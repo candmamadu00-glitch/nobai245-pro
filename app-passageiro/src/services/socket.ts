@@ -3,8 +3,7 @@ import { io, Socket } from 'socket.io-client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Sentry from '@sentry/react-native';
 
-const BASE_URL = (process.env.EXPO_PUBLIC_API_URL || 'http://192.168.18.29:3333').replace('/api', '');
-
+const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://167.172.44.3/api';
 export const socket: Socket = io(BASE_URL, {
   autoConnect: false,
   reconnection: true,

@@ -5,8 +5,8 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 import { io, Socket } from 'socket.io-client';
 import { api } from '../services/api';
 
-const VITE_API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:3333').replace(/\/$/, '');
-const BACKEND_BASE_URL = VITE_API_URL.replace(/\/api\/?$/, '');
+const rawUrl = import.meta.env?.VITE_API_URL || 'https://api.nobai245.com';
+const BACKEND_BASE_URL = rawUrl.replace(/\/api\/?$/, '').replace(/\/$/, '');
 const MAPBOX_TOKEN = 
   import.meta.env.VITE_MAPBOX_TOKEN || 
   'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZGpkMnVtMDMzdDJ4c2U0NHd3dHBtZiJ9.mT0BfmoFsPTgWFzNnblCZg';
@@ -241,7 +241,7 @@ export function AdminRadar() {
 
                 <div style={styles.popupBody}>
                   <p><strong>Telefone:</strong> {selectedDriver.phone || 'N/A'}</p>
-                  <p><strong>Veículo:</strong> {selectedDriver.vehicleBrand || 'N/A'} - <span style={styles.plateTag}>{selectedDriver.vehiclePlate || 'N/A'}</span></p>
+                  <p><strong>Veículo:</strong> {selectedDriver.vehicleBrand || 'N/A'} <span style={styles.plateTag}>{selectedDriver.vehiclePlate || 'N/A'}</span></p>
                   <p style={styles.timeText}>Atualizado às: {new Date(selectedDriver.lastUpdate).toLocaleTimeString()}</p>
                 </div>
               </div>
@@ -310,7 +310,7 @@ export function AdminRadar() {
               >
                 <div style={styles.driverListInfo}>
                   <strong>{driver.fullName || 'Motorista'}</strong>
-                  <span style={styles.driverSubtext}>{driver.vehicleBrand} • {driver.vehiclePlate || 'Sem placa'}</span>
+                  <span style={styles.driverSubtext}>{driver.vehicleBrand} {driver.vehiclePlate || 'Sem placa'}</span>
                 </div>
                 <span style={{
                   ...styles.statusDot,
@@ -340,36 +340,37 @@ const styles = {
   },
   overlayPanel: {
     position: 'absolute' as const,
-    top: '20px',
-    left: '20px',
-    width: '340px',
+    top: '12px',
+    left: '12px',
+    width: 'calc(100% - 24px)',
+    maxWidth: '340px',
     maxHeight: 'calc(100vh - 120px)',
     backgroundColor: '#FFFFFF',
     borderRadius: '16px',
-    padding: '20px',
+    padding: '16px',
     boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.15)',
     display: 'flex',
     flexDirection: 'column' as const,
-    gap: '16px',
+    gap: '12px',
     zIndex: 10
   },
   headerTitleRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  title: { margin: 0, fontSize: '20px', fontWeight: '800', color: '#0F172A' },
+  title: { margin: 0, fontSize: '18px', fontWeight: '800', color: '#0F172A' },
   liveIndicator: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#64748B', marginTop: '2px' },
   dot: { width: '8px', height: '8px', borderRadius: '50%' },
   statsRow: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' },
-  statCard: { backgroundColor: '#F8FAFC', padding: '8px 12px', borderRadius: '10px', border: '2px solid #E2E8F0', cursor: 'pointer', textAlign: 'center' as const, transition: 'all 0.2s' },
-  statVal: { fontSize: '18px', fontWeight: '800', color: '#0F172A', display: 'block' },
-  statLbl: { fontSize: '10px', fontWeight: '700', color: '#64748B', textTransform: 'uppercase' as const },
+  statCard: { backgroundColor: '#F8FAFC', padding: '8px 6px', borderRadius: '10px', border: '2px solid #E2E8F0', cursor: 'pointer', textAlign: 'center' as const, transition: 'all 0.2s' },
+  statVal: { fontSize: '16px', fontWeight: '800', color: '#0F172A', display: 'block' },
+  statLbl: { fontSize: '9px', fontWeight: '700', color: '#64748B', textTransform: 'uppercase' as const },
   searchInput: { padding: '10px 14px', borderRadius: '10px', border: '1px solid #CBD5E1', fontSize: '13px', outline: 'none', backgroundColor: '#F8FAFC' },
-  driverList: { overflowY: 'auto' as const, display: 'flex', flexDirection: 'column' as const, gap: '8px', maxHeight: '300px' },
+  driverList: { overflowY: 'auto' as const, display: 'flex', flexDirection: 'column' as const, gap: '8px', maxHeight: '220px' },
   driverListItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', borderRadius: '10px', border: '1px solid #E2E8F0', cursor: 'pointer', transition: 'background-color 0.2s' },
   driverListInfo: { display: 'flex', flexDirection: 'column' as const, fontSize: '13px', color: '#0F172A' },
   driverSubtext: { fontSize: '11px', color: '#64748B' },
   statusDot: { width: '10px', height: '10px', borderRadius: '50%' },
-  popupCard: { minWidth: '200px', padding: '4px' },
+  popupCard: { minWidth: '180px', padding: '4px' },
   popupHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '8px' },
-  driverName: { fontWeight: '700', fontSize: '14px', color: '#0F172A' },
+  driverName: { fontWeight: '700', fontSize: '13px', color: '#0F172A' },
   statusBadgePopup: { fontSize: '10px', fontWeight: '800', padding: '2px 8px', borderRadius: '12px' },
   popupBody: { fontSize: '12px', color: '#334155', lineHeight: '1.6' },
   plateTag: { backgroundColor: '#E2E8F0', padding: '2px 6px', borderRadius: '4px', fontFamily: 'monospace', fontWeight: 'bold' },

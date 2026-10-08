@@ -1,9 +1,14 @@
 import axios from 'axios';
 
-export const API_URL = import.meta.env?.VITE_API_URL || 'http://localhost:3333';
+// Captura a URL do ambiente ou usa a produção por padrão
+const rawUrl = import.meta.env?.VITE_API_URL || 'https://api.nobai245.com';
+const cleanUrl = rawUrl.replace(/\/$/, '');
+
+// Garante que a URL termina com /api, mas NUNCA duplica para /api/api
+export const API_URL = cleanUrl.endsWith('/api') ? cleanUrl : `${cleanUrl}/api`;
 
 export const api = axios.create({
-  baseURL: `${API_URL.replace(/\/$/, '')}/api`, 
+  baseURL: API_URL,
 });
 
 // Interceptador para adicionar o token de administrador em todas as requisições
@@ -38,41 +43,5 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
-
-// ==========================================
-// 🛰️ TELEMETRIA GPS DA CORRIDA
-// ==========================================
-export const getRideTelemetry = async (rideId: string) => {
-  const response = await api.get(`/admin/rides/${rideId}/telemetry`);
-  return response.data;
-};
-
-// ==========================================
-// 💳 PAGAMENTOS MOBILE MONEY
-// ==========================================
-export interface InitiatePaymentDTO {
-  phone: string;
-  amount: number;
-  provider: 'ORANGE_MONEY' | 'MTN_MOMO';
-  passengerId: string;
-}
-
-export const initiateMobileMoneyPayment = async (data: InitiatePaymentDTO) => {
-  const response = await api.post('/payments/mobile-money/initiate', data);
-  return response.data;
-};
-
-export const checkPaymentStatus = async (transactionId: string) => {
-  const response = await api.get(`/payments/mobile-money/status/${transactionId}`);
-  return response.data;
-};
-
-// ==========================================
-// 📍 RASTREAMENTO PÚBLICO DE CORRIDA
-// ==========================================
-export const getRideTracking = async (rideId: string) => {
-  const response = await api.get(`/rides/tracking/${rideId}`);
-  return response.data;
-};
 
 export default api;

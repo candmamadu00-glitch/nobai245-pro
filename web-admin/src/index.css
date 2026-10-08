@@ -1,8 +1,11 @@
+/* =========================================================
+   DESIGN SYSTEM & VARIÁVEIS GLOBAIS - NÔ BAI 245
+   ========================================================= */
 :root {
-  /* Cores Principais - BAI 245 Brand */
+  /* Cores Principais */
   --primary: #059669;
   --primary-hover: #047857;
-  --primary-light: #ecfdf5;
+  --primary-light: #d1fae5;
   --primary-dark: #064e3b;
 
   /* Neutros e Superfícies */
@@ -15,7 +18,7 @@
   /* Texto */
   --text-main: #0f172a;
   --text-muted: #64748b;
-  --text-white: #f8fafc;
+  --text-white: #ffffff;
 
   /* Status Colors */
   --status-success-bg: #dcfce7;
@@ -28,12 +31,13 @@
   --status-info-text: #0369a1;
 
   /* Sombras e Bordas */
-  --radius-sm: 6px;
-  --radius-md: 10px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
   --radius-lg: 16px;
-  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
 
   font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-synthesis: none;
@@ -68,13 +72,15 @@ body, html, #root {
 }
 ::-webkit-scrollbar-thumb {
   background: #cbd5e1;
-  border-radius: 4px;
+  border-radius: var(--radius-full);
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
 
-/* --- ESTILOS REUTILIZÁVEIS DE TABELA --- */
+/* =========================================================
+   TABELAS RESPONSIVAS (Evita quebra no telemóvel)
+   ========================================================= */
 .table-container {
   width: 100%;
   background: var(--bg-surface);
@@ -82,10 +88,13 @@ body, html, #root {
   border: 1px solid var(--border-color);
   box-shadow: var(--shadow-sm);
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 1rem;
 }
 
 .custom-table {
   width: 100%;
+  min-width: 650px; /* Garante tamanho mínimo para leitura sem esmagar texto */
   border-collapse: collapse;
   text-align: left;
   font-size: 14px;
@@ -100,6 +109,7 @@ body, html, #root {
   text-transform: uppercase;
   font-size: 11px;
   letter-spacing: 0.05em;
+  white-space: nowrap;
 }
 
 .custom-table td {
@@ -107,13 +117,16 @@ body, html, #root {
   border-bottom: 1px solid var(--border-color);
   color: var(--text-main);
   vertical-align: middle;
+  white-space: nowrap;
 }
 
 .custom-table tbody tr:hover {
   background-color: #f8fafc;
 }
 
-/* --- BADGES DE STATUS --- */
+/* =========================================================
+   BADGES DE STATUS E TELA DE CARREGAMENTO
+   ========================================================= */
 .badge {
   display: inline-flex;
   align-items: center;
@@ -128,3 +141,61 @@ body, html, #root {
 .badge-warning { background: var(--status-warning-bg); color: var(--status-warning-text); }
 .badge-danger  { background: var(--status-danger-bg);  color: var(--status-danger-text); }
 .badge-info    { background: var(--status-info-bg);    color: var(--status-info-text); }
+
+.loading-screen {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-main);
+  gap: 16px;
+}
+
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #e2e8f0;
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.loading-text {
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* =========================================================
+   REGRAS DE RESPONSIVIDADE PARA TELEMÓVEIS (Mobile Breakpoints)
+   ========================================================= */
+@media (max-width: 768px) {
+  /* Ajusta paddings de páginas e cartões no telemóvel */
+  .main-content, .page-container {
+    padding: 12px !important;
+  }
+
+  /* Faz grids de cartões ficarem em 1 coluna */
+  .grid-container, .stats-grid, .cards-grid {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
+  /* Ajusta cabeçalhos com botões de ação */
+  .page-header, .header-actions {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+
+  /* Ajusta formulários para preencher a largura total */
+  input, select, button {
+    width: 100% !important;
+  }
+}

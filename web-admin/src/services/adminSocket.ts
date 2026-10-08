@@ -1,6 +1,8 @@
 import { io, Socket } from 'socket.io-client';
 
-const API_URL = (import.meta.env?.VITE_API_URL || 'http://localhost:3333').replace(/\/$/, '');
+// Garante que o WebSocket conecta em HTTPS/WSS apontando para o domínio de produção
+const rawUrl = import.meta.env?.VITE_API_URL || 'https://api.nobai245.com';
+const API_URL = rawUrl.replace(/\/api\/?$/, '').replace(/\/$/, '');
 
 export const adminSocket: Socket = io(API_URL, {
   autoConnect: false,
@@ -18,7 +20,6 @@ export const adminSocket: Socket = io(API_URL, {
 export function connectAdminSocket(adminId: string, token: string) {
   if (!token) return;
 
-  // Atualiza o token se mudou ou se estiver desconectado
   const currentToken = (adminSocket.auth as any)?.token;
   if (currentToken !== token) {
     adminSocket.auth = { token };
@@ -28,7 +29,6 @@ export function connectAdminSocket(adminId: string, token: string) {
   }
 
   if (!adminSocket.connected) {
-    // Remove listeners antigos para evitar chamadas duplicadas
     adminSocket.off('connect');
     adminSocket.off('disconnect');
     adminSocket.off('connect_error');
