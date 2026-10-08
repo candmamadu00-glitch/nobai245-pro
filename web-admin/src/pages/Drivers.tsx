@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { 
   Eye, ShieldAlert, CheckCircle, Check, Search, Download, 
   FileDown, X, Loader2, RefreshCw, Users, UserCheck, Clock, UserX, Car, AlertTriangle, Edit2, Save, CreditCard, Trash2
@@ -371,7 +371,9 @@ export function Drivers() {
                               <strong className="driver-name" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 {driver.fullName}
                                 {driver.financeStatus === 'PENDING_VERIFICATION' && (
-                                  <AlertTriangle size={16} color="#eab308" title="Erro no Cadastro de Pagamento (Mobile Money)" />
+                                  <span title="Erro no Cadastro de Pagamento (Mobile Money)">
+                                    <AlertTriangle size={16} color="#eab308" />
+                                  </span>
                                 )}
                               </strong>
                               <span className="driver-subtext">Cadastro: {new Date(driver.createdAt || Date.now()).toLocaleDateString('pt-BR')}</span>
