@@ -1,0 +1,23 @@
+### Simular Sucesso Orange Money
+POST http://localhost:3333/api/webhooks/orange
+Content-Type: application/json
+
+{
+  "order_id": "COLE_AQUI_O_ID_DA_CORRIDA",
+  "txnid": "MOCK-TXN-9999",
+  "status": "SUCCESS",
+  "amount": "500"
+}
+
+###
+
+### Simular Sucesso MTN MoMo
+POST http://localhost:3333/api/webhooks/mtn
+Content-Type: application/json
+
+{
+  "externalId": "COLE_AQUI_O_ID_DA_CORRIDA",
+  "status": "SUCCESSFUL",
+  "amount": "500",
+  "financialTransactionId": "MOCK-TXN-12345"
+}

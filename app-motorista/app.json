@@ -1,0 +1,89 @@
+{
+  "expo": {
+    "name": "nobai245-motorista",
+    "slug": "nobai245-motorista",
+    "version": "1.0.0",
+    "jsEngine": "hermes",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": false,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0E243C"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mamadubalde.nobai245motorista",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "location",
+          "fetch",
+          "remote-notification"
+        ],
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Permita o rastreamento em segundo plano para manter a navegação da corrida ativa mesmo se você trocar de aplicativo.",
+        "NSLocationWhenInUseUsageDescription": "Sua localização é necessária para que os passageiros encontrem você."
+      }
+    },
+    "android": {
+      "usesCleartextTraffic": true,
+      "adaptiveIcon": {
+        "backgroundColor": "#0E243C",
+        "foregroundImage": "./assets/android-icon-foreground.png"
+      },
+      "package": "com.mamadubalde.nobai245motorista",
+      "googleServicesFile": "./google-services.json",
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "CAMERA",
+        "RECORD_AUDIO",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "WAKE_LOCK",
+        "VIBRATE",
+        "POST_NOTIFICATIONS"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-dev-client",
+      [
+        "@rnmapbox/maps",
+        {
+          "RNMAPBOX_MAPS_DOWNLOAD_TOKEN": "sk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZTRyc3NmMDBzMTJ5cTA1anJvYjFsOSJ9.pUAoGXwZS8FtYNr85VD1TA"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Permita o acesso à localização para rastrear rotas durante as corridas."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Permita o uso da câmera para verificação de perfil ou documentos."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#0E243C"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "68c6b217-605c-4762-8f26-9a4890b2c29b"
+      }
+    },
+    "owner": "mamadubalde"
+  }
+}

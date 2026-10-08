@@ -1,0 +1,85 @@
+{
+  "expo": {
+    "name": "nobai245-passageiro",
+    "slug": "nobai245-passageiro",
+    "version": "1.0.0",
+    "jsEngine": "hermes",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": false,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0E243C"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mamadubalde.nobai245passageiro",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "location",
+          "fetch",
+          "remote-notification"
+        ],
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Permita o acesso à localização para podermos enviar o motorista até si.",
+        "NSLocationWhenInUseUsageDescription": "Sua localização é necessária para encontrar motoristas próximos."
+      }
+    },
+    "android": {
+      "usesCleartextTraffic": true,
+      "adaptiveIcon": {
+        "backgroundColor": "#0E243C",
+        "foregroundImage": "./assets/android-icon-foreground.png"
+      },
+      "package": "com.mamadubalde.nobai245passageiro",
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "CAMERA",
+        "RECORD_AUDIO",
+        "VIBRATE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-dev-client",
+      [
+        "@rnmapbox/maps",
+        {
+          "RNMAPBOX_MAPS_DOWNLOAD_TOKEN": "sk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZTRyc3NmMDBzMTJ5cTA1anJvYjFsOSJ9.pUAoGXwZS8FtYNr85VD1TA"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Permita o acesso à localização para rastrear rotas durante as corridas.",
+          "isAndroidBackgroundLocationEnabled": true
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Permita o uso da câmera para verificação de perfil ou documentos."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#0E243C"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "0fb16cb3-4228-4f52-93b2-d39040bb9ddc"
+      }
+    },
+    "owner": "mamadubalde"
+  }
+}

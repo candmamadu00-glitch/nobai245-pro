@@ -1,0 +1,196 @@
+src/controllers/AdminAuthController.ts(19,64): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminAuthController.ts(25,18): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminAuthController.ts(45,70): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminAuthController.ts(51,18): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminAuthController.ts(87,85): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminAuthController.ts(108,18): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminAuthController.ts(281,18): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminAuthController.ts(300,64): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminAuthController.ts(306,18): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminAuthController.ts(365,18): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminAuthController.ts(390,18): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminAuthController.ts(499,11): error TS2322: Type '{ type: "MANUAL_RECHARGE"; amount: number; status: "COMPLETED"; paymentMethod: "CASH"; passengerId: any; driverId: any; }' is not assignable to type '(Without<TransactionCreateInput, TransactionUncheckedCreateInput> & TransactionUncheckedCreateInput) | (Without<...> & TransactionCreateInput)'.
+  Type '{ type: "MANUAL_RECHARGE"; amount: number; status: "COMPLETED"; paymentMethod: "CASH"; passengerId: any; driverId: any; }' is not assignable to type 'Without<TransactionUncheckedCreateInput, TransactionCreateInput> & TransactionCreateInput'.
+    Property 'reference' is missing in type '{ type: "MANUAL_RECHARGE"; amount: number; status: "COMPLETED"; paymentMethod: "CASH"; passengerId: any; driverId: any; }' but required in type 'TransactionCreateInput'.
+src/controllers/AdminAuthController.ts(622,18): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminAuthController.ts(644,18): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminAuthController.ts(653,20): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminAuthController.ts(672,22): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminDashboardController.ts(180,17): error TS2367: This comparison appears to be unintentional because the types 'DriverStatus' and '"ON_RIDE"' have no overlap.
+src/controllers/AdminDashboardController.ts(180,48): error TS2367: This comparison appears to be unintentional because the types 'DriverStatus' and '"BUSY"' have no overlap.
+src/controllers/AdminDashboardController.ts(272,18): error TS2322: Type 'string | string[]' is not assignable to type 'string | UuidFilter<"RideChatMessage"> | undefined'.
+  Type 'string[]' is not assignable to type 'string | UuidFilter<"RideChatMessage"> | undefined'.
+src/controllers/AdminFinanceController.ts(73,11): error TS2322: Type '{ type: "MANUAL_RECHARGE"; amount: number; status: "COMPLETED"; paymentMethod: "CASH"; passengerId: any; driverId: any; description: any; }' is not assignable to type '(Without<TransactionCreateInput, TransactionUncheckedCreateInput> & TransactionUncheckedCreateInput) | (Without<...> & TransactionCreateInput)'.
+  Type '{ type: "MANUAL_RECHARGE"; amount: number; status: "COMPLETED"; paymentMethod: "CASH"; passengerId: any; driverId: any; description: any; }' is not assignable to type 'Without<TransactionUncheckedCreateInput, TransactionCreateInput> & TransactionCreateInput'.
+    Property 'reference' is missing in type '{ type: "MANUAL_RECHARGE"; amount: number; status: "COMPLETED"; paymentMethod: "CASH"; passengerId: any; driverId: any; description: any; }' but required in type 'TransactionCreateInput'.
+src/controllers/AdminFinanceController.ts(142,18): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminFinanceController.ts(159,18): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminRatingController.ts(58,18): error TS2322: Type 'string | string[]' is not assignable to type 'string | (RatingRideIdReviewerIdCompoundUniqueInput & string) | undefined'.
+  Type 'string[]' is not assignable to type 'string | (RatingRideIdReviewerIdCompoundUniqueInput & string) | undefined'.
+    Type 'string[]' is not assignable to type 'RatingRideIdReviewerIdCompoundUniqueInput & string'.
+      Type 'string[]' is missing the following properties from type 'RatingRideIdReviewerIdCompoundUniqueInput': rideId, reviewerId
+src/controllers/AdminSettingsController.ts(98,18): error TS2322: Type 'string | string[]' is not assignable to type 'string | (TariffConfigVehicleTypeServiceTypeCompoundUniqueInput & string) | undefined'.
+  Type 'string[]' is not assignable to type 'string | (TariffConfigVehicleTypeServiceTypeCompoundUniqueInput & string) | undefined'.
+    Type 'string[]' is not assignable to type 'TariffConfigVehicleTypeServiceTypeCompoundUniqueInput & string'.
+      Type 'string[]' is missing the following properties from type 'TariffConfigVehicleTypeServiceTypeCompoundUniqueInput': vehicleType, serviceType
+src/controllers/AdminSosController.ts(79,11): error TS2783: 'rideId' is specified more than once, so this usage will be overwritten.
+src/controllers/AdminSosController.ts(81,11): error TS2783: 'audioUrl' is specified more than once, so this usage will be overwritten.
+src/controllers/AdminSosController.ts(82,11): error TS2783: 'createdAt' is specified more than once, so this usage will be overwritten.
+src/controllers/AdminSosController.ts(106,18): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminSosController.ts(115,20): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminSosController.ts(127,15): error TS2322: Type 'string | string[]' is not assignable to type 'string | null | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminTicketController.ts(71,18): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminTicketController.ts(119,13): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/AdminTicketController.ts(126,20): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/PassengerAuthController.ts(91,11): error TS2322: Type 'string | null' is not assignable to type 'DocumentType | null | undefined'.
+  Type 'string' is not assignable to type 'DocumentType | null | undefined'.
+src/controllers/PassengerAuthController.ts(274,36): error TS2339: Property 'otpCode' does not exist on type '{ id: string; fullName: string; phone: string; email: string | null; resetTokenHash: string | null; resetTokenExpires: Date | null; lastResetAttempt: Date | null; passwordHash: string; ... 19 more ...; version: number; }'.
+src/controllers/PassengerAuthController.ts(274,57): error TS2339: Property 'otpCode' does not exist on type '{ id: string; fullName: string; phone: string; email: string | null; resetTokenHash: string | null; resetTokenExpires: Date | null; lastResetAttempt: Date | null; passwordHash: string; ... 19 more ...; version: number; }'.
+src/controllers/PassengerAuthController.ts(842,13): error TS2322: Type '{ sender: "PASSENGER"; message: string; }' is not assignable to type 'TicketMessageCreateWithoutTicketInput[] | TicketMessageUncheckedCreateWithoutTicketInput[] | (Without<...> & TicketMessageUncheckedCreateWithoutTicketInput) | (Without<...> & TicketMessageCreateWithoutTicketInput) | undefined'.
+  Type '{ sender: "PASSENGER"; message: string; }' is not assignable to type 'undefined'.
+src/controllers/PassengerAuthController.ts(902,9): error TS2322: Type '{ ticketId: string; sender: "PASSENGER"; message: string; }' is not assignable to type '(Without<TicketMessageCreateInput, TicketMessageUncheckedCreateInput> & TicketMessageUncheckedCreateInput) | (Without<...> & TicketMessageCreateInput)'.
+  Type '{ ticketId: string; sender: "PASSENGER"; message: string; }' is not assignable to type 'Without<TicketMessageCreateInput, TicketMessageUncheckedCreateInput> & TicketMessageUncheckedCreateInput'.
+    Property 'senderId' is missing in type '{ ticketId: string; sender: "PASSENGER"; message: string; }' but required in type 'TicketMessageUncheckedCreateInput'.
+src/controllers/TicketController.ts(107,11): error TS2322: Type 'string | string[]' is not assignable to type 'string | UuidFilter<"Ticket"> | undefined'.
+  Type 'string[]' is not assignable to type 'string | UuidFilter<"Ticket"> | undefined'.
+src/controllers/TicketController.ts(118,11): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/TicketController.ts(126,18): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/rideController.ts(308,45): error TS2783: 'rideId' is specified more than once, so this usage will be overwritten.
+src/jobs/escrowTimeoutJob.ts(2,44): error TS2307: Cannot find module './mobileMoneyService' or its corresponding type declarations.
+src/jobs/escrowTimeoutJob.ts(258,25): error TS18047: 'ride.driver' is possibly 'null'.
+src/jobs/escrowTimeoutJob.ts(258,53): error TS18047: 'ride.driver' is possibly 'null'.
+src/jobs/escrowTimeoutJob.ts(258,78): error TS18047: 'ride.driver' is possibly 'null'.
+src/routes/adminRoutes.ts(222,39): error TS2339: Property 'toggleApproval' does not exist on type 'typeof AdminRatingController'.
+src/routes/webhookRoutes.ts(133,16): error TS2339: Property 'success' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; } | { status?: undefined; alreadyProcessed: boolean; rideId: string | null; success?: undefined; transactionId?: undefined; passengerId?: undefined; } | { ...; } | { ...; }'.
+  Property 'success' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; }'.
+src/routes/webhookRoutes.ts(133,34): error TS2339: Property 'status' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; } | { status?: undefined; alreadyProcessed: boolean; rideId: string | null; success?: undefined; transactionId?: undefined; passengerId?: undefined; } | { ...; } | { ...; }'.
+  Property 'status' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; }'.
+src/routes/webhookRoutes.ts(134,39): error TS2339: Property 'rideId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; } | { status?: undefined; alreadyProcessed: boolean; rideId: string | null; success?: undefined; transactionId?: undefined; passengerId?: undefined; } | { ...; } | { ...; }'.
+  Property 'rideId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; }'.
+src/routes/webhookRoutes.ts(134,55): error TS2339: Property 'passengerId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; } | { status?: undefined; alreadyProcessed: boolean; rideId: string | null; success?: undefined; transactionId?: undefined; passengerId?: undefined; } | { ...; } | { ...; }'.
+  Property 'passengerId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; }'.
+src/routes/webhookRoutes.ts(135,24): error TS2339: Property 'success' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; } | { status?: undefined; alreadyProcessed: boolean; rideId: string | null; success?: undefined; transactionId?: undefined; passengerId?: undefined; } | { ...; } | { ...; }'.
+  Property 'success' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; }'.
+src/routes/webhookRoutes.ts(137,24): error TS2339: Property 'rideId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; } | { status?: undefined; alreadyProcessed: boolean; rideId: string | null; success?: undefined; transactionId?: undefined; passengerId?: undefined; } | { ...; } | { ...; }'.
+  Property 'rideId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; }'.
+src/routes/webhookRoutes.ts(137,45): error TS2339: Property 'rideId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; } | { status?: undefined; alreadyProcessed: boolean; rideId: string | null; success?: undefined; transactionId?: undefined; passengerId?: undefined; } | { ...; } | { ...; }'.
+  Property 'rideId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; }'.
+src/routes/webhookRoutes.ts(138,24): error TS2339: Property 'passengerId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; } | { status?: undefined; alreadyProcessed: boolean; rideId: string | null; success?: undefined; transactionId?: undefined; passengerId?: undefined; } | { ...; } | { ...; }'.
+  Property 'passengerId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; }'.
+src/routes/webhookRoutes.ts(138,50): error TS2339: Property 'passengerId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; } | { status?: undefined; alreadyProcessed: boolean; rideId: string | null; success?: undefined; transactionId?: undefined; passengerId?: undefined; } | { ...; } | { ...; }'.
+  Property 'passengerId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; }'.
+src/routes/webhookRoutes.ts(181,16): error TS2339: Property 'success' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; } | { status?: undefined; alreadyProcessed: boolean; rideId: string | null; success?: undefined; transactionId?: undefined; passengerId?: undefined; } | { ...; } | { ...; }'.
+  Property 'success' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; }'.
+src/routes/webhookRoutes.ts(181,34): error TS2339: Property 'status' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; } | { status?: undefined; alreadyProcessed: boolean; rideId: string | null; success?: undefined; transactionId?: undefined; passengerId?: undefined; } | { ...; } | { ...; }'.
+  Property 'status' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; }'.
+src/routes/webhookRoutes.ts(182,39): error TS2339: Property 'rideId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; } | { status?: undefined; alreadyProcessed: boolean; rideId: string | null; success?: undefined; transactionId?: undefined; passengerId?: undefined; } | { ...; } | { ...; }'.
+  Property 'rideId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; }'.
+src/routes/webhookRoutes.ts(182,55): error TS2339: Property 'passengerId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; } | { status?: undefined; alreadyProcessed: boolean; rideId: string | null; success?: undefined; transactionId?: undefined; passengerId?: undefined; } | { ...; } | { ...; }'.
+  Property 'passengerId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; }'.
+src/routes/webhookRoutes.ts(183,24): error TS2339: Property 'success' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; } | { status?: undefined; alreadyProcessed: boolean; rideId: string | null; success?: undefined; transactionId?: undefined; passengerId?: undefined; } | { ...; } | { ...; }'.
+  Property 'success' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; }'.
+src/routes/webhookRoutes.ts(185,24): error TS2339: Property 'rideId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; } | { status?: undefined; alreadyProcessed: boolean; rideId: string | null; success?: undefined; transactionId?: undefined; passengerId?: undefined; } | { ...; } | { ...; }'.
+  Property 'rideId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; }'.
+src/routes/webhookRoutes.ts(185,45): error TS2339: Property 'rideId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; } | { status?: undefined; alreadyProcessed: boolean; rideId: string | null; success?: undefined; transactionId?: undefined; passengerId?: undefined; } | { ...; } | { ...; }'.
+  Property 'rideId' does not exist on type '{ alreadyProcessed: boolean; duplicated: boolean; }'.
+src/server.ts(22,3): error TS2305: Module '"./services/rideRulesService"' has no exported member 'getRouteDistanceAndDuration'.
+src/server.ts(235,19): error TS7006: Parameter 't' implicitly has an 'any' type.
+src/server.ts(350,46): error TS2345: Argument of type '(data: any) => Promise<boolean | undefined>' is not assignable to parameter of type '(data?: any) => void | Promise<void>'.
+  Type 'Promise<boolean | undefined>' is not assignable to type 'void | Promise<void>'.
+    Type 'Promise<boolean | undefined>' is not assignable to type 'Promise<void>'.
+      Type 'boolean | undefined' is not assignable to type 'void'.
+        Type 'boolean' is not assignable to type 'void'.
+src/server.ts(371,53): error TS2345: Argument of type '() => Promise<boolean | undefined>' is not assignable to parameter of type '(data?: any) => void | Promise<void>'.
+  Type 'Promise<boolean | undefined>' is not assignable to type 'void | Promise<void>'.
+    Type 'Promise<boolean | undefined>' is not assignable to type 'Promise<void>'.
+      Type 'boolean | undefined' is not assignable to type 'void'.
+        Type 'boolean' is not assignable to type 'void'.
+src/server.ts(426,58): error TS2345: Argument of type '(data: any) => Promise<boolean | undefined>' is not assignable to parameter of type '(data?: any) => void | Promise<void>'.
+  Type 'Promise<boolean | undefined>' is not assignable to type 'void | Promise<void>'.
+    Type 'Promise<boolean | undefined>' is not assignable to type 'Promise<void>'.
+      Type 'boolean | undefined' is not assignable to type 'void'.
+        Type 'boolean' is not assignable to type 'void'.
+src/server.ts(460,13): error TS2339: Property 'totalPrice' does not exist on type 'Number'.
+src/server.ts(472,56): error TS2345: Argument of type '() => Promise<boolean | undefined>' is not assignable to parameter of type '(data?: any) => void | Promise<void>'.
+  Type 'Promise<boolean | undefined>' is not assignable to type 'void | Promise<void>'.
+    Type 'Promise<boolean | undefined>' is not assignable to type 'Promise<void>'.
+      Type 'boolean | undefined' is not assignable to type 'void'.
+        Type 'boolean' is not assignable to type 'void'.
+src/server.ts(539,46): error TS2345: Argument of type '(data: any) => Promise<boolean | undefined>' is not assignable to parameter of type '(data?: any) => void | Promise<void>'.
+  Type 'Promise<boolean | undefined>' is not assignable to type 'void | Promise<void>'.
+    Type 'Promise<boolean | undefined>' is not assignable to type 'Promise<void>'.
+      Type 'boolean | undefined' is not assignable to type 'void'.
+        Type 'boolean' is not assignable to type 'void'.
+src/server.ts(608,55): error TS2345: Argument of type '(rideData: any) => Promise<boolean | undefined>' is not assignable to parameter of type '(data?: any) => void | Promise<void>'.
+  Type 'Promise<boolean | undefined>' is not assignable to type 'void | Promise<void>'.
+    Type 'Promise<boolean | undefined>' is not assignable to type 'Promise<void>'.
+      Type 'boolean | undefined' is not assignable to type 'void'.
+        Type 'boolean' is not assignable to type 'void'.
+src/server.ts(758,51): error TS2345: Argument of type '(data: any) => Promise<boolean | undefined>' is not assignable to parameter of type '(data?: any) => void | Promise<void>'.
+  Type 'Promise<boolean | undefined>' is not assignable to type 'void | Promise<void>'.
+    Type 'Promise<boolean | undefined>' is not assignable to type 'Promise<void>'.
+      Type 'boolean | undefined' is not assignable to type 'void'.
+        Type 'boolean' is not assignable to type 'void'.
+src/server.ts(869,47): error TS2345: Argument of type '(data: any) => Promise<boolean | undefined>' is not assignable to parameter of type '(data?: any) => void | Promise<void>'.
+  Type 'Promise<boolean | undefined>' is not assignable to type 'void | Promise<void>'.
+    Type 'Promise<boolean | undefined>' is not assignable to type 'Promise<void>'.
+      Type 'boolean | undefined' is not assignable to type 'void'.
+        Type 'boolean' is not assignable to type 'void'.
+src/server.ts(881,9): error TS18047: 'ride' is possibly 'null'.
+src/server.ts(883,13): error TS18047: 'ride' is possibly 'null'.
+src/server.ts(892,50): error TS2345: Argument of type '(data: any) => Promise<boolean | undefined>' is not assignable to parameter of type '(data?: any) => void | Promise<void>'.
+  Type 'Promise<boolean | undefined>' is not assignable to type 'void | Promise<void>'.
+    Type 'Promise<boolean | undefined>' is not assignable to type 'Promise<void>'.
+      Type 'boolean | undefined' is not assignable to type 'void'.
+        Type 'boolean' is not assignable to type 'void'.
+src/server.ts(903,86): error TS18047: 'updatedRide' is possibly 'null'.
+src/server.ts(911,51): error TS2345: Argument of type '(data: any) => Promise<boolean | undefined>' is not assignable to parameter of type '(data?: any) => void | Promise<void>'.
+  Type 'Promise<boolean | undefined>' is not assignable to type 'void | Promise<void>'.
+    Type 'Promise<boolean | undefined>' is not assignable to type 'Promise<void>'.
+      Type 'boolean | undefined' is not assignable to type 'void'.
+        Type 'boolean' is not assignable to type 'void'.
+src/server.ts(964,44): error TS2345: Argument of type '(data: any) => Promise<boolean | undefined>' is not assignable to parameter of type '(data?: any) => void | Promise<void>'.
+  Type 'Promise<boolean | undefined>' is not assignable to type 'void | Promise<void>'.
+    Type 'Promise<boolean | undefined>' is not assignable to type 'Promise<void>'.
+      Type 'boolean | undefined' is not assignable to type 'void'.
+        Type 'boolean' is not assignable to type 'void'.
+src/server.ts(1008,42): error TS2345: Argument of type '(data: any) => Promise<boolean | undefined>' is not assignable to parameter of type '(data?: any) => void | Promise<void>'.
+  Type 'Promise<boolean | undefined>' is not assignable to type 'void | Promise<void>'.
+    Type 'Promise<boolean | undefined>' is not assignable to type 'Promise<void>'.
+      Type 'boolean | undefined' is not assignable to type 'void'.
+        Type 'boolean' is not assignable to type 'void'.
+src/services/pushNotifications.ts(1,54): error TS1541: Type-only import of an ECMAScript module from a CommonJS module must have a 'resolution-mode' attribute.
+  To convert this file to an ECMAScript module, change its file extension to '.mts' or create a local package.json file with `{ "type": "module" }`.
+src/services/rideService.ts(486,43): error TS18047: 'ride.driver' is possibly 'null'.
+src/services/rideService.ts(683,103): error TS2339: Property 'PARTIALLY_REFUNDED' does not exist on type '{ PENDING: "PENDING"; PROCESSING: "PROCESSING"; PENDING_VERIFICATION: "PENDING_VERIFICATION"; HELD_IN_ESCROW: "HELD_IN_ESCROW"; COMPLETED: "COMPLETED"; FAILED: "FAILED"; FAILED_MANUAL_REVIEW: "FAILED_MANUAL_REVIEW"; CANCELLED: "CANCELLED"; REVERSED: "REVERSED"; }'.
+src/services/rideService.ts(683,142): error TS2339: Property 'REFUNDED' does not exist on type '{ PENDING: "PENDING"; PROCESSING: "PROCESSING"; PENDING_VERIFICATION: "PENDING_VERIFICATION"; HELD_IN_ESCROW: "HELD_IN_ESCROW"; COMPLETED: "COMPLETED"; FAILED: "FAILED"; FAILED_MANUAL_REVIEW: "FAILED_MANUAL_REVIEW"; CANCELLED: "CANCELLED"; REVERSED: "REVERSED"; }'.
+src/services/rideService.ts(719,75): error TS2339: Property 'CANCELLATION_FEE_COMPENSATION' does not exist on type '{ DEPOSIT: "DEPOSIT"; WITHDRAWAL: "WITHDRAWAL"; RIDE_PAYMENT: "RIDE_PAYMENT"; COMMISSION_FEE: "COMMISSION_FEE"; DRIVER_PAYOUT: "DRIVER_PAYOUT"; PAYOUT: "PAYOUT"; REFUND: "REFUND"; MANUAL_RECHARGE: "MANUAL_RECHARGE"; }'.
+src/services/stuckRideWorker.ts(4,23): error TS2307: Cannot find module '../lib/redis' or its corresponding type declarations.
+src/sockets/ticketSocket.ts(61,11): error TS2322: Type '{ ticketId: string; sender: "ADMIN" | "DRIVER" | "PASSENGER"; message: string; }' is not assignable to type '(Without<TicketMessageCreateInput, TicketMessageUncheckedCreateInput> & TicketMessageUncheckedCreateInput) | (Without<...> & TicketMessageCreateInput)'.
+  Type '{ ticketId: string; sender: "ADMIN" | "DRIVER" | "PASSENGER"; message: string; }' is not assignable to type 'Without<TicketMessageCreateInput, TicketMessageUncheckedCreateInput> & TicketMessageUncheckedCreateInput'.
+    Property 'senderId' is missing in type '{ ticketId: string; sender: "ADMIN" | "DRIVER" | "PASSENGER"; message: string; }' but required in type 'TicketMessageUncheckedCreateInput'.

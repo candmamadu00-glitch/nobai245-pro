@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  nobai245-db:
+    image: postgres:16-alpine
+    container_name: nobai245-db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Bai245_Pr0d_Db_S3cur3_998877
+      POSTGRES_DB: nobai245
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  nobai245-redis:
+    image: redis:7-alpine
+    container_name: nobai245-redis
+    restart: always
+    volumes:
+      - redis_data:/data
+
+  nobai245-api:
+    build: .
+    container_name: nobai245-api
+    restart: always
+    ports:
+      - "3333:3333"
+    env_file:
+      - .env
+    depends_on:
+      - nobai245-db
+      - nobai245-redis
+    volumes:
+      - uploads_data:/app/uploads
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:

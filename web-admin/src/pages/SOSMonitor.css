@@ -1,0 +1,170 @@
+.sos-container {
+  padding: 24px;
+  background-color: #0f172a;
+  color: #f8fafc;
+  min-height: 100vh;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.sos-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.sos-filters button {
+  background: #1e293b;
+  color: #94a3b8;
+  border: 1px solid #334155;
+  padding: 8px 16px;
+  border-radius: 8px;
+  margin-left: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.sos-filters button.active {
+  background: #3b82f6;
+  color: #ffffff;
+}
+
+.sos-filters button.active.danger {
+  background: #ef4444;
+}
+
+.sos-content {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 24px;
+}
+
+.sos-list-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sos-card {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.sos-card.selected {
+  border-color: #ef4444;
+  background: #261623;
+}
+
+.sos-card-badge {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #ef4444;
+  font-weight: bold;
+}
+
+.sos-detail-card {
+  background: #1e293b;
+  border-radius: 16px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.sos-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.info-box {
+  background: #0f172a;
+  padding: 16px;
+  border-radius: 10px;
+}
+
+.sos-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.btn {
+  padding: 12px 20px;
+  border-radius: 8px;
+  border: none;
+  font-weight: bold;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-call { background: #3b82f6; color: white; }
+.btn-police { background: #ef4444; color: white; }
+.btn-resolve { background: #10b981; color: white; }
+.btn-false-alarm { background: #64748b; color: white; }
+/* Adicionar ao final do SOSMonitor.css existente */
+
+.sos-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.status-pill {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+
+.status-pill.active {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+.status-pill.resolved {
+  background: #10b981;
+  color: #ffffff;
+}
+
+.status-pill.false_alarm {
+  background: #64748b;
+  color: #ffffff;
+}
+
+.audio-player-box {
+  background: #0f172a;
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid #334155;
+}
+
+.audio-player-box label {
+  font-size: 14px;
+  font-weight: bold;
+  color: #38bdf8;
+  display: block;
+}
+
+.map-preview {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid #334155;
+}
+
+.empty-state, .empty-detail {
+  padding: 32px;
+  text-align: center;
+  color: #64748b;
+  background: #1e293b;
+  border-radius: 12px;
+}

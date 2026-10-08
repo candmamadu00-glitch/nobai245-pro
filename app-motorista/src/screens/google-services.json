@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "440747110438",
+    "project_id": "nobai245",
+    "storage_bucket": "nobai245.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:440747110438:android:6be1537574a4ebe7ba36e7",
+        "android_client_info": {
+          "package_name": "com.mamadubalde.appmotorista"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAbtxroXGQadey_StU70jJOHg6LxW-iqFo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

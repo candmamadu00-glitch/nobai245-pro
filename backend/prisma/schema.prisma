@@ -1,0 +1,682 @@
+// ==========================================
+// 🛡️ COFRE NO BAI 245 - SCHEMA ENTERPRISE BLINDADO (V2.5)
+// ==========================================
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- ENUMS ---
+enum Role {
+  SUPER_ADMIN
+  OPERATOR
+  FINANCE
+}
+
+enum MobileMoneyProvider {
+  ORANGE_MONEY
+  MTN_MOMO
+}
+
+enum DocumentType {
+  BI
+  PASSPORT
+  MIGRATORY_CARD
+}
+
+enum VehicleType {
+  PARTICULAR
+  TAXI
+  MOTO
+  MOTO_CARRO
+  TOCA_TOCA
+}
+
+enum DriverStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  SUSPENDED
+  INACTIVE
+  BANNED
+}
+
+enum PassengerStatus {
+  ACTIVE
+  SUSPENDED
+  INACTIVE
+  BANNED
+}
+
+enum ServiceType {
+  RIDE
+  DELIVERY
+  RENTAL
+}
+
+enum RideStatus {
+  PENDING
+  SEARCHING
+  AWAITING_PAYMENT
+  ACCEPTED
+  ARRIVED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  ORANGE_MONEY
+  MTN_MOMO
+  WALLET
+  CASH
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  RIDE_PAYMENT
+  COMMISSION_FEE
+  DRIVER_PAYOUT
+  PAYOUT
+  REFUND
+  MANUAL_RECHARGE
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  PENDING_VERIFICATION
+  HELD_IN_ESCROW
+  COMPLETED
+  FAILED
+  FAILED_MANUAL_REVIEW
+  CANCELLED
+  REVERSED
+}
+
+enum UserType {
+  PASSENGER
+  DRIVER
+  ADMIN
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum SosStatus {
+  ACTIVE
+  RESOLVED
+  FALSE_ALARM
+}
+
+enum PaymentIntentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum TicketCategory {
+  LOST_ITEM
+  CHARGE_DISPUTE
+  CONDUCT_REPORT
+  OTHER
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model Admin {
+  id                String    @id @default(uuid()) @db.Uuid
+  name              String    @db.VarChar(100)
+  email             String    @unique @db.VarChar(100)
+  passwordHash      String
+  resetTokenHash    String?   @db.VarChar(100)
+  resetTokenExpires DateTime?
+  lastResetAttempt  DateTime?
+  role              Role      @default(OPERATOR)
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  auditLogs AdminAuditLog[]
+  tickets   Ticket[]        @relation("AdminAssignedTickets")
+}
+
+model AdminAuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  adminId    String   @db.Uuid
+  action     String   @db.VarChar(100)
+  targetType String   @db.VarChar(50)
+  targetId   String?  @db.VarChar(100)
+  ipAddress  String?  @db.VarChar(45)
+  payload    Json?
+  createdAt  DateTime @default(now())
+
+  admin Admin @relation(fields: [adminId], references: [id], onDelete: Restrict)
+
+  @@index([adminId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model Passenger {
+  id                String          @id @default(uuid()) @db.Uuid
+  fullName          String          @db.VarChar(100)
+  phone             String          @unique @db.VarChar(20)
+  email             String?         @unique
+  resetTokenHash    String?         @db.VarChar(100)
+  resetTokenExpires DateTime?
+  lastResetAttempt  DateTime?
+  passwordHash      String
+  profilePicture    String?
+  documentType      DocumentType?
+  documentNumber    String?         @unique @db.VarChar(50)
+  walletBalance     Decimal         @default(0.00) @db.Decimal(12, 2)
+  lockedBalance     Decimal         @default(0.00) @db.Decimal(12, 2)
+  isVerified        Boolean         @default(false)
+  status            PassengerStatus @default(ACTIVE)
+
+  ratingAverage Decimal @default(5.00) @db.Decimal(3, 2)
+  totalRatings  Int     @default(0)
+
+  paymentProvider      MobileMoneyProvider?
+  paymentAccountNumber String?              @db.VarChar(20)
+
+  refreshTokenHash String?   @db.Text
+  otpCodeHash      String?   @db.VarChar(100)
+  otpExpiresAt     DateTime?
+  deviceToken      String?
+
+  currentRideId String? @unique @db.Uuid
+  currentRide   Ride?   @relation("PassengerActiveRide", fields: [currentRideId], references: [id], onDelete: SetNull)
+
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  version   Int       @default(0)
+
+  rides                   Ride[]                   @relation("PassengerRidesHistory")
+  transactions            Transaction[]
+  emergencyContacts       EmergencyContact[]
+  sosAlerts               SosAlert[]
+  accountDeletionRequests AccountDeletionRequest[]
+  paymentIntents          PaymentIntent[]
+  tickets                 Ticket[]
+
+  @@index([phone])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model Driver {
+  id                  String    @id @default(uuid()) @db.Uuid
+  fullName            String    @db.VarChar(100)
+  phone               String    @unique @db.VarChar(20)
+  passwordHash        String
+  resetTokenHash      String?   @db.VarChar(100)
+  resetTokenExpires   DateTime?
+  lastResetAttempt    DateTime?
+  profilePicture      String?
+  licenseFrontPicture String?
+  licenseBackPicture  String?
+  orangeNumber        String?   @db.VarChar(20)
+  mtnNumber           String?   @db.VarChar(20)
+  paymentAccountNumber String?  @db.VarChar(20)
+  version             Int       @default(0)
+
+  isOnline           Boolean   @default(false)
+  isAvailable        Boolean   @default(true)
+  lastLat            Float?
+  lastLng            Float?
+  lastLocationUpdate DateTime?
+
+  ratingAverage Decimal @default(5.00) @db.Decimal(3, 2)
+  totalRatings  Int     @default(0)
+
+  vehicleType  VehicleType
+  vehicleBrand String      @db.VarChar(50)
+  vehiclePlate String      @unique @db.VarChar(20)
+  vehicleColor String      @db.VarChar(30)
+  vehicleSeats Int?
+
+  documentType   DocumentType
+  documentNumber String       @unique @db.VarChar(50)
+
+  licenseExpiresAt   DateTime?
+  carteGrisePicture  String?
+  insurancePicture   String?
+  insuranceExpiresAt DateTime?
+
+  status         DriverStatus @default(PENDING_APPROVAL)
+  walletBalance  Decimal      @default(0.00) @db.Decimal(12, 2)
+  pendingBalance Decimal      @default(0.00) @db.Decimal(12, 2)
+
+  refreshTokenHash String?   @db.Text
+  otpCodeHash      String?   @db.VarChar(100)
+  otpExpiresAt     DateTime?
+  deviceToken      String?
+
+  currentRideId String? @unique @db.Uuid
+  currentRide   Ride?   @relation("DriverActiveRide", fields: [currentRideId], references: [id], onDelete: SetNull)
+
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  rides                   Ride[]                   @relation("DriverRidesHistory")
+  transactions            Transaction[]
+  sosAlerts               SosAlert[]
+  changeRequests          DriverChangeRequest[]
+  accountDeletionRequests AccountDeletionRequest[]
+  tickets                 Ticket[]                 @relation("DriverTickets")
+  sosIncidents            SosIncident[]
+
+  @@index([phone])
+  @@index([status, isOnline, isAvailable])
+  @@index([deletedAt])
+  @@index([lastLat, lastLng])
+}
+
+model RideChatMessage {
+  id         String   @id @default(uuid()) @db.Uuid
+  rideId     String   @db.Uuid
+  senderId   String   @db.Uuid
+  senderType UserType
+  message    String   @db.Text
+  createdAt  DateTime @default(now())
+
+  ride Ride @relation(fields: [rideId], references: [id], onDelete: Cascade)
+
+  @@index([rideId, createdAt])
+}
+
+model RideCallLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  rideId     String   @db.Uuid
+  callerId   String   @db.Uuid
+  callerType UserType
+  receiverId String   @db.Uuid
+  createdAt  DateTime @default(now())
+
+  ride Ride @relation(fields: [rideId], references: [id], onDelete: Cascade)
+
+  @@index([rideId])
+}
+
+model SystemConfig {
+  id                    String   @id @default("bai245-system-config") @db.VarChar(50)
+  adminOrangeNumber     String   @default("245950000000") @db.VarChar(20)
+  adminMtnNumber        String   @default("245960000000") @db.VarChar(20)
+  defaultCommissionRate Decimal  @default(15.00) @db.Decimal(5, 2)
+  updatedAt             DateTime @updatedAt
+}
+
+model Ride {
+  id                   String        @id @default(uuid()) @db.Uuid
+  passengerId          String        @db.Uuid
+  driverId             String?       @db.Uuid
+  version              Int           @default(0)
+  serviceType          ServiceType   @default(RIDE)
+  rentalHours          Int?
+  rentalDays           Int?
+  requestedVehicleType VehicleType   @default(PARTICULAR)
+  paymentMethod        PaymentMethod @default(ORANGE_MONEY)
+  expiresAt            DateTime?
+
+  recipientName    String? @db.VarChar(100)
+  recipientPhone   String? @db.VarChar(20)
+  packageNotes     String? @db.Text
+  pickupPhotoUrl   String? @db.Text
+  deliveryPhotoUrl String? @db.Text
+
+  originAddress String
+  originLat     Float
+  originLng     Float
+  stops         Json?
+  destinationAddress String
+  destinationLat     Float
+  destinationLng     Float
+
+  referencePoint String?
+  startOtp       String? @db.VarChar(4)
+
+  shareToken String? @unique @db.VarChar(100)
+
+  priceXof       Decimal  @db.Decimal(10, 2)
+  platformFee    Decimal? @db.Decimal(10, 2)
+  driverEarnings Decimal? @db.Decimal(10, 2)
+
+  status RideStatus @default(SEARCHING)
+
+  cancellationReason String?   @db.Text
+  cancelledBy        UserType?
+  cancelledById      String?   @db.Uuid
+  cancelledAt        DateTime?
+
+  acceptedAt DateTime?
+  arrivedAt  DateTime?
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  distanceKm  Decimal? @db.Decimal(8, 2)
+  durationMin Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  passenger Passenger @relation("PassengerRidesHistory", fields: [passengerId], references: [id], onDelete: Restrict)
+  driver    Driver?   @relation("DriverRidesHistory", fields: [driverId], references: [id], onDelete: Restrict)
+
+  activePassenger Passenger? @relation("PassengerActiveRide")
+  activeDriver    Driver?    @relation("DriverActiveRide")
+
+  ratings         Rating[]
+  transactions    Transaction[]
+  locationHistory RideLocationHistory[]
+  sosAlerts       SosAlert[]
+  chatMessages    RideChatMessage[]
+  callLogs        RideCallLog[]
+  tickets         Ticket[]
+  sosIncidents    SosIncident[]
+
+  @@index([status])
+  @@index([passengerId, status])
+  @@index([driverId, status])
+  @@index([createdAt])
+}
+
+model RideLocationHistory {
+  id        String   @id @default(uuid()) @db.Uuid
+  rideId    String   @db.Uuid
+  lat       Float
+  lng       Float
+  heading   Float?   @default(0)
+  speed     Float?   @default(0)
+  createdAt DateTime @default(now())
+
+  ride Ride @relation(fields: [rideId], references: [id], onDelete: Cascade)
+
+  @@index([rideId, createdAt])
+}
+
+model Rating {
+  id           String   @id @default(uuid()) @db.Uuid
+  rideId       String   @db.Uuid
+  reviewerId   String   @db.Uuid
+  reviewerType UserType
+  receiverId   String   @db.Uuid
+  stars        Int      @default(5)
+  tags         String[] @default([])
+  comment      String?  @db.Text
+  isApproved   Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  ride Ride @relation(fields: [rideId], references: [id], onDelete: Cascade)
+
+  @@unique([rideId, reviewerId])
+  @@index([receiverId])
+}
+
+model Transaction {
+  id            String            @id @default(uuid()) @db.Uuid
+  passengerId   String?           @db.Uuid
+  driverId      String?           @db.Uuid
+  rideId        String?           @db.Uuid
+  type          TransactionType
+  status        TransactionStatus @default(PENDING)
+  paymentMethod PaymentMethod?
+  amount        Decimal           @db.Decimal(12, 2)
+
+  balanceBefore Decimal? @db.Decimal(12, 2)
+  balanceAfter  Decimal? @db.Decimal(12, 2)
+
+  reference      String  @unique
+  externalRef    String? @unique
+  idempotencyKey String? @unique @db.VarChar(100)
+  description    String?
+
+  failureReason String? @db.Text
+  version       Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  passenger     Passenger?     @relation(fields: [passengerId], references: [id], onDelete: Restrict)
+  driver        Driver?        @relation(fields: [driverId], references: [id], onDelete: Restrict)
+  ride          Ride?          @relation(fields: [rideId], references: [id], onDelete: Restrict)
+  paymentIntent PaymentIntent?
+
+  @@index([status])
+  @@index([type])
+  @@index([passengerId, createdAt])
+  @@index([driverId, createdAt])
+  @@index([rideId])
+  @@index([reference])
+}
+
+model PaymentIntent {
+  id            String              @id @default(uuid()) @db.Uuid
+  passengerId   String              @db.Uuid
+  transactionId String?             @unique @db.Uuid
+  rideId        String?             @db.Uuid
+  provider      MobileMoneyProvider
+  phone         String              @db.VarChar(20)
+  amount        Decimal             @db.Decimal(12, 2)
+  reference     String              @unique @db.VarChar(100)
+  status        PaymentIntentStatus @default(PENDING)
+
+  rawResponse   Json?
+  failureReason String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  passenger   Passenger    @relation(fields: [passengerId], references: [id], onDelete: Restrict)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@index([reference])
+  @@index([status])
+}
+
+model WebhookEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  provider    String   @db.VarChar(50)
+  eventId     String   @unique @db.VarChar(100)
+  payload     Json
+  isProcessed Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([eventId])
+  @@index([isProcessed])
+}
+
+model OutboxEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  eventType   String   @db.VarChar(100)
+  payload     Json
+  isProcessed Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isProcessed, createdAt])
+}
+
+model CompanyWallet {
+  id             String   @id @default("bai245-main-wallet") @db.VarChar(50)
+  balance        Decimal  @default(0.00) @db.Decimal(12, 2)
+  totalCollected Decimal  @default(0.00) @db.Decimal(12, 2)
+  version        Int      @default(0)
+  updatedAt      DateTime @updatedAt
+}
+
+model TariffConfig {
+  id             String      @id @default(uuid()) @db.Uuid
+  vehicleType    VehicleType
+  serviceType    ServiceType @default(RIDE)
+  baseFare       Decimal     @db.Decimal(10, 2)
+  perKmFare      Decimal     @db.Decimal(10, 2)
+  perMinuteFare  Decimal     @db.Decimal(10, 2)
+  minimumFare    Decimal     @db.Decimal(10, 2)
+  commissionRate Decimal     @db.Decimal(5, 2)
+  isActive       Boolean     @default(true)
+  updatedAt      DateTime    @updatedAt
+
+  @@unique([vehicleType, serviceType])
+}
+
+model EmergencyContact {
+  id           String   @id @default(uuid()) @db.Uuid
+  passengerId  String   @db.Uuid
+  name         String   @db.VarChar(100)
+  phone        String   @db.VarChar(20)
+  relationship String?  @db.VarChar(50)
+  createdAt    DateTime @default(now())
+
+  passenger Passenger @relation(fields: [passengerId], references: [id], onDelete: Cascade)
+
+  @@index([passengerId])
+}
+
+model SosAlert {
+  id          String    @id @default(uuid()) @db.Uuid
+  rideId      String?   @db.Uuid
+  userType    UserType
+  passengerId String?   @db.Uuid
+  driverId    String?   @db.Uuid
+  lat         Float
+  lng         Float
+  status      SosStatus @default(ACTIVE)
+
+  audioUrl String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ride      Ride?      @relation(fields: [rideId], references: [id], onDelete: SetNull)
+  passenger Passenger? @relation(fields: [passengerId], references: [id], onDelete: SetNull)
+  driver    Driver?    @relation(fields: [driverId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([rideId])
+  @@index([passengerId])
+  @@index([driverId])
+}
+
+model AccountDeletionRequest {
+  id          String        @id @default(uuid()) @db.Uuid
+  passengerId String?       @db.Uuid
+  driverId    String?       @db.Uuid
+  reason      String?       @db.Text
+  status      RequestStatus @default(PENDING)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  passenger Passenger? @relation(fields: [passengerId], references: [id], onDelete: Cascade)
+  driver    Driver?    @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@index([passengerId])
+  @@index([driverId])
+}
+
+model DriverChangeRequest {
+  id       String @id @default(uuid()) @db.Uuid
+  driverId String @db.Uuid
+
+  newFullName       String? @db.VarChar(100)
+  newVehiclePlate   String? @db.VarChar(20)
+  newVehicleBrand   String? @db.VarChar(50)
+  newVehicleColor   String? @db.VarChar(30)
+  newDocumentNumber String? @db.VarChar(50)
+
+  status RequestStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@index([driverId])
+  @@index([status])
+}
+
+model Ticket {
+  id String @id @default(uuid()) @db.Uuid
+
+  passengerId String?    @db.Uuid
+  passenger   Passenger? @relation(fields: [passengerId], references: [id], onDelete: Cascade)
+
+  driverId String? @db.Uuid
+  driver   Driver? @relation("DriverTickets", fields: [driverId], references: [id], onDelete: Cascade)
+
+  rideId String? @db.Uuid
+  ride   Ride?   @relation(fields: [rideId], references: [id], onDelete: SetNull)
+
+  createdByType UserType       @default(DRIVER)
+  category      String         @db.VarChar(100)
+  priority      TicketPriority @default(MEDIUM)
+  description   String         @db.Text
+  status        TicketStatus   @default(OPEN)
+
+  assignedAdminId String? @db.Uuid
+  assignedAdmin   Admin?  @relation("AdminAssignedTickets", fields: [assignedAdminId], references: [id], onDelete: SetNull)
+
+  resolvedAt DateTime?
+  closedAt   DateTime?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  messages   TicketMessage[]
+
+  @@index([passengerId])
+  @@index([driverId])
+  @@index([rideId])
+  @@index([status, priority, createdAt])
+  @@index([assignedAdminId])
+}
+
+model TicketMessage {
+  id        String   @id @default(uuid()) @db.Uuid
+  ticketId  String   @db.Uuid
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  sender    UserType
+  senderId  String   @db.Uuid
+  message   String   @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([ticketId])
+}
+
+model SosIncident {
+  id        String   @id @default(uuid()) @db.Uuid
+  rideId    String   @db.Uuid
+  driverId  String   @db.Uuid
+  audioUrl  String?  @db.Text
+  status    String   @default("OPEN")
+  createdAt DateTime @default(now())
+
+  ride   Ride   @relation(fields: [rideId], references: [id], onDelete: Cascade)
+  driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@index([rideId])
+  @@index([driverId])
+}
