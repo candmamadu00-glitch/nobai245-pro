@@ -40,7 +40,7 @@ export class AdminSettingsControllerClass {
 
   async getTariffs(req: Request, res: Response): Promise<Response> {
     try {
-      const tariffs = await prisma.tariff.findMany();
+      const tariffs = await prisma.tariffConfig.findMany();
       return res.status(200).json(tariffs);
     } catch (error) {
       console.error('❌ Erro ao buscar tarifas:', error);
@@ -53,7 +53,7 @@ export class AdminSettingsControllerClass {
       const { id } = req.params;
       const data = req.body;
 
-      const tariff = await prisma.tariff.update({
+      const tariff = await prisma.tariffConfig.update({
         where: { id: String(id) },
         data
       });
