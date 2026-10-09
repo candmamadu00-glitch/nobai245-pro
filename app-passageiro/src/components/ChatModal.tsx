@@ -137,124 +137,133 @@ export function ChatModal({
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <View style={styles.backdrop} />
-      </TouchableWithoutFeedback>
+      <View style={styles.modalOverlay}>
+        <TouchableWithoutFeedback onPress={onClose}>
+          <View style={styles.backdrop} />
+        </TouchableWithoutFeedback>
 
-      <KeyboardAvoidingView 
-        style={styles.keyboardAvoidingView} 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 10}
-      >
         <SafeAreaView style={styles.chatContainer}>
-          <View style={styles.chatHeader}>
-            <View style={styles.headerTitleRow}>
-              {renderAvatar(otherUserPhoto)}
-              <View>
-                <Text style={styles.chatTitle}>
-                  {otherUserName || t('chat_with_user', 'Chat da Corrida')}
-                </Text>
-                <Text style={styles.chatSubtitle}>
-                  {currentRole === 'passenger' ? t('driver', 'Motorista') : t('passenger', 'Passageiro')}
-                </Text>
-              </View>
-            </View>
-            <TouchableOpacity 
-              style={styles.closeButton} 
-              onPress={onClose} 
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <Ionicons name="close" size={22} color="#64748B" />
-            </TouchableOpacity>
-          </View>
-
-          <FlatList
-            ref={flatListRef}
-            data={messages}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.messageList}
-            keyboardShouldPersistTaps="handled"
-            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-            renderItem={({ item }) => {
-              const isMe = item.sender === currentRole;
-              return (
-                <View style={[styles.messageRow, isMe ? styles.rowMe : styles.rowOther]}>
-                  {!isMe && renderAvatar(item.senderPhoto || otherUserPhoto)}
-                  
-                  <View style={styles.messageContent}>
-                    <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleOther]}>
-                      <Text style={[styles.messageText, isMe ? styles.textMe : styles.textOther]}>
-                        {item.text}
-                      </Text>
-                    </View>
-                    {item.createdAt && (
-                      <Text style={[styles.timestamp, isMe ? styles.timestampMe : styles.timestampOther]}>
-                        {formatTime(item.createdAt)}
-                      </Text>
-                    )}
-                  </View>
-
-                  {isMe && renderAvatar(currentUserPhoto)}
+          <KeyboardAvoidingView 
+            style={styles.keyboardAvoidingView} 
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
+          >
+            {/* CABEÇALHO DO CHAT */}
+            <View style={styles.chatHeader}>
+              <View style={styles.headerTitleRow}>
+                {renderAvatar(otherUserPhoto)}
+                <View>
+                  <Text style={styles.chatTitle}>
+                    {otherUserName || t('chat_with_user', 'Chat da Corrida')}
+                  </Text>
+                  <Text style={styles.chatSubtitle}>
+                    {currentRole === 'passenger' ? t('driver', 'Motorista') : t('passenger', 'Passageiro')}
+                  </Text>
                 </View>
-              );
-            }}
-          />
+              </View>
+              <TouchableOpacity 
+                style={styles.closeButton} 
+                onPress={onClose} 
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={22} color="#64748B" />
+              </TouchableOpacity>
+            </View>
 
-          <View style={styles.chatInputContainer}>
-            <TextInput
-              style={styles.chatInput}
-              value={inputText}
-              onChangeText={setInputText}
-              placeholder={t('type_something', 'Digite sua mensagem...')}
-              placeholderTextColor="#94A3B8"
-              multiline
-              maxLength={250}
+            {/* LISTA DE MENSAGENS */}
+            <FlatList
+              ref={flatListRef}
+              data={messages}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={styles.messageList}
+              keyboardShouldPersistTaps="handled"
+              onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+              onLayout={() => flatListRef.current?.scrollToEnd({ animated: false })}
+              renderItem={({ item }) => {
+                const isMe = item.sender === currentRole;
+                return (
+                  <View style={[styles.messageRow, isMe ? styles.rowMe : styles.rowOther]}>
+                    {!isMe && renderAvatar(item.senderPhoto || otherUserPhoto)}
+                    
+                    <View style={styles.messageContent}>
+                      <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleOther]}>
+                        <Text style={[styles.messageText, isMe ? styles.textMe : styles.textOther]}>
+                          {item.text}
+                        </Text>
+                      </View>
+                      {item.createdAt && (
+                        <Text style={[styles.timestamp, isMe ? styles.timestampMe : styles.timestampOther]}>
+                          {formatTime(item.createdAt)}
+                        </Text>
+                      )}
+                    </View>
+
+                    {isMe && renderAvatar(currentUserPhoto)}
+                  </View>
+                );
+              }}
             />
-            <TouchableOpacity 
-              style={[styles.chatSendButton, !inputText.trim() && styles.chatSendButtonDisabled]} 
-              onPress={sendMessage}
-              disabled={!inputText.trim()}
-            >
-              <Ionicons name="send" size={18} color="#FFF" style={styles.sendIcon} />
-            </TouchableOpacity>
-          </View>
+
+            {/* CAMPO DE DIGITAÇÃO FIXO ACIMA DO TECLADO */}
+            <View style={styles.chatInputContainer}>
+              <TextInput
+                style={styles.chatInput}
+                value={inputText}
+                onChangeText={setInputText}
+                placeholder={t('type_something', 'Digite sua mensagem...')}
+                placeholderTextColor="#94A3B8"
+                multiline
+                maxLength={250}
+              />
+              <TouchableOpacity 
+                style={[styles.chatSendButton, !inputText.trim() && styles.chatSendButtonDisabled]} 
+                onPress={sendMessage}
+                disabled={!inputText.trim()}
+              >
+                <Ionicons name="send" size={18} color="#FFF" style={styles.sendIcon} />
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
         </SafeAreaView>
-      </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(15, 23, 42, 0.4)', 
-  },
-  keyboardAvoidingView: {
+  modalOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
   },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.5)', 
+  },
   chatContainer: {
+    flex: 1,
+    marginTop: Platform.OS === 'ios' ? 48 : 36,
     backgroundColor: '#FFF',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    maxHeight: '88%',
-    flex: 1,
-    paddingTop: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.15,
     shadowRadius: 12,
     elevation: 10,
+    overflow: 'hidden',
+  },
+  keyboardAvoidingView: {
+    flex: 1,
   },
   chatHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingBottom: 16,
-    paddingTop: 8,
+    paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
+    backgroundColor: '#FFF',
   },
   headerTitleRow: {
     flexDirection: 'row',
@@ -269,7 +278,7 @@ const styles = StyleSheet.create({
   chatSubtitle: {
     fontSize: 12,
     color: '#64748B',
-    marginTop: 2,
+    marginTop: 1,
   },
   closeButton: {
     backgroundColor: '#F1F5F9',
@@ -277,14 +286,15 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   messageList: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingVertical: 16,
     flexGrow: 1,
+    justifyContent: 'flex-end',
   },
   messageRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    marginBottom: 16,
+    marginBottom: 14,
     gap: 8,
   },
   rowMe: {
@@ -294,12 +304,12 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
   },
   messageContent: {
-    maxWidth: '72%',
+    maxWidth: '75%',
   },
   bubble: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 18,
   },
   bubbleMe: {
     backgroundColor: '#0F172A',
@@ -311,7 +321,7 @@ const styles = StyleSheet.create({
   },
   messageText: {
     fontSize: 15,
-    lineHeight: 22,
+    lineHeight: 21,
   },
   textMe: {
     color: '#FFFFFF',
@@ -331,29 +341,29 @@ const styles = StyleSheet.create({
     textAlign: 'left',
   },
   avatarImage: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: '#E2E8F0',
   },
   avatarPlaceholder: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: '#E2E8F0',
     alignItems: 'center',
     justifyContent: 'center',
   },
   chatInputContainer: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: Platform.OS === 'android' ? 16 : 24, 
+    paddingTop: 10,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 14,
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9',
-    backgroundColor: '#FFF',
-    gap: 12,
+    backgroundColor: '#FFFFFF',
+    gap: 10,
   },
   chatInput: {
     flex: 1,
@@ -362,18 +372,18 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
     borderRadius: 24,
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 12,
-    minHeight: 48,
-    maxHeight: 120,
+    paddingTop: 10,
+    paddingBottom: 10,
+    minHeight: 44,
+    maxHeight: 100,
     fontSize: 15,
     color: '#0F172A',
   },
   chatSendButton: {
     backgroundColor: '#0F172A',
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Linking,
   Platform,
+  ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -25,9 +26,11 @@ export function DriverSOSModal({ visible, onClose, currentRideId }: DriverSOSMod
   const [loading, setLoading] = useState(false);
   const { isRecording, startRecording, stopRecording } = useAudioRecorder();
 
-  const handleCallPolice = () => {
-    Linking.openURL('tel:112').catch(() => {
-      Alert.alert('Erro', 'Não foi possível abrir o discador do telefone.');
+  // Função genérica para efetuar chamadas telefónicas
+  const handleMakeCall = (phoneNumber: string, label: string) => {
+    const cleanNumber = phoneNumber.replace(/\s+/g, '');
+    Linking.openURL(`tel:${cleanNumber}`).catch(() => {
+      Alert.alert('Erro', `Não foi possível abrir o discador para ${label}.`);
     });
   };
 
@@ -54,7 +57,7 @@ export function DriverSOSModal({ visible, onClose, currentRideId }: DriverSOSMod
         longitude: location.coords.longitude,
       });
 
-      // Gravação e envio assíncrono blindado do áudio
+      // Gravação e envio assíncrono de áudio
       await startRecording();
 
       setTimeout(async () => {
@@ -80,7 +83,10 @@ export function DriverSOSModal({ visible, onClose, currentRideId }: DriverSOSMod
       onClose();
     } catch (error: any) {
       console.error('Erro SOS Driver:', error);
-      Alert.alert('Erro no SOS', 'Não foi possível enviar o alerta via rede. Ligue imediatamente para a Polícia (112).');
+      Alert.alert(
+        'Erro no SOS',
+        'Não foi possível enviar o alerta via rede. Ligue imediatamente para a Central Administrativa (+245 955 219 149) ou Polícia (112).'
+      );
     } finally {
       setLoading(false);
     }
@@ -90,40 +96,79 @@ export function DriverSOSModal({ visible, onClose, currentRideId }: DriverSOSMod
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
         <View style={styles.card}>
-          <View style={styles.iconContainer}>
-            <Ionicons name="shield-checkmark" size={38} color="#DC2626" />
-          </View>
-
-          <Text style={styles.title}>Central de Segurança do Motorista</Text>
-          <Text style={styles.subtitle}>
-            Em situações de risco ou emergência, acione o botão abaixo para notificar a central com áudio e GPS ao vivo.
-          </Text>
-
-          <TouchableOpacity
-            style={[styles.sosBtn, loading && styles.disabledBtn]}
-            onPress={handleTriggerSOS}
-            disabled={loading}
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.scrollContent}
           >
-            {loading ? (
-              <ActivityIndicator color="#FFF" />
-            ) : (
-              <>
-                <Ionicons name="radio" size={22} color="#FFF" />
-                <Text style={styles.sosBtnText}>
-                  {isRecording ? 'Gravando e Enviando...' : 'Disparar SOS com Áudio'}
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
+            <View style={styles.iconContainer}>
+              <Ionicons name="shield-checkmark" size={38} color="#DC2626" />
+            </View>
 
-          <TouchableOpacity style={styles.callBtn} onPress={handleCallPolice}>
-            <Ionicons name="call" size={20} color="#1F2937" />
-            <Text style={styles.callBtnText}>Ligar para Polícia (112)</Text>
-          </TouchableOpacity>
+            <Text style={styles.title}>Central de Segurança do Motorista</Text>
+            <Text style={styles.subtitle}>
+              Em situações de risco ou emergência, acione o botão abaixo para notificar a central com áudio e GPS ao vivo.
+            </Text>
 
-          <TouchableOpacity style={styles.closeBtn} onPress={onClose} disabled={loading}>
-            <Text style={styles.closeBtnText}>Cancelar Alerta</Text>
-          </TouchableOpacity>
+            {/* BOTÃO PRINCIPAL DE SOS */}
+            <TouchableOpacity
+              style={[styles.sosBtn, loading && styles.disabledBtn]}
+              onPress={handleTriggerSOS}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color="#FFF" />
+              ) : (
+                <>
+                  <Ionicons name="radio" size={22} color="#FFF" />
+                  <Text style={styles.sosBtnText}>
+                    {isRecording ? 'Gravando e Enviando...' : 'Disparar SOS com Áudio'}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <Text style={styles.sectionHeader}>DISCAGEM RÁPIDA DE EMERGÊNCIA</Text>
+
+            {/* CENTRAL ADMINISTRATIVA BAI 245 */}
+            <TouchableOpacity
+              style={[styles.callBtn, styles.adminCallBtn]}
+              onPress={() => handleMakeCall('+245955219149', 'Central Administrativa')}
+            >
+              <Ionicons name="headset" size={20} color="#FFF" />
+              <Text style={styles.adminCallBtnText}>Central Administ. (+245 955 219 149)</Text>
+            </TouchableOpacity>
+
+            {/* POLÍCIA */}
+            <TouchableOpacity
+              style={styles.callBtn}
+              onPress={() => handleMakeCall('112', 'Polícia')}
+            >
+              <Ionicons name="call" size={20} color="#1F2937" />
+              <Text style={styles.callBtnText}>Polícia Nacional (112)</Text>
+            </TouchableOpacity>
+
+            {/* BOMBEIROS */}
+            <TouchableOpacity
+              style={styles.callBtn}
+              onPress={() => handleMakeCall('1313', 'Bombeiros')}
+            >
+              <Ionicons name="flame" size={20} color="#DC2626" />
+              <Text style={styles.fireBtnText}>Bombeiros (1313)</Text>
+            </TouchableOpacity>
+
+            {/* SAÚDE / AMBULÂNCIA */}
+            <TouchableOpacity
+              style={styles.callBtn}
+              onPress={() => handleMakeCall('1919', 'Emergência Médica')}
+            >
+              <Ionicons name="medkit" size={20} color="#059669" />
+              <Text style={styles.healthBtnText}>Emergência Médica / Saúde (1919)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.closeBtn} onPress={onClose} disabled={loading}>
+              <Text style={styles.closeBtnText}>Cancelar / Fechar</Text>
+            </TouchableOpacity>
+          </ScrollView>
         </View>
       </View>
     </Modal>
@@ -133,58 +178,76 @@ export function DriverSOSModal({ visible, onClose, currentRideId }: DriverSOSMod
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(17, 24, 39, 0.8)',
-    justify: 'center',
+    backgroundColor: 'rgba(17, 24, 39, 0.82)',
+    justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: 16,
   },
   card: {
     width: '100%',
+    maxHeight: '90%',
     backgroundColor: '#FFF',
     borderRadius: 20,
-    padding: 24,
-    alignItems: 'center',
+    padding: 20,
     ...Platform.select({
       ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 12 },
       android: { elevation: 8 },
     }),
   },
-  iconContainer: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
-    backgroundColor: '#FEE2E2',
-    justify: 'center',
+  scrollContent: {
     alignItems: 'center',
-    marginBottom: 16,
   },
-  title: { fontSize: 20, fontWeight: 'bold', color: '#111827', textAlign: 'center' },
-  subtitle: { fontSize: 13, color: '#4B5563', textAlign: 'center', marginTop: 8, marginBottom: 24, lineHeight: 18 },
+  iconContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  title: { fontSize: 18, fontWeight: 'bold', color: '#111827', textAlign: 'center' },
+  subtitle: { fontSize: 12, color: '#4B5563', textAlign: 'center', marginTop: 6, marginBottom: 16, lineHeight: 17 },
   sosBtn: {
     width: '100%',
-    height: 52,
+    height: 50,
     backgroundColor: '#DC2626',
     borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    justify: 'center',
+    justifyContent: 'center',
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 16,
   },
   disabledBtn: { opacity: 0.7 },
   sosBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 15 },
+  sectionHeader: {
+    alignSelf: 'flex-start',
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#6B7280',
+    letterSpacing: 0.5,
+    marginBottom: 10,
+    marginTop: 4,
+  },
   callBtn: {
     width: '100%',
-    height: 52,
+    height: 48,
     backgroundColor: '#F3F4F6',
     borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    justify: 'center',
+    justifyContent: 'center',
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 8,
   },
-  callBtnText: { color: '#1F2937', fontWeight: 'bold', fontSize: 15 },
-  closeBtn: { paddingVertical: 10 },
+  adminCallBtn: {
+    backgroundColor: '#059669',
+  },
+  adminCallBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 14 },
+  callBtnText: { color: '#1F2937', fontWeight: 'bold', fontSize: 14 },
+  fireBtnText: { color: '#DC2626', fontWeight: 'bold', fontSize: 14 },
+  healthBtnText: { color: '#059669', fontWeight: 'bold', fontSize: 14 },
+  closeBtn: { paddingVertical: 12, marginTop: 8 },
   closeBtnText: { color: '#6B7280', fontWeight: '600', fontSize: 14 },
 });
