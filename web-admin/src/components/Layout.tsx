@@ -1,179 +1,166 @@
-import React from 'react';
-import { Outlet, NavLink } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { 
-  LayoutDashboard, 
-  Users, 
-  Car, 
-  LogOut, 
-  Wallet, 
-  ShieldAlert, 
-  MapPin, 
+import {
+  LayoutDashboard,
   Radio,
-  UserCheck, 
-  Star, 
-  LifeBuoy,
+  Car,
+  ShieldAlert,
+  UserCheck,
+  Users,
+  UserX,
+  UserCog,
+  DollarSign,
+  Ticket,
+  Star,
   Settings,
-  Bell,
-  ShieldCheck,
-  UserPlus
+  LogOut,
+  Menu,
+  X,
+  Download
 } from 'lucide-react';
 import './Layout.css';
 
-interface MenuItem {
-  path: string;
-  icon: React.ReactNode;
-  label: string;
-  badge?: string;
-  badgeAlert?: boolean;
-  roles: Array<'SUPER_ADMIN' | 'OPERATOR' | 'FINANCE'>;
-}
-
-interface MenuSection {
-  title: string;
-  items: MenuItem[];
-}
-
 export function Layout() {
-  const { admin, signOut } = useAuth();
-  const currentRole = (admin?.role || 'SUPER_ADMIN') as 'SUPER_ADMIN' | 'OPERATOR' | 'FINANCE';
+  const { signOut, admin } = useAuth();
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const location = useLocation();
 
-  // Estrutura completa de Menus com Matriz de Permissões (RBAC)
-  const menuSections: MenuSection[] = [
-    {
-      title: 'OPERACIONAL',
-      items: [
-        { 
-          path: '/', 
-          icon: <LayoutDashboard size={18} />, 
-          label: 'Centro de Comando', 
-          roles: ['SUPER_ADMIN', 'OPERATOR', 'FINANCE'] 
-        },
-        { 
-          path: '/radar', 
-          icon: <Radio size={18} />, 
-          label: 'Radar & Mapa Ao Vivo', 
-          badge: 'Live', 
-          roles: ['SUPER_ADMIN', 'OPERATOR'] 
-        },
-        { 
-          path: '/rides', 
-          icon: <MapPin size={18} />, 
-          label: 'Gestão de Corridas', 
-          roles: ['SUPER_ADMIN', 'OPERATOR', 'FINANCE'] 
-        },
-        { 
-          path: '/sos', 
-          icon: <ShieldAlert size={18} />, 
-          label: 'Alertas SOS', 
-          badgeAlert: true, 
-          roles: ['SUPER_ADMIN', 'OPERATOR'] 
-        },
-      ]
-    },
-    {
-      title: 'GESTÃO DE USUÁRIOS',
-      items: [
-        { 
-          path: '/driver-requests', 
-          icon: <UserCheck size={18} />, 
-          label: 'Solicitações de Motorista', 
-          roles: ['SUPER_ADMIN', 'OPERATOR'] 
-        },
-        { 
-          path: '/drivers', 
-          icon: <Car size={18} />, 
-          label: 'Frota de Motoristas', 
-          roles: ['SUPER_ADMIN', 'OPERATOR', 'FINANCE'] 
-        },
-        { 
-          path: '/passengers', 
-          icon: <Users size={18} />, 
-          label: 'Base de Passageiros', 
-          roles: ['SUPER_ADMIN', 'OPERATOR', 'FINANCE'] 
-        },
-        { 
-          path: '/admins', 
-          icon: <UserPlus size={18} />, 
-          label: 'Gestão da Equipe', 
-          roles: ['SUPER_ADMIN'] 
-        },
-      ]
-    },
-    {
-      title: 'FINANCEIRO & SUPORTE',
-      items: [
-        { 
-          path: '/finance', 
-          icon: <Wallet size={18} />, 
-          label: 'Balanço Financeiro', 
-          roles: ['SUPER_ADMIN', 'FINANCE'] 
-        },
-        { 
-          path: '/ratings', 
-          icon: <Star size={18} />, 
-          label: 'Avaliações & Notas', 
-          roles: ['SUPER_ADMIN', 'OPERATOR', 'FINANCE'] 
-        },
-        { 
-          path: '/tickets', 
-          icon: <LifeBuoy size={18} />, 
-          label: 'Central de Suporte', 
-          roles: ['SUPER_ADMIN', 'OPERATOR'] 
-        },
-        { 
-          path: '/settings', 
-          icon: <Settings size={18} />, 
-          label: 'Configurações', 
-          roles: ['SUPER_ADMIN'] 
-        },
-      ]
+  // Fecha o menu ao mudar de página
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [location.pathname]);
+
+  // Captura o evento nativo de instalação PWA
+  useEffect(() => {
+    const handleBeforeInstall = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setDeferredPrompt(null);
     }
-  ];
-
-  // Filtra itens e seções conforme o perfil do usuário logado
-  const filteredSections = menuSections
-    .map((section) => ({
-      ...section,
-      items: section.items.filter((item) => item.roles.includes(currentRole))
-    }))
-    .filter((section) => section.items.length > 0);
+  };
 
   return (
-    <div className="app-layout">
-      {/* Sidebar de Navegação */}
-      <aside className="sidebar">
+    <div className="layout-root">
+      {/* CABEÇALHO SUPERIOR EXCLUSIVO PARA TELEMÓVEIS */}
+      <header className="mobile-navbar">
+        <button
+          className="mobile-toggle-btn"
+          onClick={() => setIsMobileMenuOpen((prev) => !prev)}
+          aria-label="Alternar Menu"
+        >
+          {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+        </button>
+        <span className="mobile-brand-title">BAI 245 Admin</span>
+        
+        {deferredPrompt && (
+          <button className="mobile-install-btn" onClick={handleInstallApp} title="Baixar Aplicativo">
+            <Download size={18} />
+          </button>
+        )}
+      </header>
+
+      {/* BACKDROP PARA FECHAR O MENU AO CLICAR FORA */}
+      {isMobileMenuOpen && (
+        <div
+          className="sidebar-overlay"
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+      )}
+
+      {/* BARRA LATERAL (SIDEBAR RESPONSIVA) */}
+      <aside className={`sidebar-container ${isMobileMenuOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
-          <div className="logo-box">
+          <div className="sidebar-brand">
             <h2>BAI 245</h2>
-            <span className="sub-logo">PAINEL ADMINISTRATIVO</span>
+            <p>PAINEL ADMINISTRATIVO</p>
           </div>
-          <span className="admin-badge">
-            <ShieldCheck size={12} />
-            {currentRole.replace('_', ' ')}
-          </span>
+          {admin?.role && <span className="admin-badge">{admin.role}</span>}
         </div>
 
         <nav className="sidebar-nav">
-          {filteredSections.map((section, idx) => (
-            <div key={idx} className="nav-section">
-              <span className="section-title">{section.title}</span>
-              {section.items.map((item) => (
-                <NavLink
-                  key={item.path}
-                  to={item.path}
-                  end={item.path === '/'}
-                  className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-                >
-                  <span className="nav-icon">{item.icon}</span>
-                  <span className="nav-label">{item.label}</span>
-                  {item.badge && <span className="nav-badge-live">{item.badge}</span>}
-                  {item.badgeAlert && <span className="nav-badge-sos">SOS</span>}
-                </NavLink>
-              ))}
-            </div>
-          ))}
+          <div className="nav-group">
+            <span className="group-title">OPERACIONAL</span>
+            <NavLink to="/" end className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              <LayoutDashboard size={18} />
+              <span>Centro de Comando</span>
+            </NavLink>
+            <NavLink to="/radar" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              <Radio size={18} />
+              <span>Radar & Mapa Ao Vivo</span>
+              <span className="badge-live">LIVE</span>
+            </NavLink>
+            <NavLink to="/rides" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              <Car size={18} />
+              <span>Gestão de Corridas</span>
+            </NavLink>
+            <NavLink to="/sos" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              <ShieldAlert size={18} />
+              <span>Alertas SOS</span>
+              <span className="badge-sos">SOS</span>
+            </NavLink>
+          </div>
+
+          <div className="nav-group">
+            <span className="group-title">GESTÃO DE USUÁRIOS</span>
+            <NavLink to="/driver-requests" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              <UserCheck size={18} />
+              <span>Solicitações de Motorista</span>
+            </NavLink>
+            <NavLink to="/drivers" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              <Users size={18} />
+              <span>Frota de Motoristas</span>
+            </NavLink>
+            <NavLink to="/passengers" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              <UserX size={18} />
+              <span>Base de Passageiros</span>
+            </NavLink>
+            <NavLink to="/admins" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              <UserCog size={18} />
+              <span>Gestão da Equipe</span>
+            </NavLink>
+          </div>
+
+          <div className="nav-group">
+            <span className="group-title">FINANCEIRO & SUPORTE</span>
+            <NavLink to="/financial" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              <DollarSign size={18} />
+              <span>Financeiro & Repasses</span>
+            </NavLink>
+            <NavLink to="/tickets" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              <Ticket size={18} />
+              <span>Chamados de Suporte</span>
+            </NavLink>
+            <NavLink to="/ratings" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              <Star size={18} />
+              <span>Avaliações & Feedbacks</span>
+            </NavLink>
+            <NavLink to="/settings" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              <Settings size={18} />
+              <span>Configurações Globais</span>
+            </NavLink>
+          </div>
         </nav>
+
+        {deferredPrompt && (
+          <div className="pwa-install-banner">
+            <button onClick={handleInstallApp} className="pwa-btn">
+              <Download size={16} />
+              <span>Baixar App no Telemóvel</span>
+            </button>
+          </div>
+        )}
 
         <div className="sidebar-footer">
           <button onClick={signOut} className="btn-logout">
@@ -183,36 +170,10 @@ export function Layout() {
         </div>
       </aside>
 
-      {/* Área Principal das Abas */}
-      <div className="main-wrapper">
-        <header className="top-header">
-          <div className="header-left">
-            <span className="system-status">
-              <span className="status-dot animate-pulse"></span>
-              Sistema Operacional (+245)
-            </span>
-          </div>
-
-          <div className="header-right">
-            <button className="icon-button" title="Notificações">
-              <Bell size={18} />
-            </button>
-            <div className="user-profile">
-              <div className="avatar-circle">
-                {admin?.name?.charAt(0).toUpperCase() || 'A'}
-              </div>
-              <div className="user-info">
-                <span className="user-name">{admin?.name || 'Administrador'}</span>
-                <span className="user-email">{admin?.email || 'admin@bai245.com'}</span>
-              </div>
-            </div>
-          </div>
-        </header>
-
-        <main className="page-content">
-          <Outlet /> 
-        </main>
-      </div>
+      {/* ÁREA PRINCIPAL DO CONTEÚDO */}
+      <main className="main-viewport">
+        <Outlet />
+      </main>
     </div>
   );
 }

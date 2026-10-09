@@ -29,7 +29,6 @@ export function Login() {
     if (isSubmitting) return;
 
     setError('');
-
     const cleanEmail = email.trim().toLowerCase();
 
     if (!cleanEmail || !password) {
@@ -45,9 +44,7 @@ export function Login() {
     try {
       setIsSubmitting(true);
       await signIn(cleanEmail, password);
-      
-      // Substitui a rota no histórico para impedir o retorno ao login pelo botão 'Voltar'
-      navigate('/', { replace: true }); 
+      navigate('/', { replace: true });
     } catch (err: unknown) {
       const apiError = (err as ApiError)?.response?.data?.error;
       setError(apiError || 'Erro ao conectar com o servidor. Verifique suas credenciais.');
@@ -61,14 +58,14 @@ export function Login() {
       <div className="login-card">
         <div className="login-header">
           <div className="login-icon">
-            <ShieldCheck size={32} aria-hidden="true" />
+            <ShieldCheck size={32} />
           </div>
           <h1 className="login-title">BAI 245 Admin</h1>
           <p className="login-subtitle">Acesso restrito ao sistema de controle</p>
         </div>
 
         {error && (
-          <div className="error-message" role="alert" aria-live="polite" id="login-error">
+          <div className="error-message" role="alert">
             <AlertCircle size={18} className="shrink-0" />
             <span>{error}</span>
           </div>
@@ -76,11 +73,9 @@ export function Login() {
 
         <form onSubmit={handleSubmit} noValidate>
           <div className="form-group">
-            <label htmlFor="email-input" className="form-label">
-              E-mail Corporativo
-            </label>
+            <label htmlFor="email-input" className="form-label">E-mail Corporativo</label>
             <div className="input-wrapper">
-              <Mail className="input-icon" size={20} aria-hidden="true" />
+              <Mail className="input-icon" size={20} />
               <input
                 id="email-input"
                 type="email"
@@ -90,7 +85,6 @@ export function Login() {
                 onChange={(e) => setEmail(e.target.value)}
                 disabled={isSubmitting}
                 autoComplete="email"
-                aria-describedby={error ? 'login-error' : undefined}
                 autoFocus
                 required
               />
@@ -98,27 +92,25 @@ export function Login() {
           </div>
 
           <div className="form-group">
-            <label htmlFor="password-input" className="form-label">
-              Senha de Acesso
-            </label>
+            <label htmlFor="password-input" className="form-label">Senha de Acesso</label>
             <div className="input-wrapper">
-              <Lock className="input-icon" size={20} aria-hidden="true" />
+              <Lock className="input-icon" size={20} />
               <input
                 id="password-input"
                 type={showPassword ? 'text' : 'password'}
-                className="form-input"
+                className="form-input password-input"
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={isSubmitting}
                 autoComplete="current-password"
-                aria-describedby={error ? 'login-error' : undefined}
                 required
               />
               <button
                 type="button"
                 className="toggle-password"
                 onClick={() => setShowPassword((prev) => !prev)}
+                tabIndex={0}
                 aria-label={showPassword ? 'Ocultar senha' : 'Exibir senha'}
                 disabled={isSubmitting}
               >
@@ -130,7 +122,7 @@ export function Login() {
           <button type="submit" className="btn-submit" disabled={isSubmitting}>
             {isSubmitting ? (
               <>
-                <Loader2 className="spinner" size={20} aria-hidden="true" />
+                <Loader2 className="spinner" size={20} />
                 <span>Autenticando...</span>
               </>
             ) : (
