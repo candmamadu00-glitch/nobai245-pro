@@ -58,24 +58,34 @@ export const refundQueue = new Queue<RefundJobData>('refund-queue', { connection
 const processPayoutBlindado = async (job: Job<PayoutJobData>) => {
   const { transactionId, rideId, driverId, amountXOF, phone, provider } = job.data || {};
 
+  console.log(`💸 [JOB PAYOUT INICIADO] Tx: ${transactionId} | Motorista: ${driverId} | Valor: ${amountXOF} XOF | Provider: ${provider}`);
+
   if (!transactionId || !driverId || !amountXOF || !phone || !provider) {
+    console.error('❌ [JOB PAYOUT ERRO]: Parâmetros obrigatórios de repasse ausentes.');
     throw new UnrecoverableError('DADOS_JOB_INVALIDOS: Parâmetros obrigatórios de repasse ausentes.');
   }
 
   const currentTx = await prisma.transaction.findUnique({ where: { id: transactionId } });
-  if (!currentTx) throw new UnrecoverableError(`TRANSACTION_NOT_FOUND: Tx ${transactionId}`);
+  if (!currentTx) {
+    console.error(`❌ [JOB PAYOUT ERRO]: Transação ${transactionId} não encontrada no banco.`);
+    throw new UnrecoverableError(`TRANSACTION_NOT_FOUND: Tx ${transactionId}`);
+  }
 
   if (currentTx.status === 'COMPLETED') {
+    console.log(`ℹ️ [JOB PAYOUT SKIPPED]: Transação ${transactionId} já estava COMPLETED.`);
     return { success: true, cached: true, driverId, amountXOF, provider, ref: currentTx.externalRef };
   }
   if (currentTx.status === 'FAILED_MANUAL_REVIEW') {
+    console.warn(`⚠️ [JOB PAYOUT WARN]: Transação ${transactionId} marcada para revisão manual.`);
     return { success: false, reason: 'REVISE_MANUALMENTE', driverId, amountXOF, provider };
   }
 
   // Reconciliação passiva se houver tentativas anteriores
   if (job.attemptsMade > 0 || currentTx.status === 'PENDING_VERIFICATION' || currentTx.status === 'PROCESSING') {
     try {
+      console.log(`🔍 [JOB PAYOUT RECONCILIAÇÃO]: Verificando status da Tx ${transactionId}...`);
       const verification = await verifyTransactionStatus(transactionId);
+      
       if (verification.status === 'SUCCESS') {
         await prisma.$transaction([
           prisma.transaction.update({
@@ -87,20 +97,25 @@ const processPayoutBlindado = async (job: Job<PayoutJobData>) => {
             data: { pendingBalance: { decrement: amountXOF } }
           })
         ]);
+        console.log(`✅ [JOB PAYOUT RECONCILIADO COM SUCESSO]: Tx ${transactionId}`);
         return { success: true, recovered: true, driverId, amountXOF, provider, ref: verification.ref };
       }
+      
       if (verification.status === 'PENDING') {
         await prisma.transaction.update({
           where: { id: transactionId },
           data: { status: 'PENDING_VERIFICATION' },
         });
+        console.log(`⏳ [JOB PAYOUT RECONCILIÇÃO]: Transação ainda pendente na operadora.`);
         throw new Error('TIMEOUT_REQUIRES_RECONCILIATION');
       }
+
       if (verification.status === 'FAILED') {
         await prisma.transaction.update({
           where: { id: transactionId },
           data: { status: 'FAILED_MANUAL_REVIEW', failureReason: 'Transação confirmada como com falha pela operadora' },
         });
+        console.error(`❌ [JOB PAYOUT RECONCILIÇÃO FALHOU]: Confirmada falha pela operadora.`);
         throw new UnrecoverableError('REJEITADO_OPERADORA: Confirmado falha na reconciliação.');
       }
     } catch (verifErr: any) {
@@ -122,9 +137,12 @@ const processPayoutBlindado = async (job: Job<PayoutJobData>) => {
   }
 
   try {
+    console.log(`📡 [JOB PAYOUT ENVIANDO A OPERADORA]: Destino: ${phone} | Valor: ${amountXOF} XOF...`);
     const result = await payoutToDriverMobileMoney({ provider, phone, amount: amountXOF, rideId, payoutId: transactionId });
 
     if (!result.success) {
+      console.error(`❌ [JOB PAYOUT RESPOSTA DA OPERADORA FALHOU]:`, result);
+      
       if (result.error === 'TIMEOUT_REQUIRES_RECONCILIATION') {
         await prisma.transaction.update({
           where: { id: transactionId },
@@ -139,6 +157,8 @@ const processPayoutBlindado = async (job: Job<PayoutJobData>) => {
       });
       throw new UnrecoverableError(`REJEITADO_OPERADORA: ${result.details || result.error}`);
     }
+
+    console.log(`✅ [JOB PAYOUT CONCLUÍDO COM SUCESSO]: Ref Operadora: ${result.providerRef}`);
 
     await prisma.$transaction([
       prisma.transaction.update({
@@ -155,6 +175,7 @@ const processPayoutBlindado = async (job: Job<PayoutJobData>) => {
   } catch (error: any) {
     if (error instanceof UnrecoverableError || error.message === 'TIMEOUT_REQUIRES_RECONCILIATION') throw error;
     
+    console.error(`❌ [JOB PAYOUT ERRO INESPERADO]:`, error?.message || error);
     await prisma.transaction.update({ where: { id: transactionId }, data: { status: 'PENDING_VERIFICATION' } });
     throw error;
   }
@@ -162,6 +183,8 @@ const processPayoutBlindado = async (job: Job<PayoutJobData>) => {
 
 const processRefundBlindado = async (job: Job<RefundJobData>) => {
   const { transactionId, rideId, passengerId, phone, amountXOF, provider } = job.data || {};
+
+  console.log(`🔄 [JOB REFUND INICIADO] Tx: ${transactionId} | Passageiro: ${passengerId} | Valor: ${amountXOF} XOF`);
 
   if (!transactionId || !passengerId || !amountXOF || !phone || !provider) {
     throw new UnrecoverableError('DADOS_JOB_INVALIDOS: Parâmetros obrigatórios de estorno ausentes.');
