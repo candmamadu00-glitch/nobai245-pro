@@ -275,14 +275,21 @@ export async function chargePassengerMobileMoney(
     if (enumProvider === MobileMoneyProvider.ORANGE_MONEY) {
       const accessToken = await getOrangeAccessToken();
 
-      const payload = {
-        merchant_key: ORANGE_MERCHANT_KEY,
-        currency: 'XOF',
-        order_id: rawTransactionId,
-        amount: cleanAmount,
-        reference: params.isWalletRecharge ? `RECHARGE-${rawTransactionId.substring(0, 8)}` : `RIDE-${(params.rideId || rawTransactionId).substring(0, 8)}`,
-        subscriber_msisdn: cleanMsisdn,
-      };
+      // Para:
+const baseDomain = process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com';
+const webhookUrl = process.env.ORANGE_WEBHOOK_URL || `${baseDomain}/api/payments/orange/webhook`;
+
+const payload = {
+  merchant_key: ORANGE_MERCHANT_KEY,
+  currency: 'XOF',
+  order_id: rawTransactionId,
+  amount: cleanAmount,
+  reference: params.isWalletRecharge ? `RECHARGE-${rawTransactionId.substring(0, 8)}` : `RIDE-${(params.rideId || rawTransactionId).substring(0, 8)}`,
+  subscriber_msisdn: cleanMsisdn,
+  return_url: `${baseDomain}/api/payments/orange/return`,
+  cancel_url: `${baseDomain}/api/payments/orange/cancel`,
+  notif_url: webhookUrl
+};
 
       console.log('🍊 [REQUISICAO ORANGE WEBPAY]:', JSON.stringify({
         url: `${ORANGE_BASE_URL}/orange-money-webpay/gw/v1/webpayment`,
