@@ -510,6 +510,11 @@ export class PassengerAuthController {
     }
   }
 
+  // Alias para manter compatibilidade com a rota antiga /wallet/recharge
+  async rechargeWallet(req: Request, res: Response): Promise<Response> {
+    return this.initiatePayment(req, res);
+  }
+
   // 10. CONFIGURAR MÉTODO DE PAGAMENTO
   async updatePaymentMethod(req: Request, res: Response): Promise<Response> {
     try {
