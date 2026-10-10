@@ -206,13 +206,23 @@ export function Home() {
   useEffect(() => { isOnlineRef.current = isOnline; }, [isOnline]);
   useEffect(() => { serviceFiltersRef.current = serviceFilters; }, [serviceFilters]);
 
+  // 🎯 ANIMAÇÃO E LIMITE DE DESLOCAMENTO DO BOTTOM SHEET
   const panY = useRef(new Animated.Value(0)).current;
   const isExpandedRef = useRef(true);
+  const [sheetHeight, setSheetHeight] = useState(380);
+
+  // Calcula o limite exato para deixar sempre a barra superior visível
+  const maxCollapsedY = Math.max(100, sheetHeight - 85 - Math.max(insets.bottom, 10));
+  const maxCollapsedYRef = useRef(maxCollapsedY);
+  useEffect(() => {
+    maxCollapsedYRef.current = maxCollapsedY;
+  }, [maxCollapsedY]);
 
   const snapToState = useCallback((toExpanded: boolean) => {
     isExpandedRef.current = toExpanded;
+    const targetY = toExpanded ? 0 : maxCollapsedYRef.current;
     Animated.spring(panY, {
-      toValue: toExpanded ? 0 : 220,
+      toValue: targetY,
       useNativeDriver: true,
       bounciness: 4,
     }).start();
@@ -223,14 +233,20 @@ export function Home() {
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
       onPanResponderMove: (_, gestureState) => {
-        if (gestureState.dy > 0 || (gestureState.dy < 0 && !isExpandedRef.current)) {
-          panY.setValue(isExpandedRef.current ? gestureState.dy : 220 + gestureState.dy);
-        }
+        const maxLimit = maxCollapsedYRef.current;
+        let newY = isExpandedRef.current ? gestureState.dy : maxLimit + gestureState.dy;
+        if (newY < 0) newY = 0;
+        if (newY > maxLimit) newY = maxLimit;
+        panY.setValue(newY);
       },
       onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dy > 80) snapToState(false);
-        else if (gestureState.dy < -50) snapToState(true);
-        else snapToState(isExpandedRef.current);
+        if (gestureState.dy > 50 || gestureState.vy > 0.5) {
+          snapToState(false);
+        } else if (gestureState.dy < -50 || gestureState.vy < -0.5) {
+          snapToState(true);
+        } else {
+          snapToState(isExpandedRef.current);
+        }
       },
     })
   ).current;
@@ -955,6 +971,12 @@ export function Home() {
 
       <KeyboardAvoidingView style={styles.bottomSheetWrapper} behavior={Platform.OS === 'ios' ? 'padding' : undefined} pointerEvents="box-none">
         <Animated.View 
+          onLayout={(e) => {
+            const h = e.nativeEvent.layout.height;
+            if (h > 0 && Math.abs(h - sheetHeight) > 5) {
+              setSheetHeight(h);
+            }
+          }}
           style={[
             styles.bottomSheet, 
             { 
@@ -963,12 +985,19 @@ export function Home() {
             }
           ]}
         >
-          <View style={styles.dragHandleArea} {...panResponder.panHandlers}>
+          <TouchableOpacity 
+            activeOpacity={0.9}
+            onPress={() => {
+              if (!isExpandedRef.current) snapToState(true);
+            }}
+            style={styles.dragHandleArea} 
+            {...panResponder.panHandlers}
+          >
             <View style={styles.dragHandle} />
             <Text style={styles.dragHintText}>
-              {isExpandedRef.current ? '▼ Arraste para recolher' : '▲ Arraste para expandir'}
+              {isExpandedRef.current ? '▼ Arraste para recolher' : '▲ Toque ou arraste para expandir'}
             </Text>
-          </View>
+          </TouchableOpacity>
 
           {rideState === 'idle' && (
             <View style={styles.idleContainer}>
@@ -1354,7 +1383,7 @@ const styles = StyleSheet.create({
   bottomSheet: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 8, elevation: 15, ...floatingShadow },
   dragHandleArea: { width: '100%', alignItems: 'center', paddingVertical: 8 },
   dragHandle: { width: 44, height: 5, backgroundColor: '#CBD5E1', borderRadius: 3, marginBottom: 4 },
-  dragHintText: { fontSize: 10, color: '#94A3B8', fontWeight: '600' },
+  dragHintText: { fontSize: 11, color: '#64748B', fontWeight: '700' },
   idleContainer: { alignItems: 'center', paddingVertical: 10 },
   idleTitle: { fontSize: 22, fontWeight: '900', color: '#1A202C', marginBottom: 8 },
   idleSub: { fontSize: 15, color: '#718096', marginBottom: 20, textAlign: 'center' },

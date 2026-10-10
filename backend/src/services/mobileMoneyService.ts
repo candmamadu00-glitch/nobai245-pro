@@ -50,12 +50,17 @@ const tokenPromises: Record<string, Promise<string> | null> = {
  */
 export function formatPhoneNumber(phone: string): string {
   if (!phone) return '';
-  const cleanPhone = phone.replace(/\D/g, '');
+  let cleanPhone = phone.replace(/\D/g, '');
   if (!cleanPhone) return '';
+
+  // Remove duplicações do código do país 245 (ex: 245245955219149 -> 245955219149)
+  while (cleanPhone.startsWith('245245')) {
+    cleanPhone = cleanPhone.substring(3);
+  }
+
   if (cleanPhone.startsWith('245')) return `+${cleanPhone}`;
   return `+245${cleanPhone}`;
 }
-
 /**
  * Valida se o número pertence às operadoras da Guiné-Bissau (5, 6, 7, 9)
  */
@@ -219,7 +224,11 @@ export async function chargePassengerMobileMoney(
     return { success: false, error: 'INVALID_PHONE', details: 'Número inválido para a Guiné-Bissau (+245).' };
   }
 
-  const cleanMsisdn = formattedPhone.replace(/^\+/, '');
+ let cleanMsisdn = formattedPhone.replace(/^\+/, '');
+  while (cleanMsisdn.startsWith('245245')) {
+    cleanMsisdn = cleanMsisdn.substring(3);
+  }
+
   const cleanAmount = Math.round(Number(params.amount));
   if (isNaN(cleanAmount) || cleanAmount <= 0) {
     return { success: false, error: 'INVALID_AMOUNT', details: 'O valor da cobrança deve ser superior a zero.' };

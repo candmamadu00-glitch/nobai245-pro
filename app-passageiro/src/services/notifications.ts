@@ -35,6 +35,7 @@ export async function registerAndSendPushToken(accessToken?: string): Promise<st
       await Notifications.setNotificationChannelAsync('default', {
         name: 'Geral',
         importance: Notifications.AndroidImportance.DEFAULT,
+        sound: undefined, // Usa o som padrão do sistema Android
       });
 
       await Notifications.setNotificationChannelAsync('ride-updates', {
@@ -42,12 +43,14 @@ export async function registerAndSendPushToken(accessToken?: string): Promise<st
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
         lightColor: '#EAB308',
+        sound: undefined, // Usa o som padrão do sistema Android
       });
 
       await Notifications.setNotificationChannelAsync('chat-messages', {
         name: 'Mensagens do Chat',
         importance: Notifications.AndroidImportance.HIGH,
         vibrationPattern: [0, 150, 150, 150],
+        sound: undefined, // Usa o som padrão do sistema Android
       });
     }
 
