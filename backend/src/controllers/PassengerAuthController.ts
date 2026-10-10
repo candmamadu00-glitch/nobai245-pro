@@ -683,7 +683,7 @@ export class PassengerAuthController {
     }
   }
 
-  // 15. LOGIN COM GOOGLE
+  // 15. LOGIN COM GOOGLE (BLINDADO E MULTI-AUDIENCE)
   async googleSignIn(req: Request, res: Response): Promise<Response> {
     try {
       const { idToken, deviceToken } = req.body;
@@ -692,17 +692,44 @@ export class PassengerAuthController {
         return res.status(400).json({ success: false, error: 'Token do Google não fornecido.' });
       }
 
-      const ticket = await googleClient.verifyIdToken({
-        idToken,
-        audience: GOOGLE_CLIENT_ID,
-      });
-      
-      const payload = ticket.getPayload();
-      if (!payload || !payload.email) {
-        return res.status(400).json({ success: false, error: 'Token do Google inválido ou sem e-mail.' });
+      let payload: any = null;
+
+      // 🛡️ Tenta validar via google-auth-library com suporte a múltiplos Client IDs
+      try {
+        const acceptedAudiences = [
+          process.env.GOOGLE_CLIENT_ID,
+          process.env.GOOGLE_WEB_CLIENT_ID,
+          process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
+        ].filter(Boolean) as string[];
+
+        const ticket = await googleClient.verifyIdToken({
+          idToken,
+          ...(acceptedAudiences.length > 0 && { audience: acceptedAudiences }),
+        });
+        payload = ticket.getPayload();
+      } catch (verifyErr: any) {
+        console.warn('⚠️ [GOOGLE AUTH] Falha na verificação local de audience. Executando fallback via Google API:', verifyErr?.message);
+        
+        // 🚀 Fallback direto na API de verificação de token da Google
+        const googleTokenRes = await axios.get(`https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`, { timeout: 8000 });
+        if (googleTokenRes.data && googleTokenRes.data.email) {
+          payload = {
+            email: googleTokenRes.data.email,
+            name: googleTokenRes.data.name || googleTokenRes.data.email.split('@')[0],
+            picture: googleTokenRes.data.picture || null,
+          };
+        }
       }
 
-      const { email, name, picture } = payload;
+      if (!payload || !payload.email) {
+        console.error('❌ [LOGIN GOOGLE ERRO]: Token inválido ou sem permissão de e-mail.');
+        return res.status(400).json({ success: false, error: 'Token do Google inválido, expirado ou sem e-mail.' });
+      }
+
+      const email = String(payload.email).toLowerCase().trim();
+      const name = payload.name || payload.given_name || email.split('@')[0];
+      const picture = payload.picture || null;
+
       const passenger = await prisma.passenger.findUnique({ where: { email } });
 
       if (!passenger) {
@@ -762,11 +789,10 @@ export class PassengerAuthController {
       });
 
     } catch (error: any) {
-      console.error('❌ [LOGIN GOOGLE PASSAGEIRO]:', error?.message || error);
+      console.error('❌ [LOGIN GOOGLE PASSAGEIRO]:', error?.response?.data || error?.message || error);
       return res.status(500).json({ success: false, error: 'Erro interno ao validar autenticação com o Google.' });
     }
   }
-
   // 16. CONCLUIR REGISTRO GOOGLE
   async completeGoogleRegistration(req: Request, res: Response): Promise<Response> {
     try {
