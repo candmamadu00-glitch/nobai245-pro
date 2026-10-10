@@ -61,6 +61,7 @@ export function formatPhoneNumber(phone: string): string {
   if (cleanPhone.startsWith('245')) return `+${cleanPhone}`;
   return `+245${cleanPhone}`;
 }
+
 /**
  * Valida se o número pertence às operadoras da Guiné-Bissau (5, 6, 7, 9)
  */
@@ -224,7 +225,7 @@ export async function chargePassengerMobileMoney(
     return { success: false, error: 'INVALID_PHONE', details: 'Número inválido para a Guiné-Bissau (+245).' };
   }
 
- let cleanMsisdn = formattedPhone.replace(/^\+/, '');
+  let cleanMsisdn = formattedPhone.replace(/^\+/, '');
   while (cleanMsisdn.startsWith('245245')) {
     cleanMsisdn = cleanMsisdn.substring(3);
   }
@@ -272,16 +273,26 @@ export async function chargePassengerMobileMoney(
   try {
     if (enumProvider === MobileMoneyProvider.ORANGE_MONEY) {
       const accessToken = await getOrangeAccessToken();
-      const response = await apiClient.post(`${ORANGE_BASE_URL}/orange-money-webpay/bissau/v1/webpayment`, {
+
+      const payload = {
         merchant_key: ORANGE_MERCHANT_KEY,
         currency: 'XOF',
         order_id: rawTransactionId,
         amount: cleanAmount,
         reference: params.isWalletRecharge ? `RECHARGE-${rawTransactionId.substring(0, 8)}` : `RIDE-${(params.rideId || rawTransactionId).substring(0, 8)}`,
         subscriber_msisdn: cleanMsisdn,
-      }, { 
+      };
+
+      console.log('🍊 [REQUISICAO ORANGE WEBPAY]:', JSON.stringify({
+        url: `${ORANGE_BASE_URL}/orange-money-webpay/bissau/v1/webpayment`,
+        payload
+      }));
+
+      const response = await apiClient.post(`${ORANGE_BASE_URL}/orange-money-webpay/bissau/v1/webpayment`, payload, { 
         headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } 
       });
+
+      console.log('✅ [RESPOSTA ORANGE WEBPAY]:', response.data);
 
       return { 
         success: true, 
@@ -293,14 +304,19 @@ export async function chargePassengerMobileMoney(
 
     if (enumProvider === MobileMoneyProvider.MTN_MOMO) {
       const token = await getMtnToken('COLLECTION');
-      await apiClient.post(`${MTN_BASE_URL}/collection/v1_0/requesttopay`, {
+
+      const payload = {
         amount: cleanAmount.toString(),
         currency: 'XOF',
         externalId: rawTransactionId,
         payer: { partyIdType: 'MSISDN', partyId: cleanMsisdn },
         payerMessage: 'Pagamento BAI 245',
         payeeNote: params.isWalletRecharge ? 'Recarga de Carteira' : `Corrida: ${params.rideId || 'N/A'}`,
-      }, { 
+      };
+
+      console.log('🟡 [REQUISICAO MTN MOMO]:', JSON.stringify(payload));
+
+      await apiClient.post(`${MTN_BASE_URL}/collection/v1_0/requesttopay`, payload, { 
         headers: { 
           Authorization: `Bearer ${token}`, 
           'X-Reference-Id': mtnReferenceId, 
@@ -309,12 +325,20 @@ export async function chargePassengerMobileMoney(
         } 
       });
 
+      console.log('✅ [RESPOSTA MTN MOMO]: Solicitação enviada com sucesso');
+
       return { success: true, providerRef: mtnReferenceId, status: 'PENDING_WEBHOOK' };
     }
   } catch (error: any) {
     const isAxios = axios.isAxiosError(error);
     const errObj = error as AxiosError;
     const isTimeout = isAxios && (!errObj.response || errObj.code === 'ECONNABORTED');
+
+    console.error('❌ [ERRO GATEWAY ORANGE/MTN]:', {
+      message: error.message,
+      responseData: isAxios ? errObj.response?.data : null,
+      status: isAxios ? errObj.response?.status : null
+    });
 
     if (!isTimeout && createdIntentId) {
       await prisma.paymentIntent.update({

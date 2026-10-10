@@ -1874,7 +1874,7 @@ const handleSosPress = () => {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* KEYBOARD AVOIDING VIEW - MODAL DE PAGAMENTO MOBILE MONEY */}
+{/* KEYBOARD AVOIDING VIEW - MODAL DE PAGAMENTO MOBILE MONEY */}
       <Modal visible={isPaymentModalVisible} transparent animationType="slide" onRequestClose={() => !isProcessingPayment && setIsPaymentModalVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
           <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
@@ -1903,12 +1903,17 @@ const handleSosPress = () => {
                   <Text style={styles.countryCode}>+245</Text>
                   <TextInput
                     style={styles.phoneInput}
-                    value={paymentPhone}
-                    onChangeText={setPaymentPhone}
+                    value={paymentPhone ? String(paymentPhone).replace(/^\+?245/, '').replace(/\D/g, '') : ''}
+                    onChangeText={(text) => {
+                      const cleanNumber = text.replace(/^\+?245/, '').replace(/\D/g, '');
+                      setPaymentPhone(cleanNumber);
+                    }}
                     keyboardType="phone-pad"
                     editable={!isProcessingPayment}
+                    placeholder="955219149"
                   />
                 </View>
+
                 <View style={styles.modalActionsRow}>
                   <TouchableOpacity style={styles.cancelModalBtn} disabled={isProcessingPayment} onPress={() => setIsPaymentModalVisible(false)}>
                     <Text style={styles.cancelModalBtnText}>{t('back_btn', 'Cancelar')}</Text>
