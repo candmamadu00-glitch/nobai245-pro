@@ -10,15 +10,16 @@ import {
 } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 
-// Configurações de ambiente com fallbacks seguros
+// Configurações de ambiente MTN
 const MTN_BASE_URL = process.env.MTN_MOMO_BASE_URL || 'https://sandbox.momodeveloper.mtn.com';
-const MTN_SUBSCRIPTION_KEY = process.env.MTN_MOMO_SUBSCRIPTION_KEY || '';
+const MTN_SUBSCRIPTION_KEY = process.env.MTN_MOMO_SUBSCRIPTION_KEY || process.env.MTN_SUBSCRIPTION_KEY || '';
 const MTN_TARGET_ENV = process.env.MTN_MOMO_TARGET_ENV || 'sandbox';
 
-const ORANGE_BASE_URL = process.env.ORANGE_MONEY_API_URL || 'https://api.orange.com';
-const ORANGE_CLIENT_ID = process.env.ORANGE_MONEY_CLIENT_ID || '';
-const ORANGE_CLIENT_SECRET = process.env.ORANGE_MONEY_CLIENT_SECRET || '';
-const ORANGE_MERCHANT_KEY = process.env.ORANGE_MONEY_MERCHANT_KEY || '';
+// Configurações de ambiente ORANGE (com suporte a ambos os padrões de nomes)
+const ORANGE_BASE_URL = process.env.ORANGE_MONEY_API_URL || process.env.ORANGE_BASE_URL || 'https://api.orange.com';
+const ORANGE_CLIENT_ID = process.env.ORANGE_CLIENT_ID || process.env.ORANGE_MONEY_CLIENT_ID || '';
+const ORANGE_CLIENT_SECRET = process.env.ORANGE_CLIENT_SECRET || process.env.ORANGE_MONEY_CLIENT_SECRET || '';
+const ORANGE_MERCHANT_KEY = process.env.ORANGE_MERCHANT_KEY || process.env.ORANGE_MONEY_MERCHANT_KEY || '';
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const IS_MOCK_MODE = !IS_PRODUCTION && (process.env.ENABLE_MOCK_PAYMENTS === 'true');
@@ -53,7 +54,6 @@ export function formatPhoneNumber(phone: string): string {
   let cleanPhone = phone.replace(/\D/g, '');
   if (!cleanPhone) return '';
 
-  // Remove duplicações do código do país 245 (ex: 245245955219149 -> 245955219149)
   while (cleanPhone.startsWith('245245')) {
     cleanPhone = cleanPhone.substring(3);
   }
@@ -70,9 +70,6 @@ export function isValidBissauPhone(phone: string): boolean {
   return /^245[5679]\d{6,8}$/.test(formatted);
 }
 
-/**
- * Converte qualquer referência em UUID v4 determinístico para headers da API MTN MoMo
- */
 function toDeterministicUuid(input: string): string {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   if (uuidRegex.test(input)) return input;
@@ -107,6 +104,10 @@ export async function getOrangeAccessToken(): Promise<string> {
   tokenPromises.orange = (async () => {
     try {
       if (!ORANGE_CLIENT_ID || !ORANGE_CLIENT_SECRET) {
+        console.error('❌ [CONFIG ERRO ORANGE]: Client ID/Secret vazios.', {
+          ORANGE_CLIENT_ID: ORANGE_CLIENT_ID ? 'OK' : 'MISSING',
+          ORANGE_CLIENT_SECRET: ORANGE_CLIENT_SECRET ? 'OK' : 'MISSING'
+        });
         throw new Error('MISSING_CONFIG: Credenciais Orange Money não configuradas.');
       }
 
