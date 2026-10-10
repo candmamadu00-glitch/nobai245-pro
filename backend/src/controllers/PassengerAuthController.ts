@@ -442,13 +442,22 @@ export class PassengerAuthController {
   // 9. INICIAR COBRANÇA DIRETA DE CORRIDA NO MOBILE MONEY
   async initiatePayment(req: Request, res: Response): Promise<Response> {
     try {
+      // 🚨 Log na primeira linha para capturar qualquer corpo de requisição vindo do app
+      console.log('📥 [REQ BODY RECEBIDO DO APP]:', JSON.stringify(req.body));
+      console.log('👤 [PASSAGEIRO AUTENTICADO]:', (req as any).user?.id);
+
       const passengerId = (req as any).user?.id;
       if (!passengerId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
 
-      const { amount, provider, phone, paymentProvider, paymentAccountNumber, rideId } = req.body;
+      // Suporta todas as variações de nomes de campos que o aplicativo possa enviar
+      const rawAmount = req.body.amount ?? req.body.estimatedPrice ?? req.body.price ?? req.body.totalAmount ?? req.body.total;
+      const rawPhone = req.body.phone ?? req.body.paymentPhone ?? req.body.paymentAccountNumber;
+      const rawProvider = req.body.provider ?? req.body.paymentMethod ?? req.body.paymentProvider;
+      const rideId = req.body.rideId;
 
-      const cleanAmount = Math.round(Number(amount));
+      const cleanAmount = Math.round(Number(rawAmount));
       if (isNaN(cleanAmount) || cleanAmount <= 0) {
+        console.error('❌ [ERRO DE VALORAÇÃO]: O valor recebido foi inválido ou ausente:', rawAmount);
         return res.status(400).json({ success: false, error: 'O valor da cobrança deve ser maior que zero XOF.' });
       }
 
@@ -459,11 +468,11 @@ export class PassengerAuthController {
 
       if (!passenger) return res.status(404).json({ success: false, error: 'Passageiro não encontrado.' });
 
-      const selectedProvider = provider || paymentProvider || passenger.paymentProvider || 'ORANGE_MONEY';
-      const rawPhone = phone || paymentAccountNumber || passenger.paymentAccountNumber || passenger.phone;
-      const targetPhone = formatPhoneNumber(String(rawPhone));
+      const selectedProvider = rawProvider || passenger.paymentProvider || 'ORANGE_MONEY';
+      const phoneToUse = rawPhone || passenger.paymentAccountNumber || passenger.phone;
+      const targetPhone = formatPhoneNumber(String(phoneToUse));
 
-      console.log('📥 [COBRANÇA DIRETA MOBILE MONEY]:', {
+      console.log('🍊 [PROCESSANDO COBRANÇA DIRETA]:', {
         passengerId,
         rideId: rideId || 'N/A',
         amount: cleanAmount,
@@ -509,7 +518,6 @@ export class PassengerAuthController {
       return res.status(500).json({ success: false, error: 'Erro interno ao processar cobrança no Mobile Money.' });
     }
   }
-
   // Alias para manter compatibilidade com a rota antiga /wallet/recharge
   async rechargeWallet(req: Request, res: Response): Promise<Response> {
     return this.initiatePayment(req, res);
