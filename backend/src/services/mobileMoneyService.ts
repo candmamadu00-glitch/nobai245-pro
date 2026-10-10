@@ -285,11 +285,11 @@ export async function chargePassengerMobileMoney(
       };
 
       console.log('🍊 [REQUISICAO ORANGE WEBPAY]:', JSON.stringify({
-        url: `${ORANGE_BASE_URL}/orange-money-webpay/bissau/v1/webpayment`,
+        url: `${ORANGE_BASE_URL}/orange-money-webpay/gw/v1/webpayment`,
         payload
       }));
 
-      const response = await apiClient.post(`${ORANGE_BASE_URL}/orange-money-webpay/bissau/v1/webpayment`, payload, { 
+      const response = await apiClient.post(`${ORANGE_BASE_URL}/orange-money-webpay/gw/v1/webpayment`, payload, { 
         headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } 
       });
 
@@ -469,7 +469,7 @@ export async function verifyTransactionStatus(transactionId: string): Promise<{
   try {
     if (provider.includes('ORANGE')) {
       const accessToken = await getOrangeAccessToken();
-      const response = await apiClient.post(`${ORANGE_BASE_URL}/orange-money-webpay/bissau/v1/transactionstatus`, 
+      const response = await apiClient.post(`${ORANGE_BASE_URL}/orange-money-webpay/gw/v1/transactionstatus`, 
         { 
           order_id: transaction.reference || transactionId, 
           amount: Math.round(Number(transaction.amount)), 
@@ -555,7 +555,7 @@ export async function executeRideDisbursement(params: DisbursementParams): Promi
   try {
     if (providerStr.includes('ORANGE')) {
       const token = await getOrangeAccessToken();
-      const response = await apiClient.post(`${ORANGE_BASE_URL}/orange-money-webpay/bissau/v1/transfer`, {
+      const response = await apiClient.post(`${ORANGE_BASE_URL}/orange-money-webpay/gw/v1/transfer`, {
         recipient_msisdn: cleanPhone,
         amount: cleanAmount,
         reference: ref,
