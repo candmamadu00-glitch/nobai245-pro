@@ -442,14 +442,19 @@ export class PassengerAuthController {
   // 9. INICIAR COBRANÇA DIRETA DE CORRIDA NO MOBILE MONEY
   async initiatePayment(req: Request, res: Response): Promise<Response> {
     try {
-      // 🚨 Log na primeira linha para capturar qualquer corpo de requisição vindo do app
       console.log('📥 [REQ BODY RECEBIDO DO APP]:', JSON.stringify(req.body));
-      console.log('👤 [PASSAGEIRO AUTENTICADO]:', (req as any).user?.id);
+      
+      // Captura o ID do passageiro via Token JWT (middleware) ou via Body enviado pelo App
+      const passengerId = (req as any).user?.id || (req as any).userId || (req as any).passenger?.id || req.body.passengerId;
+      
+      console.log('👤 [PASSAGEIRO AUTENTICADO]:', passengerId);
 
-      const passengerId = (req as any).user?.id;
-      if (!passengerId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
+      if (!passengerId) {
+        console.error('❌ [AUTH ERRO]: ID do passageiro não encontrado na requisição.');
+        return res.status(401).json({ success: false, error: 'Não autorizado. ID do passageiro ausente.' });
+      }
 
-      // Suporta todas as variações de nomes de campos que o aplicativo possa enviar
+      // Suporta todas as variações de nomes de campos de valor/telefone/provedor
       const rawAmount = req.body.amount ?? req.body.estimatedPrice ?? req.body.price ?? req.body.totalAmount ?? req.body.total;
       const rawPhone = req.body.phone ?? req.body.paymentPhone ?? req.body.paymentAccountNumber;
       const rawProvider = req.body.provider ?? req.body.paymentMethod ?? req.body.paymentProvider;
@@ -462,11 +467,14 @@ export class PassengerAuthController {
       }
 
       const passenger = await prisma.passenger.findUnique({
-        where: { id: passengerId },
+        where: { id: String(passengerId) },
         select: { phone: true, paymentProvider: true, paymentAccountNumber: true }
       });
 
-      if (!passenger) return res.status(404).json({ success: false, error: 'Passageiro não encontrado.' });
+      if (!passenger) {
+        console.error('❌ [PASSAGEIRO NÃO ENCONTRADO NO BANCO]:', passengerId);
+        return res.status(404).json({ success: false, error: 'Passageiro não encontrado no banco de dados.' });
+      }
 
       const selectedProvider = rawProvider || passenger.paymentProvider || 'ORANGE_MONEY';
       const phoneToUse = rawPhone || passenger.paymentAccountNumber || passenger.phone;
@@ -486,7 +494,7 @@ export class PassengerAuthController {
       }
 
       const chargeResult = await chargePassengerMobileMoney({
-        passengerId,
+        passengerId: String(passengerId),
         phone: targetPhone,
         amount: cleanAmount,
         provider: selectedProvider,
