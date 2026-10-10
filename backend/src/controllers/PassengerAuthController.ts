@@ -194,7 +194,7 @@ export class PassengerAuthController {
     }
   }
 
-  // 3. SOLICITAR / REENVIAR CÓDIGO OTP VIA TERMII (COM HASH DE SEGURANÇA)
+  // 3. SOLICITAR / REENVIAR CÓDIGO OTP VIA TERMII (SMS REAL)
   async requestOTP(req: Request, res: Response): Promise<Response> {
     try {
       const { phone } = req.body;
@@ -210,7 +210,8 @@ export class PassengerAuthController {
         return res.status(404).json({ success: false, error: 'Passageiro não encontrado com este número.' });
       }
 
-      const otpCode = crypto.randomInt(100000, 1000000).toString();
+      // 💡 Gerando exatamente 4 DÍGITOS REAIS (compatível com a tela do app)
+      const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
       const otpCodeHash = await bcrypt.hash(otpCode, 10);
       const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
@@ -222,24 +223,25 @@ export class PassengerAuthController {
         },
       });
 
+      // Formatação do número para o Termii (+245955219149 -> 245955219149)
+      const targetPhoneNoPlus = formattedPhone.replace(/^\+/, '');
       const baseUrlClean = TERMII_BASE_URL.endsWith('/') ? TERMII_BASE_URL : `${TERMII_BASE_URL}/`;
       const termiiEndpoint = `${baseUrlClean}api/sms/send`;
-
-      const targetPhoneNoPlus = formattedPhone.replace(/^\+/, '');
 
       const termiiPayload = {
         to: targetPhoneNoPlus,
         from: TERMII_SENDER_ID,
-        sms: `O seu codigo de verificacao Nobai245 e ${otpCode}. Esse codigo expira em 10 minutos. Nao compartilhe com ninguem.`,
+        sms: `O seu codigo de verificacao Nobai245 e ${otpCode}. Expira em 10 min.`,
         type: 'plain',
         channel: 'generic',
         api_key: TERMII_API_KEY,
       };
 
       try {
-        await axios.post(termiiEndpoint, termiiPayload, { timeout: 10000 });
+        const termiiRes = await axios.post(termiiEndpoint, termiiPayload, { timeout: 10000 });
+        console.log(`✅ [TERMII ENVIADO PARA ${targetPhoneNoPlus}]:`, termiiRes.data);
       } catch (termiiErr: any) {
-        console.error('⚠️ [TERMII SMS ERROR]:', termiiErr?.response?.data || termiiErr?.message);
+        console.error('❌ [ERRO TERMII SMS]:', termiiErr?.response?.data || termiiErr?.message);
       }
 
       return res.status(200).json({
@@ -252,7 +254,7 @@ export class PassengerAuthController {
     }
   }
 
-  // 4. VERIFICAR CÓDIGO OTP DINÂMICO
+  // 4. VERIFICAR CÓDIGO OTP REAL
   async verifyOTP(req: Request, res: Response): Promise<Response> {
     try {
       const { phone, otp } = req.body;
@@ -269,12 +271,11 @@ export class PassengerAuthController {
       }
 
       const cleanOtp = String(otp).trim();
-      const isDevBypass = process.env.NODE_ENV !== 'production' && cleanOtp === '123456';
 
       const isValidOtp = passenger.otpCodeHash ? await bcrypt.compare(cleanOtp, passenger.otpCodeHash) : false;
       const isNotExpired = Boolean(passenger.otpExpiresAt && passenger.otpExpiresAt > new Date());
 
-      if (!isDevBypass && (!isValidOtp || !isNotExpired)) {
+      if (!isValidOtp || !isNotExpired) {
         return res.status(400).json({ success: false, error: 'Código OTP inválido ou expirado.' });
       }
 
@@ -293,7 +294,6 @@ export class PassengerAuthController {
       return res.status(500).json({ success: false, error: 'Erro ao verificar código OTP.' });
     }
   }
-
   // 5. REFRESH TOKEN
   async refreshToken(req: Request, res: Response): Promise<Response> {
     try {
