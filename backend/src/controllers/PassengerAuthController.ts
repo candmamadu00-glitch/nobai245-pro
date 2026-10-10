@@ -210,7 +210,6 @@ export class PassengerAuthController {
         return res.status(404).json({ success: false, error: 'Passageiro não encontrado com este número.' });
       }
 
-      // 💡 Gerando exatamente 4 DÍGITOS REAIS (compatível com a tela do app)
       const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
       const otpCodeHash = await bcrypt.hash(otpCode, 10);
       const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
@@ -223,7 +222,6 @@ export class PassengerAuthController {
         },
       });
 
-      // Formatação do número para o Termii (+245955219149 -> 245955219149)
       const targetPhoneNoPlus = formattedPhone.replace(/^\+/, '');
       const baseUrlClean = TERMII_BASE_URL.endsWith('/') ? TERMII_BASE_URL : `${TERMII_BASE_URL}/`;
       const termiiEndpoint = `${baseUrlClean}api/sms/send`;
@@ -294,6 +292,7 @@ export class PassengerAuthController {
       return res.status(500).json({ success: false, error: 'Erro ao verificar código OTP.' });
     }
   }
+  
   // 5. REFRESH TOKEN
   async refreshToken(req: Request, res: Response): Promise<Response> {
     try {
@@ -440,17 +439,17 @@ export class PassengerAuthController {
     }
   }
 
-  // 9. RECARGA DE CARTEIRA
-  async rechargeWallet(req: Request, res: Response): Promise<Response> {
+  // 9. INICIAR COBRANÇA DIRETA DE CORRIDA NO MOBILE MONEY
+  async initiatePayment(req: Request, res: Response): Promise<Response> {
     try {
       const passengerId = (req as any).user?.id;
       if (!passengerId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
 
-      const { amount, provider, phone } = req.body;
+      const { amount, provider, phone, paymentProvider, paymentAccountNumber, rideId } = req.body;
 
       const cleanAmount = Math.round(Number(amount));
       if (isNaN(cleanAmount) || cleanAmount <= 0) {
-        return res.status(400).json({ success: false, error: 'O valor da recarga deve ser maior que zero XOF.' });
+        return res.status(400).json({ success: false, error: 'O valor da cobrança deve ser maior que zero XOF.' });
       }
 
       const passenger = await prisma.passenger.findUnique({
@@ -460,68 +459,54 @@ export class PassengerAuthController {
 
       if (!passenger) return res.status(404).json({ success: false, error: 'Passageiro não encontrado.' });
 
-      const selectedProvider = provider || passenger.paymentProvider || 'ORANGE_MONEY';
-      if (!['ORANGE_MONEY', 'MTN_MOMO'].includes(selectedProvider)) {
-        return res.status(400).json({ success: false, error: 'Provedor de pagamento inválido.' });
-      }
-
-      const rawPhone = phone || passenger.paymentAccountNumber || passenger.phone;
+      const selectedProvider = provider || paymentProvider || passenger.paymentProvider || 'ORANGE_MONEY';
+      const rawPhone = phone || paymentAccountNumber || passenger.paymentAccountNumber || passenger.phone;
       const targetPhone = formatPhoneNumber(String(rawPhone));
 
+      console.log('📥 [COBRANÇA DIRETA MOBILE MONEY]:', {
+        passengerId,
+        rideId: rideId || 'N/A',
+        amount: cleanAmount,
+        provider: selectedProvider,
+        phone: targetPhone
+      });
+
       if (!isValidBissauPhone(targetPhone)) {
+        console.error('❌ [TELEFONE BISSAU INVÁLIDO]:', targetPhone);
         return res.status(400).json({ success: false, error: 'Número de telefone Mobile Money inválido para Guiné-Bissau (+245).' });
       }
 
-      const transaction = await prisma.transaction.create({
-        data: {
-          passengerId,
-          amount: cleanAmount,
-          type: 'DEPOSIT',
-          status: 'PENDING',
-          paymentMethod: selectedProvider,
-          reference: `RECHARGE-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
-          description: 'Recarga de saldo na Carteira In-App'
-        }
+      const chargeResult = await chargePassengerMobileMoney({
+        passengerId,
+        phone: targetPhone,
+        amount: cleanAmount,
+        provider: selectedProvider,
+        rideId,
+        isWalletRecharge: false
       });
 
-      let chargeResult: any;
-      try {
-        chargeResult = await chargePassengerMobileMoney({
-          passengerId,
-          phone: targetPhone,
-          amount: cleanAmount,
-          provider: selectedProvider,
-          transactionId: transaction.id,
-          isWalletRecharge: true
-        });
-      } catch (gatewayErr: any) {
-        await prisma.transaction.update({
-          where: { id: transaction.id },
-          data: { status: 'FAILED', failureReason: gatewayErr.message || 'Falha de comunicação com o Gateway de Pagamentos.' }
-        });
-        return res.status(502).json({ success: false, error: 'Serviço de pagamento indisponível no momento.' });
-      }
+      console.log('📤 [RESPOSTA DA COBRANÇA DIRETA]:', chargeResult);
 
       if (!chargeResult.success) {
-        await prisma.transaction.update({
-          where: { id: transaction.id },
-          data: { status: 'FAILED', failureReason: chargeResult.details || chargeResult.error }
+        return res.status(400).json({
+          success: false,
+          error: chargeResult.error || 'PROVIDER_REJECTED',
+          message: chargeResult.details || 'Não foi possível autorizar o débito. Verifique o saldo ou o número e tente novamente.'
         });
-        return res.status(400).json({ success: false, error: chargeResult.details || 'Falha ao iniciar cobrança Mobile Money.' });
       }
 
       return res.status(200).json({
         success: true,
         message: String(selectedProvider).toUpperCase().includes('ORANGE') 
-          ? 'Acesse o link para concluir o pagamento da recarga.' 
+          ? 'Confirme o débito digitando seu PIN no celular ou acessando o link.' 
           : 'Solicitação enviada ao seu telefone. Digite o seu PIN do Mobile Money.',
-        transactionId: transaction.id,
         paymentUrl: chargeResult.paymentUrl || null,
-        providerRef: chargeResult.providerRef
+        providerRef: chargeResult.providerRef,
+        status: chargeResult.status
       });
     } catch (error: any) {
-      console.error('❌ [RECARGA CARTEIRA]:', error?.message || error);
-      return res.status(500).json({ success: false, error: 'Erro interno ao processar recarga de carteira.' });
+      console.error('❌ [ERRO COBRANÇA DIRETA PASSAGEIRO]:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro interno ao processar cobrança no Mobile Money.' });
     }
   }
 
@@ -761,7 +746,7 @@ export class PassengerAuthController {
     }
   }
 
- // 16. CONCLUIR REGISTRO GOOGLE
+  // 16. CONCLUIR REGISTRO GOOGLE
   async completeGoogleRegistration(req: Request, res: Response): Promise<Response> {
     try {
       const { email, fullName, phone, profilePicture, deviceToken } = req.body;
@@ -1010,7 +995,8 @@ export const refreshToken = (req: Request, res: Response) => passengerAuthContro
 export const getProfile = (req: Request, res: Response) => passengerAuthController.getProfile(req, res);
 export const updateProfile = (req: Request, res: Response) => passengerAuthController.updateProfile(req, res);
 export const getFinance = (req: Request, res: Response) => passengerAuthController.getFinance(req, res);
-export const rechargeWallet = (req: Request, res: Response) => passengerAuthController.rechargeWallet(req, res);
+export const rechargeWallet = (req: Request, res: Response) => passengerAuthController.initiatePayment(req, res);
+export const initiatePayment = (req: Request, res: Response) => passengerAuthController.initiatePayment(req, res);
 export const updatePaymentMethod = (req: Request, res: Response) => passengerAuthController.updatePaymentMethod(req, res);
 export const updateDeviceToken = (req: Request, res: Response) => passengerAuthController.updateDeviceToken(req, res);
 export const getRideHistory = (req: Request, res: Response) => passengerAuthController.getRideHistory(req, res);
