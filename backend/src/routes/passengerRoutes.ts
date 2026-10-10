@@ -28,7 +28,7 @@ passengerRoutes.post('/forgot-password', (req, res) => authController.requestOTP
 passengerRoutes.post('/verify-otp', (req, res) => authController.verifyOTP(req, res));
 passengerRoutes.post('/login', validate(loginPassengerSchema), (req, res) => authController.login(req, res));
 passengerRoutes.post('/refresh-token', (req, res) => authController.refreshToken(req, res));
-
+passengerRoutes.post('/payments/initiate', (req, res) => authController.initiatePayment(req, res));
 // 🛡️ Autenticação Google
 passengerRoutes.post('/auth/google', validate(googleSignInSchema), (req, res) => authController.googleSignIn(req, res));
 passengerRoutes.post('/google-login', validate(googleSignInSchema), (req, res) => authController.googleSignIn(req, res));
