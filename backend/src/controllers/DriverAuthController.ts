@@ -607,6 +607,7 @@ export class DriverAuthController {
       return res.status(500).json({ success: false, error: 'Erro ao processar exclusão de conta.' });
     }
   }
+  
 
   // ==========================================
   // 📱 ATUALIZAR MOBILE MONEY
@@ -770,7 +771,7 @@ export class DriverAuthController {
       return res.status(500).json({ success: false, error: 'Erro ao processar imagem.' });
     }
   }
-
+}
 const driverAuthController = new DriverAuthController();
 
 export const requestForgotPasswordOtp = (req: Request, res: Response) => driverAuthController.requestForgotPasswordOtp(req, res);
