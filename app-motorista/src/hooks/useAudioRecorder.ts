@@ -1,29 +1,21 @@
-import { useState, useRef } from 'react';
-import { Audio } from 'expo-av';
+import { useState } from 'react';
+import { useAudioRecorder as useExpoAudioRecorder, AudioModule, RecordingPresets } from 'expo-audio';
 import * as FileSystem from 'expo-file-system';
 
 export function useAudioRecorder() {
   const [isRecording, setIsRecording] = useState(false);
-  const recordingRef = useRef<Audio.Recording | null>(null);
+  const audioRecorder = useExpoAudioRecorder(RecordingPresets.LOW_QUALITY);
 
   async function startRecording() {
     try {
-      const permission = await Audio.requestPermissionsAsync();
-      if (permission.status !== 'granted') {
+      const status = await AudioModule.requestRecordingPermissionsAsync();
+      if (!status.granted) {
         console.warn('Permissão de microfone negada');
         return;
       }
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-      });
-
-      const { recording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.LOW_QUALITY // Qualidade ideal para áudio leve de emergência
-      );
-
-      recordingRef.current = recording;
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
       setIsRecording(true);
     } catch (err) {
       console.error('Erro ao iniciar gravação SOS:', err);
@@ -33,20 +25,15 @@ export function useAudioRecorder() {
 
   async function stopRecording(): Promise<string | null> {
     try {
-      if (!recordingRef.current) return null;
+      if (!audioRecorder.isRecording) return null;
 
-      await recordingRef.current.stopAndUnloadAsync();
-      const uri = recordingRef.current.getURI();
-      recordingRef.current = null;
+      await audioRecorder.stop();
+      const uri = audioRecorder.uri;
       setIsRecording(false);
-
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-      });
 
       if (!uri) return null;
 
-      // Lê o áudio do armazenamento local e converte para string Base64
+      // Converte o áudio gravado para string Base64 para envio no SOS
       const base64Audio = await FileSystem.readAsStringAsync(uri, {
         encoding: FileSystem.EncodingType.Base64,
       });

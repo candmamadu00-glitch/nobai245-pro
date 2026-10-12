@@ -81,10 +81,30 @@ export function Register() {
     if (!privacyAccepted) return Alert.alert('Atenção', 'Você deve ler e aceitar as Políticas de Privacidade.');
 
     setLoading(true);
+
+    // 🔍 LOG DE DEPURAÇÃO DOS DADOS DE ENTRADA
+    console.log('=== 📤 [DEBUG CADASTRO] ENVIANDO DADOS AO BACKEND ===');
+    console.log({
+      fullName: fullName.trim(),
+      phone: `+245${cleanPhone}`,
+      password: '***',
+      vehicleBrand: vehicleModel.trim(),
+      vehicleModel: vehicleModel.trim(),
+      vehiclePlate: vehiclePlate.trim().toUpperCase(),
+      vehicleColor: vehicleColor.trim(),
+      vehicleType,
+      vehicleSeats,
+      documentType,
+      documentNumber: documentNumber.trim().toUpperCase(),
+      hasSelfie: !!selfie,
+      hasLicenseFront: !!licenseFront,
+      hasLicenseBack: !!licenseBack,
+      privacyAccepted,
+    });
+
     try {
       const formData = new FormData();
       formData.append('fullName', fullName.trim());
-      // 🛡️ BLINDAGEM: Garantia de formato do telefone para alinhamento com o Login (+245)
       formData.append('phone', `+245${cleanPhone}`);
       formData.append('password', password);
       formData.append('vehicleBrand', vehicleModel.trim());
@@ -109,14 +129,20 @@ export function Register() {
       appendImage('licenseFront', licenseFront);
       appendImage('licenseBack', licenseBack);
 
-      const response = await api.post('/drivers/register', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const response = await api.post('/drivers/register', formData);
+
+      console.log('=== ✅ [DEBUG CADASTRO] SUCESSO ===', response.data);
       
       Alert.alert('🎉 Bem-vindo(a)!', response.data.message || 'Cadastro enviado para aprovação.');
       navigation.navigate('Login');
     } catch (error: any) {
-      Alert.alert('Erro', error.response?.data?.error || 'Falha ao registrar.');
+      // 🔍 LOG DE DEPURAÇÃO DA RESPOSTA DE ERRO DA API
+      console.log('=== ❌ [DEBUG CADASTRO] ERRO RETORNADO PELA API ===');
+      console.log('Status HTTP:', error.response?.status);
+      console.log('Resposta do Servidor:', JSON.stringify(error.response?.data, null, 2));
+      console.log('Mensagem de Erro:', error.message);
+
+      Alert.alert('Erro', error.response?.data?.error || error.response?.data?.message || 'Falha ao registrar.');
     } finally {
       setLoading(false);
     }

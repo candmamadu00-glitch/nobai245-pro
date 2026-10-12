@@ -205,22 +205,27 @@ export function Profile() {
       const match = /\.(\w+)$/.exec(filename);
       const type = match ? `image/${match[1]}` : `image/jpeg`;
 
-      formData.append('profilePicture', { uri, name: filename, type } as any);
+      // 🛡️ Garante que a chave 'profilePicture' seja enviada com a estrutura esperada pelo Multer
+      formData.append('profilePicture', {
+        uri: Platform.OS === 'android' ? uri : uri.replace('file://', ''),
+        name: filename,
+        type,
+      } as any);
 
-      await api.patch('/drivers/profile-picture', formData, {
+      // 📡 Envia para a rota oficial /drivers/profile/picture
+      await api.patch('/drivers/profile/picture', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 
       await refreshDriverProfile();
       Alert.alert('Sucesso!', 'Sua foto de perfil foi atualizada com sucesso.');
     } catch (error: any) {
-      const errorMessage = error.response?.data?.message || 'Não foi possível atualizar sua foto no momento.';
+      const errorMessage = error.response?.data?.error || error.response?.data?.message || 'Não foi possível atualizar sua foto no momento.';
       Alert.alert('Erro', errorMessage);
     } finally {
       setUploadingImage(false);
     }
   }
-
   // --- SALVAR INFORMAÇÕES DE PAGAMENTO (VALIDAÇÃO RIGOROSA) ---
   async function handleSavePaymentInfo() {
     const cleanNumber = mmNumber.trim();

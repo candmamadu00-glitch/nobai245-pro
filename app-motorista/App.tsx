@@ -39,14 +39,14 @@ if (Platform.OS === 'android') {
     importance: Notifications.AndroidImportance.MAX,
     vibrationPattern: [0, 1000, 500, 1000],
     lightColor: '#059669',
-    sound: undefined,
+    // 💡 REMOVIDA A CHAVE 'sound' para o Android usar o som nativo do sistema
   });
 
   Notifications.setNotificationChannelAsync('chat-messages', {
     name: 'Mensagens do Chat',
     importance: Notifications.AndroidImportance.HIGH,
     vibrationPattern: [0, 250, 250, 250],
-    sound: undefined,
+    // 💡 REMOVIDA A CHAVE 'sound'
   });
 }
 

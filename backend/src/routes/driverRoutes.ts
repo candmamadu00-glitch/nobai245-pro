@@ -27,7 +27,13 @@ import {
 const driverRoutes = Router();
 const authController = new DriverAuthController();
 const ticketController = new TicketController();
-
+// 🛡️ Middleware flexível para aceitar qualquer nome de campo enviado pelo App
+const handleProfilePictureUpload = upload.fields([
+  { name: 'profilePicture', maxCount: 1 },
+  { name: 'photo', maxCount: 1 },
+  { name: 'file', maxCount: 1 },
+  { name: 'image', maxCount: 1 },
+]);
 // -----------------------------------------------------------------------------
 // 🟢 ROTAS PÚBLICAS (AUTENTICAÇÃO & RECUPERAÇÃO)
 // -----------------------------------------------------------------------------
@@ -53,9 +59,10 @@ driverRoutes.post('/reset-password', validate(resetPasswordSchema), (req, res) =
 
 driverRoutes.use(authenticate, authorizeRole(['DRIVER']));
 
-// 👤 Perfil e Conta
+// 👤 Perfil e Conta (Aceita ambas as rotas)
 driverRoutes.get('/profile', (req, res) => authController.getProfile(req, res));
-driverRoutes.patch('/profile/picture', upload.single('profilePicture'), (req, res) => authController.updateProfilePicture(req, res));
+driverRoutes.patch('/profile/picture', handleProfilePictureUpload, (req, res) => authController.updateProfilePicture(req, res));
+driverRoutes.patch('/profile-picture', handleProfilePictureUpload, (req, res) => authController.updateProfilePicture(req, res));
 driverRoutes.post('/request-update', validate(requestProfileUpdateSchema), (req, res) => authController.requestProfileUpdate(req, res));
 driverRoutes.get('/request-update/status', (req, res) => authController.checkPendingRequest(req, res));
 driverRoutes.delete('/delete-account', (req, res) => authController.deleteAccount(req, res));

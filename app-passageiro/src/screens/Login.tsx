@@ -41,6 +41,8 @@ export function Login() {
     try {
       GoogleSignin.configure({
         webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
+        offlineAccess: true,
+        scopes: ['profile', 'email'],
       });
     } catch (e) {
       console.warn('[GOOGLE SIGNIN] Erro ao configurar:', e);
@@ -61,21 +63,26 @@ export function Login() {
     ]).start();
   }, []);
 
-  // ==========================================
-  // 🌐 LOGIN VIA GOOGLE
-  // ==========================================
   async function handleGoogleLogin() {
     setLoading(true);
     try {
+      console.log('🌐 [GOOGLE FRONTEND] Iniciando fluxo de login Google...');
       await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
-      const response = await GoogleSignin.signIn();
+      
+      const response: any = await GoogleSignin.signIn();
+      console.log('📄 [GOOGLE FRONTEND] Resposta do SDK Google:', JSON.stringify(response));
+      
       const idToken = response.data?.idToken || response.idToken;
 
       if (!idToken) {
-        throw new Error('Não foi possível obter o token de validação do Google.');
+        console.error('❌ [GOOGLE FRONTEND] idToken ausente!');
+        Alert.alert('Erro no Google SDK', 'O Google não retornou o idToken de verificação. Verifique se o Web Client ID está correto.');
+        return;
       }
 
+      console.log('📡 [GOOGLE FRONTEND] Enviando idToken para a API (/passengers/auth/google)...');
       const apiResponse = await api.post('/passengers/auth/google', { idToken });
+      console.log('📥 [GOOGLE FRONTEND] Resposta do Backend:', JSON.stringify(apiResponse.data));
 
       if (apiResponse.data.isNewUser) {
         Alert.alert(
@@ -90,22 +97,23 @@ export function Login() {
       const { accessToken, refreshToken, passenger } = apiResponse.data;
       await signIn(passenger, accessToken, refreshToken);
       navigation.replace('Home');
+
     } catch (error: any) {
-      if (error.code === statusCodes.SIGN_IN_CANCELLED) {
-        console.log('[GOOGLE] Login cancelado pelo utilizador');
-      } else if (error.code === statusCodes.IN_PROGRESS) {
-        console.log('[GOOGLE] Login em andamento');
-      } else if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
-        Alert.alert(t('error_title', 'Falha no Acesso'), 'Google Play Services não disponível no dispositivo.');
-      } else {
-        const errorMessage = error.response?.data?.error || error.response?.data?.message || t('server_error_msg', 'Erro ao autenticar com o Google.');
-        Alert.alert(t('error_title', 'Falha no Acesso'), errorMessage);
-      }
+      console.error('❌ [GOOGLE FRONTEND ERRO COMPLETO]:', error);
+      console.error('❌ [AXIOS RESPONSE DATA]:', JSON.stringify(error.response?.data));
+      console.error('❌ [AXIOS STATUS CODE]:', error.response?.status);
+
+      const serverDetail = error.response?.data?.error || error.response?.data?.message;
+      const fallbackMsg = error.message || 'Problema de conexão com o servidor.';
+      
+      Alert.alert(
+        'Erro ao Entrar com Google', 
+        serverDetail ? `[Servidor]: ${serverDetail}` : `[Detalhe]: ${fallbackMsg}`
+      );
     } finally {
       setLoading(false);
     }
   }
-
   // ==========================================
   // 🚀 FUNÇÃO DE LOGIN PADRÃO
   // ==========================================

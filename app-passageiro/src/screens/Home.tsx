@@ -236,7 +236,7 @@ export function Home() {
   const [passengerLocation, setPassengerLocation] = useState<Location.LocationObject | null>(null);
   const [driverLocation, setDriverLocation] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
   const [driverInfo, setDriverInfo] = useState<DriverInfo | null>(null);
-  
+  const [isManualPickup, setIsManualPickup] = useState(false);
   const [pickupCoords, setPickupCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [pickupAddress, setPickupAddress] = useState(t('pickup_location', 'Local de partida'));
   
@@ -367,7 +367,14 @@ export function Home() {
       setPaymentPhone((user as any).phone);
     }
   }, [user]);
-
+// 2. Onde você recebe as atualizações do GPS (dentro de um useEffect ou listener):
+useEffect(() => {
+  if (!isManualPickup && userGpsLocation) {
+    // Só atualiza o endereço de origem com o GPS se o usuário não tiver feito uma busca manual
+    setPickupAddress(userGpsLocation.address);
+    setPickupCoords(userGpsLocation.coords);
+  }
+}, [userGpsLocation, isManualPickup]);
   const isNightTimeForPin = useCallback(() => {
     const currentHour = new Date().getHours();
     return currentHour >= 18 || currentHour < 6;
@@ -384,7 +391,12 @@ export function Home() {
       console.error('Erro ao salvar estado local:', e);
     }
   };
-
+// 1. Quando o usuário pesquisa e seleciona o endereço pelo formulário:
+const handleSelectSearchedAddress = (addressDetails) => {
+  setPickupAddress(addressDetails.name);
+  setPickupCoords(addressDetails.coords);
+  setIsManualPickup(true); // Trava a atualização automática do GPS
+};
   const fitMapBounds = useCallback((coordsArray: Array<{ latitude: number; longitude: number }>) => {
     if (!cameraRef.current || !coordsArray || coordsArray.length < 2) return;
     
@@ -1144,52 +1156,50 @@ export function Home() {
   }, [activeRideId, user?.id, resetRideState]);
 
   const onMapRegionDidChange = useCallback(async (feature: any) => {
-    setIsMapMoving(false);
-    if (rideStatus !== 'idle' || bookingStep !== 'ADDRESS') return;
+  setIsMapMoving(false);
+  if (rideStatus !== 'idle' || bookingStep !== 'ADDRESS') return;
 
-    const coords = feature?.geometry?.coordinates;
-    if (!coords || !Array.isArray(coords) || coords.length < 2) return;
+  // Se o endereço foi digitado/selecionado manualmente via busca e o usuário NÃO arrastou o mapa com o dedo,
+  // mantém o endereço digitado sem sobrescrever com o endereço da geocodificação do GPS.
+  if (isManualPickupRef.current) return;
 
-    const [lng, lat] = coords;
-    if (typeof lng !== 'number' || typeof lat !== 'number' || isNaN(lng) || isNaN(lat)) return;
+  const coords = feature?.geometry?.coordinates;
+  if (!coords || !Array.isArray(coords) || coords.length < 2) return;
 
-    if (isManualPickupRef.current) {
-      isManualPickupRef.current = false;
-      return;
-    }
+  const [lng, lat] = coords;
+  if (typeof lng !== 'number' || typeof lat !== 'number' || isNaN(lng) || isNaN(lat)) return;
 
-    setPickupCoords({ latitude: lat, longitude: lng });
+  setPickupCoords({ latitude: lat, longitude: lng });
 
-    const localName = findNearestLocalBairro(lat, lng);
-    if (localName) {
-      setPickupAddress(localName);
-      return;
-    }
+  const localName = findNearestLocalBairro(lat, lng);
+  if (localName) {
+    setPickupAddress(localName);
+    return;
+  }
 
-    if (MAPBOX_ACCESS_TOKEN) {
-      try {
-        const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`;
-        const res = await fetch(url);
+  if (MAPBOX_ACCESS_TOKEN) {
+    try {
+      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`;
+      const res = await fetch(url);
 
-        if (!res.ok) return;
+      if (!res.ok) return;
 
-        const data = await res.json();
-        
-        if (data?.features?.length > 0) {
-          const placeName = data.features[0].place_name || '';
-          const parts = placeName.split(',')
-            .map((p: string) => p.trim())
-            .filter((p: string) => p && !p.toLowerCase().includes('guiné'));
-          const cleanAddress = parts.length > 0 ? parts.slice(0, 2).join(', ') : 'Bissau, Centro';
-          setPickupAddress(cleanAddress);
-        }
-      } catch (err) {
-        console.warn('Geocodificação Mapbox falhou no arraste:', err);
-        setPickupAddress('Bissau, Centro');
+      const data = await res.json();
+      
+      if (data?.features?.length > 0) {
+        const placeName = data.features[0].place_name || '';
+        const parts = placeName.split(',')
+          .map((p: string) => p.trim())
+          .filter((p: string) => p && !p.toLowerCase().includes('guiné'));
+        const cleanAddress = parts.length > 0 ? parts.slice(0, 2).join(', ') : 'Bissau, Centro';
+        setPickupAddress(cleanAddress);
       }
+    } catch (err) {
+      console.warn('Geocodificação Mapbox falhou no arraste:', err);
+      setPickupAddress('Bissau, Centro');
     }
-  }, [rideStatus, bookingStep]);
-
+  }
+}, [rideStatus, bookingStep]);
   const handleSubmitRating = useCallback((stars: number, tags: string[], comment: string) => {
     if (activeRideId && driverInfo && user?.id) {
       rateDriver({ 
@@ -1334,27 +1344,29 @@ const handleSosPress = () => {
       </View>
 
       <Mapbox.MapView
-        style={StyleSheet.absoluteFill}
-        styleURL={Mapbox.StyleURL.Street}
-        logoEnabled={false}
-        attributionEnabled={false}
-        onCameraChanged={(e) => {
-          if (e.gestures.isGestureActive) {
-            setIsMapMoving(true);
-          }
-        }}
-        onMapIdle={onMapRegionDidChange}
-      >
+  style={StyleSheet.absoluteFill}
+  styleURL={Mapbox.StyleURL.Street}
+  logoEnabled={false}
+  attributionEnabled={false}
+  onCameraChanged={(e) => {
+    // Só desativa a trava manual se for um gesto ativo do usuário (arrastou a tela com o dedo)
+    if (e.gestures.isGestureActive) {
+      setIsMapMoving(true);
+      isManualPickupRef.current = false;
+    }
+  }}
+  onMapIdle={onMapRegionDidChange}
+>
         <Mapbox.Camera
-          ref={cameraRef}
-          zoomLevel={14}
-          centerCoordinate={[
-            passengerLocation?.coords?.longitude || BISSAU_CENTER.longitude,
-            passengerLocation?.coords?.latitude || BISSAU_CENTER.latitude,
-          ]}
-          animationMode="flyTo"
-          animationDuration={1000}
-        />
+  ref={cameraRef}
+  zoomLevel={14}
+  centerCoordinate={[
+    pickupCoords?.longitude || passengerLocation?.coords?.longitude || BISSAU_CENTER.longitude,
+    pickupCoords?.latitude || passengerLocation?.coords?.latitude || BISSAU_CENTER.latitude,
+  ]}
+  animationMode="flyTo"
+  animationDuration={1000}
+/>
 
         {/* ROTA MAPBOX */}
         {routeGeometry?.type === 'Feature' && routeGeometry?.geometry?.coordinates && (
@@ -1494,9 +1506,14 @@ const handleSosPress = () => {
         </View>
       )}
 
-      {/* KEYBOARD AVOIDING VIEW - PAINEL PRINCIPAL */}
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.bottomSheetWrapper} pointerEvents="box-none">
-        <Animated.View style={[styles.bottomSheet, { transform: [{ translateY }] }]}>
+      {/* Substitua a configuração do KeyboardAvoidingView do painel principal */}
+<KeyboardAvoidingView 
+  behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
+  keyboardVerticalOffset={Platform.OS === 'android' ? 20 : 0}
+  style={styles.bottomSheetWrapper} 
+  pointerEvents="box-none"
+>
+  <Animated.View style={[styles.bottomSheet, { transform: [{ translateY }], paddingBottom: Platform.OS === 'android' ? 24 : 0 }]}>
           
           <View style={styles.dragHandlerArea} {...panResponder.panHandlers}>
             <View style={styles.dragIndicator} />
@@ -1654,9 +1671,15 @@ const handleSosPress = () => {
                 </View>
 
                 <View style={styles.actionRow}>
-                  <TouchableOpacity style={styles.cancelButtonOutline} onPress={() => setBookingStep('SERVICE_AND_PRICE')}>
-                    <Text style={styles.cancelButtonOutlineText}>{t('back_btn', 'Voltar')}</Text>
-                  </TouchableOpacity>
+                  <TouchableOpacity 
+  style={styles.cancelButtonOutline} 
+  onPress={() => {
+    if (bookingStep === 'PAYMENT') setBookingStep('SERVICE_AND_PRICE');
+    else if (bookingStep === 'SERVICE_AND_PRICE') setBookingStep('ADDRESS');
+  }}
+>
+  <Text style={styles.cancelButtonOutlineText}>{t('back_btn', 'Voltar')}</Text>
+</TouchableOpacity>
 
                   <TouchableOpacity style={[styles.requestButton, { flex: 1, marginLeft: 10 }]} onPress={handleInitialRequestRide}>
                     <Text style={styles.requestButtonText}>{t('request_now_btn', 'Pedir Agora')}</Text>
@@ -1874,7 +1897,7 @@ const handleSosPress = () => {
         </KeyboardAvoidingView>
       </Modal>
 
-{/* KEYBOARD AVOIDING VIEW - MODAL DE PAGAMENTO MOBILE MONEY */}
+      {/* KEYBOARD AVOIDING VIEW - MODAL DE PAGAMENTO MOBILE MONEY */}
       <Modal visible={isPaymentModalVisible} transparent animationType="slide" onRequestClose={() => !isProcessingPayment && setIsPaymentModalVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
           <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
@@ -1903,17 +1926,12 @@ const handleSosPress = () => {
                   <Text style={styles.countryCode}>+245</Text>
                   <TextInput
                     style={styles.phoneInput}
-                    value={paymentPhone ? String(paymentPhone).replace(/^\+?245/, '').replace(/\D/g, '') : ''}
-                    onChangeText={(text) => {
-                      const cleanNumber = text.replace(/^\+?245/, '').replace(/\D/g, '');
-                      setPaymentPhone(cleanNumber);
-                    }}
+                    value={paymentPhone}
+                    onChangeText={setPaymentPhone}
                     keyboardType="phone-pad"
                     editable={!isProcessingPayment}
-                    placeholder="955219149"
                   />
                 </View>
-
                 <View style={styles.modalActionsRow}>
                   <TouchableOpacity style={styles.cancelModalBtn} disabled={isProcessingPayment} onPress={() => setIsPaymentModalVisible(false)}>
                     <Text style={styles.cancelModalBtnText}>{t('back_btn', 'Cancelar')}</Text>
@@ -2216,297 +2234,508 @@ const handleSosPress = () => {
 }
 
 const styles = StyleSheet.create({
+  // ========================================================
+  // LAYOUT BASE E INDICADOR CENTRAL DO MAPA
+  // ========================================================
+  container: { flex: 1, backgroundColor: '#0F172A' },
+  loadingContainer: { 
+    flex: 1, 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    backgroundColor: '#0F172A', 
+    paddingHorizontal: 20 
+  },
+  loadingIconCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(234, 179, 8, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(234, 179, 8, 0.2)',
+  },
+  loadingText: { 
+    fontSize: 14, 
+    color: '#94A3B8', 
+    fontWeight: '600', 
+    textAlign: 'center',
+    lineHeight: 20 
+  },
+  retryLocationBtn: { 
+    marginTop: 20, 
+    paddingVertical: 14, 
+    paddingHorizontal: 24, 
+    backgroundColor: '#EAB308', 
+    borderRadius: 14,
+    elevation: 4,
+  },
   centerPinContainer: {
     position: 'absolute',
     top: '50%',
     left: '50%',
-    marginLeft: -18,
-    marginTop: -36,
+    marginLeft: -19,
+    marginTop: -38,
     alignItems: 'center',
     zIndex: 5,
   },
-  centerPin: {
-    marginBottom: -4,
-  },
+  centerPin: { marginBottom: -4 },
   pinShadow: {
-    width: 12,
-    height: 4,
-    borderRadius: 6,
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    width: 14,
+    height: 5,
+    borderRadius: 7,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
   },
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFF', paddingHorizontal: 20 },
-  loadingText: { fontSize: 14, color: '#64748B', marginTop: 12, fontWeight: '500', textAlign: 'center' },
-  retryLocationBtn: { marginTop: 20, paddingVertical: 12, paddingHorizontal: 20, backgroundColor: '#EAB308', borderRadius: 12 },
-  
+
+  // ========================================================
+  // HEADER FLUTUANTE DE TOPO (NÃO INVADE A BARRA DE STATUS)
+  // ========================================================
   floatingHeader: { 
     position: 'absolute', 
     top: Platform.OS === 'ios' ? 50 : (StatusBar.currentHeight || 20) + 10, 
     left: 16, 
     right: 16, 
     zIndex: 10, 
-    backgroundColor: '#EAB308', 
-    borderRadius: 20, 
+  },
+  headerContent: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    backgroundColor: '#1E293B', 
+    borderRadius: 22, 
+    paddingHorizontal: 14, 
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
     elevation: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+  },
+  headerUserInfo: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  avatarPlaceholder: { 
+    width: 36, 
+    height: 36, 
+    borderRadius: 18, 
+    backgroundColor: '#EAB308', 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    marginRight: 10, 
+    overflow: 'hidden' 
+  },
+  greetingText: { fontSize: 14, fontWeight: '700', color: '#F8FAFC' },
+  langHeaderBtn: { 
+    backgroundColor: '#0F172A', 
+    paddingHorizontal: 10, 
+    paddingVertical: 6, 
+    borderRadius: 12, 
+    marginRight: 8, 
+    borderWidth: 1, 
+    borderColor: '#334155' 
+  },
+  langHeaderBtnText: { fontSize: 11, fontWeight: '800', color: '#EAB308' },
+  menuIcon: { 
+    padding: 7, 
+    backgroundColor: '#0F172A', 
+    borderRadius: 12, 
+    borderWidth: 1, 
+    borderColor: '#334155' 
+  },
+
+  // ========================================================
+  // ATALHOS DE FAVORITOS (POSICIONADOS LOGO ABAIXO DO HEADER)
+  // ========================================================
+  favoritesContainer: { 
+    position: 'absolute', 
+    top: Platform.OS === 'ios' ? 112 : (StatusBar.currentHeight || 20) + 72, 
+    left: 16, 
+    right: 16, 
+    flexDirection: 'row', 
+    gap: 10, 
+    zIndex: 9 
+  },
+  favoriteButton: { 
+    flex: 1, 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    backgroundColor: '#1E293B', 
+    paddingHorizontal: 12, 
+    paddingVertical: 10, 
+    borderRadius: 16, 
+    borderWidth: 1, 
+    borderColor: '#334155',
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
     shadowRadius: 5,
   },
-  headerContent: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
-  headerUserInfo: { flexDirection: 'row', alignItems: 'center' },
-  avatarPlaceholder: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#FFF', justifyContent: 'center', alignItems: 'center', marginRight: 10, overflow: 'hidden' },
-  greetingText: { fontSize: 15, fontWeight: '700', color: '#0F172A' },
-  menuIcon: { padding: 4 },
-  dragHandlerArea: { width: '100%', alignItems: 'center', paddingVertical: 10, marginTop: -8 },
+  favoriteIconBg: { 
+    width: 28, 
+    height: 28, 
+    borderRadius: 14, 
+    backgroundColor: '#EAB308', 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    marginRight: 8 
+  },
+  favoriteText: { fontSize: 12, fontWeight: '700', color: '#F8FAFC', flex: 1 },
 
+  // ========================================================
+  // BOTÕES FLUTUANTES E MARCADORES DO MAPA
+  // ========================================================
   recenterButton: { 
     position: 'absolute', 
     right: 16, 
-    bottom: 310, 
-    backgroundColor: '#FFF', 
-    width: 44, 
-    height: 44, 
-    borderRadius: 22, 
+    bottom: 270, 
+    backgroundColor: '#1E293B', 
+    width: 46, 
+    height: 46, 
+    borderRadius: 23, 
     justifyContent: 'center', 
     alignItems: 'center', 
+    borderWidth: 1,
+    borderColor: '#334155',
     elevation: 6, 
     shadowColor: '#000', 
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25, 
-    shadowRadius: 5, 
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
     zIndex: 9 
   },
-  carMarker: { backgroundColor: '#EAB308', padding: 8, borderRadius: 20, borderWidth: 2, borderColor: '#FFF', elevation: 4 },
+  carMarker: { 
+    backgroundColor: '#EAB308', 
+    padding: 8, 
+    borderRadius: 20, 
+    borderWidth: 2, 
+    borderColor: '#0F172A', 
+    elevation: 4 
+  },
   driverMarkerContainer: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
+    elevation: 6,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
   },
 
-  favoritesContainer: { position: 'absolute', bottom: 195, left: 16, right: 16, flexDirection: 'row', gap: 10, zIndex: 9 },
-  favoriteButton: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 14, elevation: 6, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.15, shadowRadius: 5, gap: 8 },
-  favoriteIconBg: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#FEF08A', justifyContent: 'center', alignItems: 'center' },
-  favoriteText: { fontSize: 12, fontWeight: '600', color: '#0F172A', flex: 1 },
-
-  pinSecurityBadge: { position: 'absolute', top: 110, left: 16, right: 16, backgroundColor: '#FEF3C7', borderRadius: 16, padding: 12, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#F59E0B', zIndex: 10, elevation: 6, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.2, shadowRadius: 5 },
-  pinSecurityTextContainer: { flex: 1, marginLeft: 10 },
-  pinSecurityTitle: { fontSize: 12, fontWeight: '700', color: '#92400E' },
-  pinSecuritySub: { fontSize: 11, color: '#B45309' },
-  pinCodeBox: { backgroundColor: '#92400E', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
-  pinCodeText: { color: '#FFF', fontWeight: '800', fontSize: 14 },
-
-  bottomSheetWrapper: { position: 'absolute', bottom: Platform.OS === 'ios' ? 20 : 12, left: 12, right: 12, zIndex: 10, elevation: 12 },
-  bottomSheet: {
-    backgroundColor: '#FFF',
-    borderRadius: 28,
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    paddingTop: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -5 },
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    elevation: 20,
-    minHeight: 180,
-    maxHeight: Dimensions.get('window').height * 0.75,
-  },
-  dragIndicator: { width: 38, height: 4, backgroundColor: '#E2E8F0', borderRadius: 2, alignSelf: 'center', marginBottom: 14 },
-  sheetTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginBottom: 14 },
-  
-  mainSearchInput: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 12, elevation: 2 },
-  mainSearchText: { fontSize: 14, color: '#475569', flex: 1, fontWeight: '500' },
-  
-  requestButton: { backgroundColor: '#EAB308', paddingVertical: 14, borderRadius: 14, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 5 },
-  requestButtonText: { color: '#0F172A', fontSize: 15, fontWeight: '700' },
-
-  actionRow: { 
+  // ========================================================
+  // BADGE DE PIN DE SEGURANÇA NOTURNO
+  // ========================================================
+  pinSecurityBadge: { 
+    position: 'absolute', 
+    top: Platform.OS === 'ios' ? 112 : (StatusBar.currentHeight || 20) + 72, 
+    left: 16, 
+    right: 16, 
+    backgroundColor: '#1E293B', 
+    borderRadius: 18, 
+    padding: 12, 
     flexDirection: 'row', 
     alignItems: 'center', 
-    marginTop: 12, 
-    gap: 8,
-    width: '100%',
+    borderWidth: 1, 
+    borderColor: '#EAB308', 
+    zIndex: 10,
+    elevation: 8,
   },
-  iconCircleButton: { 
-    width: 44, 
-    height: 44, 
-    borderRadius: 22, 
-    backgroundColor: '#F1F5F9', 
+  pinSecurityTextContainer: { flex: 1, marginLeft: 10 },
+  pinSecurityTitle: { fontSize: 12, fontWeight: '800', color: '#EAB308' },
+  pinSecuritySub: { fontSize: 11, color: '#94A3B8', marginTop: 1 },
+  pinCodeBox: { backgroundColor: '#EAB308', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  pinCodeText: { color: '#0F172A', fontWeight: '900', fontSize: 15 },
+
+  // ========================================================
+  // PAINEL INFERIOR (BOTTOM SHEET SLIDING PANEL)
+  // ========================================================
+  bottomSheetWrapper: { position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 20 },
+  bottomSheet: {
+    backgroundColor: '#1E293B',
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    paddingHorizontal: 20,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+    paddingTop: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    elevation: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    minHeight: 190,
+    maxHeight: Dimensions.get('window').height * 0.78,
+  },
+  dragHandlerArea: { width: '100%', alignItems: 'center', paddingVertical: 10 },
+  dragIndicator: { width: 40, height: 5, backgroundColor: '#475569', borderRadius: 3 },
+  sheetTitle: { fontSize: 19, fontWeight: '800', color: '#FFFFFF', marginBottom: 14 },
+  
+  mainSearchInput: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    backgroundColor: '#0F172A', 
+    borderRadius: 16, 
+    paddingHorizontal: 16, 
+    height: 54, 
+    borderWidth: 1, 
+    borderColor: '#334155', 
+    marginBottom: 14 
+  },
+  mainSearchText: { fontSize: 14, color: '#94A3B8', flex: 1, fontWeight: '500' },
+  
+  requestButton: { 
+    backgroundColor: '#EAB308', 
+    height: 52, 
+    borderRadius: 16, 
     justifyContent: 'center', 
     alignItems: 'center', 
-    borderWidth: 1, 
-    borderColor: '#E2E8F0',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 3
+    flexDirection: 'row',
+    elevation: 6,
   },
-  cancelButtonOutline: { 
-    flex: 1, 
-    height: 44,
-    borderWidth: 1, 
-    borderColor: '#CBD5E1', 
-    paddingHorizontal: 6, 
-    borderRadius: 12, 
-    alignItems: 'center', 
-    justifyContent: 'center',
-    backgroundColor: '#FFF'
+  requestButtonText: { color: '#0F172A', fontSize: 15, fontWeight: '800' },
+  requestButtonDisabled: { 
+    backgroundColor: '#0F172A', 
+    height: 52, 
+    borderRadius: 16, 
+    justifyContent: 'center', 
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#334155'
   },
-  cancelButtonOutlineText: { 
-    color: '#475569', 
-    fontSize: 12, 
-    fontWeight: '600' 
-  },
+  requestButtonDisabledText: { color: '#64748B', fontSize: 14, fontWeight: '600' },
 
-  sectionLabel: { fontSize: 12, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, marginTop: 12 },
+  // ========================================================
+  // SELEÇÃO DE TIPO DE SERVIÇO E VEÍCULOS
+  // ========================================================
+  sectionLabel: { fontSize: 12, fontWeight: '700', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, marginTop: 10 },
+  modernSectionHeader: { fontSize: 15, fontWeight: '700', color: '#F8FAFC', marginBottom: 10 },
+  
   serviceTypesContainer: { flexDirection: 'row', gap: 8 },
-  serviceTypeButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 12, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0' },
-  serviceTypeActive: { backgroundColor: '#FEF08A', borderColor: '#EAB308' },
-  serviceTypeText: { fontSize: 13, fontWeight: '600', color: '#64748B' },
-  serviceTypeTextActive: { color: '#0F172A', fontWeight: '700' },
+  serviceTypeButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 12, backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155' },
+  serviceTypeActive: { backgroundColor: '#EAB308', borderColor: '#EAB308' },
+  serviceTypeText: { fontSize: 13, fontWeight: '600', color: '#94A3B8' },
+  serviceTypeTextActive: { color: '#0F172A', fontWeight: '800' },
 
-  vehicleCategoryContainer: { gap: 8 },
-  categoryCard: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 16, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0' },
-  categoryCardActive: { backgroundColor: '#FEF08A', borderColor: '#EAB308', borderWidth: 2 },
-  vehicleImage: { width: 48, height: 36, marginRight: 12 },
+  modernTabGroup: { flexDirection: 'row', backgroundColor: '#0F172A', borderRadius: 16, padding: 4, marginBottom: 12, borderWidth: 1, borderColor: '#334155' },
+  modernTab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, borderRadius: 12 },
+  modernTabActive: { backgroundColor: '#EAB308' },
+  modernTabText: { fontSize: 13, fontWeight: '600', color: '#94A3B8', marginLeft: 6 },
+  modernTabTextActive: { color: '#0F172A', fontWeight: '800' },
+
+  vehicleCategoryContainer: { gap: 10 },
+  categoryCard: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 18, backgroundColor: '#0F172A', borderWidth: 1.5, borderColor: '#334155' },
+  categoryCardActive: { borderColor: '#EAB308', backgroundColor: 'rgba(234, 179, 8, 0.08)' },
+  vehicleImage: { width: 52, height: 38, marginRight: 12 },
   categoryTextWrapper: { flex: 1 },
-  categoryTitle: { fontSize: 14, fontWeight: '700', color: '#0F172A' },
-  categorySubtitle: { fontSize: 11, color: '#64748B' },
-  categoryPriceText: { fontSize: 14, fontWeight: '800', color: '#0F172A' },
-  categoryTextActive: { color: '#0F172A' },
-  categoryPriceTextActive: { color: '#0F172A' },
+  categoryTitle: { fontSize: 15, fontWeight: '700', color: '#CBD5E1' },
+  categorySubtitle: { fontSize: 12, color: '#64748B', marginTop: 2 },
+  categoryPriceText: { fontSize: 15, fontWeight: '800', color: '#CBD5E1' },
+  categoryTextActive: { color: '#FFFFFF' },
+  categoryPriceTextActive: { color: '#EAB308' },
+
+  vehicleCardModern: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', borderRadius: 18, padding: 14, borderWidth: 1.5, borderColor: '#334155' },
+  vehicleCardModernActive: { borderColor: '#EAB308', backgroundColor: 'rgba(234, 179, 8, 0.08)' },
+  vehicleImgModern: { width: 54, height: 40, marginRight: 12 },
+  vehicleInfoCol: { flex: 1 },
+  vehicleTitleModern: { fontSize: 15, fontWeight: '700', color: '#CBD5E1' },
+  vehicleTitleActive: { color: '#FFFFFF' },
+  vehicleSubtitleModern: { fontSize: 12, color: '#64748B', marginTop: 2 },
+  vehiclePriceModern: { fontSize: 15, fontWeight: '800', color: '#CBD5E1' },
+  vehiclePriceActive: { color: '#EAB308' },
+  popularBadge: { backgroundColor: '#EAB308', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginLeft: 8 },
+  popularBadgeText: { color: '#0F172A', fontSize: 9, fontWeight: '900' },
+  etaText: { fontSize: 11, color: '#64748B', marginTop: 2 },
+
+  // ========================================================
+  // ALUGUEL E PONTO DE REFERÊNCIA
+  // ========================================================
+  rentalHighlightCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', borderRadius: 18, padding: 16, borderWidth: 2, borderColor: '#EAB308' },
+  rentalBadgeIcon: { width: 44, height: 44, borderRadius: 14, backgroundColor: '#EAB308', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  rentalTitle: { fontSize: 16, fontWeight: '800', color: '#FFFFFF' },
+  rentalSubtitle: { fontSize: 12, color: '#94A3B8', marginTop: 2 },
+  rentalPrice: { fontSize: 15, fontWeight: '800', color: '#10B981' },
 
   referenceContainer: { marginBottom: 12 },
-  referenceInput: { backgroundColor: '#F8FAFC', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, color: '#0F172A' },
+  referenceInput: { backgroundColor: '#0F172A', borderRadius: 14, borderWidth: 1, borderColor: '#334155', paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#FFFFFF' },
+  referenceLabel: { fontSize: 12, fontWeight: '600', color: '#94A3B8', marginBottom: 6 },
+  referenceBoxModern: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155', borderRadius: 14, paddingHorizontal: 12, height: 48 },
+  referenceInputModern: { flex: 1, color: '#FFFFFF', fontSize: 14 },
 
-  paymentOptionsContainer: { flexDirection: 'row', gap: 8, marginBottom: 16 },
-  paymentBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, borderRadius: 12, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0' },
-  paymentBtnActive: { backgroundColor: '#FEF08A', borderColor: '#EAB308' },
-  paymentBtnText: { fontSize: 12, fontWeight: '600', color: '#64748B' },
-  paymentBtnTextActive: { color: '#0F172A', fontWeight: '700' },
+  // ========================================================
+  // SELETOR DE PAGAMENTOS
+  // ========================================================
+  paymentOptionsContainer: { gap: 10, marginBottom: 16 },
+  paymentBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', borderRadius: 18, padding: 14, borderWidth: 1.5, borderColor: '#334155' },
+  paymentBtnActive: { borderColor: '#EAB308', backgroundColor: 'rgba(234, 179, 8, 0.08)' },
+  paymentBtnText: { fontSize: 15, fontWeight: '700', color: '#CBD5E1' },
+  paymentBtnTextActive: { color: '#FFFFFF' },
 
-  pinCardContainer: { backgroundColor: '#ECFDF5', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#10B981', marginBottom: 12 },
+  paymentGridModern: { gap: 10, marginBottom: 14 },
+  paymentTileModern: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', borderRadius: 18, padding: 14, borderWidth: 1.5, borderColor: '#334155' },
+  paymentTileOrangeActive: { borderColor: '#FF6600', backgroundColor: 'rgba(255, 102, 0, 0.08)' },
+  paymentTileMtnActive: { borderColor: '#EAB308', backgroundColor: 'rgba(234, 179, 8, 0.08)' },
+  paymentTileCashActive: { borderColor: '#10B981', backgroundColor: 'rgba(16, 185, 129, 0.08)' },
+  paymentBadgeIcon: { width: 36, height: 36, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  paymentTileTitle: { fontSize: 15, fontWeight: '700', color: '#CBD5E1' },
+  paymentTileSub: { fontSize: 12, color: '#64748B', marginTop: 1 },
+  textWhite: { color: '#FFFFFF' },
+
+  fareSummaryBox: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#0F172A', borderRadius: 16, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#334155' },
+  fareSummaryLabel: { fontSize: 14, color: '#94A3B8', fontWeight: '500' },
+  fareSummaryValue: { fontSize: 18, fontWeight: '900', color: '#EAB308' },
+
+  // ========================================================
+  // BOTOES DE AÇÃO DA BOTTOM SHEET
+  // ========================================================
+  actionRow: { flexDirection: 'row', alignItems: 'center', marginTop: 12, gap: 8, width: '100%' },
+  iconCircleButton: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#0F172A', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#334155' },
+  cancelButtonOutline: { flex: 1, height: 46, borderWidth: 1, borderColor: '#334155', paddingHorizontal: 6, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0F172A' },
+  cancelButtonOutlineText: { color: '#CBD5E1', fontSize: 13, fontWeight: '600' },
+
+  actionRowModern: { flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 10 },
+  backBtnModern: { width: 50, height: 50, borderRadius: 16, backgroundColor: '#0F172A', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#334155' },
+  primaryBtnModern: { flex: 1, height: 50, borderRadius: 16, backgroundColor: '#EAB308', flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
+  primaryBtnText: { color: '#0F172A', fontSize: 15, fontWeight: '800' },
+  confirmRideBtn: { flex: 1, height: 50, borderRadius: 16, backgroundColor: '#EAB308', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', elevation: 6 },
+  confirmRideBtnText: { color: '#0F172A', fontSize: 15, fontWeight: '900' },
+
+  cancelSearchBtnModern: { marginTop: 16, paddingVertical: 12, paddingHorizontal: 20, borderRadius: 14, borderWidth: 1, borderColor: '#334155', backgroundColor: '#0F172A', alignItems: 'center' },
+  cancelSearchBtnText: { color: '#CBD5E1', fontSize: 13, fontWeight: '700' },
+  cancelBtnSecondary: { paddingHorizontal: 16, height: 48, borderRadius: 14, borderWidth: 1, borderColor: '#334155', backgroundColor: '#0F172A', justifyContent: 'center', alignItems: 'center' },
+  cancelBtnSecondaryText: { color: '#CBD5E1', fontSize: 13, fontWeight: '600' },
+  chatActionBtn: { flex: 1, height: 48, borderRadius: 14, backgroundColor: '#EAB308', flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
+  chatActionBtnText: { color: '#0F172A', fontSize: 14, fontWeight: '800' },
+
+  // ========================================================
+  // PIN CARD, STATUS DE BUSCA E CARD DO MOTORISTA
+  // ========================================================
+  pinCardContainer: { backgroundColor: 'rgba(16, 185, 129, 0.1)', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#10B981', marginBottom: 12 },
   pinHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
-  pinTitle: { fontSize: 12, fontWeight: '800', color: '#065F46' },
-  pinSubtitle: { fontSize: 11, color: '#047857', marginBottom: 10 },
+  pinTitle: { fontSize: 12, fontWeight: '800', color: '#10B981' },
+  pinSubtitle: { fontSize: 11, color: '#A7F3D0', marginBottom: 10 },
   pinDigitsRow: { flexDirection: 'row', justifyContent: 'center', gap: 8 },
-  pinDigitBox: { backgroundColor: '#065F46', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
-  pinDigitText: { fontSize: 18, fontWeight: '800', color: '#FFF' },
+  pinDigitBox: { backgroundColor: '#10B981', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
+  pinDigitText: { fontSize: 18, fontWeight: '800', color: '#FFFFFF' },
 
   statusBox: { alignItems: 'center', paddingVertical: 20 },
-  statusTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A', marginBottom: 4 },
-  statusSub: { fontSize: 13, color: '#64748B', textAlign: 'center' },
+  statusTitle: { fontSize: 16, fontWeight: '800', color: '#FFFFFF', marginBottom: 4 },
+  statusSub: { fontSize: 13, color: '#94A3B8', textAlign: 'center' },
 
-  driverCardContainer: { backgroundColor: '#F8FAFC', borderRadius: 16, padding: 12, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 12 },
+  driverCardContainer: { backgroundColor: '#0F172A', borderRadius: 18, padding: 14, borderWidth: 1, borderColor: '#334155', marginBottom: 12 },
   driverMainInfo: { flexDirection: 'row', alignItems: 'center' },
-  driverAvatarProfile: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#E2E8F0', marginRight: 12, justifyContent: 'center', alignItems: 'center' },
+  driverAvatarProfile: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#334155', marginRight: 12, justifyContent: 'center', alignItems: 'center' },
   driverDetails: { flex: 1 },
-  driverName: { fontSize: 15, fontWeight: '700', color: '#0F172A' },
+  driverName: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
   driverRatingBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
-  driverRatingText: { fontSize: 12, fontWeight: '700', color: '#0F172A' },
+  driverRatingText: { fontSize: 12, fontWeight: '700', color: '#EAB308' },
 
-  dividerLight: { height: 1, backgroundColor: '#E2E8F0', marginVertical: 10 },
+  dividerLight: { height: 1, backgroundColor: '#334155', marginVertical: 10 },
 
   vehicleShowcase: { flexDirection: 'row', alignItems: 'center' },
-  showcaseVehicleImg: { width: 42, height: 30, marginRight: 10 },
+  showcaseVehicleImg: { width: 44, height: 32, marginRight: 10 },
   vehicleDetailsCol: { flex: 1 },
-  vehicleModelText: { fontSize: 13, fontWeight: '700', color: '#0F172A' },
+  vehicleModelText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
   colorAndPlateRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
-  modernColorChip: { width: 10, height: 10, borderRadius: 5, marginRight: 6, borderWidth: 1, borderColor: '#CBD5E1' },
-  vehicleColorText: { fontSize: 11, color: '#64748B' },
-  dotSeparator: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: '#94A3B8', marginHorizontal: 6 },
-  modernPlateBadge: { backgroundColor: '#0F172A', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  modernPlateText: { color: '#FFF', fontSize: 10, fontWeight: '800' },
+  modernColorChip: { width: 10, height: 10, borderRadius: 5, marginRight: 6, borderWidth: 1, borderColor: '#64748B' },
+  vehicleColorText: { fontSize: 11, color: '#94A3B8' },
+  dotSeparator: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: '#64748B', marginHorizontal: 6 },
+  modernPlateBadge: { backgroundColor: '#EAB308', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  modernPlateText: { color: '#0F172A', fontSize: 10, fontWeight: '900' },
 
-  statusBanner: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#FEF08A', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, marginBottom: 8 },
-  statusBannerText: { fontSize: 13, fontWeight: '700', color: '#0F172A' },
+  statusBanner: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#EAB308', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 14, marginBottom: 8 },
+  statusBannerText: { fontSize: 13, fontWeight: '800', color: '#0F172A' },
   shareButton: { padding: 4 },
+  sosButton: { backgroundColor: 'rgba(239, 68, 68, 0.15)', borderColor: '#EF4444' },
 
-  sosButton: { backgroundColor: '#FEE2E2', borderColor: '#FCA5A5' },
+  // ========================================================
+  // MODAIS (IDIOMA, GPS, PERMISSÕES E MOBILE MONEY)
+  // ========================================================
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.85)', justifyContent: 'center', padding: 20 },
+  modalContainer: { backgroundColor: '#1E293B', borderRadius: 24, padding: 24, borderWidth: 1, borderColor: '#334155' },
+  modalTitle: { fontSize: 18, fontWeight: '800', color: '#FFFFFF', marginBottom: 16, textAlign: 'center' },
+  langOption: { paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#334155' },
+  langOptionText: { color: '#F8FAFC', fontSize: 15, fontWeight: '600', textAlign: 'center' },
+  closeButton: { marginTop: 16, alignItems: 'center', paddingVertical: 10 },
 
-  langHeaderBtn: { backgroundColor: '#FFF', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, marginRight: 8 },
-  langHeaderBtnText: { fontSize: 11, fontWeight: '800', color: '#0F172A' },
+  locationModalCard: { backgroundColor: '#1E293B', borderRadius: 24, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: '#334155' },
+  locationIconBg: { width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(234, 179, 8, 0.1)', justifyContent: 'center', alignItems: 'center', marginBottom: 16 },
+  locationModalTitle: { fontSize: 18, fontWeight: '800', color: '#FFFFFF', marginBottom: 8 },
+  locationModalText: { fontSize: 13, color: '#94A3B8', textAlign: 'center', lineHeight: 19, marginBottom: 20 },
 
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.6)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 20 },
-  modalContainer: { width: '100%', backgroundColor: '#FFF', borderRadius: 20, padding: 20, alignItems: 'center' },
-  modalTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A', marginBottom: 16 },
-  langOption: { width: '100%', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', alignItems: 'center' },
-  langOptionText: { fontSize: 14, fontWeight: '600', color: '#0F172A' },
-  closeButton: { marginTop: 16, paddingVertical: 8 },
-
-  locationModalCard: { width: '100%', backgroundColor: '#FFF', borderRadius: 24, padding: 20, alignItems: 'center' },
-  locationIconBg: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#FEF08A', justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
-  locationModalTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A', marginBottom: 8, textAlign: 'center' },
-  locationModalText: { fontSize: 13, color: '#64748B', textAlign: 'center', marginBottom: 20, lineHeight: 18 },
-
-  paymentModalCard: { width: '100%', backgroundColor: '#FFF', borderRadius: 24, overflow: 'hidden' },
+  paymentModalCard: { backgroundColor: '#1E293B', borderRadius: 24, overflow: 'hidden', borderWidth: 1, borderColor: '#334155' },
   operatorHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 16 },
   operatorTitle: { fontSize: 16, fontWeight: '800' },
   paymentModalBody: { padding: 16 },
-  paymentModalSubtitle: { fontSize: 12, color: '#64748B', marginBottom: 16, lineHeight: 18 },
-  amountBadge: { backgroundColor: '#F8FAFC', padding: 12, borderRadius: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, borderWidth: 1, borderColor: '#E2E8F0' },
-  amountTextLabel: { fontSize: 13, fontWeight: '600', color: '#64748B' },
-  amountValue: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
-  inputLabel: { fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6 },
-  phoneInputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 12, paddingHorizontal: 12, marginBottom: 20 },
-  countryCode: { fontSize: 14, fontWeight: '700', color: '#0F172A', marginRight: 8 },
-  phoneInput: { flex: 1, paddingVertical: 12, fontSize: 15, fontWeight: '700', color: '#0F172A' },
+  paymentModalSubtitle: { fontSize: 12, color: '#94A3B8', marginBottom: 16, lineHeight: 18 },
+  amountBadge: { backgroundColor: '#0F172A', padding: 12, borderRadius: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, borderWidth: 1, borderColor: '#334155' },
+  amountTextLabel: { fontSize: 13, fontWeight: '600', color: '#94A3B8' },
+  amountValue: { fontSize: 16, fontWeight: '800', color: '#EAB308' },
+  inputLabel: { fontSize: 12, fontWeight: '700', color: '#CBD5E1', marginBottom: 6 },
+  phoneInputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155', borderRadius: 12, paddingHorizontal: 12, marginBottom: 20 },
+  countryCode: { fontSize: 14, fontWeight: '700', color: '#EAB308', marginRight: 8 },
+  phoneInput: { flex: 1, paddingVertical: 12, fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
   modalActionsRow: { flexDirection: 'row', gap: 10 },
-  cancelModalBtn: { flex: 1, paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: '#CBD5E1', alignItems: 'center' },
-  cancelModalBtnText: { color: '#475569', fontWeight: '700', fontSize: 13 },
+  cancelModalBtn: { flex: 1, paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: '#334155', alignItems: 'center' },
+  cancelModalBtnText: { color: '#CBD5E1', fontWeight: '700', fontSize: 13 },
   confirmModalBtn: { flex: 1.5, paddingVertical: 12, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  confirmModalBtnText: { color: '#FFF', fontWeight: '800', fontSize: 13 },
+  confirmModalBtnText: { fontWeight: '800', fontSize: 13 },
 
-  menuOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.5)' },
-  menuDrawer: { width: '75%', height: '100%', backgroundColor: '#FFF', padding: 20 },
+  // ========================================================
+  // MENU DRAWER LATERAL
+  // ========================================================
+  menuOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.8)' },
+  menuDrawer: { width: '75%', height: '100%', backgroundColor: '#1E293B', padding: 20, borderRightWidth: 1, borderRightColor: '#334155' },
   menuHeader: { marginTop: Platform.OS === 'ios' ? 40 : 20, marginBottom: 20 },
-  avatarPlaceholderLarge: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#FEF08A', justifyContent: 'center', alignItems: 'center', marginBottom: 12, overflow: 'hidden' },
-  menuUserName: { fontSize: 18, fontWeight: '800', color: '#0F172A' },
-  menuUserPhone: { fontSize: 13, color: '#64748B' },
+  avatarPlaceholderLarge: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#EAB308', justifyContent: 'center', alignItems: 'center', marginBottom: 12, overflow: 'hidden' },
+  menuUserName: { fontSize: 18, fontWeight: '800', color: '#FFFFFF' },
+  menuUserPhone: { fontSize: 13, color: '#94A3B8' },
   menuItems: { flex: 1 },
   menuItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14 },
-  menuItemText: { fontSize: 14, fontWeight: '600', color: '#0F172A' },
-  menuDivider: { height: 1, backgroundColor: '#E2E8F0', my: 12, marginVertical: 12 },
+  menuItemText: { fontSize: 14, fontWeight: '600', color: '#F8FAFC' },
+  menuDivider: { height: 1, backgroundColor: '#334155', marginVertical: 12 },
 
-  chatOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.6)', justifyContent: 'flex-end' },
-  chatContainer: { height: '80%', backgroundColor: '#FFF', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 16 },
-  chatHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
+  // ========================================================
+  // CHAT INTERNO
+  // ========================================================
+  chatOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.85)', justifyContent: 'flex-end' },
+  chatContainer: { height: '80%', backgroundColor: '#1E293B', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 16, borderWidth: 1, borderColor: '#334155' },
+  chatHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#334155' },
   chatHeaderUserInfo: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   headerAvatar: { width: 32, height: 32, borderRadius: 16 },
-  headerAvatarPlaceholder: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center' },
-  chatTitle: { fontSize: 15, fontWeight: '700', color: '#0F172A' },
+  headerAvatarPlaceholder: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#0F172A', justifyContent: 'center', alignItems: 'center' },
+  chatTitle: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
   chatList: { paddingVertical: 12 },
   messageRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 10, gap: 8 },
   rowPassenger: { justifyContent: 'flex-end' },
   rowDriver: { justifyContent: 'flex-start' },
   chatBubbleAvatar: { width: 24, height: 24, borderRadius: 12 },
-  chatBubbleAvatarPlaceholder: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#E2E8F0', justifyContent: 'center', alignItems: 'center' },
+  chatBubbleAvatarPlaceholder: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#0F172A', justifyContent: 'center', alignItems: 'center' },
   messageBubble: { maxWidth: '75%', padding: 12, borderRadius: 16 },
   messagePassenger: { backgroundColor: '#EAB308', borderBottomRightRadius: 2 },
-  messageDriver: { backgroundColor: '#F1F5F9', borderBottomLeftRadius: 2 },
+  messageDriver: { backgroundColor: '#0F172A', borderBottomLeftRadius: 2 },
   messageText: { fontSize: 13, lineHeight: 18 },
   textPassenger: { color: '#0F172A', fontWeight: '600' },
-  textDriver: { color: '#0F172A', fontWeight: '500' },
+  textDriver: { color: '#FFFFFF', fontWeight: '500' },
   chatInputContainer: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: 8 },
-  chatInput: { flex: 1, backgroundColor: '#F8FAFC', borderRadius: 20, borderWidth: 1, borderColor: '#E2E8F0', paddingHorizontal: 16, paddingVertical: 10, fontSize: 13, color: '#0F172A' },
-  chatSendButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#0F172A', justifyContent: 'center', alignItems: 'center' },
+  chatInput: { flex: 1, backgroundColor: '#0F172A', borderRadius: 20, borderWidth: 1, borderColor: '#334155', paddingHorizontal: 16, paddingVertical: 10, fontSize: 13, color: '#FFFFFF' },
+  chatSendButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#EAB308', justifyContent: 'center', alignItems: 'center' },
 
-  searchModalContainer: { flex: 1, backgroundColor: '#FFF' },
-  searchHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
+  // ========================================================
+  // MODAL DE BUSCA MAPBOX DE ENDEREÇOS
+  // ========================================================
+  searchModalContainer: { flex: 1, backgroundColor: '#0F172A' },
+  searchHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#334155' },
   backButton: { padding: 4 },
-  passengerSelector: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F1F5F9', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12 },
-  passengerSelectorText: { fontSize: 12, fontWeight: '600', color: '#475569' },
+  passengerSelector: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1E293B', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, borderWidth: 1, borderColor: '#334155' },
+  passengerSelectorText: { fontSize: 12, fontWeight: '600', color: '#F8FAFC' },
   modalBody: { flex: 1, padding: 16 },
-  mapboxSearchInputWrapper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 2 },
-  mapboxSearchInput: { flex: 1, paddingVertical: 10, fontSize: 14, color: '#0F172A', fontWeight: '500' },
-  searchResultItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
-  searchResultText: { fontSize: 13, color: '#0F172A', fontWeight: '500', flex: 1 },
+  mapboxSearchInputWrapper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1E293B', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 2, borderWidth: 1, borderColor: '#334155' },
+  mapboxSearchInput: { flex: 1, paddingVertical: 10, fontSize: 14, color: '#FFFFFF', fontWeight: '500' },
+  searchResultItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#1E293B' },
+  searchResultText: { fontSize: 13, color: '#F8FAFC', fontWeight: '500', flex: 1 },
 });

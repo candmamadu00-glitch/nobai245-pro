@@ -3,11 +3,9 @@
     "name": "nobai245-motorista",
     "slug": "nobai245-motorista",
     "version": "1.0.0",
-    "jsEngine": "hermes",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": false,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -27,7 +25,7 @@
       }
     },
     "android": {
-      "usesCleartextTraffic": true,
+      "newArchEnabled": false,
       "adaptiveIcon": {
         "backgroundColor": "#0E243C",
         "foregroundImage": "./assets/android-icon-foreground.png"
@@ -80,7 +78,9 @@
           "color": "#0E243C"
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-splash-screen",
+      "expo-audio"
     ],
     "extra": {
       "eas": {

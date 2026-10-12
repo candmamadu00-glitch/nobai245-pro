@@ -732,15 +732,24 @@ export class DriverAuthController {
   }
   
   // ==========================================
-  // 🖼️ ATUALIZAR FOTO DE PERFIL
+  // 🖼️ ATUALIZAR FOTO DE PERFIL (FLEXÍVEL)
   // ==========================================
   async updateProfilePicture(req: Request, res: Response): Promise<Response> {
     try {
       const driverId = (req as any).user?.id;
       if (!driverId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
 
-      const file = req.file;
-      if (!file) return res.status(400).json({ success: false, error: 'Nenhuma imagem foi enviada.' });
+      // Captura o arquivo vindo por req.file ou por req.files
+      const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+      const file = req.file || 
+                   files?.['profilePicture']?.[0] || 
+                   files?.['photo']?.[0] || 
+                   files?.['file']?.[0] || 
+                   files?.['image']?.[0];
+
+      if (!file) {
+        return res.status(400).json({ success: false, error: 'Nenhuma imagem foi enviada.' });
+      }
 
       const baseUrl = process.env.APP_URL ? process.env.APP_URL.replace(/\/$/, '') : `${req.protocol}://${req.get('host')}`;
       const newProfilePicture = `${baseUrl}/uploads/${encodeURIComponent(file.filename)}`;
@@ -750,13 +759,16 @@ export class DriverAuthController {
         data: { profilePicture: newProfilePicture }
       });
 
-      return res.status(200).json({ success: true, message: 'Foto atualizada com sucesso', profilePicture: newProfilePicture });
+      return res.status(200).json({ 
+        success: true, 
+        message: 'Foto atualizada com sucesso', 
+        profilePicture: newProfilePicture 
+      });
     } catch (error: any) {
       console.error('❌ [FOTO PERFIL]:', error?.message || error);
       return res.status(500).json({ success: false, error: 'Erro ao processar imagem.' });
     }
   }
-}
 
 const driverAuthController = new DriverAuthController();
 
