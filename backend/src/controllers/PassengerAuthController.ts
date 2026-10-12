@@ -683,46 +683,56 @@ export class PassengerAuthController {
     }
   }
 
-  // 15. LOGIN COM GOOGLE (BLINDADO E MULTI-AUDIENCE)
+  // 15. LOGIN COM GOOGLE (COM LOGS DEPURATIVOS DETALHADOS)
   async googleSignIn(req: Request, res: Response): Promise<Response> {
+    console.log('\n======================================================');
+    console.log('🚀 [GOOGLE SIGNIN] Nova tentativa de login iniciada');
+    console.log('📥 [REQ BODY RECEBIDO]:', JSON.stringify({ ...req.body, idToken: req.body?.idToken ? `${req.body.idToken.substring(0, 30)}...` : 'AUSENTE' }));
+
     try {
       const { idToken, deviceToken } = req.body;
 
       if (!idToken || typeof idToken !== 'string') {
+        console.error('❌ [GOOGLE SIGNIN ERRO]: idToken ausente ou inválido no body da requisição.');
         return res.status(400).json({ success: false, error: 'Token do Google não fornecido.' });
       }
 
+      const configuredClientId = process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_WEB_CLIENT_ID || process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
+      console.log('🔑 [GOOGLE SIGNIN] Client ID ativo no .env:', configuredClientId || '❌ NENHUM CONFIGURADO!');
+
       let payload: any = null;
 
-      // 🛡️ Tenta validar via google-auth-library com suporte a múltiplos Client IDs
+      // 1. Tentativa via google-auth-library
       try {
-        const acceptedAudiences = [
-          process.env.GOOGLE_CLIENT_ID,
-          process.env.GOOGLE_WEB_CLIENT_ID,
-          process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
-        ].filter(Boolean) as string[];
-
+        console.log('🔍 [GOOGLE SIGNIN] Validando idToken com google-auth-library...');
         const ticket = await googleClient.verifyIdToken({
           idToken,
-          ...(acceptedAudiences.length > 0 && { audience: acceptedAudiences }),
+          audience: configuredClientId ? [configuredClientId] : undefined,
         });
         payload = ticket.getPayload();
+        console.log('✅ [GOOGLE SIGNIN] Validação local efetuada! E-mail:', payload?.email);
       } catch (verifyErr: any) {
-        console.warn('⚠️ [GOOGLE AUTH] Falha na verificação local de audience. Executando fallback via Google API:', verifyErr?.message);
+        console.warn('⚠️ [GOOGLE SIGNIN] Falha na validação local (audience/library):', verifyErr?.message);
         
-        // 🚀 Fallback direto na API de verificação de token da Google
-        const googleTokenRes = await axios.get(`https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`, { timeout: 8000 });
-        if (googleTokenRes.data && googleTokenRes.data.email) {
-          payload = {
-            email: googleTokenRes.data.email,
-            name: googleTokenRes.data.name || googleTokenRes.data.email.split('@')[0],
-            picture: googleTokenRes.data.picture || null,
-          };
+        // 2. Fallback via Endpoint HTTP oficial do Google
+        try {
+          console.log('🌐 [GOOGLE SIGNIN] Executando fallback via API OAuth2 direta do Google...');
+          const googleTokenRes = await axios.get(`https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`, { timeout: 8000 });
+          console.log('✅ [GOOGLE SIGNIN] Resposta do Fallback Google API:', googleTokenRes.data?.email ? `Sucesso (${googleTokenRes.data.email})` : 'Sem Email');
+          if (googleTokenRes.data && googleTokenRes.data.email) {
+            payload = {
+              email: googleTokenRes.data.email,
+              name: googleTokenRes.data.name || googleTokenRes.data.email.split('@')[0],
+              picture: googleTokenRes.data.picture || null,
+            };
+          }
+        } catch (fallbackErr: any) {
+          console.error('❌ [GOOGLE SIGNIN ERRO FALLBACK]:', fallbackErr?.response?.data || fallbackErr?.message);
         }
       }
 
       if (!payload || !payload.email) {
-        console.error('❌ [LOGIN GOOGLE ERRO]: Token inválido ou sem permissão de e-mail.');
+        console.error('❌ [GOOGLE SIGNIN ERRO FINAL]: Impossível obter e-mail válido do Google.');
         return res.status(400).json({ success: false, error: 'Token do Google inválido, expirado ou sem e-mail.' });
       }
 
@@ -730,9 +740,11 @@ export class PassengerAuthController {
       const name = payload.name || payload.given_name || email.split('@')[0];
       const picture = payload.picture || null;
 
+      console.log(`👤 [GOOGLE SIGNIN] Pesquisando passageiro no banco de dados para: ${email}`);
       const passenger = await prisma.passenger.findUnique({ where: { email } });
 
       if (!passenger) {
+        console.log('🆕 [GOOGLE SIGNIN] Passageiro não encontrado. Retornando isNewUser: true');
         return res.status(200).json({
           success: true,
           isNewUser: true,
@@ -741,7 +753,10 @@ export class PassengerAuthController {
         });
       }
 
+      console.log('✅ [GOOGLE SIGNIN] Passageiro cadastrado localizado. ID:', passenger.id);
+
       if (DISABLED_STATUSES.includes((passenger.status || '').toUpperCase())) {
+        console.warn('⛔ [GOOGLE SIGNIN] Conta com status suspenso/inativo.');
         return res.status(403).json({ success: false, error: 'Sua conta de passageiro está suspensa ou inativa.' });
       }
 
@@ -769,6 +784,7 @@ export class PassengerAuthController {
         },
       });
 
+      console.log('🎉 [GOOGLE SIGNIN] Login finalizado com sucesso!');
       return res.json({
         success: true,
         message: 'Login com Google realizado com sucesso!',
@@ -789,8 +805,10 @@ export class PassengerAuthController {
       });
 
     } catch (error: any) {
-      console.error('❌ [LOGIN GOOGLE PASSAGEIRO]:', error?.response?.data || error?.message || error);
-      return res.status(500).json({ success: false, error: 'Erro interno ao validar autenticação com o Google.' });
+      console.error('❌ [GOOGLE SIGNIN ERRO EXCEÇÃO]:', error?.response?.data || error?.stack || error?.message || error);
+      return res.status(500).json({ success: false, error: `Erro ao validar Google: ${error?.message || 'Falha no servidor'}` });
+    } finally {
+      console.log('======================================================\n');
     }
   }
   // 16. CONCLUIR REGISTRO GOOGLE

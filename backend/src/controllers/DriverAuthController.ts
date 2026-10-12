@@ -270,11 +270,17 @@ export class DriverAuthController {
     return this.resetPasswordWithOtp(req, res);
   }
 
-  // ==========================================
-  // 📝 REGISTRO DE MOTORISTA
+  /// ==========================================
+  // 📝 REGISTRO DE MOTORISTA (COM LOGS DE DEPURAÇÃO)
   // ==========================================
   async register(req: Request, res: Response): Promise<Response> {
     try {
+      // 🔍 LOG 1: CONTEÚDO BRUTO RECEBIDO NO REQ.BODY E REQ.FILES
+      console.log('=== 📥 [DEBUG BACKEND] REQ.BODY RECEBIDO ===');
+      console.log(JSON.stringify(req.body, null, 2));
+      console.log('=== 📁 [DEBUG BACKEND] REQ.FILES RECEBIDOS ===');
+      console.log(req.files ? Object.keys(req.files) : 'Nenhum arquivo capturado pelo Multer');
+
       const { 
         fullName, vehicleModel, password, vehicleColor, vehicleType, documentType 
       } = req.body;
@@ -282,17 +288,32 @@ export class DriverAuthController {
       const rawPhone = req.body.phone ? String(req.body.phone).trim() : '';
       const formattedPhone = formatPhoneNumber(rawPhone);
 
-      if (!isValidBissauPhone(formattedPhone)) {
-        return res.status(400).json({ success: false, error: 'O número de telefone deve ser válido para a Guiné-Bissau (+245).' });
-      }
-
       const vehiclePlate = sanitize(req.body.vehiclePlate);
       const documentNumber = sanitize(req.body.documentNumber);
       const cleanFullName = sanitizeText(fullName, 120);
       const cleanVehicleModel = sanitizeText(vehicleModel, 80);
       const cleanVehicleColor = sanitizeText(vehicleColor, 40);
 
+      // 🔍 LOG 2: VERIFICAÇÃO DE CADA CAMPO APÓS A SANITIZAÇÃO
+      console.log('=== 🧪 [DEBUG BACKEND] AVALIAÇÃO DOS CAMPOS ===', {
+        cleanFullName: cleanFullName || '❌ VAZIO/UNDEFINED',
+        cleanVehicleModel: cleanVehicleModel || '❌ VAZIO/UNDEFINED',
+        vehiclePlate: vehiclePlate || '❌ VAZIO/UNDEFINED',
+        password: password ? '✅ OK' : '❌ VAZIO/UNDEFINED',
+        cleanVehicleColor: cleanVehicleColor || '❌ VAZIO/UNDEFINED',
+        documentNumber: documentNumber || '❌ VAZIO/UNDEFINED',
+        rawPhone,
+        formattedPhone,
+        isValidPhone: isValidBissauPhone(formattedPhone),
+      });
+
+      if (!isValidBissauPhone(formattedPhone)) {
+        console.log('❌ [DEBUG BACKEND] Falhou na validação do telefone Bissau');
+        return res.status(400).json({ success: false, error: 'O número de telefone deve ser válido para a Guiné-Bissau (+245).' });
+      }
+
       if (!cleanFullName || !cleanVehicleModel || !vehiclePlate || !password || !cleanVehicleColor || !documentNumber) {
+        console.log('❌ [DEBUG BACKEND] Falhou no IF de campos obrigatórios');
         return res.status(400).json({ success: false, error: 'Todos os campos obrigatórios devem ser preenchidos.' });
       }
 
@@ -363,7 +384,6 @@ export class DriverAuthController {
       return res.status(500).json({ success: false, error: 'Erro interno no servidor ao cadastrar motorista.' });
     }
   }
-
   // ==========================================
   // 🚨 BOTÃO DE EMERGÊNCIA (SOS)
   // ==========================================

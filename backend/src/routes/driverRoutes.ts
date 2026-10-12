@@ -39,10 +39,9 @@ driverRoutes.post(
     { name: 'licenseFront', maxCount: 1 },
     { name: 'licenseBack', maxCount: 1 },
   ]),
-  validate(registerDriverSchema),
+  // validate(registerDriverSchema),
   (req, res) => authController.register(req, res)
 );
-
 driverRoutes.post('/login', validate(loginDriverSchema), (req, res) => authController.login(req, res));
 driverRoutes.post('/refresh-token', (req, res) => authController.refreshToken(req, res));
 driverRoutes.post('/forgot-password', validate(forgotPasswordSchema), (req, res) => authController.forgotPassword(req, res));
