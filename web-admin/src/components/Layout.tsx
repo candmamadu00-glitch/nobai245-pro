@@ -65,8 +65,14 @@ export function Layout() {
           {isMobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
         </button>
 
-        <div className="mobile-logo">
-          <span className="logo-accent">NÔ BAI</span> 245
+        {/* 🖼️ LOGO OFICIAL NO CABEÇALHO MOBILE */}
+        <div className="mobile-logo" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <img 
+            src="/logo-pwa.png" 
+            alt="Nô Bai 245" 
+            style={{ width: 26, height: 26, objectFit: 'contain' }} 
+          />
+          <span><span className="logo-accent">NÔ BAI</span> 245</span>
         </div>
 
         {deferredPrompt ? (
@@ -91,8 +97,13 @@ export function Layout() {
       <aside className={`sidebar-drawer ${isMobileMenuOpen ? 'drawer-open' : ''}`}>
         <div className="sidebar-brand-box">
           <div className="brand-logo-row">
-            <div className="brand-icon">
-              <Shield size={20} />
+            {/* 🖼️ LOGO OFICIAL NO TOPO DA SIDEBAR */}
+            <div className="brand-icon" style={{ background: 'transparent', padding: 0 }}>
+              <img 
+                src="/logo-pwa.png" 
+                alt="BAI 245" 
+                style={{ width: 32, height: 32, objectFit: 'contain' }} 
+              />
             </div>
             <div>
               <h1 className="brand-title">BAI 245</h1>
@@ -189,4 +200,3 @@ export function Layout() {
       </main>
     </div>
   );
-}

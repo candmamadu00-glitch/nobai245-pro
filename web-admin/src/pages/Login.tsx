@@ -57,12 +57,16 @@ export function Login() {
     <div className="login-container">
       <div className="login-card">
         <div className="login-header">
-          <div className="login-icon">
-            <ShieldCheck size={32} />
-          </div>
-          <h1 className="login-title">BAI 245 Admin</h1>
-          <p className="login-subtitle">Acesso restrito ao sistema de controle</p>
-        </div>
+  <div className="login-icon" style={{ background: 'transparent', padding: 0 }}>
+    <img 
+      src="/logo-pwa.png" 
+      alt="BAI 245" 
+      style={{ width: 56, height: 56, objectFit: 'contain' }} 
+    />
+  </div>
+  <h1 className="login-title">NOBAI 245 Admin</h1>
+  <p className="login-subtitle">Acesso restrito ao sistema de controle</p>
+</div>
 
         {error && (
           <div className="error-message" role="alert">
