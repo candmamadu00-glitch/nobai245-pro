@@ -557,53 +557,51 @@ export class DriverAuthController {
     }
   }
 
-  // ==========================================
-  // 🗑️ EXCLUIR CONTA
+ // ==========================================
+  // 🗑️ EXCLUSÃO DE CONTA DO MOTORISTA (BLINDADO)
   // ==========================================
   async deleteAccount(req: Request, res: Response): Promise<Response> {
     try {
       const driverId = (req as any).user?.id;
-      if (!driverId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
-
-      const activeRide = await prisma.ride.findFirst({
-        where: {
-          driverId,
-          status: { in: ['PENDING', 'SEARCHING', 'AWAITING_PAYMENT', 'ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] }
-        }
-      });
-
-      if (activeRide) {
-        return res.status(400).json({ success: false, error: 'Você possui uma corrida em andamento. Conclua a corrida antes de excluir a conta.' });
+      if (!driverId) {
+        return res.status(401).json({ success: false, error: 'Não autorizado.' });
       }
 
-      const driver = await prisma.driver.findUnique({
-        where: { id: driverId },
-        select: { phone: true, status: true }
-      });
-
+      const driver = await prisma.driver.findUnique({ where: { id: driverId } });
       if (!driver) {
         return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
       }
 
+      // 🛡️ Trunca as strings para respeitar o VarChar(20) do PostgreSQL
+      const shortId = driverId.substring(0, 6);
+      const timestamp = Date.now().toString().slice(-6);
+      
+      const deletedPhone = `del_${shortId}_${timestamp}`.substring(0, 20); // max 20 chars
+      const deletedPlate = `del_${shortId}_${timestamp}`.substring(0, 20); // max 20 chars
+      const deletedDoc = `del_${driverId}`.substring(0, 50);              // max 50 chars
+
       await prisma.driver.update({
         where: { id: driverId },
         data: {
-          status: 'SUSPENDED',
+          phone: deletedPhone,
+          vehiclePlate: deletedPlate,
+          documentNumber: deletedDoc,
+          status: 'INACTIVE',
           isOnline: false,
           isAvailable: false,
-          phone: `del_${Date.now()}_${driver.phone}`,
+          deletedAt: new Date(),
           refreshTokenHash: null,
           deviceToken: null,
-          paymentAccountNumber: null,
-          orangeNumber: null,
-          mtnNumber: null
-        }
+        },
       });
 
-      return res.status(200).json({ success: true, message: 'Conta excluída e dados sensíveis removidos com sucesso.' });
+      return res.status(200).json({
+        success: true,
+        message: 'Sua conta foi desativada e excluída com sucesso.',
+      });
     } catch (error: any) {
       console.error('❌ [EXCLUSÃO DE CONTA MOTORISTA]:', error?.message || error);
-      return res.status(500).json({ success: false, error: 'Erro interno ao tentar excluir a conta.' });
+      return res.status(500).json({ success: false, error: 'Erro ao processar exclusão de conta.' });
     }
   }
 
