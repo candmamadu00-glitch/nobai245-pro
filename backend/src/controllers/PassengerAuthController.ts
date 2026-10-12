@@ -1007,7 +1007,9 @@ export class PassengerAuthController {
     }
   }
 
-  // 20. EXCLUIR / ANONIMIZAR CONTA
+  // ==========================================
+  // 🗑️ 20. EXCLUIR / ANONIMIZAR CONTA DO PASSAGEIRO (VARCHAR 20 BLINDADO)
+  // ==========================================
   async deleteAccount(req: Request, res: Response): Promise<Response> {
     try {
       const passengerId = (req as any).user?.id;
@@ -1027,18 +1029,25 @@ export class PassengerAuthController {
         });
       }
 
-      const uniqueHash = crypto.randomUUID();
+      // 🛡️ Identificador ultra-curto (< 14 caracteres) para caber no VarChar(20)
+      const stamp = Date.now().toString().slice(-8); 
+      const rand = Math.floor(100 + Math.random() * 900);
+      
+      const delPhone = `p_${stamp}_${rand}`; // Ex: p_75829123_123 (14 caracteres)
+      const delEmail = `del_${stamp}_${rand}@anon.com`;
 
       await prisma.passenger.update({
         where: { id: passengerId },
         data: {
           status: 'SUSPENDED',
           fullName: 'Passageiro Anônimo',
-          phone: `DEL-${uniqueHash}`,
-          email: `deleted-${uniqueHash}@anon.com`,
+          phone: delPhone,
+          email: delEmail,
+          documentNumber: null,
           paymentAccountNumber: null,
           refreshTokenHash: null,
           deviceToken: null,
+          deletedAt: new Date(),
         },
       });
 
