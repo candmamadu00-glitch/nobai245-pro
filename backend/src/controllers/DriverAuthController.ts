@@ -558,7 +558,7 @@ export class DriverAuthController {
   }
 
  // ==========================================
-  // 🗑️ EXCLUSÃO DE CONTA DO MOTORISTA (ULTRA-CURTO < 12 CHARS)
+  // 🗑️ EXCLUSÃO DE CONTA DO MOTORISTA (STATUS ENUM VALIDADOR)
   // ==========================================
   async deleteAccount(req: Request, res: Response): Promise<Response> {
     try {
@@ -572,12 +572,12 @@ export class DriverAuthController {
         return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
       }
 
-      // 🛡️ Sufixo de 8 dígitos do timestamp + prefixo de 2 caracteres (Total: 10 caracteres)
+      // 🛡️ Identificadores ultra-curtos (< 12 chars)
       const stamp = Date.now().toString().slice(-8); 
       
-      const delPhone = `d_${stamp}`;   // Ex: d_75829123 (10 chars)
-      const delPlate = `p_${stamp}`;   // Ex: p_75829123 (10 chars)
-      const delDoc   = `doc_${stamp}`; // Ex: doc_75829123 (12 chars)
+      const delPhone = `d_${stamp}`;   // Ex: d_75829123
+      const delPlate = `p_${stamp}`;   // Ex: p_75829123
+      const delDoc   = `doc_${stamp}`; // Ex: doc_75829123
 
       await prisma.driver.update({
         where: { id: driverId },
@@ -588,7 +588,7 @@ export class DriverAuthController {
           orangeNumber: null,
           mtnNumber: null,
           paymentAccountNumber: null,
-          status: 'INACTIVE',
+          status: 'SUSPENDED', // 👈 'SUSPENDED' é 100% compatível com o enum do PostgreSQL
           isOnline: false,
           isAvailable: false,
           currentRideId: null,
@@ -606,8 +606,7 @@ export class DriverAuthController {
       console.error('❌ [EXCLUSÃO DE CONTA MOTORISTA]:', error?.message || error);
       return res.status(500).json({ success: false, error: 'Erro ao processar exclusão de conta.' });
     }
-  }
-  
+  } 
 
   // ==========================================
   // 📱 ATUALIZAR MOBILE MONEY
