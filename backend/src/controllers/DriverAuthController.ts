@@ -572,13 +572,13 @@ export class DriverAuthController {
         return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
       }
 
-      // 🛡️ Trunca as strings para respeitar o VarChar(20) do PostgreSQL
-      const shortId = driverId.substring(0, 6);
-      const timestamp = Date.now().toString().slice(-6);
+      // 🛡️ Gera identificadores curtos (garantindo < 20 caracteres para respeitar VarChar(20))
+      const stamp = Date.now().toString().slice(-8); // 8 dígitos
+      const rand = Math.floor(1000 + Math.random() * 9000); // 4 dígitos
       
-      const deletedPhone = `del_${shortId}_${timestamp}`.substring(0, 20); // max 20 chars
-      const deletedPlate = `del_${shortId}_${timestamp}`.substring(0, 20); // max 20 chars
-      const deletedDoc = `del_${driverId}`.substring(0, 50);              // max 50 chars
+      const deletedPhone = `del_${stamp}_${rand}`; // ex: del_58291000_1234 (17 caracteres)
+      const deletedPlate = `plt_${stamp}_${rand}`; // ex: plt_58291000_1234 (17 caracteres)
+      const deletedDoc = `doc_${driverId.substring(0, 8)}_${stamp}`; // <= 50 caracteres
 
       await prisma.driver.update({
         where: { id: driverId },
@@ -586,9 +586,13 @@ export class DriverAuthController {
           phone: deletedPhone,
           vehiclePlate: deletedPlate,
           documentNumber: deletedDoc,
+          orangeNumber: null,
+          mtnNumber: null,
+          paymentAccountNumber: null,
           status: 'INACTIVE',
           isOnline: false,
           isAvailable: false,
+          currentRideId: null,
           deletedAt: new Date(),
           refreshTokenHash: null,
           deviceToken: null,
