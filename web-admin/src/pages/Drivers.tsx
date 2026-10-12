@@ -13,7 +13,12 @@ interface Driver {
   fullName: string;
   phone: string;
   vehicleType: string;
+  vehicleBrand?: string;
+  vehicleColor?: string;
+  vehicleSeats?: number | null;
   vehiclePlate: string;
+  documentType?: string;
+  documentNumber?: string;
   status: 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED' | 'SUSPENDED';
   walletBalance: number;
   ratingAverage: number;
@@ -58,12 +63,23 @@ export function Drivers() {
   const [editProvider, setEditProvider] = useState('ORANGE');
   const [editNumber, setEditNumber] = useState('');
 
+  // 🛡️ TRATAMENTO BLINDADO DE IMAGENS
   const formatImageUrl = (path?: string) => {
     if (!path) return undefined;
-    if (path.startsWith('http')) return path;
-    const cleanBase = API_URL.replace(/\/$/, '');
+
+    const serverBase = API_URL.replace(/\/api\/?$/, '');
+
+    if (path.includes('/uploads/')) {
+      const filename = path.split('/uploads/')[1];
+      return `${serverBase}/uploads/${filename}`;
+    }
+
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      return path;
+    }
+
     const cleanPath = path.startsWith('/') ? path : `/${path}`;
-    return `${cleanBase}${cleanPath}`;
+    return `${serverBase}${cleanPath}`;
   };
 
   const fetchDrivers = useCallback(async () => {
@@ -446,10 +462,15 @@ export function Drivers() {
             </div>
             
             <div className="modal-content-body">
-              <div className="details-summary-card">
+              <div className="details-summary-card" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
                 <div>
                   <span className="summary-label">Veículo</span>
-                  <strong className="summary-value">{selectedDriver.vehicleType} ({selectedDriver.vehiclePlate})</strong>
+                  <strong className="summary-value">{selectedDriver.vehicleType} {selectedDriver.vehicleBrand ? `- ${selectedDriver.vehicleBrand}` : ''} ({selectedDriver.vehiclePlate})</strong>
+                  {selectedDriver.vehicleColor && <small style={{ display: 'block', color: '#64748b' }}>Cor: {selectedDriver.vehicleColor}</small>}
+                </div>
+                <div>
+                  <span className="summary-label">Documento</span>
+                  <strong className="summary-value">{selectedDriver.documentType || 'BI'}: {selectedDriver.documentNumber || 'Não informado'}</strong>
                 </div>
                 <div>
                   <span className="summary-label">Telefone de Contato</span>
@@ -527,11 +548,19 @@ export function Drivers() {
                 )}
               </div>
               
-              <div className="documents-grid-view" style={{ marginTop: '20px' }}>
+              <div className="documents-grid-view" style={{ marginTop: '20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+                <div className="document-preview-card">
+                  <h3>Foto do Perfil / Selfie</h3>
+                  {selectedDriver.profilePicture ? (
+                    <img src={formatImageUrl(selectedDriver.profilePicture)} alt="Foto do Motorista" style={{ width: '100%', height: '180px', objectFit: 'cover', borderRadius: '8px' }} />
+                  ) : (
+                    <div className="no-document-placeholder">Foto não enviada</div>
+                  )}
+                </div>
                 <div className="document-preview-card">
                   <h3>Documento / CNH (Frente)</h3>
                   {selectedDriver.licenseFrontPicture ? (
-                    <img src={formatImageUrl(selectedDriver.licenseFrontPicture)} alt="Frente do Documento" />
+                    <img src={formatImageUrl(selectedDriver.licenseFrontPicture)} alt="Frente do Documento" style={{ width: '100%', height: '180px', objectFit: 'cover', borderRadius: '8px' }} />
                   ) : (
                     <div className="no-document-placeholder">Documento não enviado</div>
                   )}
@@ -539,7 +568,7 @@ export function Drivers() {
                 <div className="document-preview-card">
                   <h3>Documento / CNH (Verso)</h3>
                   {selectedDriver.licenseBackPicture ? (
-                    <img src={formatImageUrl(selectedDriver.licenseBackPicture)} alt="Verso do Documento" />
+                    <img src={formatImageUrl(selectedDriver.licenseBackPicture)} alt="Verso do Documento" style={{ width: '100%', height: '180px', objectFit: 'cover', borderRadius: '8px' }} />
                   ) : (
                     <div className="no-document-placeholder">Documento não enviado</div>
                   )}
