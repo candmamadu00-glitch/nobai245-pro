@@ -558,7 +558,7 @@ export class DriverAuthController {
   }
 
  // ==========================================
-  // 🗑️ EXCLUSÃO DE CONTA DO MOTORISTA (BLINDADO)
+  // 🗑️ EXCLUSÃO DE CONTA DO MOTORISTA (ULTRA-CURTO < 12 CHARS)
   // ==========================================
   async deleteAccount(req: Request, res: Response): Promise<Response> {
     try {
@@ -572,20 +572,19 @@ export class DriverAuthController {
         return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
       }
 
-      // 🛡️ Gera identificadores curtos (garantindo < 20 caracteres para respeitar VarChar(20))
-      const stamp = Date.now().toString().slice(-8); // 8 dígitos
-      const rand = Math.floor(1000 + Math.random() * 9000); // 4 dígitos
+      // 🛡️ Sufixo de 8 dígitos do timestamp + prefixo de 2 caracteres (Total: 10 caracteres)
+      const stamp = Date.now().toString().slice(-8); 
       
-      const deletedPhone = `del_${stamp}_${rand}`; // ex: del_58291000_1234 (17 caracteres)
-      const deletedPlate = `plt_${stamp}_${rand}`; // ex: plt_58291000_1234 (17 caracteres)
-      const deletedDoc = `doc_${driverId.substring(0, 8)}_${stamp}`; // <= 50 caracteres
+      const delPhone = `d_${stamp}`;   // Ex: d_75829123 (10 chars)
+      const delPlate = `p_${stamp}`;   // Ex: p_75829123 (10 chars)
+      const delDoc   = `doc_${stamp}`; // Ex: doc_75829123 (12 chars)
 
       await prisma.driver.update({
         where: { id: driverId },
         data: {
-          phone: deletedPhone,
-          vehiclePlate: deletedPlate,
-          documentNumber: deletedDoc,
+          phone: delPhone,
+          vehiclePlate: delPlate,
+          documentNumber: delDoc,
           orangeNumber: null,
           mtnNumber: null,
           paymentAccountNumber: null,
