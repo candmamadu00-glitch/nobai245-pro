@@ -8,7 +8,12 @@ interface DriverRequest {
   fullName: string;
   phone: string;
   vehicleType: string;
+  vehicleBrand?: string;
+  vehicleColor?: string;
+  vehicleSeats?: number | null;
   vehiclePlate: string;
+  documentType?: string;
+  documentNumber?: string;
   status: 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED';
   createdAt: string;
   profilePicture?: string;
@@ -24,10 +29,25 @@ export function DriverRequests() {
   const [selectedDriver, setSelectedDriver] = useState<DriverRequest | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
+  // 🛡️ TRATAMENTO BLINDADO DE IMAGENS
   const formatImageUrl = (path?: string) => {
     if (!path) return undefined;
-    if (path.startsWith('http')) return path;
-    return `${API_URL}${path.startsWith('/') ? '' : '/'}${path}`;
+
+    // Remove o sufixo /api para apontar diretamente para o endpoint de arquivos estáticos (/uploads)
+    const serverBase = API_URL.replace(/\/api\/?$/, '');
+
+    // Se contiver /uploads/, isola o nome do arquivo ignorando domínios/IPs locais gravados no banco
+    if (path.includes('/uploads/')) {
+      const filename = path.split('/uploads/')[1];
+      return `${serverBase}/uploads/${filename}`;
+    }
+
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      return path;
+    }
+
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    return `${serverBase}${cleanPath}`;
   };
 
   const fetchRequests = useCallback(async () => {
@@ -177,8 +197,8 @@ export function DriverRequests() {
                     </td>
                     <td>{driver.phone}</td>
                     <td>
-                      <div><strong>{driver.vehicleType}</strong></div>
-                      <small style={{ color: '#6B7280' }}>{driver.vehiclePlate}</small>
+                      <div><strong>{driver.vehicleType}</strong> ({driver.vehicleBrand || 'N/A'})</div>
+                      <small style={{ color: '#6B7280' }}>Placa: {driver.vehiclePlate}</small>
                     </td>
                     <td>{new Date(driver.createdAt).toLocaleDateString('pt-BR')}</td>
                     <td>
@@ -225,23 +245,38 @@ export function DriverRequests() {
             </div>
 
             <div className="modal-body">
-              <p><strong>Telefone:</strong> {selectedDriver.phone}</p>
-              <p><strong>Veículo:</strong> {selectedDriver.vehicleType} | <strong>Placa:</strong> {selectedDriver.vehiclePlate}</p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px', backgroundColor: '#F3F4F6', padding: '12px', borderRadius: '8px' }}>
+                <p><strong>Telefone:</strong> {selectedDriver.phone}</p>
+                <p><strong>Tipo de Documento:</strong> {selectedDriver.documentType || 'BI'}</p>
+                <p><strong>Nº do Documento:</strong> {selectedDriver.documentNumber || 'Não informado'}</p>
+                <p><strong>Veículo:</strong> {selectedDriver.vehicleType} - {selectedDriver.vehicleBrand || ''} ({selectedDriver.vehicleColor || 'Sem cor'})</p>
+                <p><strong>Placa:</strong> {selectedDriver.vehiclePlate}</p>
+                {selectedDriver.vehicleSeats ? <p><strong>Lotação:</strong> {selectedDriver.vehicleSeats} Lugares</p> : null}
+              </div>
 
-              <div className="documents-grid">
+              <div className="documents-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
                 <div className="document-card">
-                  <h3>CNH / Documento (Frente)</h3>
-                  {selectedDriver.licenseFrontPicture ? (
-                    <img src={formatImageUrl(selectedDriver.licenseFrontPicture)} alt="Frente Documento" />
+                  <h3>Foto de Perfil / Selfie</h3>
+                  {selectedDriver.profilePicture ? (
+                    <img src={formatImageUrl(selectedDriver.profilePicture)} alt="Foto do Motorista" style={{ width: '100%', height: '180px', objectFit: 'cover', borderRadius: '8px' }} />
                   ) : (
                     <div className="no-image">Imagem não enviada</div>
                   )}
                 </div>
 
                 <div className="document-card">
-                  <h3>CNH / Documento (Verso)</h3>
+                  <h3>Carta de Condução (Frente)</h3>
+                  {selectedDriver.licenseFrontPicture ? (
+                    <img src={formatImageUrl(selectedDriver.licenseFrontPicture)} alt="Frente Documento" style={{ width: '100%', height: '180px', objectFit: 'cover', borderRadius: '8px' }} />
+                  ) : (
+                    <div className="no-image">Imagem não enviada</div>
+                  )}
+                </div>
+
+                <div className="document-card">
+                  <h3>Carta de Condução (Verso)</h3>
                   {selectedDriver.licenseBackPicture ? (
-                    <img src={formatImageUrl(selectedDriver.licenseBackPicture)} alt="Verso Documento" />
+                    <img src={formatImageUrl(selectedDriver.licenseBackPicture)} alt="Verso Documento" style={{ width: '100%', height: '180px', objectFit: 'cover', borderRadius: '8px' }} />
                   ) : (
                     <div className="no-image">Imagem não enviada</div>
                   )}
@@ -249,7 +284,7 @@ export function DriverRequests() {
               </div>
             </div>
 
-            <div className="modal-footer" style={{ gap: 12 }}>
+            <div className="modal-footer" style={{ gap: 12, marginTop: '16px' }}>
               <button
                 className="action-btn"
                 disabled={actionLoading === selectedDriver.id}
