@@ -209,7 +209,7 @@ export class AdminAuthController {
     }
   }
 
-  // 📋 3. LISTAR MOTORISTAS
+  // 📋 3. LISTAR MOTORISTAS (DADOS COMPLETOS E SINCRONIZADOS)
   async listDrivers(req: Request, res: Response): Promise<Response> {
     try {
       const { status } = req.query;
@@ -224,6 +224,10 @@ export class AdminAuthController {
           vehicleType: true,
           vehiclePlate: true,
           vehicleBrand: true,
+          vehicleColor: true,      // ✅ Adicionado
+          vehicleSeats: true,      // ✅ Adicionado
+          documentType: true,      // ✅ Adicionado
+          documentNumber: true,    // ✅ Adicionado
           status: true,
           isOnline: true,
           profilePicture: true,
