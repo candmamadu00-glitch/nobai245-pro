@@ -519,6 +519,7 @@ handleSocketEvent(socket, 'sos:triggered', async (data) => {
         destinationAddress: rideData.destinationAddress,
         requestedVehicleType: normalizedVehicleType,
         serviceType: rideData.serviceType || 'RIDE',
+        paymentMethod: rideData.paymentMethod,
         estimatedPrice: estimatedPrice ? Number(estimatedPrice) : undefined,
         stops: rawStops
       });
