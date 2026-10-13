@@ -218,8 +218,19 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
 
   // Normalização segura do método de pagamento
   const rawMethod = data.paymentMethod || passenger.paymentProvider || PaymentMethod.ORANGE_MONEY;
-  const chosenMethod = String(rawMethod).toUpperCase() as PaymentMethod;
+  const chosenMethod = String(rawMethod).toUpperCase().trim() as PaymentMethod;
   const isCash = chosenMethod === 'CASH';
+
+  // 🔍 LOG 1: DIAGNÓSTICO DAS VARIÁVEIS DE ENTRADA
+  console.log('🔍 [DEBUG RIDE PAYMENT]', {
+    received_paymentMethod: data.paymentMethod,
+    passenger_paymentProvider: passenger.paymentProvider,
+    rawMethod,
+    chosenMethod,
+    isCash,
+    IS_MOCK_MODE,
+    full_data_keys: Object.keys(data)
+  });
 
   if (!isCash) {
     const paymentPhone = passenger.paymentAccountNumber || passenger.phone || (IS_MOCK_MODE ? '245955000000' : null);
@@ -282,12 +293,18 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     return { ride: newRide, transaction: newTx };
   });
 
+  // 🔍 LOG 2: VERIFICAÇÃO IMEDIATAMENTE ANTES DO IF
+  console.log(`🧭 [CHECKPOINT BYPASS] Eval: isCash=${isCash} (type: ${typeof isCash}), IS_MOCK_MODE=${IS_MOCK_MODE}, chosenMethod='${chosenMethod}'`);
+
   // Se for dinheiro (CASH) ou modo de teste, ignora a cobrança do gateway e notifica os motoristas diretamente
   if (isCash || IS_MOCK_MODE) {
-    console.log(`💵 [RIDE SERVICE] Corrida em dinheiro (${chosenMethod}). Ignorando gateway Mobile Money.`);
+    console.log(`💵 [RIDE SERVICE SUCCESS] Corrida em dinheiro (${chosenMethod}). Ignorando gateway Mobile Money.`);
     notifyDriversNewRide(ride.id).catch(err => console.error('Erro ao notificar motoristas:', err));
     return { success: true, pendingVerification: false, ride };
   }
+
+  // 🔍 LOG 3: ALERTA SE IGNOROU O IF
+  console.log(`⚠️ [ALERTA CRÍTICO] Passou direto pelo bypass e vai chamar Orange/MTN! chosenMethod='${chosenMethod}'`);
 
   const paymentPhone = passenger.paymentAccountNumber || passenger.phone!;
 
@@ -328,7 +345,6 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     throw new Error('Não foi possível realizar a cobrança via Mobile Money. Verifique o saldo do seu PIN/Carteira.');
   }
 }
-
 // -----------------------------------------------------------------------------
 // 4. ACEITE DE CORRIDA E CHEGADA DO MOTORISTA
 // -----------------------------------------------------------------------------
