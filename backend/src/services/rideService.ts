@@ -216,8 +216,10 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     throw new Error('UNAUTHORIZED: Conta de passageiro inexistente, inativa ou suspensa.');
   }
 
-  const chosenMethod = (data.paymentMethod || passenger.paymentProvider || PaymentMethod.ORANGE_MONEY) as PaymentMethod;
-  const isCash = chosenMethod === PaymentMethod.CASH;
+  // Normalização segura do método de pagamento
+  const rawMethod = data.paymentMethod || passenger.paymentProvider || PaymentMethod.ORANGE_MONEY;
+  const chosenMethod = String(rawMethod).toUpperCase() as PaymentMethod;
+  const isCash = chosenMethod === 'CASH';
 
   if (!isCash) {
     const paymentPhone = passenger.paymentAccountNumber || passenger.phone || (IS_MOCK_MODE ? '245955000000' : null);
@@ -280,7 +282,9 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     return { ride: newRide, transaction: newTx };
   });
 
+  // Se for dinheiro (CASH) ou modo de teste, ignora a cobrança do gateway e notifica os motoristas diretamente
   if (isCash || IS_MOCK_MODE) {
+    console.log(`💵 [RIDE SERVICE] Corrida em dinheiro (${chosenMethod}). Ignorando gateway Mobile Money.`);
     notifyDriversNewRide(ride.id).catch(err => console.error('Erro ao notificar motoristas:', err));
     return { success: true, pendingVerification: false, ride };
   }

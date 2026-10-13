@@ -236,7 +236,7 @@ export function Home() {
   const [passengerLocation, setPassengerLocation] = useState<Location.LocationObject | null>(null);
   const [driverLocation, setDriverLocation] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
   const [driverInfo, setDriverInfo] = useState<DriverInfo | null>(null);
-  const [isManualPickup, setIsManualPickup] = useState(false);
+  
   const [pickupCoords, setPickupCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [pickupAddress, setPickupAddress] = useState(t('pickup_location', 'Local de partida'));
   
@@ -367,14 +367,7 @@ export function Home() {
       setPaymentPhone((user as any).phone);
     }
   }, [user]);
-// 2. Onde você recebe as atualizações do GPS (dentro de um useEffect ou listener):
-useEffect(() => {
-  if (!isManualPickup && userGpsLocation) {
-    // Só atualiza o endereço de origem com o GPS se o usuário não tiver feito uma busca manual
-    setPickupAddress(userGpsLocation.address);
-    setPickupCoords(userGpsLocation.coords);
-  }
-}, [userGpsLocation, isManualPickup]);
+
   const isNightTimeForPin = useCallback(() => {
     const currentHour = new Date().getHours();
     return currentHour >= 18 || currentHour < 6;
@@ -391,12 +384,7 @@ useEffect(() => {
       console.error('Erro ao salvar estado local:', e);
     }
   };
-// 1. Quando o usuário pesquisa e seleciona o endereço pelo formulário:
-const handleSelectSearchedAddress = (addressDetails) => {
-  setPickupAddress(addressDetails.name);
-  setPickupCoords(addressDetails.coords);
-  setIsManualPickup(true); // Trava a atualização automática do GPS
-};
+
   const fitMapBounds = useCallback((coordsArray: Array<{ latitude: number; longitude: number }>) => {
     if (!cameraRef.current || !coordsArray || coordsArray.length < 2) return;
     
@@ -840,7 +828,6 @@ const handleSelectSearchedAddress = (addressDetails) => {
 
       Alert.alert(t('ride_accepted_title', 'Corrida Aceita! 🚗'), `${data.driverName || 'O motorista'} ${t('ride_accepted_msg', 'aceitou sua viagem e está a caminho.')}`);
     };
-
     const handleDriverArrived = () => {
       if (!isMountedRef.current) return;
       setRideStatus('arrived');
@@ -1358,15 +1345,15 @@ const handleSosPress = () => {
   onMapIdle={onMapRegionDidChange}
 >
         <Mapbox.Camera
-  ref={cameraRef}
-  zoomLevel={14}
-  centerCoordinate={[
-    pickupCoords?.longitude || passengerLocation?.coords?.longitude || BISSAU_CENTER.longitude,
-    pickupCoords?.latitude || passengerLocation?.coords?.latitude || BISSAU_CENTER.latitude,
-  ]}
-  animationMode="flyTo"
-  animationDuration={1000}
-/>
+          ref={cameraRef}
+          zoomLevel={14}
+          centerCoordinate={[
+            passengerLocation?.coords?.longitude || BISSAU_CENTER.longitude,
+            passengerLocation?.coords?.latitude || BISSAU_CENTER.latitude,
+          ]}
+          animationMode="flyTo"
+          animationDuration={1000}
+        />
 
         {/* ROTA MAPBOX */}
         {routeGeometry?.type === 'Feature' && routeGeometry?.geometry?.coordinates && (
@@ -1506,14 +1493,9 @@ const handleSosPress = () => {
         </View>
       )}
 
-      {/* Substitua a configuração do KeyboardAvoidingView do painel principal */}
-<KeyboardAvoidingView 
-  behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
-  keyboardVerticalOffset={Platform.OS === 'android' ? 20 : 0}
-  style={styles.bottomSheetWrapper} 
-  pointerEvents="box-none"
->
-  <Animated.View style={[styles.bottomSheet, { transform: [{ translateY }], paddingBottom: Platform.OS === 'android' ? 24 : 0 }]}>
+      {/* KEYBOARD AVOIDING VIEW - PAINEL PRINCIPAL */}
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.bottomSheetWrapper} pointerEvents="box-none">
+        <Animated.View style={[styles.bottomSheet, { transform: [{ translateY }] }]}>
           
           <View style={styles.dragHandlerArea} {...panResponder.panHandlers}>
             <View style={styles.dragIndicator} />
@@ -1617,8 +1599,7 @@ const handleSosPress = () => {
                     </View>
                   </View>
                 )}
-
-                <Text style={styles.sectionLabel}>{t('reference_point', 'Ponto de Referência (Opcional)')}</Text>
+ <Text style={styles.sectionLabel}>{t('reference_point', 'Ponto de Referência (Opcional)')}</Text>
                 <View style={styles.referenceContainer}>
                   <TextInput
                     style={styles.referenceInput}
@@ -1671,15 +1652,9 @@ const handleSosPress = () => {
                 </View>
 
                 <View style={styles.actionRow}>
-                  <TouchableOpacity 
-  style={styles.cancelButtonOutline} 
-  onPress={() => {
-    if (bookingStep === 'PAYMENT') setBookingStep('SERVICE_AND_PRICE');
-    else if (bookingStep === 'SERVICE_AND_PRICE') setBookingStep('ADDRESS');
-  }}
->
-  <Text style={styles.cancelButtonOutlineText}>{t('back_btn', 'Voltar')}</Text>
-</TouchableOpacity>
+                  <TouchableOpacity style={styles.cancelButtonOutline} onPress={() => setBookingStep('SERVICE_AND_PRICE')}>
+                    <Text style={styles.cancelButtonOutlineText}>{t('back_btn', 'Voltar')}</Text>
+                  </TouchableOpacity>
 
                   <TouchableOpacity style={[styles.requestButton, { flex: 1, marginLeft: 10 }]} onPress={handleInitialRequestRide}>
                     <Text style={styles.requestButtonText}>{t('request_now_btn', 'Pedir Agora')}</Text>
