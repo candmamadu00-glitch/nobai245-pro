@@ -38,50 +38,36 @@ const sanitizeText = (text?: string, maxLength = 255): string => {
 
 const DISABLED_STATUSES = ['SUSPENDED', 'BANNED', 'REJECTED', 'INACTIVE'];
 
-// Helper centralizado para envio de SMS via Termii com logs avançados
+// Helper centralizado para envio de SMS via Termii
 async function sendTermiiSMS(formattedPhone: string, otpCode: string): Promise<boolean> {
-  // Termii exige os dígitos sem o sinal de + (Ex: 24595000000)
-  const targetPhoneNoPlus = formattedPhone.replace(/[^0-9]/g, '');
-  
-  const baseUrl = process.env.TERMII_BASE_URL || 'https://api.ng.termii.com';
-  const baseUrlClean = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-  const termiiEndpoint = `${baseUrlClean}/api/sms/send`;
+  const targetPhoneNoPlus = formattedPhone.replace(/^\+/, '');
+  const baseUrlClean = TERMII_BASE_URL.endsWith('/') ? TERMII_BASE_URL : `${TERMII_BASE_URL}/`;
+  const termiiEndpoint = `${baseUrlClean}api/sms/send`;
 
   const termiiPayload = {
     to: targetPhoneNoPlus,
-    from: process.env.TERMII_SENDER_ID || 'N-ALERT',
+    from: TERMII_SENDER_ID,
     sms: `O seu codigo de verificacao Nobai245 e ${otpCode}. Expira em 10 min.`,
     type: 'plain',
     channel: 'generic',
-    api_key: process.env.TERMII_API_KEY,
+    api_key: TERMII_API_KEY,
   };
 
-  console.log(`\n📡 ================= [DIAGNÓSTICO TERMII SMS] =================`);
-  console.log(`📱 Telefone Destino: ${targetPhoneNoPlus}`);
-  console.log(`🔑 API Key Presente?: ${Boolean(process.env.TERMII_API_KEY)}`);
-  console.log(`🏷️ Sender ID: ${termiiPayload.from}`);
-  console.log(`🌐 Endpoint: ${termiiEndpoint}`);
-  console.log(`===============================================================\n`);
+  console.log(`📱 [ENVIO SMS TERMII] Enviando OTP ${otpCode} para +${targetPhoneNoPlus}...`);
 
   try {
     const termiiRes = await axios.post(termiiEndpoint, termiiPayload, { timeout: 10000 });
-    console.log(`✅ [TERMII RESPOSTA SUCESSO]:`, JSON.stringify(termiiRes.data));
+    console.log(`✅ [TERMII SMS SUCESSO]:`, termiiRes.data);
     return true;
   } catch (termiiErr: any) {
-    console.error('❌ [ERRO CRÍTICO TERMII SMS]:');
-    if (termiiErr?.response) {
-      console.error('  Status HTTP:', termiiErr.response.status);
-      console.error('  Detalhe do Erro Termii:', JSON.stringify(termiiErr.response.data));
-    } else {
-      console.error('  Mensagem de Erro:', termiiErr?.message || termiiErr);
-    }
+    console.error('❌ [ERRO TERMII SMS]:', termiiErr?.response?.data || termiiErr?.message);
     return false;
   }
 }
 
 export class PassengerAuthController {
 
-  // 1. REGISTRO DE PASSAGEIRO (COM ENVIO DE OTP E REGISTRO EM LOG)
+  // 1. REGISTRO DE PASSAGEIRO (COM ENVIO AUTOMÁTICO DE OTP)
   async register(req: Request, res: Response): Promise<Response> {
     try {
       const { fullName, password, documentType, email } = req.body;
@@ -129,14 +115,15 @@ export class PassengerAuthController {
 
       const passwordHash = await bcrypt.hash(String(password), 12);
 
-      // Gerar OTP de verificação inicial
+      // Gerar OTP de verificação inicial de cadastro
       const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
       const otpCodeHash = await bcrypt.hash(otpCode, 10);
       const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
+      // Log visível no terminal do servidor para agilizar testes
       console.log(`\n🔑 =================================================`);
       console.log(`🔑 [NOVO CADASTRO PASSAGEIRO] Telefone: ${formattedPhone}`);
-      console.log(`🔑 [CÓDIGO OTP PARA TESTE MANUAL]: ${otpCode}`);
+      console.log(`🔑 [CÓDIGO OTP GERADO]: ${otpCode}`);
       console.log(`🔑 =================================================\n`);
 
       const passenger = await prisma.passenger.create({
@@ -155,7 +142,7 @@ export class PassengerAuthController {
         },
       });
 
-      // Envia SMS via Termii
+      // Dispara o SMS via Termii
       await sendTermiiSMS(formattedPhone, otpCode);
 
       if (passenger.email) {
@@ -177,61 +164,6 @@ export class PassengerAuthController {
     } catch (error: any) {
       console.error('❌ [REGISTRO PASSAGEIRO]:', error?.message || error);
       return res.status(500).json({ success: false, error: 'Erro interno no servidor ao cadastrar passageiro.' });
-    }
-  }
-
-  // 2. LOGIN COM BLOQUEIO DE CONTAS NÃO VERIFICADAS
-  async login(req: Request, res: Response): Promise<Response> {
-    try {
-      const { password } = req.body;
-      const rawPhone = sanitize(req.body.phone);
-
-      if (!rawPhone || !password) {
-        return res.status(400).json({ success: false, error: 'Telefone e senha são obrigatórios.' });
-      }
-
-      const formattedPhone = formatPhoneNumber(rawPhone);
-
-      const passenger = await prisma.passenger.findUnique({
-        where: { phone: formattedPhone }
-      });
-
-      if (!passenger) {
-        return res.status(404).json({ success: false, error: 'Telefone ou senha incorretos.' });
-      }
-
-      const isPasswordValid = await bcrypt.compare(String(password), passenger.passwordHash);
-      if (!isPasswordValid) {
-        return res.status(401).json({ success: false, error: 'Telefone ou senha incorretos.' });
-      }
-
-      // ⛔ BLOQUEIO DE SEGURANÇA: Recusa o login se a conta não tiver ativado o OTP
-      if (!passenger.isVerified) {
-        return res.status(403).json({
-          success: false,
-          code: 'PHONE_NOT_VERIFIED',
-          error: 'Sua conta ainda não foi verificada. Digite o código OTP enviado por SMS para ativar.',
-          phone: passenger.phone
-        });
-      }
-
-      const accessToken = generateAccessToken(passenger.id);
-      const refreshToken = generateRefreshToken(passenger.id);
-
-      return res.json({
-        success: true,
-        accessToken,
-        refreshToken,
-        passenger: {
-          id: passenger.id,
-          fullName: passenger.fullName,
-          phone: passenger.phone,
-          email: passenger.email
-        }
-      });
-    } catch (error: any) {
-      console.error('❌ [LOGIN PASSAGEIRO]:', error?.message || error);
-      return res.status(500).json({ success: false, error: 'Erro interno no servidor ao realizar login.' });
     }
   }
 

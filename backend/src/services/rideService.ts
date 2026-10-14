@@ -216,20 +216,19 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     throw new Error('UNAUTHORIZED: Conta de passageiro inexistente, inativa ou suspensa.');
   }
 
-  // Normalização segura do método de pagamento
-  const rawMethod = data.paymentMethod || passenger.paymentProvider || PaymentMethod.ORANGE_MONEY;
-  const chosenMethod = String(rawMethod).toUpperCase().trim() as PaymentMethod;
-  const isCash = chosenMethod === 'CASH';
+  // Normalização segura do método de pagamento (CASH / DINHEIRO)
+  const rawMethod = data.paymentMethod || passenger.paymentProvider || 'CASH';
+  const chosenMethod = String(rawMethod).toUpperCase().trim();
+  const isCash = chosenMethod === 'CASH' || chosenMethod === 'DINHEIRO';
+  const IS_MOCK_MODE = process.env.ENABLE_MOCK_PAYMENTS === 'true';
 
-  // 🔍 LOG 1: DIAGNÓSTICO DAS VARIÁVEIS DE ENTRADA
   console.log('🔍 [DEBUG RIDE PAYMENT]', {
     received_paymentMethod: data.paymentMethod,
     passenger_paymentProvider: passenger.paymentProvider,
     rawMethod,
     chosenMethod,
     isCash,
-    IS_MOCK_MODE,
-    full_data_keys: Object.keys(data)
+    IS_MOCK_MODE
   });
 
   if (!isCash) {
@@ -264,7 +263,7 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
       data: {
         passengerId, serviceType: (serviceType || 'RIDE') as ServiceType,
         requestedVehicleType: (requestedVehicleType || 'PARTICULAR') as VehicleType,
-        paymentMethod: chosenMethod, originAddress: originAddress || '',
+        paymentMethod: chosenMethod as PaymentMethod, originAddress: originAddress || '',
         originLat, originLng, destinationAddress: destinationAddress || '',
         destinationLat, destinationLng, referencePoint: referencePoint || null,
         stops: stops.length > 0 ? stops : undefined,
@@ -285,7 +284,7 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
       data: {
         passengerId, rideId: newRide.id, type: TransactionType.RIDE_PAYMENT,
         status: initialTxStatus, amount: priceXof,
-        reference: `PAY-${newRide.id.slice(0, 8)}-${Date.now()}`, paymentMethod: chosenMethod,
+        reference: `PAY-${newRide.id.slice(0, 8)}-${Date.now()}`, paymentMethod: chosenMethod as PaymentMethod,
         idempotencyKey: data.idempotencyKey
       }
     });
@@ -293,26 +292,21 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     return { ride: newRide, transaction: newTx };
   });
 
-  // 🔍 LOG 2: VERIFICAÇÃO IMEDIATAMENTE ANTES DO IF
-  console.log(`🧭 [CHECKPOINT BYPASS] Eval: isCash=${isCash} (type: ${typeof isCash}), IS_MOCK_MODE=${IS_MOCK_MODE}, chosenMethod='${chosenMethod}'`);
-
-  // Se for dinheiro (CASH) ou modo de teste, ignora a cobrança do gateway e notifica os motoristas diretamente
+  // 💵 TRAVA ABSOLUTA: Se for pagamento em dinheiro ou modo Mock, notifica os motoristas e finaliza imediatamente
   if (isCash || IS_MOCK_MODE) {
-    console.log(`💵 [RIDE SERVICE SUCCESS] Corrida em dinheiro (${chosenMethod}). Ignorando gateway Mobile Money.`);
+    console.log(`💵 [RIDE SUCCESS] Corrida em Dinheiro (${chosenMethod}). Ignorando Mobile Money.`);
     notifyDriversNewRide(ride.id).catch(err => console.error('Erro ao notificar motoristas:', err));
     return { success: true, pendingVerification: false, ride };
   }
 
-  // 🔍 LOG 3: ALERTA SE IGNOROU O IF
-  console.log(`⚠️ [ALERTA CRÍTICO] Passou direto pelo bypass e vai chamar Orange/MTN! chosenMethod='${chosenMethod}'`);
-
+  // 📲 COBRANÇA VIA MOBILE MONEY (Apenas se NÃO for CASH)
   const paymentPhone = passenger.paymentAccountNumber || passenger.phone!;
 
   try {
     const chargeResult = await chargePassengerMobileMoney({
       phone: paymentPhone,
       amount: priceXof,
-      provider: chosenMethod,
+      provider: chosenMethod as PaymentMethod,
       rideId: ride.id,
       transactionId: transaction.id
     });
