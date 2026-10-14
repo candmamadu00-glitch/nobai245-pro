@@ -123,7 +123,125 @@ app.get('/health', (_req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
+// =============================================================================
+// 🌐 ROTA PÚBLICA DE RASTREAMENTO WEB DA VIAGEM (SEM AUTENTICAÇÃO JWT)
+// =============================================================================
+app.get('/track/:rideId', async (req: Request, res: Response) => {
+  try {
+    const { rideId } = req.params;
 
+    // Busca os dados da corrida no Prisma
+    const ride = await prisma.ride.findUnique({
+      where: { id: rideId },
+      include: { 
+        driver: {
+          select: {
+            fullName: true,
+            carModel: true,
+            carColor: true,
+            licensePlate: true,
+          }
+        },
+        passenger: {
+          select: {
+            fullName: true
+          }
+        }
+      }
+    });
+
+    if (!ride) {
+      return res.status(404).send(`
+        <!DOCTYPE html>
+        <html lang="pt">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Viagem Não Encontrada - Nô Bai 245</title>
+          <style>
+            body { background: #0F172A; color: white; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; text-align: center; }
+            .card { background: #1E293B; padding: 30px; border-radius: 20px; border: 1px solid #334155; }
+            h2 { color: #EAB308; margin-bottom: 8px; }
+            p { color: #94A3B8; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h2>⚠️ Viagem não encontrada</h2>
+            <p>Esta corrida não existe ou já foi finalizada.</p>
+          </div>
+        </body>
+        </html>
+      `);
+    }
+
+    // Permite carregar scripts e estilos do Mapbox via CDN sem conflito com Helmet
+    res.setHeader(
+      "Content-Security-Policy",
+      "default-src 'self' https: data: 'unsafe-inline' 'unsafe-eval';"
+    );
+
+    const driverLat = ride.driverLat || ride.originLat || 11.8633;
+    const driverLng = ride.driverLng || ride.originLng || -15.5833;
+
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="pt">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Rastreamento de Viagem - Nô Bai 245</title>
+        <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+        <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
+        <style>
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #0F172A; color: #FFFFFF; height: 100vh; display: flex; flex-direction: column; }
+          #map { flex: 1; width: 100%; }
+          .info-card { background-color: #1E293B; padding: 20px; border-top-left-radius: 24px; border-top-right-radius: 24px; border-top: 1px solid #334155; }
+          .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+          .title { font-size: 18px; font-weight: 800; color: #EAB308; }
+          .badge { background: #0F172A; color: #10B981; font-weight: 700; font-size: 11px; padding: 4px 10px; border-radius: 12px; border: 1px solid #334155; text-transform: uppercase; }
+          .detail-item { font-size: 14px; color: #CBD5E1; margin-bottom: 6px; }
+          .detail-item strong { color: #FFF; }
+        </style>
+      </head>
+      <body>
+        <div id="map"></div>
+        <div class="info-card">
+          <div class="header">
+            <div class="title">🚕 Nobai245 Rastreamento</div>
+            <div class="badge">${ride.status}</div>
+          </div>
+          <div class="detail-item"><strong>👤 Motorista:</strong> ${ride.driver?.fullName || 'Motorista'}</div>
+          <div class="detail-item"><strong>🚘 Veículo:</strong> ${ride.driver?.carModel || 'Veículo'} (${ride.driver?.carColor || 'Cor N/A'}) - Placa: ${ride.driver?.licensePlate || 'N/A'}</div>
+          <div class="detail-item"><strong>📍 Destino:</strong> ${ride.destinationAddress || 'Endereço de destino'}</div>
+        </div>
+
+        <script>
+          mapboxgl.accessToken = 'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZGpkMnVtMDMzdDJ4c2U0NHd3dHBtZiJ9.mT0BfmoFsPTgWFzNnblCZg';
+          const map = new mapboxgl.Map({
+            container: 'map',
+            style: 'mapbox://styles/mapbox/dark-v11',
+            center: [${driverLng}, ${driverLat}],
+            zoom: 15
+          });
+
+          // Adiciona marcador no mapa para o veículo
+          const el = document.createElement('div');
+          el.style.fontSize = '30px';
+          el.innerHTML = '🚗';
+          new mapboxgl.Marker(el)
+            .setLngLat([${driverLng}, ${driverLat}])
+            .addTo(map);
+        </script>
+      </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error('❌ Erro no rastreamento público:', error);
+    res.status(500).send('Erro interno ao carregar página de rastreamento.');
+  }
+});
 // -----------------------------------------------------------------------------
 // 4. CLIENTES REDIS (SAFE REDIS + PUBSUB PARA CLUSTER DIGITALOCEAN)
 // -----------------------------------------------------------------------------

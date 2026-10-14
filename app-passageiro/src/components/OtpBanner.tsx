@@ -13,6 +13,7 @@ export const OtpBanner: React.FC<Props> = ({ otpCode, status }) => {
   if (!otpCode || status === 'IN_PROGRESS' || status === 'SEARCHING') return null;
 
   const isArrived = status === 'ARRIVED';
+  const digits = otpCode ? otpCode.toString().split('') : [];
 
   return (
     <View style={[styles.container, isArrived && styles.arrivedContainer]}>
@@ -29,7 +30,7 @@ export const OtpBanner: React.FC<Props> = ({ otpCode, status }) => {
       </Text>
 
       <View style={styles.otpBox}>
-        {otpCode.split('').map((digit, index) => (
+        {digits.map((digit, index) => (
           <View key={index} style={[styles.digitBox, isArrived && styles.arrivedDigitBox]}>
             <Text style={[styles.digitText, isArrived && styles.arrivedDigitText]}>
               {digit}
@@ -46,11 +47,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF8E1',
     borderColor: '#FFA000',
     borderWidth: 1.5,
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
     alignItems: 'center',
     marginHorizontal: 16,
     marginVertical: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
   arrivedContainer: {
     backgroundColor: '#E8F5E9',
@@ -58,7 +64,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 16,
-    fontWeight: 'bold',
+    fontWeight: '800',
     color: '#E65100',
     marginBottom: 4,
   },
@@ -67,27 +73,30 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 13,
-    color: '#555',
+    color: '#475569',
     textAlign: 'center',
     marginBottom: 12,
+    lineHeight: 18,
   },
   otpBox: {
     flexDirection: 'row',
     gap: 10,
+    justify: 'center',
+    flexWrap: 'wrap',
   },
   digitBox: {
-    width: 48,
+    width: 46,
     height: 52,
     backgroundColor: '#FFF',
-    borderRadius: 8,
+    borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
-    elevation: 3,
+    elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.08,
     shadowRadius: 3,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#FFE082',
   },
   arrivedDigitBox: {
@@ -95,8 +104,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF',
   },
   digitText: {
-    fontSize: 24,
-    fontWeight: 'bold',
+    fontSize: 22,
+    fontWeight: '900',
     color: '#F57C00',
   },
   arrivedDigitText: {

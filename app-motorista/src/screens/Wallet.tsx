@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  View, Text, StyleSheet, SafeAreaView, TouchableOpacity, 
+  View, Text, StyleSheet, TouchableOpacity, 
   ScrollView, Platform, StatusBar, ActivityIndicator, RefreshControl 
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { api } from '../services/api';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,6 +11,7 @@ import { theme } from '../theme/theme';
 
 export function Wallet() {
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
   
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -43,19 +45,33 @@ export function Wallet() {
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   }
 
+  // Cálculos dinâmicos para recuo seguro em topo e rodapé (Android e iOS)
+  const dynamicTopPadding = Math.max((insets?.top || 0) + 6, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 6 : 14);
+  const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 28 : 16);
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={theme.colors.primaryDark} translucent />
       
       {/* HEADER HERO ESTILO BANCO DIGITAL */}
-      <SafeAreaView style={styles.topHeaderContainer}>
+      <View style={[styles.topHeaderContainer, { paddingTop: dynamicTopPadding }]}>
         <View style={styles.headerTopBar}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="#FFF" />
+          <TouchableOpacity 
+            onPress={() => navigation.goBack()} 
+            style={styles.backButton}
+            activeOpacity={0.8}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="arrow-back" size={22} color="#FFF" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Ganhos e Carteira</Text>
-          <TouchableOpacity onPress={handleRefresh} style={styles.refreshButton}>
-            <Ionicons name="reload" size={20} color="#FFF" />
+          <TouchableOpacity 
+            onPress={handleRefresh} 
+            style={styles.refreshButton}
+            activeOpacity={0.8}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="reload" size={18} color="#FFF" />
           </TouchableOpacity>
         </View>
 
@@ -69,23 +85,41 @@ export function Wallet() {
 
         {/* PILLS DE AÇÕES RÁPIDAS */}
         <View style={styles.quickPillRow}>
-          <TouchableOpacity style={styles.quickPill} onPress={() => navigation.navigate('RideHistory')}>
+          <TouchableOpacity 
+            style={styles.quickPill} 
+            onPress={() => navigation.navigate('RideHistory')}
+            activeOpacity={0.85}
+          >
             <Ionicons name="receipt-outline" size={16} color="#FFF" />
             <Text style={styles.quickPillText}>Ver Extrato</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.quickPill} onPress={() => navigation.navigate('Profile')}>
+          
+          <TouchableOpacity 
+            style={styles.quickPill} 
+            onPress={() => navigation.navigate('Profile')}
+            activeOpacity={0.85}
+          >
             <Ionicons name="wallet-outline" size={16} color="#FFF" />
             <Text style={styles.quickPillText}>Conta Recebimento</Text>
           </TouchableOpacity>
         </View>
-      </SafeAreaView>
+      </View>
 
       {/* FOLHA BRANCA SOBREPOSTA (WHITE CONTENT SHEET) */}
       <View style={styles.contentSheet}>
         <ScrollView 
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scrollContent}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={[theme.colors.primaryDark]} />}
+          contentContainerStyle={[
+            styles.scrollContent, 
+            { paddingBottom: dynamicBottomPadding + 20 }
+          ]}
+          refreshControl={
+            <RefreshControl 
+              refreshing={refreshing} 
+              onRefresh={handleRefresh} 
+              colors={[theme.colors.primaryDark]} 
+            />
+          }
         >
           {loading ? (
             <ActivityIndicator size="large" color={theme.colors.primaryDark} style={{ marginTop: 40 }} />
@@ -160,20 +194,19 @@ const styles = StyleSheet.create({
   topHeaderContainer: { 
     backgroundColor: theme.colors.primaryDark, 
     paddingHorizontal: 20, 
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 10,
-    paddingBottom: 35 
+    paddingBottom: 28 
   },
-  headerTopBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
+  headerTopBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
   backButton: { padding: 6, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20 },
   refreshButton: { padding: 6, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20 },
-  headerTitle: { fontSize: 17, fontWeight: '700', color: '#FFF' },
+  headerTitle: { fontSize: 16, fontWeight: '700', color: '#FFF' },
 
-  heroAmountBox: { alignItems: 'center', marginVertical: 10 },
-  heroLabel: { fontSize: 13, color: '#94A3B8', fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1 },
-  heroAmount: { fontSize: 38, fontWeight: '900', color: '#FFF', marginTop: 4 },
-  heroCurrency: { fontSize: 20, fontWeight: 'bold', color: theme.colors.accentYellow },
+  heroAmountBox: { alignItems: 'center', marginVertical: 6 },
+  heroLabel: { fontSize: 12, color: '#94A3B8', fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1 },
+  heroAmount: { fontSize: 36, fontWeight: '900', color: '#FFF', marginTop: 2 },
+  heroCurrency: { fontSize: 18, fontWeight: 'bold', color: theme.colors.accentYellow },
 
-  quickPillRow: { flexDirection: 'row', justifyContent: 'center', gap: 12, marginTop: 16 },
+  quickPillRow: { flexDirection: 'row', justifyContent: 'center', gap: 12, marginTop: 14 },
   quickPill: { 
     flexDirection: 'row', 
     alignItems: 'center', 
@@ -183,7 +216,7 @@ const styles = StyleSheet.create({
     borderRadius: theme.borderRadius.pill,
     gap: 6 
   },
-  quickPillText: { color: '#FFF', fontWeight: '700', fontSize: 13 },
+  quickPillText: { color: '#FFF', fontWeight: '700', fontSize: 12 },
 
   contentSheet: { 
     flex: 1, 
@@ -193,7 +226,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden'
   },
   scrollContent: { padding: 20 },
-  sectionTitle: { fontSize: 16, fontWeight: '800', color: theme.colors.textPrimary, marginBottom: 14 },
+  sectionTitle: { fontSize: 15, fontWeight: '800', color: theme.colors.textPrimary, marginBottom: 12 },
 
   iconGrid: { flexDirection: 'row', gap: 12, marginBottom: 16 },
   gridItem: { 
@@ -203,27 +236,27 @@ const styles = StyleSheet.create({
     borderRadius: theme.borderRadius.lg, 
     ...theme.shadows.card 
   },
-  gridIconBox: { width: 44, height: 44, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
+  gridIconBox: { width: 42, height: 42, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
   gridLabel: { fontSize: 12, color: theme.colors.textSecondary, fontWeight: '600' },
-  gridValue: { fontSize: 16, fontWeight: '900', color: theme.colors.textPrimary, marginTop: 4 },
+  gridValue: { fontSize: 15, fontWeight: '900', color: theme.colors.textPrimary, marginTop: 4 },
 
   card: { 
     backgroundColor: theme.colors.surfaceWhite, 
-    padding: 20, 
+    padding: 18, 
     borderRadius: theme.borderRadius.lg, 
     marginBottom: 16, 
     ...theme.shadows.card 
   },
   cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   cardTitle: { fontSize: 15, fontWeight: '800', color: theme.colors.textPrimary },
-  cardSub: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 2, marginBottom: 16 },
+  cardSub: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 2, marginBottom: 14 },
   balanceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  balanceLabel: { fontSize: 14, color: theme.colors.textSecondary, fontWeight: '600' },
-  balanceValue: { fontSize: 22, fontWeight: '900' },
+  balanceLabel: { fontSize: 13, color: theme.colors.textSecondary, fontWeight: '600' },
+  balanceValue: { fontSize: 20, fontWeight: '900' },
 
   warningBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FEF2F2', padding: 12, borderRadius: 10, marginTop: 14, gap: 8 },
   warningText: { fontSize: 12, color: theme.colors.dangerRed, fontWeight: '600', flex: 1 },
 
   infoBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECFDF5', padding: 14, borderRadius: theme.borderRadius.md, gap: 10 },
-  infoBannerText: { fontSize: 13, color: '#047857', fontWeight: '500', flex: 1, lineHeight: 18 },
+  infoBannerText: { fontSize: 12, color: '#047857', fontWeight: '500', flex: 1, lineHeight: 17 },
 });

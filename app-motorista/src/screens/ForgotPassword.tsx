@@ -3,6 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, Alert,
   ActivityIndicator, KeyboardAvoidingView, ScrollView, Platform, StatusBar
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { api } from '../services/api';
 import { Feather } from '@expo/vector-icons';
@@ -10,6 +11,7 @@ import { theme } from '../theme/theme';
 
 export function ForgotPassword() {
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
 
   const [step, setStep] = useState<1 | 2>(1);
   const [phone, setPhone] = useState('');
@@ -42,7 +44,7 @@ export function ForgotPassword() {
       const formattedPhone = `+245${phone}`;
       await api.post('/drivers/forgot-password', { phone: formattedPhone });
       
-      Alert.alert('Código Enviado', `Um SMS com o código foi enviado para +245 ${phone}.`);
+      Alert.alert('Código Enviado 📩', `Um SMS com o código foi enviado para +245 ${phone}.`);
       setStep(2);
       setTimer(60);
     } catch (error: any) {
@@ -81,16 +83,37 @@ export function ForgotPassword() {
     }
   }
 
+  // Cálculos dinâmicos para proteção de bordas no Android e iOS
+  const dynamicTopPadding = Math.max((insets?.top || 0) + 10, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 12 : 20);
+  const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 20, Platform.OS === 'android' ? 32 : 20);
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={theme.colors.primaryDark} translucent />
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
-          
-          <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-            <Feather name="arrow-left" size={24} color="#FFF" />
+      
+      <KeyboardAvoidingView 
+        style={{ flex: 1 }} 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <ScrollView 
+          contentContainerStyle={[
+            styles.scrollContainer, 
+            { paddingTop: dynamicTopPadding, paddingBottom: dynamicBottomPadding }
+          ]} 
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* BOTÃO DE VOLTAR */}
+          <TouchableOpacity 
+            style={styles.backButton} 
+            onPress={() => navigation.goBack()}
+            activeOpacity={0.8}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Feather name="arrow-left" size={22} color="#FFF" />
           </TouchableOpacity>
 
+          {/* CABEÇALHO */}
           <View style={styles.header}>
             <Text style={styles.title}>Recuperar Senha</Text>
             <Text style={styles.subtitle}>
@@ -100,6 +123,7 @@ export function ForgotPassword() {
             </Text>
           </View>
 
+          {/* CARD DO FORMULÁRIO */}
           <View style={styles.formCard}>
             {step === 1 ? (
               <>
@@ -123,6 +147,7 @@ export function ForgotPassword() {
                   style={[styles.button, (loading || phone.length !== 9) && styles.buttonDisabled]}
                   onPress={handleSendCode}
                   disabled={loading || phone.length !== 9}
+                  activeOpacity={0.85}
                 >
                   {loading ? <ActivityIndicator color="#0F2537" /> : <Text style={styles.buttonText}>Enviar SMS</Text>}
                 </TouchableOpacity>
@@ -154,7 +179,7 @@ export function ForgotPassword() {
                     onChangeText={setNewPassword}
                     secureTextEntry={!showPassword}
                   />
-                  <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeButton}>
+                  <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeButton} activeOpacity={0.7}>
                     <Feather name={showPassword ? 'eye' : 'eye-off'} size={18} color={theme.colors.textSecondary} />
                   </TouchableOpacity>
                 </View>
@@ -163,6 +188,7 @@ export function ForgotPassword() {
                   style={[styles.button, loading && styles.buttonDisabled]}
                   onPress={handleResetPassword}
                   disabled={loading}
+                  activeOpacity={0.85}
                 >
                   {loading ? <ActivityIndicator color="#0F2537" /> : <Text style={styles.buttonText}>Redefinir Senha</Text>}
                 </TouchableOpacity>
@@ -171,6 +197,7 @@ export function ForgotPassword() {
                   style={styles.resendContainer}
                   onPress={handleSendCode}
                   disabled={timer > 0 || loading}
+                  activeOpacity={0.7}
                 >
                   <Text style={[styles.resendText, timer > 0 && { color: theme.colors.textLight }]}>
                     {timer > 0 ? `Reenviar SMS em ${timer}s` : 'Não recebeu? Reenviar código'}
@@ -190,25 +217,23 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.primaryDark },
   scrollContainer: {
     flexGrow: 1,
-    padding: 20,
-    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 30) + 10 : 30,
-    paddingBottom: 30,
+    paddingHorizontal: 20,
   },
   backButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    justify: 'center',
     alignItems: 'center',
     marginBottom: 20,
   },
   header: { marginBottom: 24 },
-  title: { fontSize: 26, fontWeight: '900', color: '#FFF', marginBottom: 8 },
-  subtitle: { fontSize: 14, color: '#94A3B8', lineHeight: 20 },
+  title: { fontSize: 24, fontWeight: '900', color: '#FFF', marginBottom: 6 },
+  subtitle: { fontSize: 13, color: '#94A3B8', lineHeight: 18 },
   formCard: {
     backgroundColor: theme.colors.surfaceWhite,
-    padding: 24,
+    padding: 20,
     borderRadius: theme.borderRadius.xl,
     ...theme.shadows.floating,
   },
@@ -220,9 +245,9 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.md,
-    marginBottom: 18,
+    marginBottom: 16,
     paddingHorizontal: 12,
-    height: 54,
+    height: 52,
   },
   prefixBadge: {
     backgroundColor: '#E2E8F0',
@@ -231,20 +256,20 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginRight: 10,
   },
-  prefixText: { fontSize: 14, fontWeight: '800', color: theme.colors.textPrimary },
+  prefixText: { fontSize: 13, fontWeight: '800', color: theme.colors.textPrimary },
   inputIcon: { marginRight: 10 },
-  inputFlex: { flex: 1, fontSize: 15, fontWeight: '600', color: theme.colors.textPrimary, height: '100%' },
+  inputFlex: { flex: 1, fontSize: 14, fontWeight: '600', color: theme.colors.textPrimary, height: '100%' },
   eyeButton: { padding: 8 },
   button: {
     backgroundColor: theme.colors.accentYellow,
-    height: 54,
+    height: 52,
     borderRadius: theme.borderRadius.md,
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 10,
+    marginTop: 8,
   },
   buttonDisabled: { opacity: 0.6 },
   buttonText: { color: '#0F2537', fontSize: 14, fontWeight: '900', textTransform: 'uppercase' },
-  resendContainer: { marginTop: 20, alignItems: 'center' },
+  resendContainer: { marginTop: 18, alignItems: 'center' },
   resendText: { fontSize: 13, color: theme.colors.primaryBlue, fontWeight: '700' },
 });

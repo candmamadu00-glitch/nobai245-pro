@@ -1,5 +1,9 @@
 import React, { useState } from 'react';
-import { Modal, View, Text, TouchableOpacity, TextInput, StyleSheet, Alert } from 'react-native';
+import { 
+  Modal, View, Text, TouchableOpacity, TextInput, StyleSheet, Alert, 
+  KeyboardAvoidingView, Platform, Keyboard, TouchableWithoutFeedback 
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface CancelModalProps {
   visible: boolean;
@@ -23,13 +27,19 @@ const REASONS_DRIVER = [
   'Outro motivo',
 ];
 
-export function CancelModal({ visible, userType, isPenaltyApplicable = false, onConfirm, onClose }: CancelModalProps) {
+export function CancelModal({ 
+  visible, 
+  userType, 
+  isPenaltyApplicable = false, 
+  onConfirm, 
+  onClose 
+}: CancelModalProps) {
+  const insets = useSafeAreaInsets();
   const [selectedReason, setSelectedReason] = useState('');
   const [customReason, setCustomReason] = useState('');
 
   const reasons = userType === 'PASSENGER' ? REASONS_PASSENGER : REASONS_DRIVER;
 
-  //  Função para resetar os campos internos adicionada
   function resetInternalState() {
     setSelectedReason('');
     setCustomReason('');
@@ -53,10 +63,20 @@ export function CancelModal({ visible, userType, isPenaltyApplicable = false, on
     onClose();
   }
 
+  // Cálculo dinâmico para garantir margem de segurança na barra inferior do Android/iOS
+  const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 28 : 16);
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
-      <View style={styles.overlay}>
-        <View style={styles.container}>
+      <KeyboardAvoidingView 
+        style={styles.overlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View style={styles.backdrop} />
+        </TouchableWithoutFeedback>
+
+        <View style={[styles.container, { paddingBottom: dynamicBottomPadding }]}>
           <Text style={styles.title}>Cancelar Corrida?</Text>
           
           {isPenaltyApplicable && userType === 'PASSENGER' && (
@@ -74,6 +94,7 @@ export function CancelModal({ visible, userType, isPenaltyApplicable = false, on
               key={reason}
               style={[styles.reasonOption, selectedReason === reason && styles.reasonSelected]}
               onPress={() => setSelectedReason(reason)}
+              activeOpacity={0.8}
             >
               <Text style={[styles.reasonText, selectedReason === reason && styles.reasonTextSelected]}>
                 {reason}
@@ -85,8 +106,11 @@ export function CancelModal({ visible, userType, isPenaltyApplicable = false, on
             <TextInput
               style={styles.input}
               placeholder="Descreva o motivo..."
+              placeholderTextColor="#94A3B8"
               value={customReason}
               onChangeText={setCustomReason}
+              multiline
+              maxLength={150}
             />
           )}
 
@@ -94,34 +118,53 @@ export function CancelModal({ visible, userType, isPenaltyApplicable = false, on
             style={[styles.confirmButton, !selectedReason && styles.disabledButton]} 
             onPress={handleConfirm}
             disabled={!selectedReason}
+            activeOpacity={0.85}
           >
             <Text style={styles.confirmButtonText}>Confirmar Cancelamento</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.backButton} onPress={handleClose}>
+          <TouchableOpacity style={styles.backButton} onPress={handleClose} activeOpacity={0.7}>
             <Text style={styles.backButtonText}>Voltar e Continuar Corrida</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
-  container: { backgroundColor: '#FFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24 },
-  title: { fontSize: 20, fontWeight: 'bold', color: '#1F2937', marginBottom: 8 },
-  subtitle: { fontSize: 14, color: '#4B5563', marginBottom: 12 },
-  warningBox: { backgroundColor: '#FEF2F2', borderColor: '#EF4444', borderWidth: 1, padding: 12, borderRadius: 8, marginBottom: 12 },
-  warningText: { color: '#991B1B', fontSize: 13, fontWeight: '600' },
-  reasonOption: { padding: 12, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 8, marginBottom: 8 },
-  reasonSelected: { backgroundColor: '#059669', borderColor: '#059669' },
-  reasonText: { color: '#374151', fontSize: 14 },
-  reasonTextSelected: { color: '#FFF', fontWeight: 'bold' },
-  input: { backgroundColor: '#F3F4F6', borderRadius: 8, padding: 12, marginBottom: 12, marginTop: 4 },
-  confirmButton: { backgroundColor: '#DC2626', padding: 16, borderRadius: 8, alignItems: 'center', marginTop: 12 },
-  disabledButton: { opacity: 0.5 },
-  confirmButtonText: { color: '#FFF', fontWeight: 'bold', fontSize: 16 },
-  backButton: { padding: 12, alignItems: 'center', marginTop: 8 },
-  backButtonText: { color: '#4B5563', fontWeight: 'bold' },
+  overlay: { 
+    flex: 1, 
+    justifyContent: 'flex-end',
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+  },
+  container: { 
+    backgroundColor: '#FFF', 
+    borderTopLeftRadius: 24, 
+    borderTopRightRadius: 24, 
+    paddingHorizontal: 20, 
+    paddingTop: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    elevation: 12,
+  },
+  title: { fontSize: 18, fontWeight: '900', color: '#0F172A', marginBottom: 4 },
+  subtitle: { fontSize: 13, color: '#64748B', marginBottom: 14 },
+  warningBox: { backgroundColor: '#FEF2F2', borderColor: '#FCA5A5', borderWidth: 1, padding: 10, borderRadius: 12, marginBottom: 12 },
+  warningText: { color: '#991B1B', fontSize: 12, fontWeight: '700', lineHeight: 16 },
+  reasonOption: { paddingVertical: 12, paddingHorizontal: 14, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, marginBottom: 8, backgroundColor: '#F8FAFC' },
+  reasonSelected: { backgroundColor: '#0284C7', borderColor: '#0284C7' },
+  reasonText: { color: '#334155', fontSize: 13, fontWeight: '600' },
+  reasonTextSelected: { color: '#FFF', fontWeight: '800' },
+  input: { backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 12, padding: 12, minHeight: 48, maxHeight: 90, marginBottom: 10, fontSize: 13, color: '#0F172A' },
+  confirmButton: { backgroundColor: '#EF4444', paddingVertical: 14, borderRadius: 14, alignItems: 'center', marginTop: 8 },
+  disabledButton: { backgroundColor: '#CBD5E1' },
+  confirmButtonText: { color: '#FFF', fontWeight: '800', fontSize: 15 },
+  backButton: { paddingVertical: 12, alignItems: 'center', marginTop: 4 },
+  backButtonText: { color: '#64748B', fontWeight: '800', fontSize: 13 },
 });

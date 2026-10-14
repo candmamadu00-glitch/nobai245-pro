@@ -5,7 +5,7 @@ import {
   Share, AppState, KeyboardAvoidingView, Modal, TextInput, 
   ActivityIndicator, Image, Animated, PanResponder, Dimensions, ScrollView, TouchableWithoutFeedback, Keyboard
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Mapbox from '@rnmapbox/maps';
 import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -218,6 +218,7 @@ export function Home() {
   const navigation = useNavigation<any>();
   const { t, i18n } = useTranslation();
   const isMountedRef = useRef(true);
+  const insets = useSafeAreaInsets();
   const cameraRef = useRef<Mapbox.Camera>(null);
   const chatFlatListRef = useRef<FlatList>(null);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -550,30 +551,38 @@ export function Home() {
 
       if (!isMountedRef.current || !location) return;
 
+      // Guarda sempre a posição real do passageiro no mapa
       setPassengerLocation(location);
-      setPickupCoords({ latitude: location.coords.latitude, longitude: location.coords.longitude });
 
-      const localName = findNearestLocalBairro(location.coords.latitude, location.coords.longitude);
-      if (localName) {
-        setPickupAddress(localName);
-      } else if (MAPBOX_ACCESS_TOKEN && isMountedRef.current) {
-        try {
-          const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${location.coords.longitude},${location.coords.latitude}.json?language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`;
-          const res = await fetch(url);
-          if (res.ok) {
-            const data = await res.json();
-            if (data?.features?.length > 0 && isMountedRef.current) {
-              const placeName = data.features[0].place_name || '';
-              const parts = placeName.split(',')
-                .map((p: string) => p.trim())
-                .filter((p: string) => p && !p.toLowerCase().includes('guiné'));
-              const cleanAddress = parts.length > 0 ? parts.slice(0, 2).join(', ') : 'Bissau, Centro';
-              setPickupAddress(cleanAddress);
+      // 🛡️ SÓ SOBRESCREVE O PONTO DE EMBARQUE SE O USUÁRIO NÃO TIVER DIGITADO OU SELECIONADO UM ENDEREÇO MANUALMENTE
+      if (!isManualPickupRef.current) {
+        setPickupCoords({ latitude: location.coords.latitude, longitude: location.coords.longitude });
+
+        const localName = findNearestLocalBairro(location.coords.latitude, location.coords.longitude);
+        if (localName) {
+          setPickupAddress(localName);
+        } else if (MAPBOX_ACCESS_TOKEN && isMountedRef.current) {
+          try {
+            const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${location.coords.longitude},${location.coords.latitude}.json?language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`;
+            const res = await fetch(url);
+            if (res.ok) {
+              const data = await res.json();
+              if (data?.features?.length > 0 && isMountedRef.current) {
+                const placeName = data.features[0].place_name || '';
+                const parts = placeName.split(',')
+                  .map((p: string) => p.trim())
+                  .filter((p: string) => p && !p.toLowerCase().includes('guiné'));
+                const cleanAddress = parts.length > 0 ? parts.slice(0, 2).join(', ') : 'Bissau, Centro';
+                
+                if (!isManualPickupRef.current) {
+                  setPickupAddress(cleanAddress);
+                }
+              }
             }
+          } catch (gErr) {
+            console.warn('Geocodificação reversa falhou:', gErr);
+            if (!isManualPickupRef.current) setPickupAddress('Bissau, Centro');
           }
-        } catch (gErr) {
-          console.warn('Geocodificação reversa falhou:', gErr);
-          setPickupAddress('Bissau, Centro');
         }
       }
     } catch (error) {
@@ -1202,7 +1211,11 @@ export function Home() {
     setShowRatingModal(false);
     resetRideState();
   }, [activeRideId, driverInfo, user?.id, resetRideState]);
-  
+  const handleResetToMyGps = () => {
+    // 🔓 DESATRAVA A TRAVA MANUAL E VOLTA PRO GPS REAL
+    isManualPickupRef.current = false;
+    getCurrentLocationWithFallback();
+  };
   const handleCallDriver = () => {
     setIsChatVisible(true);
     Alert.alert(
@@ -1212,26 +1225,28 @@ export function Home() {
   };
 
   const handleShareTrip = async () => {
-    try {
-      if (!driverInfo || !dropoffAddress || !activeRideId) {
-        Alert.alert(t('warning_title', 'Aviso ⚠️'), t('wait_trip_data', 'Aguarde os dados da corrida carregarem para compartilhar.'));
-        return;
-      }
-
-      const trackingUrl = `https://nobai245.com/track/${activeRideId}`;
-
-      const mensagem = `🚕 Acompanhe minha viagem no Nobai245!\n\n` +
-        `👤 Motorista: ${driverInfo.name}\n` +
-        `🚘 Veículo: ${driverInfo.carModel || 'Veículo'} (${driverInfo.carColor || 'Cor N/A'}) - Placa: ${driverInfo.licensePlate || 'N/A'}\n` +
-        `📍 Destino: ${dropoffAddress}\n` +
-        `${driverEta ? `⏳ Previsão de chegada: ${driverEta} minutos\n` : ''}` +
-        `🌐 Acompanhe em tempo real pelo navegador: ${trackingUrl}`;
-
-      await Share.share({ message: mensagem, title: 'Detalhes da minha corrida' });
-    } catch (error) {
-      Alert.alert(t('error_title', 'Erro'), t('share_error_msg', 'Não foi possível abrir o menu de compartilhamento.'));
+  try {
+    if (!driverInfo || !dropoffAddress || !activeRideId) {
+      Alert.alert(t('warning_title', 'Aviso ⚠️'), t('wait_trip_data', 'Aguarde os dados da corrida carregarem para compartilhar.'));
+      return;
     }
-  };
+
+    // Usa a URL base configurada no .env
+    const apiDomain = process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com';
+    const trackingUrl = `${apiDomain}/track/${activeRideId}`;
+
+    const mensagem = `🚕 Acompanhe minha viagem no Nobai245!\n\n` +
+      `👤 Motorista: ${driverInfo.name}\n` +
+      `🚘 Veículo: ${driverInfo.carModel || 'Veículo'} (${driverInfo.carColor || 'Cor N/A'}) - Placa: ${driverInfo.licensePlate || 'N/A'}\n` +
+      `📍 Destino: ${dropoffAddress}\n` +
+      `${driverEta ? `⏳ Previsão de chegada: ${driverEta} minutos\n` : ''}` +
+      `🌐 Acompanhe em tempo real pelo navegador: ${trackingUrl}`;
+
+    await Share.share({ message: mensagem, title: 'Detalhes da minha corrida' });
+  } catch (error) {
+    Alert.alert(t('error_title', 'Erro'), t('share_error_msg', 'Não foi possível abrir o menu de compartilhamento.'));
+  }
+};
 
   function sendMessage() {
     if (!inputText.trim() || !activeRideId) return;
@@ -1249,6 +1264,24 @@ export function Home() {
     setSearchResults([]);
     setIsSearchModalVisible(true);
   }
+  // Função acionada quando o usuário clica em um endereço da lista de busca
+  const handleSelectSearchResult = (address: string, coords: { latitude: number; longitude: number }) => {
+    if (searchType === 'pickup') {
+      // 🔒 ATIVA A TRAVA MANUAL: O GPS e o mapa não vão mais apagar o endereço digitado!
+      isManualPickupRef.current = true;
+      setPickupAddress(address);
+      setPickupCoords(coords);
+    } else if (searchType === 'dropoff') {
+      setDropoffAddress(address);
+      setDropoffCoords(coords);
+      setBookingStep('SERVICE_AND_PRICE');
+    } else if (searchType === 'extraStop') {
+      setExtraStopAddress(address);
+      setExtraStopCoords(coords);
+    }
+
+    setIsSearchModalVisible(false);
+  };
 const handleSosPress = () => {
   Alert.alert(
     t('emergency_sos', 'SOS / Emergência 🚨'),
@@ -1274,16 +1307,17 @@ const handleSosPress = () => {
     { cancelable: true }
   );
 };
-  if (!passengerLocation) {
+ if (!passengerLocation) {
     return (
-      <View style={styles.loadingContainer}>
-        <StatusBar barStyle="dark-content" backgroundColor="#FFF" />
+      <View style={[styles.loadingContainer, { paddingTop: Math.max(insets?.top || 0, 40), paddingBottom: Math.max(insets?.bottom || 0, 20) }]}>
+        <StatusBar barStyle="light-content" backgroundColor="#0F172A" translucent />
         <MaterialCommunityIcons name="map-marker-radius" size={54} color="#EAB308" />
         <Text style={styles.loadingText}>{locationError || t('getting_location', 'Obtendo localização exata...')}</Text>
         {locationError && (
           <TouchableOpacity 
             style={styles.retryLocationBtn} 
             onPress={getCurrentLocationWithFallback}
+            activeOpacity={0.8}
           >
             <Text style={{ color: '#0F172A', fontWeight: 'bold' }}>{t('try_again', 'Tentar Novamente')}</Text>
           </TouchableOpacity>
@@ -1293,9 +1327,14 @@ const handleSosPress = () => {
   }
 
   const activeOtpPin = String(startOtp || driverInfo?.startOtp || '');
+  const topHeaderInset = Math.max((insets?.top || 0) + 12, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 12 : 20);
+
   return (
     <View style={styles.container}>
-      <View style={styles.floatingHeader}>
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+
+      {/* HEADER FLUTUANTE AJUSTADO PARA NÃO INVADIR A BARRA DE STATUS */}
+      <View style={[styles.floatingHeader, { top: topHeaderInset }]}>
         <View style={styles.headerContent}>
           <TouchableOpacity 
             style={styles.headerUserInfo} 
@@ -1309,7 +1348,7 @@ const handleSosPress = () => {
                   style={{ width: '100%', height: '100%', borderRadius: 50 }} 
                 />
               ) : (
-                <Ionicons name="person" size={16} color="#0F172A" />
+                <Ionicons name="person" size={18} color="#0F172A" />
               )}
             </View>
             <Text style={styles.greetingText}>
@@ -1320,30 +1359,30 @@ const handleSosPress = () => {
           <TouchableOpacity 
             style={styles.langHeaderBtn} 
             onPress={() => setLangModalVisible(true)}
+            activeOpacity={0.8}
           >
             <Text style={styles.langHeaderBtnText}>{i18n.language?.toUpperCase() || 'PT'}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.menuIcon} activeOpacity={0.7} onPress={() => setIsMenuVisible(true)}>
-            <Ionicons name="menu" size={22} color="#0F172A" />
+            <Ionicons name="menu" size={22} color="#EAB308" />
           </TouchableOpacity>
         </View>
       </View>
 
       <Mapbox.MapView
-  style={StyleSheet.absoluteFill}
-  styleURL={Mapbox.StyleURL.Street}
-  logoEnabled={false}
-  attributionEnabled={false}
-  onCameraChanged={(e) => {
-    // Só desativa a trava manual se for um gesto ativo do usuário (arrastou a tela com o dedo)
-    if (e.gestures.isGestureActive) {
-      setIsMapMoving(true);
-      isManualPickupRef.current = false;
-    }
-  }}
-  onMapIdle={onMapRegionDidChange}
->
+        style={StyleSheet.absoluteFill}
+        styleURL={Mapbox.StyleURL.Street}
+        logoEnabled={false}
+        attributionEnabled={false}
+        onCameraChanged={(e) => {
+          if (e.gestures.isGestureActive) {
+            setIsMapMoving(true);
+            isManualPickupRef.current = false;
+          }
+        }}
+        onMapIdle={onMapRegionDidChange}
+      >
         <Mapbox.Camera
           ref={cameraRef}
           zoomLevel={14}
@@ -1361,7 +1400,7 @@ const handleSosPress = () => {
             <Mapbox.LineLayer
               id="routeLine"
               style={{
-                lineColor: '#0F172A',
+                lineColor: '#EAB308',
                 lineWidth: 5,
                 lineCap: 'round',
                 lineJoin: 'round',
@@ -1436,14 +1475,15 @@ const handleSosPress = () => {
       {rideStatus === 'idle' && bookingStep === 'ADDRESS' && (
         <View style={styles.centerPinContainer} pointerEvents="none">
           <Animated.View style={[styles.centerPin, isMapMoving && { transform: [{ translateY: -10 }] }]}>
-            <Ionicons name="location" size={36} color="#0F172A" />
+            <Ionicons name="location" size={36} color="#EAB308" />
           </Animated.View>
           <View style={styles.pinShadow} />
         </View>
       )}
 
+      {/* BOTÃO RECENTRALIZAR */}
       <TouchableOpacity 
-        style={styles.recenterButton} 
+        style={[styles.recenterButton, { bottom: Math.max((insets?.bottom || 0) + 260, 270) }]} 
         activeOpacity={0.85}
         onPress={() => {
           if (passengerLocation?.coords && cameraRef.current) {
@@ -1455,11 +1495,12 @@ const handleSosPress = () => {
           }
         }}
       >
-        <Ionicons name="locate" size={20} color="#0F172A" />
+        <Ionicons name="locate" size={22} color="#EAB308" />
       </TouchableOpacity>
 
+      {/* ATALHOS FAVORITOS (DESLOCADOS PARA BAIXO DO CABEÇALHO) */}
       {rideStatus === 'idle' && bookingStep === 'ADDRESS' && (
-        <View style={styles.favoritesContainer}>
+        <View style={[styles.favoritesContainer, { top: topHeaderInset + 68 }]}>
           <TouchableOpacity style={styles.favoriteButton} activeOpacity={0.8} onPress={() => handleFavoritePress('home')}>
             <View style={styles.favoriteIconBg}>
               <Ionicons name="home" size={14} color="#0F172A" />
@@ -1480,9 +1521,10 @@ const handleSosPress = () => {
         </View>
       )}
 
+      {/* BADGE DE SEGURANÇA NOTURNO */}
       {isNightTimeForPin() && Boolean(activeOtpPin) && ['accepted', 'arrived'].includes(rideStatus) && (
-        <View style={styles.pinSecurityBadge}>
-          <Ionicons name="shield-checkmark" size={20} color="#B45309" />
+        <View style={[styles.pinSecurityBadge, { top: topHeaderInset + 68 }]}>
+          <Ionicons name="shield-checkmark" size={20} color="#EAB308" />
           <View style={styles.pinSecurityTextContainer}>
             <Text style={styles.pinSecurityTitle}>{t('boarding_pin_title', 'PIN DE EMBARQUE')}</Text>
             <Text style={styles.pinSecuritySub}>{t('tell_pin_to_driver_msg', 'Fale este código ao motorista para iniciar a corrida')}</Text>
@@ -1493,16 +1535,24 @@ const handleSosPress = () => {
         </View>
       )}
 
-      {/* KEYBOARD AVOIDING VIEW - PAINEL PRINCIPAL */}
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.bottomSheetWrapper} pointerEvents="box-none">
-        <Animated.View style={[styles.bottomSheet, { transform: [{ translateY }] }]}>
+      {/* KEYBOARD AVOIDING VIEW - PAINEL PRINCIPAL SLIDING SHEET */}
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
+        style={styles.bottomSheetWrapper} 
+        pointerEvents="box-none"
+      >
+        <Animated.View style={[styles.bottomSheet, { transform: [{ translateY }], paddingBottom: Math.max((insets?.bottom || 0) + 12, 20) }]}>
           
           <View style={styles.dragHandlerArea} {...panResponder.panHandlers}>
             <View style={styles.dragIndicator} />
           </View>
 
-          <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ flexGrow: 1, paddingBottom: 20 }}>
-            
+          <ScrollView 
+            nestedScrollEnabled 
+            showsVerticalScrollIndicator={false} 
+            keyboardShouldPersistTaps="handled" 
+            contentContainerStyle={{ flexGrow: 1, paddingBottom: 16 }}
+          >
             {rideStatus === 'idle' && bookingStep === 'ADDRESS' && (
               <View style={{ width: '100%', paddingTop: 4 }}>
                 <Text style={styles.sheetTitle}>{t('where_to', 'Para onde vamos?')}</Text>
@@ -1519,8 +1569,8 @@ const handleSosPress = () => {
                     <Text style={styles.requestButtonText}>{t('next_btn', 'Avançar')}</Text>
                   </TouchableOpacity>
                 ) : (
-                  <TouchableOpacity style={[styles.requestButton, { backgroundColor: '#F1F5F9' }]} activeOpacity={0.8} onPress={() => openSearchModal('dropoff')}>
-                    <Text style={[styles.requestButtonText, { color: '#64748B' }]}>{t('where_do_you_want_to_go', 'Aonde você quer ir?')}</Text>
+                  <TouchableOpacity style={[styles.requestButton, { backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155' }]} activeOpacity={0.8} onPress={() => openSearchModal('dropoff')}>
+                    <Text style={[styles.requestButtonText, { color: '#EAB308' }]}>{t('where_do_you_want_to_go', 'Aonde você quer ir?')}</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -1534,7 +1584,7 @@ const handleSosPress = () => {
                     style={[styles.serviceTypeButton, serviceType === 'viagem' && styles.serviceTypeActive]}
                     onPress={() => setServiceType('viagem')}
                   >
-                    <Ionicons name="car-outline" size={18} color={serviceType === 'viagem' ? '#0F172A' : '#64748B'} />
+                    <Ionicons name="car-outline" size={18} color={serviceType === 'viagem' ? '#0F172A' : '#94A3B8'} />
                     <Text style={[styles.serviceTypeText, serviceType === 'viagem' && styles.serviceTypeTextActive]}>{t('ride_service', 'Viagem')}</Text>
                   </TouchableOpacity>
 
@@ -1542,7 +1592,7 @@ const handleSosPress = () => {
                     style={[styles.serviceTypeButton, serviceType === 'entrega' && styles.serviceTypeActive]}
                     onPress={() => setServiceType('entrega')}
                   >
-                    <Ionicons name="cube-outline" size={18} color={serviceType === 'entrega' ? '#0F172A' : '#64748B'} />
+                    <Ionicons name="cube-outline" size={18} color={serviceType === 'entrega' ? '#0F172A' : '#94A3B8'} />
                     <Text style={[styles.serviceTypeText, serviceType === 'entrega' && styles.serviceTypeTextActive]}>{t('delivery_service', 'Entrega')}</Text>
                   </TouchableOpacity>
 
@@ -1550,7 +1600,7 @@ const handleSosPress = () => {
                     style={[styles.serviceTypeButton, serviceType === 'aluguel' && styles.serviceTypeActive]}
                     onPress={() => setServiceType('aluguel')}
                   >
-                    <Ionicons name="key-outline" size={18} color={serviceType === 'aluguel' ? '#0F172A' : '#64748B'} />
+                    <Ionicons name="key-outline" size={18} color={serviceType === 'aluguel' ? '#0F172A' : '#94A3B8'} />
                     <Text style={[styles.serviceTypeText, serviceType === 'aluguel' && styles.serviceTypeTextActive]}>{t('rental_service', 'Aluguel')}</Text>
                   </TouchableOpacity>
                 </View>
@@ -1566,7 +1616,7 @@ const handleSosPress = () => {
                         <Text style={[styles.categoryTitle, styles.categoryTextActive]}>{RENTAL_PRICES[selectedRegion]?.label || 'Bissau'}</Text>
                         <Text style={styles.categorySubtitle}>{RENTAL_PRICES[selectedRegion]?.description}</Text>
                       </View>
-                      <Text style={[styles.categoryPriceText, styles.categoryPriceTextActive, { color: '#15803D' }]}>
+                      <Text style={[styles.categoryPriceText, styles.categoryPriceTextActive, { color: '#10B981' }]}>
                         {RENTAL_PRICES[selectedRegion]?.price ? `${RENTAL_PRICES[selectedRegion].price?.toLocaleString('pt-BR')} XOF` : t('on_request', 'Sob Consulta')}
                       </Text>
                     </TouchableOpacity>
@@ -1599,7 +1649,8 @@ const handleSosPress = () => {
                     </View>
                   </View>
                 )}
- <Text style={styles.sectionLabel}>{t('reference_point', 'Ponto de Referência (Opcional)')}</Text>
+
+                <Text style={styles.sectionLabel}>{t('reference_point', 'Ponto de Referência (Opcional)')}</Text>
                 <View style={styles.referenceContainer}>
                   <TextInput
                     style={styles.referenceInput}
@@ -1630,7 +1681,7 @@ const handleSosPress = () => {
                     style={[styles.paymentBtn, paymentMethod === 'ORANGE_MONEY' && styles.paymentBtnActive]}
                     onPress={() => setPaymentMethod('ORANGE_MONEY')}
                   >
-                    <Ionicons name="phone-portrait-outline" size={18} color={paymentMethod === 'ORANGE_MONEY' ? '#0F172A' : '#64748B'} />
+                    <Ionicons name="phone-portrait-outline" size={18} color={paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#94A3B8'} />
                     <Text style={[styles.paymentBtnText, paymentMethod === 'ORANGE_MONEY' && styles.paymentBtnTextActive]}>Orange Money</Text>
                   </TouchableOpacity>
 
@@ -1638,7 +1689,7 @@ const handleSosPress = () => {
                     style={[styles.paymentBtn, paymentMethod === 'MTN_MOMO' && styles.paymentBtnActive]}
                     onPress={() => setPaymentMethod('MTN_MOMO')}
                   >
-                    <Ionicons name="phone-portrait-outline" size={18} color={paymentMethod === 'MTN_MOMO' ? '#0F172A' : '#64748B'} />
+                    <Ionicons name="phone-portrait-outline" size={18} color={paymentMethod === 'MTN_MOMO' ? '#EAB308' : '#94A3B8'} />
                     <Text style={[styles.paymentBtnText, paymentMethod === 'MTN_MOMO' && styles.paymentBtnTextActive]}>MTN MoMo</Text>
                   </TouchableOpacity>
 
@@ -1646,7 +1697,7 @@ const handleSosPress = () => {
                     style={[styles.paymentBtn, paymentMethod === 'CASH' && styles.paymentBtnActive]}
                     onPress={() => setPaymentMethod('CASH')}
                   >
-                    <Ionicons name="cash-outline" size={18} color={paymentMethod === 'CASH' ? '#0F172A' : '#64748B'} />
+                    <Ionicons name="cash-outline" size={18} color={paymentMethod === 'CASH' ? '#10B981' : '#94A3B8'} />
                     <Text style={[styles.paymentBtnText, paymentMethod === 'CASH' && styles.paymentBtnTextActive]}>{t('cash', 'Dinheiro')}</Text>
                   </TouchableOpacity>
                 </View>
@@ -1768,7 +1819,7 @@ const handleSosPress = () => {
                   </TouchableOpacity>
 
                   <TouchableOpacity style={styles.iconCircleButton} onPress={handleCallDriver}>
-                    <Ionicons name="call" size={18} color="#0F172A" />
+                    <Ionicons name="call" size={18} color="#EAB308" />
                   </TouchableOpacity>
 
                   <TouchableOpacity style={styles.cancelButtonOutline} onPress={() => setShowCancelModal(true)}>
@@ -1786,141 +1837,164 @@ const handleSosPress = () => {
         </Animated.View>
       </KeyboardAvoidingView>
 
-      {/* KEYBOARD AVOIDING VIEW - MODAL DE IDIOMAS */}
+      {/* MODAL DE IDIOMAS */}
       <Modal visible={langModalVisible} transparent animationType="slide" onRequestClose={() => setLangModalVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <Text style={styles.modalTitle}>{t('select_language', 'Selecione o Idioma')}</Text>
-            {LANGUAGES.map((lang) => (
-              <TouchableOpacity
-                key={lang.code}
-                style={styles.langOption}
-                onPress={() => changeLanguage(lang.code)}
-              >
-                <Text style={styles.langOptionText}>{lang.label}</Text>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity 
-              style={styles.closeButton} 
-              onPress={() => setLangModalVisible(false)}
-            >
-              <Text style={{ color: '#EF4444', fontWeight: 'bold' }}>{t('back_btn', 'Fechar')}</Text>
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* KEYBOARD AVOIDING VIEW - MODAL DE PERMISSÃO DE GPS */}
-      <Modal visible={isLocationSettingsVisible} animationType="slide" transparent>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
-          <View style={styles.locationModalCard}>
-            <View style={styles.locationIconBg}>
-              <Ionicons name="location" size={32} color="#EAB308" />
-            </View>
-            <Text style={styles.locationModalTitle}>{t('location_needed_title', 'Localização Necessária')}</Text>
-            <Text style={styles.locationModalText}>
-              {locationError || t('location_needed_desc', 'Para encontrar motoristas rapidamente e garantir sua segurança, precisamos que ative o GPS e permita o acesso no seu celular.')}
-            </Text>
-            
-            <TouchableOpacity 
-              style={[styles.requestButton, { width: '100%', marginBottom: 12 }]} 
-              onPress={() => Linking.openSettings()}
-            >
-              <Text style={styles.requestButtonText}>{t('open_settings', 'Abrir Configurações')}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={styles.cancelButtonOutline} 
-              onPress={getCurrentLocationWithFallback}
-            >
-              <Text style={styles.cancelButtonOutlineText}>{t('try_again', 'Já ativei / Tentar novamente')}</Text>
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-      {/* KEYBOARD AVOIDING VIEW - MODAL DE CONVIDADO / TERCEIROS */}
-      <Modal visible={isGuestModalVisible} transparent animationType="slide" onRequestClose={() => setIsGuestModalVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
           <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-            <View style={styles.locationModalCard}>
-              <Text style={styles.locationModalTitle}>Para quem é a corrida?</Text>
-              <TextInput
-                style={[styles.referenceInput, { width: '100%', marginBottom: 12 }]}
-                placeholder="Nome do passageiro"
-                placeholderTextColor="#94A3B8"
-                value={guestName}
-                onChangeText={setGuestName}
-              />
-              <TextInput
-                style={[styles.referenceInput, { width: '100%', marginBottom: 20 }]}
-                placeholder="Telefone (Opcional)"
-                placeholderTextColor="#94A3B8"
-                keyboardType="phone-pad"
-                value={guestPhone}
-                onChangeText={setGuestPhone}
-              />
-              <View style={styles.actionRow}>
-                <TouchableOpacity style={styles.cancelButtonOutline} onPress={() => { setIsForAnotherPerson(false); setIsGuestModalVisible(false); }}>
-                  <Text style={styles.cancelButtonOutlineText}>Cancelar</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.requestButton, { flex: 1, marginLeft: 10 }]} onPress={() => { setIsForAnotherPerson(true); setIsGuestModalVisible(false); }}>
-                  <Text style={styles.requestButtonText}>Confirmar</Text>
-                </TouchableOpacity>
-              </View>
+            <View style={styles.modalOverlayInner}>
+              <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+                <View style={[styles.modalContainer, { paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
+                  <Text style={styles.modalTitle}>{t('select_language', 'Selecione o Idioma')}</Text>
+                  {LANGUAGES.map((lang) => (
+                    <TouchableOpacity
+                      key={lang.code}
+                      style={styles.langOption}
+                      onPress={() => changeLanguage(lang.code)}
+                    >
+                      <Text style={styles.langOptionText}>{lang.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  <TouchableOpacity 
+                    style={styles.closeButton} 
+                    onPress={() => setLangModalVisible(false)}
+                  >
+                    <Text style={{ color: '#EF4444', fontWeight: 'bold' }}>{t('back_btn', 'Fechar')}</Text>
+                  </TouchableOpacity>
+                </View>
+              </TouchableWithoutFeedback>
             </View>
           </TouchableWithoutFeedback>
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* KEYBOARD AVOIDING VIEW - MODAL DE PAGAMENTO MOBILE MONEY */}
-      <Modal visible={isPaymentModalVisible} transparent animationType="slide" onRequestClose={() => !isProcessingPayment && setIsPaymentModalVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
+      {/* MODAL DE PERMISSÃO DE GPS */}
+      <Modal visible={isLocationSettingsVisible} animationType="slide" transparent onRequestClose={() => setIsLocationSettingsVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
           <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-            <View style={styles.paymentModalCard}>
-              <View style={[styles.operatorHeader, { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#FFCC00' }]}>
-                <Ionicons name="phone-portrait-sharp" size={24} color={paymentMethod === 'ORANGE_MONEY' ? '#FFFFFF' : '#000000'} />
-                <Text style={[styles.operatorTitle, { color: paymentMethod === 'ORANGE_MONEY' ? '#FFFFFF' : '#000000' }]}>
-                  {paymentMethod === 'ORANGE_MONEY' ? 'Orange Money' : 'MTN Mobile Money'}
-                </Text>
-              </View>
-
-              <ScrollView style={styles.paymentModalBody} contentContainerStyle={{ paddingBottom: 10 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-                <Text style={styles.paymentModalSubtitle}>
-                  {t('ussd_push_instruction', 'Confirme seu número. Você receberá um alerta seguro da operadora no seu celular para digitar seu PIN.')}
-                </Text>
-
-                <View style={styles.amountBadge}>
-                  <Text style={styles.amountTextLabel}>{t('total_amount', 'Valor Total:')}</Text>
-                  <Text style={styles.amountValue}>
-                    {estimatedPrice ? `${estimatedPrice.toLocaleString('pt-GW')} XOF` : t('calculating', 'Calculando...')}
+            <View style={styles.modalOverlayInner}>
+              <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+                <View style={[styles.locationModalCard, { paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
+                  <View style={styles.locationIconBg}>
+                    <Ionicons name="location" size={32} color="#EAB308" />
+                  </View>
+                  <Text style={styles.locationModalTitle}>{t('location_needed_title', 'Localização Necessária')}</Text>
+                  <Text style={styles.locationModalText}>
+                    {locationError || t('location_needed_desc', 'Para encontrar motoristas rapidamente e garantir sua segurança, precisamos que ative o GPS e permita o acesso no seu celular.')}
                   </Text>
-                </View>
-
-                <Text style={styles.inputLabel}>{t('mobile_money_account', 'Número da Conta Mobile Money')}</Text>
-                <View style={styles.phoneInputContainer}>
-                  <Text style={styles.countryCode}>+245</Text>
-                  <TextInput
-                    style={styles.phoneInput}
-                    value={paymentPhone}
-                    onChangeText={setPaymentPhone}
-                    keyboardType="phone-pad"
-                    editable={!isProcessingPayment}
-                  />
-                </View>
-                <View style={styles.modalActionsRow}>
-                  <TouchableOpacity style={styles.cancelModalBtn} disabled={isProcessingPayment} onPress={() => setIsPaymentModalVisible(false)}>
-                    <Text style={styles.cancelModalBtnText}>{t('back_btn', 'Cancelar')}</Text>
+                  
+                  <TouchableOpacity 
+                    style={[styles.requestButton, { width: '100%', marginBottom: 12 }]} 
+                    onPress={() => Linking.openSettings()}
+                  >
+                    <Text style={styles.requestButtonText}>{t('open_settings', 'Abrir Configurações')}</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity 
-                    style={[styles.confirmModalBtn, { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#004F9F' }]}
-                    disabled={isProcessingPayment}
-                    onPress={confirmPaymentAndRide}
+                    style={styles.cancelButtonOutline} 
+                    onPress={getCurrentLocationWithFallback}
                   >
-                    {isProcessingPayment ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Text style={styles.confirmModalBtnText}>{t('confirm_payment_btn', 'Confirmar Solicitação')}</Text>}
+                    <Text style={styles.cancelButtonOutlineText}>{t('try_again', 'Já ativei / Tentar novamente')}</Text>
                   </TouchableOpacity>
                 </View>
-              </ScrollView>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* MODAL DE CONVIDADO / TERCEIROS */}
+      <Modal visible={isGuestModalVisible} transparent animationType="slide" onRequestClose={() => setIsGuestModalVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={styles.modalOverlayInner}>
+              <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+                <View style={[styles.locationModalCard, { paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
+                  <Text style={styles.locationModalTitle}>Para quem é a corrida?</Text>
+                  <TextInput
+                    style={[styles.referenceInput, { width: '100%', marginBottom: 12 }]}
+                    placeholder="Nome do passageiro"
+                    placeholderTextColor="#94A3B8"
+                    value={guestName}
+                    onChangeText={setGuestName}
+                  />
+                  <TextInput
+                    style={[styles.referenceInput, { width: '100%', marginBottom: 20 }]}
+                    placeholder="Telefone (Opcional)"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="phone-pad"
+                    value={guestPhone}
+                    onChangeText={setGuestPhone}
+                  />
+                  <View style={styles.actionRow}>
+                    <TouchableOpacity style={styles.cancelButtonOutline} onPress={() => { setIsForAnotherPerson(false); setIsGuestModalVisible(false); }}>
+                      <Text style={styles.cancelButtonOutlineText}>Cancelar</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.requestButton, { flex: 1, marginLeft: 10 }]} onPress={() => { setIsForAnotherPerson(true); setIsGuestModalVisible(false); }}>
+                      <Text style={styles.requestButtonText}>Confirmar</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* MODAL DE PAGAMENTO MOBILE MONEY */}
+      <Modal visible={isPaymentModalVisible} transparent animationType="slide" onRequestClose={() => !isProcessingPayment && setIsPaymentModalVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={styles.modalOverlayInner}>
+              <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+                <View style={[styles.paymentModalCard, { paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
+                  <View style={[styles.operatorHeader, { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#FFCC00' }]}>
+                    <Ionicons name="phone-portrait-sharp" size={24} color={paymentMethod === 'ORANGE_MONEY' ? '#FFFFFF' : '#000000'} />
+                    <Text style={[styles.operatorTitle, { color: paymentMethod === 'ORANGE_MONEY' ? '#FFFFFF' : '#000000' }]}>
+                      {paymentMethod === 'ORANGE_MONEY' ? 'Orange Money' : 'MTN Mobile Money'}
+                    </Text>
+                  </View>
+
+                  <ScrollView style={styles.paymentModalBody} contentContainerStyle={{ paddingBottom: 10 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                    <Text style={styles.paymentModalSubtitle}>
+                      {t('ussd_push_instruction', 'Confirme seu número. Você receberá um alerta seguro da operadora no seu celular para digitar seu PIN.')}
+                    </Text>
+
+                    <View style={styles.amountBadge}>
+                      <Text style={styles.amountTextLabel}>{t('total_amount', 'Valor Total:')}</Text>
+                      <Text style={styles.amountValue}>
+                        {estimatedPrice ? `${estimatedPrice.toLocaleString('pt-GW')} XOF` : t('calculating', 'Calculando...')}
+                      </Text>
+                    </View>
+
+                    <Text style={styles.inputLabel}>{t('mobile_money_account', 'Número da Conta Mobile Money')}</Text>
+                    <View style={styles.phoneInputContainer}>
+                      <Text style={styles.countryCode}>+245</Text>
+                      <TextInput
+                        style={styles.phoneInput}
+                        value={paymentPhone}
+                        onChangeText={setPaymentPhone}
+                        keyboardType="phone-pad"
+                        editable={!isProcessingPayment}
+                        placeholderTextColor="#64748B"
+                      />
+                    </View>
+                    <View style={styles.modalActionsRow}>
+                      <TouchableOpacity style={styles.cancelModalBtn} disabled={isProcessingPayment} onPress={() => setIsPaymentModalVisible(false)} activeOpacity={0.8}>
+                        <Text style={styles.cancelModalBtnText}>{t('back_btn', 'Cancelar')}</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity 
+                        style={[styles.confirmModalBtn, { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#004F9F' }]}
+                        disabled={isProcessingPayment}
+                        onPress={confirmPaymentAndRide}
+                        activeOpacity={0.85}
+                      >
+                        {isProcessingPayment ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Text style={styles.confirmModalBtnText}>{t('confirm_payment_btn', 'Confirmar Solicitação')}</Text>}
+                      </TouchableOpacity>
+                    </View>
+                  </ScrollView>
+                </View>
+              </TouchableWithoutFeedback>
             </View>
           </TouchableWithoutFeedback>
         </KeyboardAvoidingView>
@@ -1929,7 +2003,7 @@ const handleSosPress = () => {
       {/* MENU LATERAL */}
       <Modal visible={isMenuVisible} animationType="fade" transparent onRequestClose={() => setIsMenuVisible(false)}>
         <TouchableOpacity style={styles.menuOverlay} activeOpacity={1} onPress={() => setIsMenuVisible(false)}>
-          <View style={styles.menuDrawer}>
+          <View style={[styles.menuDrawer, { paddingTop: Math.max((insets?.top || 0) + 16, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 20), paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
             <View style={styles.menuHeader}>
               <View style={styles.avatarPlaceholderLarge}>
                 {user?.profilePicture ? (
@@ -1943,29 +2017,29 @@ const handleSosPress = () => {
             </View>
 
             <View style={styles.menuItems}>
-              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('Profile'); }}>
+              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('Profile'); }} activeOpacity={0.7}>
                 <Ionicons name="person-outline" size={20} color="#0F172A" />
                 <Text style={styles.menuItemText}>{t('my_profile', 'Meu Perfil')}</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('RideHistory'); }}>
+              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('RideHistory'); }} activeOpacity={0.7}>
                 <Ionicons name="time-outline" size={20} color="#0F172A" />
                 <Text style={styles.menuItemText}>{t('my_rides', 'Minhas Corridas')}</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('EmergencyContacts'); }}>
+              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('EmergencyContacts'); }} activeOpacity={0.7}>
                 <Ionicons name="shield-checkmark-outline" size={20} color="#0F172A" />
                 <Text style={styles.menuItemText}>{t('emergency_contacts', 'Contatos de Emergência')}</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('HelpCenter'); }}>
+              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('HelpCenter'); }} activeOpacity={0.7}>
                 <Ionicons name="help-buoy-outline" size={20} color="#0F172A" />
                 <Text style={styles.menuItemText}>{t('help_center', 'Central de Ajuda')}</Text>
               </TouchableOpacity>
 
               <View style={styles.menuDivider} />
 
-              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); signOut(); }}>
+              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); signOut(); }} activeOpacity={0.7}>
                 <Ionicons name="log-out-outline" size={20} color="#EF4444" />
                 <Text style={[styles.menuItemText, { color: '#EF4444' }]}>{t('logout', 'Sair da Conta')}</Text>
               </TouchableOpacity>
@@ -1974,18 +2048,23 @@ const handleSosPress = () => {
         </TouchableOpacity>
       </Modal>
 
-      {/* KEYBOARD AVOIDING VIEW - CHAT INTERNO */}
-      <Modal visible={isChatVisible} animationType="slide" transparent onRequestClose={() => setIsChatVisible(false)}>
+      {/* CHAT INTERNO COM TECLADO AJUSTADO */}
+      <Modal 
+        visible={isChatVisible} 
+        animationType="slide" 
+        transparent 
+        statusBarTranslucent
+        onRequestClose={() => setIsChatVisible(false)}
+      >
         <KeyboardAvoidingView 
           style={styles.chatOverlay} 
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'android' ? 10 : 0}
         >
-          <View style={styles.chatContainer}>
+          <View style={[styles.chatContainer, { paddingTop: Math.max((insets?.top || 0) + 10, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 16) }]}>
             <View style={styles.chatHeader}>
               <View style={styles.chatHeaderUserInfo}>
-                {driverInfo?.profilePicture ? (
-                  <Image source={{ uri: formatPhotoUrl(driverInfo.profilePicture) }} style={styles.headerAvatar} />
+                {driverInfo?.photoUrl || driverInfo?.profilePicture ? (
+                  <Image source={{ uri: formatPhotoUrl(driverInfo.photoUrl || driverInfo.profilePicture) }} style={styles.headerAvatar} />
                 ) : (
                   <View style={styles.headerAvatarPlaceholder}>
                     <Ionicons name="person" size={18} color="#64748B" />
@@ -1996,8 +2075,8 @@ const handleSosPress = () => {
                 </Text>
               </View>
 
-              <TouchableOpacity onPress={() => setIsChatVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                <Ionicons name="close" size={22} color="#0F172A" />
+              <TouchableOpacity onPress={() => setIsChatVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} activeOpacity={0.8}>
+                <Ionicons name="close" size={22} color="#FFFFFF" />
               </TouchableOpacity>
             </View>
 
@@ -2006,6 +2085,7 @@ const handleSosPress = () => {
               data={messages}
               keyExtractor={(item, index) => item.id || `msg-${index}`}
               contentContainerStyle={styles.chatList}
+              keyboardShouldPersistTaps="handled"
               onContentSizeChange={() => chatFlatListRef.current?.scrollToEnd({ animated: true })}
               renderItem={({ item }) => {
                 const isPassenger = item.sender === 'passenger';
@@ -2043,32 +2123,34 @@ const handleSosPress = () => {
               }}
             />
 
-            <View style={[styles.chatInputContainer, { paddingBottom: Platform.OS === 'android' ? 16 : 12 }]}>
+            <View style={[styles.chatInputContainer, { paddingBottom: Math.max((insets?.bottom || 0) + 8, 12) }]}>
               <TextInput
                 style={styles.chatInput}
                 value={inputText}
                 onChangeText={setInputText}
                 placeholder={t('type_something', 'Escreva algo...')}
                 placeholderTextColor="#94A3B8"
+                multiline
+                maxLength={250}
               />
-              <TouchableOpacity style={styles.chatSendButton} onPress={sendMessage}>
-                <Ionicons name="send" size={16} color="#FFF" />
+              <TouchableOpacity style={styles.chatSendButton} onPress={sendMessage} activeOpacity={0.85}>
+                <Ionicons name="send" size={16} color="#0F172A" />
               </TouchableOpacity>
             </View>
           </View>
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* KEYBOARD AVOIDING VIEW - MODAL DE BUSCA DE ENDEREÇO MAPBOX */}
+      {/* MODAL DE BUSCA DE ENDEREÇO MAPBOX */}
       <Modal visible={isSearchModalVisible} animationType="slide" transparent={false} onRequestClose={() => setIsSearchModalVisible(false)}>
         <SafeAreaView style={styles.searchModalContainer}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
             <View style={styles.searchHeader}>
-              <TouchableOpacity onPress={() => setIsSearchModalVisible(false)} style={styles.backButton}>
+              <TouchableOpacity onPress={() => setIsSearchModalVisible(false)} style={styles.backButton} activeOpacity={0.7}>
                 <Ionicons name="arrow-back" size={22} color="#0F172A" />
               </TouchableOpacity>
               
-              <TouchableOpacity style={styles.passengerSelector} onPress={() => setIsGuestModalVisible(true)}>
+              <TouchableOpacity style={styles.passengerSelector} onPress={() => setIsGuestModalVisible(true)} activeOpacity={0.8}>
                 <Ionicons name="person" size={13} color="#475569" style={{ marginRight: 6 }} />
                 <Text style={styles.passengerSelectorText}>
                   {isForAnotherPerson ? (guestName || 'Outra Pessoa') : t('for_me', 'Para mim')}
@@ -2152,6 +2234,7 @@ const handleSosPress = () => {
                 renderItem={({ item }) => (
                   <TouchableOpacity
                     style={styles.searchResultItem}
+                    activeOpacity={0.7}
                     onPress={() => {
                       if (searchType === 'pickup') {
                         isManualPickupRef.current = true;
@@ -2209,9 +2292,6 @@ const handleSosPress = () => {
 }
 
 const styles = StyleSheet.create({
-  // ========================================================
-  // LAYOUT BASE E INDICADOR CENTRAL DO MAPA
-  // ========================================================
   container: { flex: 1, backgroundColor: '#0F172A' },
   loadingContainer: { 
     flex: 1, 
@@ -2220,23 +2300,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#0F172A', 
     paddingHorizontal: 20 
   },
-  loadingIconCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(234, 179, 8, 0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(234, 179, 8, 0.2)',
-  },
   loadingText: { 
     fontSize: 14, 
     color: '#94A3B8', 
     fontWeight: '600', 
     textAlign: 'center',
-    lineHeight: 20 
+    lineHeight: 20,
+    marginTop: 12
   },
   retryLocationBtn: { 
     marginTop: 20, 
@@ -2250,8 +2320,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: '50%',
     left: '50%',
-    marginLeft: -19,
-    marginTop: -38,
+    marginLeft: -18,
+    marginTop: -36,
     alignItems: 'center',
     zIndex: 5,
   },
@@ -2262,13 +2332,8 @@ const styles = StyleSheet.create({
     borderRadius: 7,
     backgroundColor: 'rgba(0, 0, 0, 0.4)',
   },
-
-  // ========================================================
-  // HEADER FLUTUANTE DE TOPO (NÃO INVADE A BARRA DE STATUS)
-  // ========================================================
   floatingHeader: { 
     position: 'absolute', 
-    top: Platform.OS === 'ios' ? 50 : (StatusBar.currentHeight || 20) + 10, 
     left: 16, 
     right: 16, 
     zIndex: 10, 
@@ -2278,7 +2343,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between', 
     alignItems: 'center', 
     backgroundColor: '#1E293B', 
-    borderRadius: 22, 
+    borderRadius: 20, 
     paddingHorizontal: 14, 
     paddingVertical: 10,
     borderWidth: 1,
@@ -2316,15 +2381,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#0F172A', 
     borderRadius: 12, 
     borderWidth: 1, 
-    borderColor: '#334155' 
+    borderColor: '#334155',
+    justifyContent: 'center',
+    alignItems: 'center'
   },
-
-  // ========================================================
-  // ATALHOS DE FAVORITOS (POSICIONADOS LOGO ABAIXO DO HEADER)
-  // ========================================================
   favoritesContainer: { 
     position: 'absolute', 
-    top: Platform.OS === 'ios' ? 112 : (StatusBar.currentHeight || 20) + 72, 
     left: 16, 
     right: 16, 
     flexDirection: 'row', 
@@ -2357,14 +2419,9 @@ const styles = StyleSheet.create({
     marginRight: 8 
   },
   favoriteText: { fontSize: 12, fontWeight: '700', color: '#F8FAFC', flex: 1 },
-
-  // ========================================================
-  // BOTÕES FLUTUANTES E MARCADORES DO MAPA
-  // ========================================================
   recenterButton: { 
     position: 'absolute', 
     right: 16, 
-    bottom: 270, 
     backgroundColor: '#1E293B', 
     width: 46, 
     height: 46, 
@@ -2400,13 +2457,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 4,
   },
-
-  // ========================================================
-  // BADGE DE PIN DE SEGURANÇA NOTURNO
-  // ========================================================
   pinSecurityBadge: { 
     position: 'absolute', 
-    top: Platform.OS === 'ios' ? 112 : (StatusBar.currentHeight || 20) + 72, 
     left: 16, 
     right: 16, 
     backgroundColor: '#1E293B', 
@@ -2424,17 +2476,12 @@ const styles = StyleSheet.create({
   pinSecuritySub: { fontSize: 11, color: '#94A3B8', marginTop: 1 },
   pinCodeBox: { backgroundColor: '#EAB308', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
   pinCodeText: { color: '#0F172A', fontWeight: '900', fontSize: 15 },
-
-  // ========================================================
-  // PAINEL INFERIOR (BOTTOM SHEET SLIDING PANEL)
-  // ========================================================
   bottomSheetWrapper: { position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 20 },
   bottomSheet: {
     backgroundColor: '#1E293B',
-    borderTopLeftRadius: 32,
-    borderTopRightRadius: 32,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     paddingHorizontal: 20,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
     paddingTop: 8,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
@@ -2449,7 +2496,6 @@ const styles = StyleSheet.create({
   dragHandlerArea: { width: '100%', alignItems: 'center', paddingVertical: 10 },
   dragIndicator: { width: 40, height: 5, backgroundColor: '#475569', borderRadius: 3 },
   sheetTitle: { fontSize: 19, fontWeight: '800', color: '#FFFFFF', marginBottom: 14 },
-  
   mainSearchInput: { 
     flexDirection: 'row', 
     alignItems: 'center', 
@@ -2462,7 +2508,6 @@ const styles = StyleSheet.create({
     marginBottom: 14 
   },
   mainSearchText: { fontSize: 14, color: '#94A3B8', flex: 1, fontWeight: '500' },
-  
   requestButton: { 
     backgroundColor: '#EAB308', 
     height: 52, 
@@ -2473,35 +2518,12 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   requestButtonText: { color: '#0F172A', fontSize: 15, fontWeight: '800' },
-  requestButtonDisabled: { 
-    backgroundColor: '#0F172A', 
-    height: 52, 
-    borderRadius: 16, 
-    justifyContent: 'center', 
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#334155'
-  },
-  requestButtonDisabledText: { color: '#64748B', fontSize: 14, fontWeight: '600' },
-
-  // ========================================================
-  // SELEÇÃO DE TIPO DE SERVIÇO E VEÍCULOS
-  // ========================================================
   sectionLabel: { fontSize: 12, fontWeight: '700', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, marginTop: 10 },
-  modernSectionHeader: { fontSize: 15, fontWeight: '700', color: '#F8FAFC', marginBottom: 10 },
-  
   serviceTypesContainer: { flexDirection: 'row', gap: 8 },
   serviceTypeButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 12, backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155' },
   serviceTypeActive: { backgroundColor: '#EAB308', borderColor: '#EAB308' },
   serviceTypeText: { fontSize: 13, fontWeight: '600', color: '#94A3B8' },
   serviceTypeTextActive: { color: '#0F172A', fontWeight: '800' },
-
-  modernTabGroup: { flexDirection: 'row', backgroundColor: '#0F172A', borderRadius: 16, padding: 4, marginBottom: 12, borderWidth: 1, borderColor: '#334155' },
-  modernTab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, borderRadius: 12 },
-  modernTabActive: { backgroundColor: '#EAB308' },
-  modernTabText: { fontSize: 13, fontWeight: '600', color: '#94A3B8', marginLeft: 6 },
-  modernTabTextActive: { color: '#0F172A', fontWeight: '800' },
-
   vehicleCategoryContainer: { gap: 10 },
   categoryCard: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 18, backgroundColor: '#0F172A', borderWidth: 1.5, borderColor: '#334155' },
   categoryCardActive: { borderColor: '#EAB308', backgroundColor: 'rgba(234, 179, 8, 0.08)' },
@@ -2512,205 +2534,117 @@ const styles = StyleSheet.create({
   categoryPriceText: { fontSize: 15, fontWeight: '800', color: '#CBD5E1' },
   categoryTextActive: { color: '#FFFFFF' },
   categoryPriceTextActive: { color: '#EAB308' },
-
-  vehicleCardModern: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', borderRadius: 18, padding: 14, borderWidth: 1.5, borderColor: '#334155' },
-  vehicleCardModernActive: { borderColor: '#EAB308', backgroundColor: 'rgba(234, 179, 8, 0.08)' },
-  vehicleImgModern: { width: 54, height: 40, marginRight: 12 },
-  vehicleInfoCol: { flex: 1 },
-  vehicleTitleModern: { fontSize: 15, fontWeight: '700', color: '#CBD5E1' },
-  vehicleTitleActive: { color: '#FFFFFF' },
-  vehicleSubtitleModern: { fontSize: 12, color: '#64748B', marginTop: 2 },
-  vehiclePriceModern: { fontSize: 15, fontWeight: '800', color: '#CBD5E1' },
-  vehiclePriceActive: { color: '#EAB308' },
-  popularBadge: { backgroundColor: '#EAB308', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginLeft: 8 },
-  popularBadgeText: { color: '#0F172A', fontSize: 9, fontWeight: '900' },
-  etaText: { fontSize: 11, color: '#64748B', marginTop: 2 },
-
-  // ========================================================
-  // ALUGUEL E PONTO DE REFERÊNCIA
-  // ========================================================
-  rentalHighlightCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', borderRadius: 18, padding: 16, borderWidth: 2, borderColor: '#EAB308' },
-  rentalBadgeIcon: { width: 44, height: 44, borderRadius: 14, backgroundColor: '#EAB308', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  rentalTitle: { fontSize: 16, fontWeight: '800', color: '#FFFFFF' },
-  rentalSubtitle: { fontSize: 12, color: '#94A3B8', marginTop: 2 },
-  rentalPrice: { fontSize: 15, fontWeight: '800', color: '#10B981' },
-
   referenceContainer: { marginBottom: 12 },
   referenceInput: { backgroundColor: '#0F172A', borderRadius: 14, borderWidth: 1, borderColor: '#334155', paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#FFFFFF' },
-  referenceLabel: { fontSize: 12, fontWeight: '600', color: '#94A3B8', marginBottom: 6 },
-  referenceBoxModern: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155', borderRadius: 14, paddingHorizontal: 12, height: 48 },
-  referenceInputModern: { flex: 1, color: '#FFFFFF', fontSize: 14 },
-
-  // ========================================================
-  // SELETOR DE PAGAMENTOS
-  // ========================================================
   paymentOptionsContainer: { gap: 10, marginBottom: 16 },
-  paymentBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', borderRadius: 18, padding: 14, borderWidth: 1.5, borderColor: '#334155' },
+  paymentBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', borderRadius: 18, padding: 14, borderWidth: 1.5, borderColor: '#334155', gap: 10 },
   paymentBtnActive: { borderColor: '#EAB308', backgroundColor: 'rgba(234, 179, 8, 0.08)' },
   paymentBtnText: { fontSize: 15, fontWeight: '700', color: '#CBD5E1' },
   paymentBtnTextActive: { color: '#FFFFFF' },
-
-  paymentGridModern: { gap: 10, marginBottom: 14 },
-  paymentTileModern: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', borderRadius: 18, padding: 14, borderWidth: 1.5, borderColor: '#334155' },
-  paymentTileOrangeActive: { borderColor: '#FF6600', backgroundColor: 'rgba(255, 102, 0, 0.08)' },
-  paymentTileMtnActive: { borderColor: '#EAB308', backgroundColor: 'rgba(234, 179, 8, 0.08)' },
-  paymentTileCashActive: { borderColor: '#10B981', backgroundColor: 'rgba(16, 185, 129, 0.08)' },
-  paymentBadgeIcon: { width: 36, height: 36, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  paymentTileTitle: { fontSize: 15, fontWeight: '700', color: '#CBD5E1' },
-  paymentTileSub: { fontSize: 12, color: '#64748B', marginTop: 1 },
-  textWhite: { color: '#FFFFFF' },
-
-  fareSummaryBox: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#0F172A', borderRadius: 16, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#334155' },
-  fareSummaryLabel: { fontSize: 14, color: '#94A3B8', fontWeight: '500' },
-  fareSummaryValue: { fontSize: 18, fontWeight: '900', color: '#EAB308' },
-
-  // ========================================================
-  // BOTOES DE AÇÃO DA BOTTOM SHEET
-  // ========================================================
-  actionRow: { flexDirection: 'row', alignItems: 'center', marginTop: 12, gap: 8, width: '100%' },
-  iconCircleButton: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#0F172A', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#334155' },
-  cancelButtonOutline: { flex: 1, height: 46, borderWidth: 1, borderColor: '#334155', paddingHorizontal: 6, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0F172A' },
-  cancelButtonOutlineText: { color: '#CBD5E1', fontSize: 13, fontWeight: '600' },
-
-  actionRowModern: { flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 10 },
-  backBtnModern: { width: 50, height: 50, borderRadius: 16, backgroundColor: '#0F172A', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#334155' },
-  primaryBtnModern: { flex: 1, height: 50, borderRadius: 16, backgroundColor: '#EAB308', flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
-  primaryBtnText: { color: '#0F172A', fontSize: 15, fontWeight: '800' },
-  confirmRideBtn: { flex: 1, height: 50, borderRadius: 16, backgroundColor: '#EAB308', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', elevation: 6 },
-  confirmRideBtnText: { color: '#0F172A', fontSize: 15, fontWeight: '900' },
-
-  cancelSearchBtnModern: { marginTop: 16, paddingVertical: 12, paddingHorizontal: 20, borderRadius: 14, borderWidth: 1, borderColor: '#334155', backgroundColor: '#0F172A', alignItems: 'center' },
-  cancelSearchBtnText: { color: '#CBD5E1', fontSize: 13, fontWeight: '700' },
-  cancelBtnSecondary: { paddingHorizontal: 16, height: 48, borderRadius: 14, borderWidth: 1, borderColor: '#334155', backgroundColor: '#0F172A', justifyContent: 'center', alignItems: 'center' },
-  cancelBtnSecondaryText: { color: '#CBD5E1', fontSize: 13, fontWeight: '600' },
-  chatActionBtn: { flex: 1, height: 48, borderRadius: 14, backgroundColor: '#EAB308', flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
-  chatActionBtnText: { color: '#0F172A', fontSize: 14, fontWeight: '800' },
-
-  // ========================================================
-  // PIN CARD, STATUS DE BUSCA E CARD DO MOTORISTA
-  // ========================================================
-  pinCardContainer: { backgroundColor: 'rgba(16, 185, 129, 0.1)', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#10B981', marginBottom: 12 },
+  actionRow: { flexDirection: 'row', alignItems: 'center', marginTop: 12 },
+  cancelButtonOutline: { paddingVertical: 14, paddingHorizontal: 18, borderWidth: 1, borderColor: '#334155', borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0F172A' },
+  cancelButtonOutlineText: { color: '#94A3B8', fontWeight: '700', fontSize: 14 },
+  iconCircleButton: { width: 48, height: 48, borderRadius: 14, backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155', alignItems: 'center', justifyContent: 'center', marginRight: 8 },
+  sosButton: { borderColor: '#EF4444', backgroundColor: 'rgba(239, 68, 68, 0.1)' },
+  pinCardContainer: { backgroundColor: '#0F172A', padding: 16, borderRadius: 18, borderWidth: 1, borderColor: '#10B981', marginBottom: 12 },
   pinHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
-  pinTitle: { fontSize: 12, fontWeight: '800', color: '#10B981' },
-  pinSubtitle: { fontSize: 11, color: '#A7F3D0', marginBottom: 10 },
-  pinDigitsRow: { flexDirection: 'row', justifyContent: 'center', gap: 8 },
+  pinTitle: { color: '#10B981', fontWeight: '800', fontSize: 13 },
+  pinSubtitle: { color: '#94A3B8', fontSize: 12, marginBottom: 10 },
+  pinDigitsRow: { flexDirection: 'row', gap: 8, justifyContent: 'center' },
   pinDigitBox: { backgroundColor: '#10B981', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
-  pinDigitText: { fontSize: 18, fontWeight: '800', color: '#FFFFFF' },
-
-  statusBox: { alignItems: 'center', paddingVertical: 20 },
-  statusTitle: { fontSize: 16, fontWeight: '800', color: '#FFFFFF', marginBottom: 4 },
-  statusSub: { fontSize: 13, color: '#94A3B8', textAlign: 'center' },
-
+  pinDigitText: { color: '#FFFFFF', fontWeight: '900', fontSize: 18 },
+  statusBox: { alignItems: 'center', paddingVertical: 12 },
+  statusTitle: { color: '#F8FAFC', fontSize: 16, fontWeight: '800' },
+  statusSub: { color: '#94A3B8', fontSize: 13, marginTop: 4 },
   driverCardContainer: { backgroundColor: '#0F172A', borderRadius: 18, padding: 14, borderWidth: 1, borderColor: '#334155', marginBottom: 12 },
   driverMainInfo: { flexDirection: 'row', alignItems: 'center' },
-  driverAvatarProfile: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#334155', marginRight: 12, justifyContent: 'center', alignItems: 'center' },
+  driverAvatarProfile: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#334155', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
   driverDetails: { flex: 1 },
-  driverName: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
+  driverName: { color: '#FFF', fontSize: 16, fontWeight: '800' },
   driverRatingBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
-  driverRatingText: { fontSize: 12, fontWeight: '700', color: '#EAB308' },
-
+  driverRatingText: { color: '#EAB308', fontWeight: '700', fontSize: 13 },
   dividerLight: { height: 1, backgroundColor: '#334155', marginVertical: 10 },
-
   vehicleShowcase: { flexDirection: 'row', alignItems: 'center' },
-  showcaseVehicleImg: { width: 44, height: 32, marginRight: 10 },
+  showcaseVehicleImg: { width: 50, height: 36, marginRight: 10 },
   vehicleDetailsCol: { flex: 1 },
-  vehicleModelText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
-  colorAndPlateRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
-  modernColorChip: { width: 10, height: 10, borderRadius: 5, marginRight: 6, borderWidth: 1, borderColor: '#64748B' },
-  vehicleColorText: { fontSize: 11, color: '#94A3B8' },
-  dotSeparator: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: '#64748B', marginHorizontal: 6 },
-  modernPlateBadge: { backgroundColor: '#EAB308', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  modernPlateText: { color: '#0F172A', fontSize: 10, fontWeight: '900' },
-
-  statusBanner: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#EAB308', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 14, marginBottom: 8 },
-  statusBannerText: { fontSize: 13, fontWeight: '800', color: '#0F172A' },
+  vehicleModelText: { color: '#F8FAFC', fontWeight: '700', fontSize: 14 },
+  colorAndPlateRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4, flexWrap: 'wrap', gap: 6 },
+  modernColorChip: { width: 12, height: 12, borderRadius: 6, borderWidth: 1, borderColor: '#FFF' },
+  vehicleColorText: { color: '#94A3B8', fontSize: 12 },
+  dotSeparator: { width: 4, height: 4, borderRadius: 2, backgroundColor: '#475569' },
+  modernPlateBadge: { backgroundColor: '#EAB308', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  modernPlateText: { color: '#0F172A', fontWeight: '900', fontSize: 10 },
+  statusBanner: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#EAB308', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 14, marginBottom: 12 },
+  statusBannerText: { color: '#0F172A', fontWeight: '800', fontSize: 14, flex: 1 },
   shareButton: { padding: 4 },
-  sosButton: { backgroundColor: 'rgba(239, 68, 68, 0.15)', borderColor: '#EF4444' },
-
-  // ========================================================
-  // MODAIS (IDIOMA, GPS, PERMISSÕES E MOBILE MONEY)
-  // ========================================================
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.85)', justifyContent: 'center', padding: 20 },
-  modalContainer: { backgroundColor: '#1E293B', borderRadius: 24, padding: 24, borderWidth: 1, borderColor: '#334155' },
-  modalTitle: { fontSize: 18, fontWeight: '800', color: '#FFFFFF', marginBottom: 16, textAlign: 'center' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.75)' },
+  modalOverlayInner: { flex: 1, justifyContent: 'flex-end' },
+  modalContainer: { backgroundColor: '#1E293B', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, width: '100%' },
+  modalTitle: { fontSize: 16, fontWeight: '800', color: '#FFF', marginBottom: 16 },
   langOption: { paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#334155' },
-  langOptionText: { color: '#F8FAFC', fontSize: 15, fontWeight: '600', textAlign: 'center' },
+  langOptionText: { fontSize: 15, color: '#CBD5E1', fontWeight: '600' },
   closeButton: { marginTop: 16, alignItems: 'center', paddingVertical: 10 },
-
-  locationModalCard: { backgroundColor: '#1E293B', borderRadius: 24, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: '#334155' },
-  locationIconBg: { width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(234, 179, 8, 0.1)', justifyContent: 'center', alignItems: 'center', marginBottom: 16 },
-  locationModalTitle: { fontSize: 18, fontWeight: '800', color: '#FFFFFF', marginBottom: 8 },
-  locationModalText: { fontSize: 13, color: '#94A3B8', textAlign: 'center', lineHeight: 19, marginBottom: 20 },
-
-  paymentModalCard: { backgroundColor: '#1E293B', borderRadius: 24, overflow: 'hidden', borderWidth: 1, borderColor: '#334155' },
-  operatorHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 16 },
+  locationModalCard: { backgroundColor: '#1E293B', borderRadius: 24, padding: 20, alignItems: 'center', width: '90%', alignSelf: 'center', borderWidth: 1, borderColor: '#334155' },
+  locationIconBg: { width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(234, 179, 8, 0.1)', alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
+  locationModalTitle: { fontSize: 18, fontWeight: '800', color: '#FFF', marginBottom: 8 },
+  locationModalText: { fontSize: 13, color: '#94A3B8', textAlign: 'center', lineHeight: 18, marginBottom: 20 },
+  paymentModalCard: { backgroundColor: '#1E293B', borderTopLeftRadius: 28, borderTopRightRadius: 28, borderWidth: 1, borderColor: '#334155', overflow: 'hidden' },
+  operatorHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16, gap: 10 },
   operatorTitle: { fontSize: 16, fontWeight: '800' },
-  paymentModalBody: { padding: 16 },
-  paymentModalSubtitle: { fontSize: 12, color: '#94A3B8', marginBottom: 16, lineHeight: 18 },
-  amountBadge: { backgroundColor: '#0F172A', padding: 12, borderRadius: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, borderWidth: 1, borderColor: '#334155' },
-  amountTextLabel: { fontSize: 13, fontWeight: '600', color: '#94A3B8' },
-  amountValue: { fontSize: 16, fontWeight: '800', color: '#EAB308' },
-  inputLabel: { fontSize: 12, fontWeight: '700', color: '#CBD5E1', marginBottom: 6 },
-  phoneInputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155', borderRadius: 12, paddingHorizontal: 12, marginBottom: 20 },
-  countryCode: { fontSize: 14, fontWeight: '700', color: '#EAB308', marginRight: 8 },
-  phoneInput: { flex: 1, paddingVertical: 12, fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
-  modalActionsRow: { flexDirection: 'row', gap: 10 },
-  cancelModalBtn: { flex: 1, paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: '#334155', alignItems: 'center' },
-  cancelModalBtnText: { color: '#CBD5E1', fontWeight: '700', fontSize: 13 },
-  confirmModalBtn: { flex: 1.5, paddingVertical: 12, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  confirmModalBtnText: { fontWeight: '800', fontSize: 13 },
-
-  // ========================================================
-  // MENU DRAWER LATERAL
-  // ========================================================
-  menuOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.8)' },
-  menuDrawer: { width: '75%', height: '100%', backgroundColor: '#1E293B', padding: 20, borderRightWidth: 1, borderRightColor: '#334155' },
-  menuHeader: { marginTop: Platform.OS === 'ios' ? 40 : 20, marginBottom: 20 },
-  avatarPlaceholderLarge: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#EAB308', justifyContent: 'center', alignItems: 'center', marginBottom: 12, overflow: 'hidden' },
+  paymentModalBody: { paddingHorizontal: 20, paddingTop: 16 },
+  paymentModalSubtitle: { fontSize: 13, color: '#94A3B8', marginBottom: 16, lineHeight: 18 },
+  amountBadge: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#0F172A', padding: 14, borderRadius: 14, marginBottom: 16, borderWidth: 1, borderColor: '#334155' },
+  amountTextLabel: { fontSize: 13, color: '#94A3B8', fontWeight: '600' },
+  amountValue: { fontSize: 16, fontWeight: '900', color: '#EAB308' },
+  inputLabel: { fontSize: 12, fontWeight: '700', color: '#CBD5E1', marginBottom: 8 },
+  phoneInputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', borderRadius: 14, borderWidth: 1, borderColor: '#334155', paddingHorizontal: 14, height: 50, marginBottom: 20 },
+  countryCode: { fontSize: 15, fontWeight: '800', color: '#EAB308', marginRight: 10 },
+  phoneInput: { flex: 1, fontSize: 15, color: '#FFFFFF', fontWeight: '600' },
+  modalActionsRow: { flexDirection: 'row', gap: 10, marginTop: 6, marginBottom: 10 },
+  cancelModalBtn: { flex: 1, paddingVertical: 14, borderRadius: 14, alignItems: 'center', backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155' },
+  cancelModalBtnText: { color: '#94A3B8', fontWeight: '800', fontSize: 14 },
+  confirmModalBtn: { flex: 1.5, paddingVertical: 14, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  confirmModalBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 14 },
+  menuOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.6)' },
+  menuDrawer: { width: '80%', height: '100%', backgroundColor: '#1E293B', paddingHorizontal: 20, borderRightWidth: 1, borderRightColor: '#334155' },
+  menuHeader: { paddingVertical: 20, borderBottomWidth: 1, borderBottomColor: '#334155' },
+  avatarPlaceholderLarge: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#EAB308', alignItems: 'center', justifyContent: 'center', marginBottom: 12, overflow: 'hidden' },
   menuUserName: { fontSize: 18, fontWeight: '800', color: '#FFFFFF' },
-  menuUserPhone: { fontSize: 13, color: '#94A3B8' },
-  menuItems: { flex: 1 },
-  menuItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14 },
-  menuItemText: { fontSize: 14, fontWeight: '600', color: '#F8FAFC' },
-  menuDivider: { height: 1, backgroundColor: '#334155', marginVertical: 12 },
-
-  // ========================================================
-  // CHAT INTERNO
-  // ========================================================
-  chatOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.85)', justifyContent: 'flex-end' },
-  chatContainer: { height: '80%', backgroundColor: '#1E293B', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 16, borderWidth: 1, borderColor: '#334155' },
-  chatHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#334155' },
+  menuUserPhone: { fontSize: 13, color: '#94A3B8', marginTop: 2 },
+  menuItems: { marginTop: 16, gap: 4 },
+  menuItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 10, borderRadius: 12, gap: 12 },
+  menuItemText: { fontSize: 15, fontWeight: '600', color: '#F8FAFC' },
+  menuDivider: { height: 1, backgroundColor: '#334155', marginVertical: 10 },
+  chatOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(15, 23, 42, 0.5)' },
+  chatContainer: { flex: 1, backgroundColor: '#1E293B', borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden' },
+  chatHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#334155' },
   chatHeaderUserInfo: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   headerAvatar: { width: 32, height: 32, borderRadius: 16 },
-  headerAvatarPlaceholder: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#0F172A', justifyContent: 'center', alignItems: 'center' },
+  headerAvatarPlaceholder: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center' },
   chatTitle: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
-  chatList: { paddingVertical: 12 },
-  messageRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 10, gap: 8 },
+  chatList: { paddingHorizontal: 16, paddingVertical: 16, flexGrow: 1, justifyContent: 'flex-end' },
+  messageRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 12, gap: 8 },
   rowPassenger: { justifyContent: 'flex-end' },
   rowDriver: { justifyContent: 'flex-start' },
-  chatBubbleAvatar: { width: 24, height: 24, borderRadius: 12 },
-  chatBubbleAvatarPlaceholder: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#0F172A', justifyContent: 'center', alignItems: 'center' },
-  messageBubble: { maxWidth: '75%', padding: 12, borderRadius: 16 },
-  messagePassenger: { backgroundColor: '#EAB308', borderBottomRightRadius: 2 },
-  messageDriver: { backgroundColor: '#0F172A', borderBottomLeftRadius: 2 },
-  messageText: { fontSize: 13, lineHeight: 18 },
+  chatBubbleAvatar: { width: 26, height: 26, borderRadius: 13 },
+  chatBubbleAvatarPlaceholder: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center' },
+  messageBubble: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 16, maxWidth: '75%' },
+  messagePassenger: { backgroundColor: '#EAB308', borderBottomRightRadius: 4 },
+  messageDriver: { backgroundColor: '#0F172A', borderBottomLeftRadius: 4 },
+  messageText: { fontSize: 14, lineHeight: 20 },
   textPassenger: { color: '#0F172A', fontWeight: '600' },
-  textDriver: { color: '#FFFFFF', fontWeight: '500' },
-  chatInputContainer: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: 8 },
-  chatInput: { flex: 1, backgroundColor: '#0F172A', borderRadius: 20, borderWidth: 1, borderColor: '#334155', paddingHorizontal: 16, paddingVertical: 10, fontSize: 13, color: '#FFFFFF' },
-  chatSendButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#EAB308', justifyContent: 'center', alignItems: 'center' },
-
-  // ========================================================
-  // MODAL DE BUSCA MAPBOX DE ENDEREÇOS
-  // ========================================================
+  textDriver: { color: '#FFFFFF' },
+  chatInputContainer: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#334155', gap: 10, backgroundColor: '#1E293B' },
+  chatInput: { flex: 1, backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8, minHeight: 42, maxHeight: 90, fontSize: 14, color: '#FFFFFF' },
+  chatSendButton: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#EAB308', alignItems: 'center', justifyContent: 'center' },
   searchModalContainer: { flex: 1, backgroundColor: '#0F172A' },
-  searchHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#334155' },
-  backButton: { padding: 4 },
-  passengerSelector: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1E293B', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, borderWidth: 1, borderColor: '#334155' },
-  passengerSelectorText: { fontSize: 12, fontWeight: '600', color: '#F8FAFC' },
-  modalBody: { flex: 1, padding: 16 },
-  mapboxSearchInputWrapper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1E293B', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 2, borderWidth: 1, borderColor: '#334155' },
-  mapboxSearchInput: { flex: 1, paddingVertical: 10, fontSize: 14, color: '#FFFFFF', fontWeight: '500' },
+  searchHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#1E293B' },
+  backButton: { padding: 8 },
+  passengerSelector: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1E293B', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  passengerSelectorText: { fontSize: 13, fontWeight: '600', color: '#CBD5E1' },
+  modalBody: { flex: 1, paddingHorizontal: 16, paddingTop: 14 },
+  mapboxSearchInputWrapper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1E293B', borderRadius: 12, paddingHorizontal: 12, height: 46 },
+  mapboxSearchInput: { flex: 1, fontSize: 14, color: '#FFFFFF' },
   searchResultItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#1E293B' },
-  searchResultText: { fontSize: 13, color: '#F8FAFC', fontWeight: '500', flex: 1 },
+  searchResultText: { fontSize: 14, color: '#CBD5E1', flex: 1 },
 });

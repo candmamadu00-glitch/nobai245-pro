@@ -1,8 +1,9 @@
 import React from 'react';
 import { 
-  View, Text, StyleSheet, SafeAreaView, TouchableOpacity, 
+  View, Text, StyleSheet, TouchableOpacity, 
   ScrollView, Platform, StatusBar 
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,20 +11,36 @@ import { Ionicons } from '@expo/vector-icons';
 export function VehicleSettings() {
   const navigation = useNavigation<any>();
   const { driver } = useAuth();
+  const insets = useSafeAreaInsets();
+
+  // Cálculos dinâmicos para recuo seguro no topo e no rodapé (Android/iOS)
+  const dynamicTopPadding = Math.max((insets?.top || 0) + 6, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 6 : 14);
+  const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 28 : 16);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFF" translucent />
+
       {/* HEADER */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+      <View style={[styles.header, { paddingTop: dynamicTopPadding }]}>
+        <TouchableOpacity 
+          onPress={() => navigation.goBack()} 
+          style={styles.backButton}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
           <Ionicons name="arrow-back" size={24} color="#059669" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Veículo e Documentos</Text>
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        
+      <ScrollView 
+        contentContainerStyle={[
+          styles.content, 
+          { paddingBottom: dynamicBottomPadding + 20 }
+        ]} 
+        showsVerticalScrollIndicator={false}
+      >
         {/* CARD DADOS DO VEÍCULO */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
@@ -79,13 +96,14 @@ export function VehicleSettings() {
           <TouchableOpacity 
             style={styles.actionBtn} 
             onPress={() => navigation.navigate('Profile')}
+            activeOpacity={0.85}
           >
             <Text style={styles.actionBtnText}>Ir ao Perfil para Solicitar Alteração</Text>
           </TouchableOpacity>
         </View>
 
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -93,14 +111,13 @@ const styles = StyleSheet.create({
   container: { 
     flex: 1, 
     backgroundColor: '#F4F4F5', 
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 
   },
   header: { 
     flexDirection: 'row', 
     alignItems: 'center', 
-    justify: 'space-between', 
+    justifyContent: 'space-between', 
     paddingHorizontal: 16, 
-    paddingVertical: 14, 
+    paddingBottom: 14, 
     backgroundColor: '#FFF', 
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',

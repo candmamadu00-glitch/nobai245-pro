@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, Text, TouchableOpacity, StyleSheet, Modal, 
   KeyboardAvoidingView, Platform, Keyboard,
-  FlatList, TextInput, Image, TouchableWithoutFeedback, SafeAreaView
+  FlatList, TextInput, Image, TouchableWithoutFeedback 
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Socket } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
@@ -55,6 +56,7 @@ export function ChatModal({
   otherUserPhoto
 }: ChatModalProps) {
   const { t } = useTranslation();
+  const insets = useSafeAreaInsets();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const flatListRef = useRef<FlatList>(null);
@@ -135,19 +137,22 @@ export function ChatModal({
     );
   };
 
+  // Recuos seguros para topo e rodapé (Android e iOS)
+  const dynamicTopMargin = Math.max((insets?.top || 0) + 12, Platform.OS === 'android' ? 36 : 24);
+  const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 10, Platform.OS === 'android' ? 20 : 12);
+
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <TouchableWithoutFeedback onPress={onClose}>
-          <View style={styles.backdrop} />
-        </TouchableWithoutFeedback>
+      <KeyboardAvoidingView 
+        style={styles.keyboardAvoidingView} 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableWithoutFeedback onPress={onClose}>
+            <View style={styles.backdrop} />
+          </TouchableWithoutFeedback>
 
-        <SafeAreaView style={styles.chatContainer}>
-          <KeyboardAvoidingView 
-            style={styles.keyboardAvoidingView} 
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
-          >
+          <View style={[styles.chatContainer, { marginTop: dynamicTopMargin }]}>
             {/* CABEÇALHO DO CHAT */}
             <View style={styles.chatHeader}>
               <View style={styles.headerTitleRow}>
@@ -165,6 +170,7 @@ export function ChatModal({
                 style={styles.closeButton} 
                 onPress={onClose} 
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                activeOpacity={0.8}
               >
                 <Ionicons name="close" size={22} color="#64748B" />
               </TouchableOpacity>
@@ -205,7 +211,7 @@ export function ChatModal({
             />
 
             {/* CAMPO DE DIGITAÇÃO FIXO ACIMA DO TECLADO */}
-            <View style={styles.chatInputContainer}>
+            <View style={[styles.chatInputContainer, { paddingBottom: dynamicBottomPadding }]}>
               <TextInput
                 style={styles.chatInput}
                 value={inputText}
@@ -219,18 +225,20 @@ export function ChatModal({
                 style={[styles.chatSendButton, !inputText.trim() && styles.chatSendButtonDisabled]} 
                 onPress={sendMessage}
                 disabled={!inputText.trim()}
+                activeOpacity={0.85}
               >
                 <Ionicons name="send" size={18} color="#FFF" style={styles.sendIcon} />
               </TouchableOpacity>
             </View>
-          </KeyboardAvoidingView>
-        </SafeAreaView>
-      </View>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  keyboardAvoidingView: { flex: 1 },
   modalOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -241,7 +249,6 @@ const styles = StyleSheet.create({
   },
   chatContainer: {
     flex: 1,
-    marginTop: Platform.OS === 'ios' ? 48 : 36,
     backgroundColor: '#FFF',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
@@ -251,9 +258,6 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 10,
     overflow: 'hidden',
-  },
-  keyboardAvoidingView: {
-    flex: 1,
   },
   chatHeader: {
     flexDirection: 'row',
@@ -359,7 +363,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: 10,
-    paddingBottom: Platform.OS === 'ios' ? 24 : 14,
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9',
     backgroundColor: '#FFFFFF',

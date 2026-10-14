@@ -4,6 +4,7 @@ import {
   KeyboardAvoidingView, Platform, Keyboard,
   FlatList, TextInput, Image, TouchableWithoutFeedback
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Socket } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
@@ -52,6 +53,7 @@ export function ChatModal({
   otherUserPhoto
 }: ChatModalProps) {
   const { t } = useTranslation();
+  const insets = useSafeAreaInsets();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const flatListRef = useRef<FlatList>(null);
@@ -140,18 +142,21 @@ export function ChatModal({
     );
   };
 
+  // Cálculo dinâmico para elevação do rodapé contra botões do Android/iOS
+  const dynamicBottomPadding = Math.max(insets.bottom + 8, Platform.OS === 'android' ? 20 : 16);
+
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <KeyboardAvoidingView 
         style={styles.chatOverlay} 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'padding'} 
-        keyboardVerticalOffset={Platform.OS === 'android' ? 24 : 0} 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
       >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <View style={styles.backdrop} />
         </TouchableWithoutFeedback>
 
         <View style={styles.chatContainer}>
+          {/* CABEÇALHO DO CHAT */}
           <View style={styles.chatHeader}>
             <View style={styles.headerTitleRow}>
               {renderAvatar(otherUserPhoto)}
@@ -173,6 +178,7 @@ export function ChatModal({
             </TouchableOpacity>
           </View>
 
+          {/* LISTA DE MENSAGENS */}
           <FlatList
             ref={flatListRef}
             data={messages}
@@ -205,7 +211,8 @@ export function ChatModal({
             }}
           />
 
-          <View style={styles.chatInputContainer}>
+          {/* CAIXA DE ENTRADA DE MENSAGEM */}
+          <View style={[styles.chatInputContainer, { paddingBottom: dynamicBottomPadding }]}>
             <TextInput
               style={styles.chatInput}
               value={inputText}
@@ -219,6 +226,7 @@ export function ChatModal({
               style={[styles.chatSendButton, !inputText.trim() && styles.chatSendButtonDisabled]} 
               onPress={sendMessage}
               disabled={!inputText.trim()}
+              activeOpacity={0.8}
             >
               <Ionicons name="send" size={18} color="#FFF" style={styles.sendIcon} />
             </TouchableOpacity>
@@ -232,7 +240,7 @@ export function ChatModal({
 const styles = StyleSheet.create({
   chatOverlay: {
     flex: 1,
-    justifyContent: 'flex-end',
+    justify: 'flex-end',
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
@@ -242,7 +250,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    height: '90%',
+    maxHeight: '88%',
+    flex: 1,
     paddingTop: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -4 },
@@ -255,7 +264,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingBottom: 16,
+    paddingBottom: 14,
     paddingTop: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
@@ -352,7 +361,6 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     paddingHorizontal: 16,
     paddingTop: 12,
-    paddingBottom: Platform.OS === 'android' ? 24 : 32, 
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9',
     backgroundColor: '#FFF',
@@ -379,12 +387,11 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 0, 
   },
   chatSendButtonDisabled: {
     backgroundColor: '#CBD5E1',
   },
   sendIcon: {
-    marginLeft: 4, 
+    marginLeft: 2, 
   },
 });

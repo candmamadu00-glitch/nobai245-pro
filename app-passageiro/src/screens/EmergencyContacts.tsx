@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   View, Text, StyleSheet, TouchableOpacity, StatusBar, Platform, 
   FlatList, TextInput, Alert, ActivityIndicator, Modal,
   KeyboardAvoidingView, Keyboard, ScrollView, Pressable
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useTranslation } from 'react-i18next';
@@ -20,6 +20,8 @@ interface Contact {
 export function EmergencyContacts() {
   const navigation = useNavigation();
   const { t } = useTranslation();
+  const insets = useSafeAreaInsets();
+
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -28,18 +30,31 @@ export function EmergencyContacts() {
   const [relationship, setRelationship] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const fetchContacts = useCallback(async () => {
-    setLoading(true);
+    if (isMountedRef.current) setLoading(true);
     try {
       const response = await api.get('/passengers/emergency-contacts');
-      setContacts(response.data || []);
+      if (isMountedRef.current) {
+        setContacts(response.data || []);
+      }
     } catch (error: any) {
-      Alert.alert(
-        t('error_title', 'Erro de Conexão'), 
-        t('error_fetch_contacts', 'Verifique sua internet. Não foi possível carregar os contatos.')
-      );
+      if (isMountedRef.current) {
+        Alert.alert(
+          t('error_title', 'Erro de Conexão'), 
+          t('error_fetch_contacts', 'Verifique sua internet. Não foi possível carregar os contatos.')
+        );
+      }
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) setLoading(false);
     }
   }, [t]);
 
@@ -79,18 +94,21 @@ export function EmergencyContacts() {
       };
       
       const response = await api.post('/passengers/emergency-contacts', payload);
-      setContacts((prev) => [response.data, ...prev]);
-      
-      Alert.alert(t('success', 'Sucesso'), t('contact_added', 'Contato de emergência adicionado e sincronizado!'));
-      resetForm();
-      setIsModalOpen(false);
+      if (isMountedRef.current) {
+        setContacts((prev) => [response.data, ...prev]);
+        Alert.alert(t('success', 'Sucesso'), t('contact_added', 'Contato de emergência adicionado e sincronizado!'));
+        resetForm();
+        setIsModalOpen(false);
+      }
     } catch (error: any) {
-      Alert.alert(
-        t('error_title', 'Erro'), 
-        error?.response?.data?.error || error?.response?.data?.message || t('contact_add_error', 'Falha ao salvar. Tente novamente.')
-      );
+      if (isMountedRef.current) {
+        Alert.alert(
+          t('error_title', 'Erro'), 
+          error?.response?.data?.error || error?.response?.data?.message || t('contact_add_error', 'Falha ao salvar. Tente novamente.')
+        );
+      }
     } finally {
-      setIsSaving(false);
+      if (isMountedRef.current) setIsSaving(false);
     }
   }
 
@@ -112,9 +130,13 @@ export function EmergencyContacts() {
           onPress: async () => {
             try {
               await api.delete(`/passengers/emergency-contacts/${id}`);
-              setContacts((prev) => prev.filter((c) => c.id !== id));
+              if (isMountedRef.current) {
+                setContacts((prev) => prev.filter((c) => c.id !== id));
+              }
             } catch (error) { 
-              Alert.alert(t('error_title', 'Erro'), t('contact_add_error', 'Não foi possível remover.')); 
+              if (isMountedRef.current) {
+                Alert.alert(t('error_title', 'Erro'), t('contact_add_error', 'Não foi possível remover.')); 
+              }
             }
           }
         }
@@ -122,15 +144,31 @@ export function EmergencyContacts() {
     );
   }, [t]);
 
+  // Recuos seguros para topo e rodapé (Android e iOS)
+  const dynamicTopPadding = Math.max((insets?.top || 0) + 6, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 6 : 14);
+  const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 28 : 16);
+
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
+    <View style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" translucent />
+      
+      {/* HEADER */}
+      <View style={[styles.header, { paddingTop: dynamicTopPadding }]}>
+        <TouchableOpacity 
+          onPress={() => navigation.goBack()} 
+          style={styles.iconButton}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          activeOpacity={0.7}
+        >
           <Ionicons name="arrow-back" size={24} color="#0F172A" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{t('emergency_contacts', 'Contatos de Emergência')}</Text>
-        <TouchableOpacity onPress={() => setIsModalOpen(true)} style={styles.iconButton}>
+        <TouchableOpacity 
+          onPress={() => setIsModalOpen(true)} 
+          style={styles.iconButton}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          activeOpacity={0.7}
+        >
           <Ionicons name="add-circle" size={28} color="#EAB308" />
         </TouchableOpacity>
       </View>
@@ -143,7 +181,7 @@ export function EmergencyContacts() {
         <FlatList
           data={contacts}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[styles.listContent, { paddingBottom: dynamicBottomPadding + 20 }]}
           showsVerticalScrollIndicator={false}
           ListHeaderComponent={
             <View style={styles.bannerContainer}>
@@ -158,7 +196,7 @@ export function EmergencyContacts() {
             <View style={styles.emptyContainer}>
               <Ionicons name="people-outline" size={48} color="#94A3B8" />
               <Text style={styles.emptyTitle}>{t('no_contacts', 'Nenhum contato adicionado')}</Text>
-              <TouchableOpacity style={styles.stunningButton} activeOpacity={0.8} onPress={() => setIsModalOpen(true)}>
+              <TouchableOpacity style={styles.stunningButton} activeOpacity={0.85} onPress={() => setIsModalOpen(true)}>
                 <Text style={styles.stunningButtonText}>{t('add_contact_btn', 'Adicionar Contato Seguro')}</Text>
               </TouchableOpacity>
             </View>
@@ -177,7 +215,12 @@ export function EmergencyContacts() {
                   </View>
                 )}
               </View>
-              <TouchableOpacity onPress={() => handleDeleteContact(item.id)} style={styles.deleteButton} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <TouchableOpacity 
+                onPress={() => handleDeleteContact(item.id)} 
+                style={styles.deleteButton} 
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                activeOpacity={0.7}
+              >
                 <Ionicons name="trash-outline" size={22} color="#EF4444" />
               </TouchableOpacity>
             </View>
@@ -185,66 +228,131 @@ export function EmergencyContacts() {
         />
       )}
 
-      <Modal visible={isModalOpen} animationType="slide" transparent onRequestClose={() => { if (!isSaving) { resetForm(); setIsModalOpen(false); } }}>
-        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <Modal 
+        visible={isModalOpen} 
+        animationType="slide" 
+        transparent 
+        onRequestClose={() => { if (!isSaving) { resetForm(); setIsModalOpen(false); } }}
+      >
+        <KeyboardAvoidingView 
+          style={styles.modalOverlay} 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
           <Pressable style={styles.backdrop} onPress={Keyboard.dismiss} />
           <View style={styles.modalContent}>
-            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 20 }}>
+            <ScrollView 
+              showsVerticalScrollIndicator={false} 
+              keyboardShouldPersistTaps="handled" 
+              contentContainerStyle={{ paddingBottom: dynamicBottomPadding + 10 }}
+            >
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>{t('new_emergency_contact', 'Novo Contato')}</Text>
-                <TouchableOpacity onPress={() => { resetForm(); setIsModalOpen(false); }} disabled={isSaving}>
+                <TouchableOpacity 
+                  onPress={() => { resetForm(); setIsModalOpen(false); }} 
+                  disabled={isSaving}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
                   <Ionicons name="close" size={24} color="#64748B" />
                 </TouchableOpacity>
               </View>
+
               <Text style={styles.inputLabel}>{t('full_name', 'Nome Completo')}</Text>
-              <TextInput style={styles.input} placeholder="Ex: Bacar Camará" value={name} onChangeText={setName} editable={!isSaving} />
+              <TextInput 
+                style={styles.input} 
+                placeholder="Ex: Bacar Camará" 
+                placeholderTextColor="#94A3B8"
+                value={name} 
+                onChangeText={setName} 
+                editable={!isSaving} 
+              />
               
               <Text style={styles.inputLabel}>{t('phone_whatsapp', 'Telefone (Guiné-Bissau)')}</Text>
-              <TextInput style={styles.input} placeholder="Ex: 955123456" keyboardType="phone-pad" value={phone} onChangeText={setPhone} editable={!isSaving} />
+              <TextInput 
+                style={styles.input} 
+                placeholder="Ex: 955123456" 
+                placeholderTextColor="#94A3B8"
+                keyboardType="phone-pad" 
+                value={phone} 
+                onChangeText={setPhone} 
+                editable={!isSaving} 
+              />
               
               <Text style={styles.inputLabel}>{t('relationship_optional', 'Parentesco (Opcional)')}</Text>
-              <TextInput style={styles.input} placeholder="Ex: Irmão, Mãe" value={relationship} onChangeText={setRelationship} editable={!isSaving} />
+              <TextInput 
+                style={styles.input} 
+                placeholder="Ex: Irmão, Mãe" 
+                placeholderTextColor="#94A3B8"
+                value={relationship} 
+                onChangeText={setRelationship} 
+                editable={!isSaving} 
+              />
               
-              <TouchableOpacity style={[styles.stunningButton, isSaving && styles.stunningButtonDisabled, { marginTop: 20 }]} onPress={handleAddContact} disabled={isSaving} activeOpacity={0.8}>
+              <TouchableOpacity 
+                style={[styles.stunningButton, isSaving && styles.stunningButtonDisabled, { marginTop: 20 }]} 
+                onPress={handleAddContact} 
+                disabled={isSaving} 
+                activeOpacity={0.85}
+              >
                 {isSaving ? <ActivityIndicator color="#0F172A" /> : <Text style={styles.stunningButtonText}>{t('save_contact', 'Salvar Contato')}</Text>}
               </TouchableOpacity>
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14, backgroundColor: '#F8FAFC' },
+  header: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'space-between', 
+    paddingHorizontal: 20, 
+    paddingBottom: 14, 
+    backgroundColor: '#F8FAFC',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0'
+  },
   iconButton: { padding: 4 },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: '#0F172A' },
+  headerTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A' },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  listContent: { paddingHorizontal: 20, paddingBottom: 40 },
+  listContent: { paddingHorizontal: 20 },
   bannerContainer: { alignItems: 'center', marginVertical: 20 },
   iconBadge: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#D1FAE5', justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
   title: { fontSize: 20, fontWeight: '800', color: '#0F172A' },
   subtitle: { fontSize: 14, color: '#64748B', textAlign: 'center', marginTop: 6, lineHeight: 20, paddingHorizontal: 10 },
   emptyContainer: { alignItems: 'center', marginTop: 40 },
-  emptyTitle: { fontSize: 16, fontWeight: '600', color: '#334155', marginTop: 12, marginBottom: 20 },
+  emptyTitle: { fontSize: 16, fontWeight: '700', color: '#334155', marginTop: 12, marginBottom: 20 },
   stunningButton: { backgroundColor: '#EAB308', paddingVertical: 16, paddingHorizontal: 24, borderRadius: 16, alignItems: 'center', shadowColor: '#EAB308', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 5 },
   stunningButtonText: { color: '#0F172A', fontWeight: '800', fontSize: 16 },
   stunningButtonDisabled: { opacity: 0.6, shadowOpacity: 0 },
   contactCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 16, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: '#F1F5F9', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
   avatarCircle: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center', marginRight: 14 },
   contactInfo: { flex: 1 },
-  contactName: { fontSize: 16, fontWeight: '700', color: '#0F172A' },
+  contactName: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
   contactPhone: { fontSize: 14, color: '#475569', marginTop: 4 },
   tag: { alignSelf: 'flex-start', backgroundColor: '#FEF9C3', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, marginTop: 8 },
-  contactRelation: { fontSize: 11, color: '#B45309', fontWeight: '700' },
+  contactRelation: { fontSize: 11, color: '#B45309', fontWeight: '800' },
   deleteButton: { padding: 8, backgroundColor: '#FEF2F2', borderRadius: 10 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.6)', justifyContent: 'flex-end' },
   backdrop: { ...StyleSheet.absoluteFillObject },
-  modalContent: { backgroundColor: '#FFF', borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 24, paddingTop: 24, maxHeight: '90%' },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
+  modalContent: { 
+    backgroundColor: '#FFF', 
+    borderTopLeftRadius: 28, 
+    borderTopRightRadius: 28, 
+    paddingHorizontal: 24, 
+    paddingTop: 24, 
+    maxHeight: '90%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
   modalTitle: { fontSize: 20, fontWeight: '800', color: '#0F172A' },
-  inputLabel: { fontSize: 14, fontWeight: '600', color: '#475569', marginBottom: 8, marginTop: 12 },
-  input: { backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 14, height: 54, paddingHorizontal: 16, fontSize: 16, color: '#0F172A' },
+  inputLabel: { fontSize: 13, fontWeight: '700', color: '#475569', marginBottom: 8, marginTop: 12 },
+  input: { backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 14, height: 52, paddingHorizontal: 16, fontSize: 15, color: '#0F172A' },
 });

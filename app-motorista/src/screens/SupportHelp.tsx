@@ -11,7 +11,12 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  StatusBar,
+  Keyboard,
+  TouchableWithoutFeedback,
+  ScrollView,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../services/api';
 import { getSocket } from '../services/socket';
@@ -52,6 +57,7 @@ const CATEGORIES: { label: string; value: TicketCategory }[] = [
 ];
 
 export function SupportHelp({ navigation, route }: any) {
+  const insets = useSafeAreaInsets();
   const initialRideId = route?.params?.rideId || null;
 
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -124,7 +130,7 @@ export function SupportHelp({ navigation, route }: any) {
         rideId: rideId || undefined,
         priority: category === 'SAFETY' ? 'HIGH' : 'MEDIUM',
       });
-      Alert.alert('Sucesso', 'Chamado aberto com sucesso!');
+      Alert.alert('Sucesso 🎉', 'Chamado aberto com sucesso!');
       setIsCreateModalOpen(false);
       setDescription('');
       setRideId(null);
@@ -189,14 +195,21 @@ export function SupportHelp({ navigation, route }: any) {
     return found ? found.label : cat;
   };
 
+  // Cálculos dinâmicos para recuo das bordas no Android e iOS
+  const dynamicTopPadding = Math.max((insets?.top || 0) + 10, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 20);
+  const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 28 : 16);
+
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" translucent />
+      
+      {/* CABEÇALHO DA TELA PRINCIPAL */}
+      <View style={[styles.header, { paddingTop: dynamicTopPadding }]}>
+        <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Ionicons name="arrow-back" size={24} color="#1F2937" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Suporte ao Motorista</Text>
-        <TouchableOpacity onPress={() => setIsCreateModalOpen(true)}>
+        <TouchableOpacity onPress={() => setIsCreateModalOpen(true)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Ionicons name="add-circle-outline" size={26} color="#059669" />
         </TouchableOpacity>
       </View>
@@ -212,7 +225,7 @@ export function SupportHelp({ navigation, route }: any) {
           <Text style={styles.emptySubtitle}>
             Precisa de ajuda com repasses, taxas ou viagens? Abra um chamado abaixo.
           </Text>
-          <TouchableOpacity style={styles.createButton} onPress={() => setIsCreateModalOpen(true)}>
+          <TouchableOpacity style={styles.createButton} onPress={() => setIsCreateModalOpen(true)} activeOpacity={0.85}>
             <Text style={styles.createButtonText}>Novo Chamado</Text>
           </TouchableOpacity>
         </View>
@@ -220,11 +233,11 @@ export function SupportHelp({ navigation, route }: any) {
         <FlatList
           data={tickets}
           keyExtractor={(item, index) => (item.id ? `${item.id}-${index}` : String(index))}
-          contentContainerStyle={{ padding: 16 }}
+          contentContainerStyle={{ padding: 16, paddingBottom: dynamicBottomPadding + 20 }}
           renderItem={({ item }) => {
             const badge = getStatusBadge(item.status);
             return (
-              <TouchableOpacity style={styles.ticketCard} onPress={() => handleOpenChat(item)}>
+              <TouchableOpacity style={styles.ticketCard} onPress={() => handleOpenChat(item)} activeOpacity={0.85}>
                 <View style={styles.ticketHeader}>
                   <Text style={styles.ticketCategory}>{getCategoryLabel(item.category)}</Text>
                   <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
@@ -252,72 +265,90 @@ export function SupportHelp({ navigation, route }: any) {
         />
       )}
 
-      {/* Modal Novo Chamado */}
-      <Modal visible={isCreateModalOpen} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Novo Chamado de Suporte</Text>
-              <TouchableOpacity onPress={() => setIsCreateModalOpen(false)}>
-                <Ionicons name="close" size={24} color="#6B7280" />
-              </TouchableOpacity>
-            </View>
+      {/* MODAL NOVO CHAMADO */}
+      <Modal visible={isCreateModalOpen} animationType="slide" transparent onRequestClose={() => setIsCreateModalOpen(false)}>
+        <KeyboardAvoidingView 
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={styles.backdrop} />
+          </TouchableWithoutFeedback>
 
-            <Text style={styles.label}>Categoria do Problema</Text>
-            <View style={styles.categoryContainer}>
-              {CATEGORIES.map((cat) => (
-                <TouchableOpacity
-                  key={cat.value}
-                  style={[styles.categoryChip, category === cat.value && styles.categoryChipActive]}
-                  onPress={() => setCategory(cat.value)}
-                >
-                  <Text
-                    style={[
-                      styles.categoryChipText,
-                      category === cat.value && styles.categoryChipTextActive,
-                    ]}
-                  >
-                    {cat.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {rideId && (
-              <View style={styles.rideBadgeContainer}>
-                <Ionicons name="car-outline" size={16} color="#059669" />
-                <Text style={styles.rideBadgeText}>Vinculado à corrida #{rideId.slice(-6)}</Text>
-                <TouchableOpacity onPress={() => setRideId(null)}>
-                  <Ionicons name="close-circle" size={16} color="#9CA3AF" />
+          <View style={[styles.modalContent, { paddingBottom: dynamicBottomPadding }]}>
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Novo Chamado de Suporte</Text>
+                <TouchableOpacity onPress={() => setIsCreateModalOpen(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <Ionicons name="close" size={24} color="#6B7280" />
                 </TouchableOpacity>
               </View>
-            )}
 
-            <Text style={styles.label}>Descrição Detalhada</Text>
-            <TextInput
-              style={styles.textArea}
-              placeholder="Explique detalhadamente o que ocorreu..."
-              multiline
-              numberOfLines={4}
-              value={description}
-              onChangeText={setDescription}
-            />
+              <Text style={styles.label}>Categoria do Problema</Text>
+              <View style={styles.categoryContainer}>
+                {CATEGORIES.map((cat) => (
+                  <TouchableOpacity
+                    key={cat.value}
+                    style={[styles.categoryChip, category === cat.value && styles.categoryChipActive]}
+                    onPress={() => setCategory(cat.value)}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.categoryChipText,
+                        category === cat.value && styles.categoryChipTextActive,
+                      ]}
+                    >
+                      {cat.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
 
-            <TouchableOpacity style={styles.submitButton} onPress={handleCreateTicket} disabled={creating}>
-              {creating ? <ActivityIndicator color="#FFF" /> : <Text style={styles.submitButtonText}>Enviar Chamado</Text>}
-            </TouchableOpacity>
+              {rideId && (
+                <View style={styles.rideBadgeContainer}>
+                  <Ionicons name="car-outline" size={16} color="#059669" />
+                  <Text style={styles.rideBadgeText}>Vinculado à corrida #{rideId.slice(-6)}</Text>
+                  <TouchableOpacity onPress={() => setRideId(null)}>
+                    <Ionicons name="close-circle" size={16} color="#9CA3AF" />
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              <Text style={styles.label}>Descrição Detalhada</Text>
+              <TextInput
+                style={styles.textArea}
+                placeholder="Explique detalhadamente o que ocorreu..."
+                placeholderTextColor="#9CA3AF"
+                multiline
+                numberOfLines={4}
+                value={description}
+                onChangeText={setDescription}
+              />
+
+              <TouchableOpacity 
+                style={[styles.submitButton, creating && { opacity: 0.7 }]} 
+                onPress={handleCreateTicket} 
+                disabled={creating}
+                activeOpacity={0.85}
+              >
+                {creating ? <ActivityIndicator color="#FFF" /> : <Text style={styles.submitButtonText}>Enviar Chamado</Text>}
+              </TouchableOpacity>
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
-      {/* Modal Chat */}
-      <Modal visible={!!selectedTicket} animationType="slide">
+      {/* MODAL CHAT */}
+      <Modal visible={!!selectedTicket} animationType="slide" onRequestClose={() => setSelectedTicket(null)}>
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.container}
         >
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => setSelectedTicket(null)}>
+          <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" translucent />
+
+          <View style={[styles.header, { paddingTop: dynamicTopPadding }]}>
+            <TouchableOpacity onPress={() => setSelectedTicket(null)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
               <Ionicons name="close" size={24} color="#1F2937" />
             </TouchableOpacity>
             <Text style={styles.headerTitle} numberOfLines={1}>
@@ -344,14 +375,16 @@ export function SupportHelp({ navigation, route }: any) {
             }}
           />
 
-          <View style={styles.inputContainer}>
+          <View style={[styles.inputContainer, { paddingBottom: dynamicBottomPadding }]}>
             <TextInput
               style={styles.chatInput}
               placeholder="Escreva uma mensagem..."
+              placeholderTextColor="#9CA3AF"
               value={inputMessage}
               onChangeText={setInputMessage}
+              multiline
             />
-            <TouchableOpacity style={styles.sendButton} onPress={handleSendMessage}>
+            <TouchableOpacity style={styles.sendButton} onPress={handleSendMessage} activeOpacity={0.85}>
               <Ionicons name="send" size={18} color="#FFF" />
             </TouchableOpacity>
           </View>
@@ -361,7 +394,6 @@ export function SupportHelp({ navigation, route }: any) {
   );
 }
 
-// Objeto de sombra reutilizável
 const floatingShadow = {
   shadowColor: '#000',
   shadowOffset: { width: 0, height: 2 },
@@ -376,19 +408,18 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justify: 'space-between',
     paddingHorizontal: 16,
-    paddingTop: 50,
-    paddingBottom: 16,
+    paddingBottom: 14,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
   },
-  headerTitle: { fontSize: 18, fontWeight: 'bold', color: '#1F2937' },
+  headerTitle: { fontSize: 17, fontWeight: 'bold', color: '#1F2937' },
   emptyTitle: { fontSize: 18, fontWeight: 'bold', color: '#374151', marginTop: 12 },
-  emptySubtitle: { fontSize: 14, color: '#6B7280', textAlign: 'center', marginTop: 6, marginBottom: 20 },
-  createButton: { backgroundColor: '#059669', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, ...floatingShadow },
-  createButtonText: { color: '#FFF', fontWeight: 'bold' },
+  emptySubtitle: { fontSize: 13, color: '#6B7280', textAlign: 'center', marginTop: 6, marginBottom: 20 },
+  createButton: { backgroundColor: '#059669', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 10, ...floatingShadow },
+  createButtonText: { color: '#FFF', fontWeight: 'bold', fontSize: 14 },
   ticketCard: {
     backgroundColor: '#FFF',
     padding: 16,
@@ -407,13 +438,17 @@ const styles = StyleSheet.create({
   ticketFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
   ticketDate: { fontSize: 12, color: '#9CA3AF' },
   chatLink: { fontSize: 12, color: '#059669', fontWeight: 'bold' },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#FFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 },
+  modalOverlay: { flex: 1, justifyContent: 'flex-end' },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.5)',
+  },
+  modalContent: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, maxHeight: '90%' },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   modalTitle: { fontSize: 18, fontWeight: 'bold', color: '#1F2937' },
   label: { fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 8 },
   categoryContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
-  categoryChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: '#D1D5DB' },
+  categoryChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: '#D1D5DB', backgroundColor: '#F9FAFB' },
   categoryChipActive: { borderColor: '#059669', backgroundColor: '#ECFDF5' },
   categoryChipText: { fontSize: 12, color: '#4B5563' },
   categoryChipTextActive: { color: '#059669', fontWeight: 'bold' },
@@ -431,13 +466,16 @@ const styles = StyleSheet.create({
   textArea: {
     borderWidth: 1,
     borderColor: '#D1D5DB',
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 12,
     textAlignVertical: 'top',
     marginBottom: 20,
     fontSize: 14,
+    minHeight: 90,
+    backgroundColor: '#F9FAFB',
+    color: '#1F2937',
   },
-  submitButton: { backgroundColor: '#059669', paddingVertical: 14, borderRadius: 8, alignItems: 'center', ...floatingShadow },
+  submitButton: { backgroundColor: '#059669', paddingVertical: 14, borderRadius: 12, alignItems: 'center', ...floatingShadow },
   submitButtonText: { color: '#FFF', fontWeight: 'bold', fontSize: 15 },
   messageBubble: { maxWidth: '80%', padding: 12, borderRadius: 12, marginBottom: 10 },
   myMessage: { alignSelf: 'flex-end', backgroundColor: '#059669', borderBottomRightRadius: 2 },
@@ -447,13 +485,14 @@ const styles = StyleSheet.create({
   messageTime: { fontSize: 10, marginTop: 4, alignSelf: 'flex-end' },
   inputContainer: {
     flexDirection: 'row',
-    padding: 12,
+    paddingHorizontal: 12,
+    paddingTop: 12,
     backgroundColor: '#FFF',
     borderTopWidth: 1,
     borderTopColor: '#E5E7EB',
     alignItems: 'center',
     gap: 8,
   },
-  chatInput: { flex: 1, borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8 },
-  sendButton: { backgroundColor: '#059669', padding: 10, borderRadius: 20, justifyContent: 'center', alignItems: 'center', ...floatingShadow },
+  chatInput: { flex: 1, borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8, minHeight: 40, maxHeight: 100, backgroundColor: '#F9FAFB', color: '#1F2937' },
+  sendButton: { backgroundColor: '#059669', width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', ...floatingShadow },
 });

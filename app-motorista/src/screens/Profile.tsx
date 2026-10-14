@@ -4,7 +4,6 @@ import {
   Text, 
   StyleSheet, 
   TouchableOpacity, 
-  SafeAreaView, 
   Platform, 
   StatusBar, 
   TextInput, 
@@ -13,8 +12,11 @@ import {
   ActivityIndicator, 
   Modal, 
   Image,
-  KeyboardAvoidingView 
+  KeyboardAvoidingView,
+  Keyboard,
+  TouchableWithoutFeedback
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -53,8 +55,8 @@ const LANGUAGES: readonly LanguageOption[] = [
 ] as const;
 
 type ProfileScreenNavigationProp = NativeStackNavigationProp<RootStackParamList>;
-// --- INTERFACES DE DADOS ---
 
+// --- INTERFACES DE DADOS ---
 export interface FinanceData {
   walletBalance: number;
   totalEarned: number;
@@ -73,22 +75,21 @@ export interface UpdateFormState {
 }
 
 // --- DECLARAÇÃO DO COMPONENTE ---
-
 export function Profile() {
   const { t, i18n } = useTranslation();
   const { driver, signOut, refreshDriverProfile } = useAuth();
+  const insets = useSafeAreaInsets();
   
-  // Utilizando a tipagem estrita de rotas criada no Passo 1
   const navigation = useNavigation<ProfileScreenNavigationProp>();
 
   // --- ESTADOS DE DADOS ---
   const [financeData, setFinanceData] = useState<FinanceData | null>(null);
   const [hasPendingRequest, setHasPendingRequest] = useState<boolean>(false);
   
-  // --- ESTADOS DE CARREGAMENTO E REDE (Resiliência) ---
-  const [initialLoading, setInitialLoading] = useState<boolean>(true); // Para o Skeleton/Spinner inicial
-  const [networkError, setNetworkError] = useState<boolean>(false); // Para exibir banner offline
-  const [loading, setLoading] = useState<boolean>(false); // Para botões de ação
+  // --- ESTADOS DE CARREGAMENTO E REDE ---
+  const [initialLoading, setInitialLoading] = useState<boolean>(true);
+  const [networkError, setNetworkError] = useState<boolean>(false);
+  const [loading, setLoading] = useState<boolean>(false);
   const [uploadingImage, setUploadingImage] = useState<boolean>(false);
   const [isSubmittingUpdate, setIsSubmittingUpdate] = useState<boolean>(false);
 
@@ -101,7 +102,7 @@ export function Profile() {
   const [isPrivacyModalVisible, setIsPrivacyModalVisible] = useState<boolean>(false);
   const [isLanguageModalVisible, setIsLanguageModalVisible] = useState<boolean>(false);
 
-  // --- ESTADO DO FORMULÁRIO (Tipado) ---
+  // --- ESTADO DO FORMULÁRIO ---
   const [updateData, setUpdateData] = useState<UpdateFormState>({
     newFullName: driver?.fullName || '',
     newVehiclePlate: driver?.vehiclePlate || '',
@@ -109,7 +110,8 @@ export function Profile() {
     newVehicleColor: driver?.vehicleColor || '',
     newDocumentNumber: driver?.documentNumber || '',
   });
-// --- EFEITOS E CARREGAMENTO INICIAL ---
+
+  // --- EFEITOS E CARREGAMENTO INICIAL ---
   useEffect(() => {
     loadInitialData();
   }, []);
@@ -117,10 +119,7 @@ export function Profile() {
   async function loadInitialData() {
     setInitialLoading(true);
     setNetworkError(false);
-    
-    // Executa ambas as chamadas simultaneamente sem que uma bloqueie a outra
     await Promise.allSettled([loadFinanceData(), checkPendingRequest()]);
-    
     setInitialLoading(false);
   }
 
@@ -185,12 +184,12 @@ export function Profile() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-  mediaTypes: ['images'], // Removido do ImagePicker.MediaTypeOptions.Images para manter sua string
-  allowsEditing: true,
-  aspect: [1, 1],
-  quality: 0.1, // Reduzido de 0.5 para 0.1 (Fotos de perfil ficam nítidas e caem para ~50KB)
-  base64: false, // Garanta que base64 está falso para não travar a memória
-});
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.1,
+      base64: false,
+    });
 
     if (!result.canceled && result.assets && result.assets[0]) {
       uploadProfileImage(result.assets[0].uri);
@@ -205,14 +204,12 @@ export function Profile() {
       const match = /\.(\w+)$/.exec(filename);
       const type = match ? `image/${match[1]}` : `image/jpeg`;
 
-      // 🛡️ Garante que a chave 'profilePicture' seja enviada com a estrutura esperada pelo Multer
       formData.append('profilePicture', {
         uri: Platform.OS === 'android' ? uri : uri.replace('file://', ''),
         name: filename,
         type,
       } as any);
 
-      // 📡 Envia para a rota oficial /drivers/profile/picture
       await api.patch('/drivers/profile/picture', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
@@ -226,7 +223,8 @@ export function Profile() {
       setUploadingImage(false);
     }
   }
-  // --- SALVAR INFORMAÇÕES DE PAGAMENTO (VALIDAÇÃO RIGOROSA) ---
+
+  // --- SALVAR INFORMAÇÕES DE PAGAMENTO ---
   async function handleSavePaymentInfo() {
     const cleanNumber = mmNumber.trim();
 
@@ -270,7 +268,7 @@ export function Profile() {
     }
   }
 
-  // --- SOLICITAÇÃO DE ALTERAÇÃO DE DADOS (COM VERIFICAÇÃO DE MUDANÇAS) ---
+  // --- SOLICITAÇÃO DE ALTERAÇÃO DE DADOS ---
   function openUpdateModal() {
     setUpdateData({
       newFullName: driver?.fullName || '',
@@ -366,20 +364,25 @@ export function Profile() {
   const formatImageUrl = (path?: string) => path ? (path.startsWith('http') ? path : `${API_URL}${path.startsWith('/') ? '' : '/'}${path}`) : undefined;
   const profileImageUrl = formatImageUrl(driver?.profilePicture || undefined);
   const currentLang = LANGUAGES.find(l => l.code === i18n.language) || LANGUAGES[0];
- return (
-    <SafeAreaView style={styles.container}>
+
+  // Cálculos dinâmicos para recuo seguro em topo e rodapé (Android e iOS)
+  const dynamicTopPadding = Math.max((insets?.top || 0) + 6, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 6 : 14);
+  const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 28 : 16);
+
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFF" translucent />
+      
       {/* HEADER */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: dynamicTopPadding }]}>
         <TouchableOpacity 
           onPress={() => navigation.goBack()} 
           style={styles.backButton}
-          accessible={true}
-          accessibilityRole="button"
-          accessibilityLabel="Voltar para a tela anterior"
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
           <Ionicons name="arrow-back" size={24} color="#059669" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle} accessibilityRole="header">
+        <Text style={styles.headerTitle}>
           {t('profileTitle') || 'Meu Perfil'}
         </Text>
         <View style={{ width: 40 }} />
@@ -394,30 +397,29 @@ export function Profile() {
       )}
 
       {initialLoading ? (
-        // FEEDBACK DE CARREGAMENTO INICIAL
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#059669" />
           <Text style={styles.loadingText}>Carregando perfil...</Text>
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          
+        <ScrollView 
+          contentContainerStyle={[styles.content, { paddingBottom: dynamicBottomPadding + 20 }]} 
+          showsVerticalScrollIndicator={false}
+        >
           {/* FOTO E CABEÇALHO */}
           <View style={styles.profileHeader}>
             <TouchableOpacity 
               onPress={handlePickAndUploadImage} 
               disabled={uploadingImage} 
               style={styles.imageContainer}
-              accessible={true}
-              accessibilityRole="button"
-              accessibilityLabel="Alterar foto de perfil"
+              activeOpacity={0.8}
             >
               {uploadingImage ? (
                 <View style={styles.imagePlaceholder}>
                   <ActivityIndicator color="#059669" size="large" />
                 </View>
               ) : profileImageUrl ? (
-                <Image source={{ uri: profileImageUrl }} style={styles.profileImage} accessible={false} />
+                <Image source={{ uri: profileImageUrl }} style={styles.profileImage} />
               ) : (
                 <View style={styles.imagePlaceholder}>
                   <Ionicons name="person" size={50} color="#9CA3AF" />
@@ -427,12 +429,12 @@ export function Profile() {
                 <Ionicons name="camera" size={16} color="#FFF" />
               </View>
             </TouchableOpacity>
-            <Text style={styles.profileName} accessibilityRole="text">{driver?.fullName}</Text>
-            <Text style={styles.profilePhone} accessibilityRole="text">{driver?.phone}</Text>
+            <Text style={styles.profileName}>{driver?.fullName}</Text>
+            <Text style={styles.profilePhone}>{driver?.phone}</Text>
           </View>
 
           {/* STATUS DA CONTA */}
-          <View style={[styles.statusBanner, { backgroundColor: statusDisplay.bg }]} accessible={true} accessibilityLabel={`Status da conta: ${statusDisplay.text}`}>
+          <View style={[styles.statusBanner, { backgroundColor: statusDisplay.bg }]}>
             <Ionicons name={statusDisplay.icon as any} size={22} color={statusDisplay.color} />
             <Text style={[styles.statusText, { color: statusDisplay.color }]}>
               {statusDisplay.text}
@@ -440,7 +442,7 @@ export function Profile() {
           </View>
 
           {hasPendingRequest && (
-            <View style={[styles.statusBanner, { backgroundColor: '#DBEAFE', marginTop: -6 }]} accessible={true} accessibilityLabel="Solicitação de alteração em análise">
+            <View style={[styles.statusBanner, { backgroundColor: '#DBEAFE', marginTop: -6 }]}>
               <Ionicons name="information-circle" size={22} color="#1D4ED8" />
               <Text style={[styles.statusText, { color: '#1D4ED8', flex: 1 }]}>
                 Você tem uma solicitação de alteração em análise pela central.
@@ -448,16 +450,12 @@ export function Profile() {
             </View>
           )}
 
-          {/* ================================================== */}
-          {/* 1. QUADRINHOS EM PARALELO (DASHBOARD) */}
-          {/* ================================================== */}
+          {/* DASHBOARD QUADRINHOS */}
           <View style={styles.gridContainer}>
-            
-            {/* Quadrinho 1: Carteira Virtual */}
             <TouchableOpacity 
               style={styles.gridCard} 
               onPress={() => navigation.navigate('Wallet' as never)}
-              activeOpacity={0.8}
+              activeOpacity={0.85}
             >
               <View style={[styles.gridIconBox, { backgroundColor: '#ECFDF5' }]}>
                 <Ionicons name="card" size={18} color="#059669" />
@@ -471,12 +469,11 @@ export function Profile() {
               </Text>
             </TouchableOpacity>
 
-            {/* Quadrinho 2: Conta de Recebimento */}
             <TouchableOpacity 
               style={styles.gridCard} 
               onPress={handleOpenEdit}
               disabled={networkError}
-              activeOpacity={0.8}
+              activeOpacity={0.85}
             >
               <View style={[styles.gridIconBox, { backgroundColor: '#FFF7ED' }]}>
                 <Ionicons name="wallet" size={18} color="#FF6600" />
@@ -487,11 +484,10 @@ export function Profile() {
               </Text>
             </TouchableOpacity>
 
-            {/* Quadrinho 3: Veículo e Documentos */}
             <TouchableOpacity 
               style={styles.gridCard} 
               onPress={() => navigation.navigate('VehicleSettings' as never)}
-              activeOpacity={0.8}
+              activeOpacity={0.85}
             >
               <View style={[styles.gridIconBox, { backgroundColor: '#F3F4F6' }]}>
                 <Ionicons name="car" size={18} color="#4B5563" />
@@ -500,11 +496,10 @@ export function Profile() {
               <Text style={styles.gridValuePlate}>{driver?.vehiclePlate || 'Pendente'}</Text>
             </TouchableOpacity>
 
-            {/* Quadrinho 4: Histórico de Corridas */}
             <TouchableOpacity 
               style={styles.gridCard} 
               onPress={() => navigation.navigate('RideHistory' as never)}
-              activeOpacity={0.8}
+              activeOpacity={0.85}
             >
               <View style={[styles.gridIconBox, { backgroundColor: '#E0E7FF' }]}>
                 <Ionicons name="list" size={18} color="#4338CA" />
@@ -512,17 +507,15 @@ export function Profile() {
               <Text style={styles.gridTitle}>Corridas</Text>
               <Text style={styles.gridValueSecondary}>{financeData?.totalRides || 0} viagens</Text>
             </TouchableOpacity>
-
           </View>
 
-          {/* Alerta de saldo (aparece apenas se for negativo) */}
           {(financeData?.walletBalance || 0) < 0 && (
-            <View style={{marginBottom: 16}}>
+            <View style={{ marginBottom: 16 }}>
               <Text style={styles.warningText}>⚠️ Saldo negativo. Recarregue para evitar bloqueios.</Text>
             </View>
           )}
 
-          {/* Formulário de Edição de Recebimento (Mostra apenas quando clica em Configurar) */}
+          {/* FORMULÁRIO DE EDIÇÃO DE RECEBIMENTO */}
           {isEditingPayment && (
             <View style={styles.editFormContainer}>
               <Text style={styles.cardTitle}>Configurar Recebimento</Text>
@@ -565,21 +558,18 @@ export function Profile() {
             </View>
           )}
 
-          {/* Botão extra para solicitação de dados caso o usuário não queira ir pela tela do veículo */}
           <TouchableOpacity 
             style={[styles.updateBtn, hasPendingRequest && styles.updateBtnDisabled, { marginBottom: 20 }]} 
             onPress={openUpdateModal}
             disabled={hasPendingRequest || networkError}
+            activeOpacity={0.85}
           >
             <Text style={[styles.updateBtnText, hasPendingRequest && styles.updateBtnTextDisabled]}>
               {hasPendingRequest ? 'Alteração de Dados em Andamento' : 'Solicitar Alteração de Dados'}
             </Text>
           </TouchableOpacity>
 
-
-          {/* ================================================== */}
-          {/* 2. CONFIGURAÇÕES EM SÉRIE (LISTA) */}
-          {/* ================================================== */}
+          {/* CONFIGURAÇÕES EM SÉRIE */}
           <Text style={styles.sectionTitle}>Configurações</Text>
           
           <View style={styles.seriesContainer}>
@@ -610,12 +600,12 @@ export function Profile() {
           </View>
 
           {/* AÇÕES DE SAÍDA */}
-          <TouchableOpacity style={styles.logoutButton} onPress={signOut}>
+          <TouchableOpacity style={styles.logoutButton} onPress={signOut} activeOpacity={0.85}>
             <Ionicons name="log-out-outline" size={20} color="#DC2626" style={{ marginRight: 8 }} />
             <Text style={styles.logoutButtonText}>{t('logout') || 'Sair do Aplicativo'}</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.deleteAccountBtn} onPress={handleDeleteAccount}>
+          <TouchableOpacity style={styles.deleteAccountBtn} onPress={handleDeleteAccount} activeOpacity={0.7}>
             <Ionicons name="trash-outline" size={20} color="#991B1B" style={{ marginRight: 8 }} />
             <Text style={styles.deleteAccountText}>{t('deleteAccount') || 'Excluir Minha Conta'}</Text>
           </TouchableOpacity>
@@ -623,25 +613,37 @@ export function Profile() {
       )}
 
       {/* MODAL DE ALTERAÇÃO DE DADOS */}
-      <Modal visible={isUpdateModalVisible} transparent={true} animationType="slide">
+      <Modal visible={isUpdateModalVisible} transparent={true} animationType="slide" onRequestClose={() => setIsUpdateModalVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={styles.backdrop} />
+          </TouchableWithoutFeedback>
+
+          <View style={[styles.modalContainer, { paddingBottom: dynamicBottomPadding }]}>
             <Text style={styles.modalTitle}>Solicitar Alteração</Text>
             <Text style={styles.modalSubtitle}>Modifique apenas os campos que precisa atualizar.</Text>
+            
             <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               <Text style={styles.inputLabel}>Nome Completo</Text>
-              <TextInput style={styles.modalInput} value={updateData.newFullName} onChangeText={(t) => setUpdateData({...updateData, newFullName: t})} />
+              <TextInput style={styles.modalInput} value={updateData.newFullName} onChangeText={(t) => setUpdateData({...updateData, newFullName: t})} placeholderTextColor="#9CA3AF" />
+              
               <Text style={styles.inputLabel}>Nº Documento (BI / Passaporte)</Text>
-              <TextInput style={styles.modalInput} value={updateData.newDocumentNumber} onChangeText={(t) => setUpdateData({...updateData, newDocumentNumber: t})} />
+              <TextInput style={styles.modalInput} value={updateData.newDocumentNumber} onChangeText={(t) => setUpdateData({...updateData, newDocumentNumber: t})} placeholderTextColor="#9CA3AF" />
+              
               <Text style={styles.inputLabel}>Marca / Modelo do Veículo</Text>
-              <TextInput style={styles.modalInput} value={updateData.newVehicleBrand} onChangeText={(t) => setUpdateData({...updateData, newVehicleBrand: t})} />
+              <TextInput style={styles.modalInput} value={updateData.newVehicleBrand} onChangeText={(t) => setUpdateData({...updateData, newVehicleBrand: t})} placeholderTextColor="#9CA3AF" />
+              
               <Text style={styles.inputLabel}>Cor do Veículo</Text>
-              <TextInput style={styles.modalInput} value={updateData.newVehicleColor} onChangeText={(t) => setUpdateData({...updateData, newVehicleColor: t})} />
+              <TextInput style={styles.modalInput} value={updateData.newVehicleColor} onChangeText={(t) => setUpdateData({...updateData, newVehicleColor: t})} placeholderTextColor="#9CA3AF" />
+              
               <Text style={styles.inputLabel}>Placa do Veículo</Text>
-              <TextInput style={styles.modalInput} value={updateData.newVehiclePlate} onChangeText={(t) => setUpdateData({...updateData, newVehiclePlate: t})} />
+              <TextInput style={styles.modalInput} value={updateData.newVehiclePlate} onChangeText={(t) => setUpdateData({...updateData, newVehiclePlate: t})} placeholderTextColor="#9CA3AF" />
             </ScrollView>
+
             <View style={[styles.formActions, { marginTop: 16 }]}>
-              <TouchableOpacity style={styles.cancelBtn} onPress={() => setIsUpdateModalVisible(false)} disabled={isSubmittingUpdate}><Text style={styles.cancelBtnText}>Cancelar</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => setIsUpdateModalVisible(false)} disabled={isSubmittingUpdate}>
+                <Text style={styles.cancelBtnText}>Cancelar</Text>
+              </TouchableOpacity>
               <TouchableOpacity style={styles.saveBtn} onPress={handleRequestUpdate} disabled={isSubmittingUpdate}>
                 {isSubmittingUpdate ? <ActivityIndicator color="#FFF" /> : <Text style={styles.saveBtnText}>Enviar Pedido</Text>}
               </TouchableOpacity>
@@ -651,15 +653,23 @@ export function Profile() {
       </Modal>
 
       {/* MODAL SELETOR DE IDIOMA */}
-      <Modal visible={isLanguageModalVisible} transparent={true} animationType="fade">
-        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setIsLanguageModalVisible(false)}>
-          <View style={styles.languageModalContainer}>
+      <Modal visible={isLanguageModalVisible} transparent={true} animationType="fade" onRequestClose={() => setIsLanguageModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <TouchableWithoutFeedback onPress={() => setIsLanguageModalVisible(false)}>
+            <View style={styles.backdrop} />
+          </TouchableWithoutFeedback>
+
+          <View style={[styles.languageModalContainer, { paddingBottom: dynamicBottomPadding + 10 }]}>
             <Text style={styles.modalTitle}>Selecione o Idioma</Text>
             <Text style={styles.modalSubtitle}>Select your preferred language</Text>
             {LANGUAGES.map((item) => {
               const isSelected = i18n.language === item.code;
               return (
-                <TouchableOpacity key={item.code} style={[styles.languageOption, isSelected && styles.languageOptionActive]} onPress={() => { i18n.changeLanguage(item.code); setIsLanguageModalVisible(false); }}>
+                <TouchableOpacity 
+                  key={item.code} 
+                  style={[styles.languageOption, isSelected && styles.languageOptionActive]} 
+                  onPress={() => { i18n.changeLanguage(item.code); setIsLanguageModalVisible(false); }}
+                >
                   <Text style={styles.languageFlag}>{item.flag}</Text>
                   <Text style={[styles.languageName, isSelected && styles.languageNameActive]}>{item.name}</Text>
                   {isSelected && <Ionicons name="checkmark-circle" size={22} color="#059669" />}
@@ -667,18 +677,28 @@ export function Profile() {
               );
             })}
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
 
       <PrivacyPolicyModal visible={isPrivacyModalVisible} onClose={() => setIsPrivacyModalVisible(false)} />
-    </SafeAreaView>
+    </View>
   );
 }
 
 // --- ESTILOS DO COMPONENTE ---
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4F4F5', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 14, backgroundColor: '#FFF', borderBottomWidth: 1, borderBottomColor: '#E5E7EB', elevation: 2 },
+  container: { flex: 1, backgroundColor: '#F4F4F5' },
+  header: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justify: 'space-between', 
+    paddingHorizontal: 16, 
+    paddingBottom: 14, 
+    backgroundColor: '#FFF', 
+    borderBottomWidth: 1, 
+    borderBottomColor: '#E5E7EB', 
+    elevation: 2 
+  },
   backButton: { padding: 4 },
   headerTitle: { fontSize: 18, fontWeight: '800', color: '#1F2937' },
   
@@ -700,7 +720,6 @@ const styles = StyleSheet.create({
   statusBanner: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 12, marginBottom: 14, gap: 8 },
   statusText: { fontWeight: 'bold', fontSize: 14 },
 
-  /* --- NOVOS ESTILOS PARA OS QUADRINHOS (GRID) --- */
   gridContainer: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 8 },
   gridCard: {
     width: '48%',
@@ -714,61 +733,56 @@ const styles = StyleSheet.create({
   },
   gridIconBox: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
   gridTitle: { fontSize: 13, color: '#6B7280', fontWeight: '600', marginBottom: 4 },
-  gridValue: { fontSize: 16, fontWeight: '900', color: '#1F2937' },
-  gridValuePlate: { fontSize: 14, fontWeight: '900', color: '#059669', letterSpacing: 1, backgroundColor: '#D1FAE5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, alignSelf: 'flex-start' },
-  gridValueSecondary: { fontSize: 15, fontWeight: '700', color: '#4338CA' },
-
-  /* --- ESTILOS DO FORMULÁRIO DE EDIÇÃO --- */
-  editFormContainer: { backgroundColor: '#FFF', padding: 18, borderRadius: 16, marginBottom: 16, borderWidth: 1, borderColor: '#E5E7EB', elevation: 1 },
-  cardTitle: { fontSize: 16, fontWeight: '800', color: '#1F2937', marginBottom: 8 },
-  infoText: { fontSize: 13, color: '#6B7280', marginBottom: 14, lineHeight: 18 },
-  inputLabel: { fontSize: 13, fontWeight: 'bold', color: '#374151', marginBottom: 6 },
-  providerSelect: { flexDirection: 'row', gap: 10, marginBottom: 16 },
-  providerBtn: { flex: 1, padding: 12, borderRadius: 10, borderWidth: 2, borderColor: '#E5E7EB', alignItems: 'center' },
-  providerActiveOrange: { backgroundColor: '#FF6600', borderColor: '#FF6600' },
-  providerActiveMtn: { backgroundColor: '#FFCC00', borderColor: '#FFCC00' },
-  providerText: { fontWeight: 'bold', color: '#4B5563', fontSize: 14 },
-  phoneInputContainer: { flexDirection: 'row', alignItems: 'center', borderWidth: 2, borderColor: '#E5E7EB', borderRadius: 10, backgroundColor: '#F9FAFB', marginBottom: 16, overflow: 'hidden' },
-  countryBadge: { backgroundColor: '#E5E7EB', paddingHorizontal: 12, paddingVertical: 14, justifyContent: 'center' },
-  countryBadgeText: { fontSize: 15, fontWeight: 'bold', color: '#374151' },
-  phoneInput: { flex: 1, padding: 12, fontSize: 16, fontWeight: '700', color: '#1F2937' },
-  formActions: { flexDirection: 'row', gap: 10 },
-  cancelBtn: { flex: 1, padding: 14, backgroundColor: '#F3F4F6', borderRadius: 10, alignItems: 'center' },
-  cancelBtnText: { color: '#4B5563', fontWeight: 'bold', fontSize: 15 },
-  saveBtn: { flex: 1, padding: 14, backgroundColor: '#059669', borderRadius: 10, alignItems: 'center' },
-  saveBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 15 },
-
-  /* --- OUTROS --- */
+  gridValue: { fontSize: 15, fontWeight: '900', color: '#059669' },
+  gridValuePlate: { fontSize: 14, fontWeight: '800', color: '#1F2937' },
+  gridValueSecondary: { fontSize: 13, fontWeight: '700', color: '#4338CA' },
+  
   warningText: { color: '#DC2626', fontSize: 12, fontWeight: '600' },
-  updateBtn: { paddingVertical: 12, backgroundColor: '#F3F4F6', borderRadius: 10, alignItems: 'center', borderWidth: 1, borderColor: '#E5E7EB' },
-  updateBtnDisabled: { backgroundColor: '#E5E7EB' },
-  updateBtnText: { color: '#4B5563', fontWeight: 'bold', fontSize: 14 },
+  editFormContainer: { backgroundColor: '#FFF', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 16 },
+  cardTitle: { fontSize: 16, fontWeight: '800', color: '#111827', marginBottom: 4 },
+  infoText: { fontSize: 12, color: '#6B7280', marginBottom: 12 },
+  inputLabel: { fontSize: 13, fontWeight: '700', color: '#374151', marginBottom: 6, marginTop: 8 },
+  providerSelect: { flexDirection: 'row', gap: 10, marginBottom: 12 },
+  providerBtn: { flex: 1, paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB', alignItems: 'center', backgroundColor: '#F9FAFB' },
+  providerActiveOrange: { backgroundColor: '#FF6600', borderColor: '#FF6600' },
+  providerActiveMtn: { backgroundColor: '#EAB308', borderColor: '#EAB308' },
+  providerText: { fontSize: 12, fontWeight: '700', color: '#374151' },
+  phoneInputContainer: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 10, backgroundColor: '#F9FAFB', overflow: 'hidden' },
+  countryBadge: { backgroundColor: '#E5E7EB', paddingHorizontal: 12, paddingVertical: 12 },
+  countryBadgeText: { fontSize: 13, fontWeight: '800', color: '#1F2937' },
+  phoneInput: { flex: 1, paddingHorizontal: 12, fontSize: 14, color: '#111827' },
+  formActions: { flexDirection: 'row', gap: 10, marginTop: 16 },
+  cancelBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: '#F3F4F6', alignItems: 'center' },
+  cancelBtnText: { color: '#4B5563', fontWeight: '700', fontSize: 13 },
+  saveBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: '#059669', alignItems: 'center' },
+  saveBtnText: { color: '#FFF', fontWeight: '800', fontSize: 13 },
+  updateBtn: { backgroundColor: '#FFF', borderWidth: 1, borderColor: '#059669', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  updateBtnDisabled: { borderColor: '#D1D5DB', backgroundColor: '#F3F4F6' },
+  updateBtnText: { color: '#059669', fontWeight: '800', fontSize: 13 },
   updateBtnTextDisabled: { color: '#9CA3AF' },
-
-  /* --- NOVOS ESTILOS PARA OS BOTÕES EM SÉRIE (LISTA) --- */
-  sectionTitle: { fontSize: 16, fontWeight: '800', color: '#1F2937', marginBottom: 10, marginLeft: 4 },
+  sectionTitle: { fontSize: 15, fontWeight: '800', color: '#1F2937', marginBottom: 12, marginTop: 8 },
   seriesContainer: { backgroundColor: '#FFF', borderRadius: 16, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 20, overflow: 'hidden' },
-  seriesBtn: { flexDirection: 'row', alignItems: 'center', padding: 16 },
-  seriesIconBox: { width: 32, height: 32, borderRadius: 8, backgroundColor: '#F3F4F6', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
-  seriesBtnText: { color: '#374151', fontWeight: 'bold', fontSize: 15, flex: 1 },
-  seriesDivider: { height: 1, backgroundColor: '#E5E7EB', marginLeft: 60 },
-  languageSelectedText: { color: '#059669', fontSize: 12, fontWeight: '600', marginTop: 2 },
+  seriesBtn: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12 },
+  seriesIconBox: { width: 32, height: 32, borderRadius: 8, backgroundColor: '#F3F4F6', alignItems: 'center', justifyContent: 'center' },
+  seriesBtnText: { flex: 1, fontSize: 14, fontWeight: '600', color: '#1F2937' },
+  seriesDivider: { height: 1, backgroundColor: '#F3F4F6', marginLeft: 58 },
+  languageSelectedText: { fontSize: 11, color: '#059669', fontWeight: '700', marginTop: 2 },
+  logoutButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FEE2E2', paddingVertical: 14, borderRadius: 12, marginBottom: 10 },
+  logoutButtonText: { color: '#DC2626', fontWeight: '800', fontSize: 14 },
+  deleteAccountBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
+  deleteAccountText: { color: '#991B1B', fontWeight: '700', fontSize: 13 },
   
-  logoutButton: { flexDirection: 'row', backgroundColor: '#FEE2E2', padding: 16, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
-  logoutButtonText: { color: '#DC2626', fontSize: 15, fontWeight: 'bold' },
-  deleteAccountBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, marginBottom: 30 },
-  deleteAccountText: { color: '#991B1B', fontWeight: 'bold', fontSize: 14 },
+  modalOverlay: { flex: 1, justifyContent: 'flex-end' },
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(15, 23, 42, 0.5)' },
+  modalContainer: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, maxHeight: '85%' },
+  modalTitle: { fontSize: 18, fontWeight: '900', color: '#111827', marginBottom: 4 },
+  modalSubtitle: { fontSize: 12, color: '#6B7280', marginBottom: 16 },
+  modalInput: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 10, padding: 12, fontSize: 14, color: '#111827', backgroundColor: '#F9FAFB', marginBottom: 10 },
   
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
-  modalContainer: { backgroundColor: '#FFF', borderRadius: 16, padding: 20, maxHeight: '85%', elevation: 5 },
-  modalTitle: { fontSize: 20, fontWeight: '900', color: '#1F2937', marginBottom: 4 },
-  modalSubtitle: { fontSize: 14, color: '#6B7280', marginBottom: 16 },
-  modalInput: { borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, padding: 12, fontSize: 16, backgroundColor: '#F9FAFB', marginBottom: 12, color: '#1F2937' },
-  
-  languageModalContainer: { backgroundColor: '#FFF', borderRadius: 16, padding: 20, width: '88%', alignSelf: 'center', elevation: 5 },
-  languageOption: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14, borderRadius: 10, marginBottom: 6, backgroundColor: '#F9FAFB' },
-  languageOptionActive: { backgroundColor: '#D1FAE5', borderWidth: 1, borderColor: '#059669' },
-  languageFlag: { fontSize: 22, marginRight: 12 },
-  languageName: { flex: 1, fontSize: 15, color: '#374151', fontWeight: '500' },
-  languageNameActive: { color: '#059669', fontWeight: 'bold' },
+  languageModalContainer: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20 },
+  languageOption: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#F3F4F6', gap: 12 },
+  languageOptionActive: { backgroundColor: '#ECFDF5', borderRadius: 12, paddingHorizontal: 12, borderBottomWidth: 0, marginVertical: 2 },
+  languageFlag: { fontSize: 20 },
+  languageName: { flex: 1, fontSize: 14, fontWeight: '600', color: '#374151' },
+  languageNameActive: { color: '#059669', fontWeight: '800' },
 });

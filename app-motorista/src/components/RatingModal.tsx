@@ -1,8 +1,10 @@
 import React, { useState, memo, useCallback } from 'react';
 import { 
   Modal, View, Text, TouchableOpacity, TextInput, 
-  StyleSheet, ScrollView, KeyboardAvoidingView, Platform, Keyboard, ActivityIndicator
+  StyleSheet, ScrollView, KeyboardAvoidingView, Platform, Keyboard, ActivityIndicator,
+  TouchableWithoutFeedback
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 
@@ -28,6 +30,7 @@ export const RatingModal = memo(function RatingModal({
   onSubmit 
 }: RatingModalProps) {
   const { t } = useTranslation();
+  const insets = useSafeAreaInsets();
   const [stars, setStars] = useState(5);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [comment, setComment] = useState('');
@@ -60,95 +63,129 @@ export const RatingModal = memo(function RatingModal({
     }
   };
 
+  const handleClose = () => {
+    if (!isSubmitting && onClose) {
+      onClose();
+    }
+  };
+
+  // Recuo dinâmico inferior para botões virtuais do Android e barra de gestos do iOS
+  const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 28 : 16);
+
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={isSubmitting ? undefined : onClose}>
-      <View style={styles.overlay}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, width: '100%' }}>
-          <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
-            <View style={styles.container}>
-              {onClose && !isSubmitting && (
-                <TouchableOpacity style={styles.closeButton} onPress={onClose} disabled={isSubmitting}>
-                  <Ionicons name="close" size={24} color="#64748B" />
-                </TouchableOpacity>
-              )}
+    <Modal 
+      visible={visible} 
+      transparent 
+      animationType="fade" 
+      onRequestClose={isSubmitting ? undefined : handleClose}
+    >
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+        style={styles.keyboardOverlay}
+      >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View style={styles.overlay}>
+            <ScrollView 
+              contentContainerStyle={[
+                styles.scrollContainer, 
+                { paddingBottom: dynamicBottomPadding + 10 }
+              ]} 
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+                <View style={styles.container}>
+                  {onClose && !isSubmitting && (
+                    <TouchableOpacity 
+                      style={styles.closeButton} 
+                      onPress={handleClose} 
+                      disabled={isSubmitting}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                      <Ionicons name="close" size={24} color="#64748B" />
+                    </TouchableOpacity>
+                  )}
 
-              <Text style={styles.title}>{t('how_was_the_ride', 'Como foi a viagem?')}</Text>
-              <Text style={styles.subtitle}>
-                {isDriverEvaluating 
-                  ? `Avalie o passageiro ${targetName}` 
-                  : `Avalie o motorista ${targetName}`}
-              </Text>
+                  <Text style={styles.title}>{t('how_was_the_ride', 'Como foi a viagem?')}</Text>
+                  <Text style={styles.subtitle}>
+                    {isDriverEvaluating 
+                      ? `Avalie o passageiro ${targetName}` 
+                      : `Avalie o motorista ${targetName}`}
+                  </Text>
 
-              <View style={styles.starRow}>
-                {[1, 2, 3, 4, 5].map((star) => (
+                  <View style={styles.starRow}>
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <TouchableOpacity 
+                        key={star} 
+                        onPress={() => setStars(star)} 
+                        activeOpacity={0.6} 
+                        style={{ padding: 4 }}
+                        disabled={isSubmitting}
+                      >
+                        <Ionicons 
+                          name={star <= stars ? 'star' : 'star-outline'} 
+                          size={36} 
+                          color={star <= stars ? '#EAB308' : '#CBD5E1'} 
+                        />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <Text style={styles.tagTitle}>Destaques:</Text>
+                  <View style={styles.tagsContainer}>
+                    {availableTags.map((tag) => {
+                      const active = selectedTags.includes(tag);
+                      return (
+                        <TouchableOpacity
+                          key={tag}
+                          style={[styles.tagItem, active && styles.tagItemActive, isSubmitting && { opacity: 0.5 }]}
+                          onPress={() => toggleTag(tag)}
+                          activeOpacity={0.7}
+                          disabled={isSubmitting}
+                        >
+                          <Text style={[styles.tagText, active && styles.tagTextActive]}>
+                            {tag.replace(/_/g, ' ')}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  <TextInput
+                    style={styles.input}
+                    placeholder={t('write_comment_optional', 'Escreva um comentário (opcional)...')}
+                    placeholderTextColor="#9CA3AF"
+                    value={comment}
+                    onChangeText={setComment}
+                    multiline
+                    numberOfLines={3}
+                    editable={!isSubmitting}
+                  />
+
                   <TouchableOpacity 
-                    key={star} 
-                    onPress={() => setStars(star)} 
-                    activeOpacity={0.6} 
-                    style={{ padding: 4 }}
+                    style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]} 
+                    onPress={handleSubmit} 
+                    activeOpacity={0.8}
                     disabled={isSubmitting}
                   >
-                    <Ionicons 
-                      name={star <= stars ? 'star' : 'star-outline'} 
-                      size={36} 
-                      color={star <= stars ? '#EAB308' : '#CBD5E1'} 
-                    />
+                    {isSubmitting ? (
+                      <ActivityIndicator color="#0F172A" />
+                    ) : (
+                      <Text style={styles.submitButtonText}>{t('submit_rating_btn', 'Enviar Avaliação')}</Text>
+                    )}
                   </TouchableOpacity>
-                ))}
-              </View>
-
-              <Text style={styles.tagTitle}>Destaques:</Text>
-              <View style={styles.tagsContainer}>
-                {availableTags.map((tag) => {
-                  const active = selectedTags.includes(tag);
-                  return (
-                    <TouchableOpacity
-                      key={tag}
-                      style={[styles.tagItem, active && styles.tagItemActive, isSubmitting && { opacity: 0.5 }]}
-                      onPress={() => toggleTag(tag)}
-                      activeOpacity={0.7}
-                      disabled={isSubmitting}
-                    >
-                      <Text style={[styles.tagText, active && styles.tagTextActive]}>
-                        {tag.replace(/_/g, ' ')}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              <TextInput
-                style={styles.input}
-                placeholder={t('write_comment_optional', 'Escreva um comentário (opcional)...')}
-                placeholderTextColor="#9CA3AF"
-                value={comment}
-                onChangeText={setComment}
-                multiline
-                numberOfLines={3}
-                editable={!isSubmitting}
-              />
-
-              <TouchableOpacity 
-                style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]} 
-                onPress={handleSubmit} 
-                activeOpacity={0.8}
-                disabled={isSubmitting}
-              >
-                {isSubmitting ? (
-                  <ActivityIndicator color="#0F172A" />
-                ) : (
-                  <Text style={styles.submitButtonText}>{t('submit_rating_btn', 'Enviar Avaliação')}</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </View>
+                </View>
+              </TouchableWithoutFeedback>
+            </ScrollView>
+          </View>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
     </Modal>
   );
 });
 
 const styles = StyleSheet.create({
+  keyboardOverlay: { flex: 1 },
   overlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.75)' },
   scrollContainer: { flexGrow: 1, justifyContent: 'center', padding: 20 },
   container: { backgroundColor: '#FFF', borderRadius: 20, padding: 24, alignItems: 'center', position: 'relative' },
