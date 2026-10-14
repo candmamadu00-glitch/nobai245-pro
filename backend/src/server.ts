@@ -130,7 +130,6 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
   try {
     const rideId = String(req.params.rideId);
 
-    // Busca os dados da corrida no Prisma com relacionamentos flexíveis
     const ride: any = await prisma.ride.findUnique({
       where: { id: rideId },
       include: { 
@@ -164,10 +163,16 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
       `);
     }
 
-    // Permite carregar scripts e estilos do Mapbox via CDN sem conflito com Helmet
+    // Configuração CSP necessária para o Mapbox carregar Web Workers, Styles e Tiles no Chrome
     res.setHeader(
       "Content-Security-Policy",
-      "default-src 'self' https: data: 'unsafe-inline' 'unsafe-eval';"
+      "default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'; " +
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://api.mapbox.com; " +
+      "worker-src 'self' blob:; " +
+      "child-src 'self' blob:; " +
+      "style-src 'self' 'unsafe-inline' https://api.mapbox.com; " +
+      "connect-src 'self' https://*.mapbox.com https://api.mapbox.com; " +
+      "img-src 'self' blob: data: https://*.mapbox.com;"
     );
 
     const driverLat = ride.driverLat || ride.driver?.currentLat || ride.originLat || 11.8633;
@@ -183,18 +188,20 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
       <html lang="pt">
       <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
         <title>Rastreamento de Viagem - Nô Bai 245</title>
         <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
         <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
         <style>
           * { box-sizing: border-box; margin: 0; padding: 0; }
-          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #0F172A; color: #FFFFFF; height: 100vh; display: flex; flex-direction: column; }
-          #map { flex: 1; width: 100%; }
-          .info-card { background-color: #1E293B; padding: 20px; border-top-left-radius: 24px; border-top-right-radius: 24px; border-top: 1px solid #334155; }
+          html, body { height: 100%; width: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #0F172A; color: #FFFFFF; }
+          body { display: flex; flex-direction: column; }
+          #map { flex: 1; width: 100%; height: 100%; }
+          .info-card { background-color: #1E293B; padding: 20px; border-top-left-radius: 24px; border-top-right-radius: 24px; border-top: 1px solid #334155; z-index: 10; }
           .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
           .title { font-size: 18px; font-weight: 800; color: #EAB308; }
           .badge { background: #0F172A; color: #10B981; font-weight: 700; font-size: 11px; padding: 4px 10px; border-radius: 12px; border: 1px solid #334155; text-transform: uppercase; }
+          .badge.cancelled { color: #EF4444; }
           .detail-item { font-size: 14px; color: #CBD5E1; margin-bottom: 6px; }
           .detail-item strong { color: #FFF; }
         </style>
@@ -204,7 +211,7 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
         <div class="info-card">
           <div class="header">
             <div class="title">🚕 Nobai245 Rastreamento</div>
-            <div class="badge">${ride.status || 'EM ANDAMENTO'}</div>
+            <div class="badge ${ride.status === 'CANCELLED' ? 'cancelled' : ''}">${ride.status || 'EM ANDAMENTO'}</div>
           </div>
           <div class="detail-item"><strong>👤 Motorista:</strong> ${driverName}</div>
           <div class="detail-item"><strong>🚘 Veículo:</strong> ${carModel} (${carColor}) - Placa: ${licensePlate}</div>
@@ -218,6 +225,10 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
             style: 'mapbox://styles/mapbox/dark-v11',
             center: [${driverLng}, ${driverLat}],
             zoom: 15
+          });
+
+          map.on('load', function() {
+            map.resize();
           });
 
           const el = document.createElement('div');
