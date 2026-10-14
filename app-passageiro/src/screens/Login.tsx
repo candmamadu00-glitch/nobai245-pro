@@ -209,7 +209,7 @@ export function Login() {
                   <Ionicons name="mail-outline" size={20} color="#64748B" style={styles.inputIcon} />
                   <TextInput
                     style={styles.input}
-                    placeholder="seu.nome@gmail.com"
+                    placeholder="seu.email@exemplo.com"
                     placeholderTextColor="#94A3B8"
                     value={email}
                     onChangeText={setEmail}
@@ -282,11 +282,12 @@ export function Login() {
         </Animated.View>
       </ScrollView>
 
-      {/* 🔐 MODAL DE RECUPERAÇÃO DE SENHA (COM KEYBOARD AVOIDING VIEW DEDICADO) */}
+      {/* 🔐 MODAL DE RECUPERAÇÃO DE SENHA */}
       <Modal
         visible={isForgotModalVisible}
         transparent
         animationType="slide"
+        statusBarTranslucent
         onRequestClose={() => setForgotModalVisible(false)}
       >
         <TouchableWithoutFeedback onPress={() => setForgotModalVisible(false)}>
@@ -294,6 +295,7 @@ export function Login() {
             <KeyboardAvoidingView 
               behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
               style={styles.modalKeyboardContainer}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
             >
               <TouchableWithoutFeedback>
                 <View style={styles.modalContent}>
@@ -301,6 +303,7 @@ export function Login() {
                     keyboardShouldPersistTaps="handled"
                     showsVerticalScrollIndicator={false}
                     bounces={false}
+                    contentContainerStyle={{ flexGrow: 1 }}
                   >
                     <View style={styles.modalHeader}>
                       <View style={styles.modalIconContainer}>
@@ -362,7 +365,7 @@ export function Login() {
                         <Ionicons name="mail-outline" size={20} color="#64748B" style={styles.inputIcon} />
                         <TextInput
                           style={styles.input}
-                          placeholder="seu.nome@gmail.com"
+                          placeholder="seu.email@exemplo.com"
                           placeholderTextColor="#94A3B8"
                           value={recoveryEmail}
                           onChangeText={setRecoveryEmail}
