@@ -38,7 +38,6 @@
         "foregroundImage": "./assets/android-icon-foreground.png"
       },
       "package": "com.mamadubalde.nobai245passageiro",
-      "googleServicesFile": "./google-services.json",
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
@@ -76,7 +75,8 @@
         "expo-notifications",
         {
           "icon": "./assets/icon.png",
-          "color": "#0E243C"
+          "color": "#0E243C",
+          "sounds": []
         }
       ],
       [

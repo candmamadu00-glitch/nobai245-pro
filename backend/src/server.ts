@@ -124,7 +124,37 @@ app.get('/health', (_req, res) => {
   });
 });
 // =============================================================================
-// 🌐 ROTA PÚBLICA DE RASTREAMENTO WEB DA VIAGEM (SEM AUTENTICAÇÃO JWT)
+// 🌐 API JSON DE DADOS EM TEMPO REAL DO RASTREAMENTO
+// =============================================================================
+app.get('/track/:rideId/data', async (req: Request, res: Response) => {
+  try {
+    const rideId = String(req.params.rideId);
+    const ride: any = await prisma.ride.findUnique({
+      where: { id: rideId },
+      include: { driver: true }
+    });
+
+    if (!ride) return res.status(404).json({ error: 'Corrida não encontrada' });
+
+    const driverLat = ride.driverLat || ride.driver?.currentLat || ride.originLat || 11.8633;
+    const driverLng = ride.driverLng || ride.driver?.currentLng || ride.originLng || -15.5833;
+
+    return res.json({
+      status: ride.status || 'IN_PROGRESS',
+      driverLat,
+      driverLng,
+      originLat: ride.originLat,
+      originLng: ride.originLng,
+      destinationLat: ride.destinationLat,
+      destinationLng: ride.destinationLng,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: 'Erro ao buscar dados do rastreamento' });
+  }
+});
+
+// =============================================================================
+// 🌐 ROTA PÚBLICA DE RASTREAMENTO WEB DA VIAGEM (VERSÃO PROFISSIONAL)
 // =============================================================================
 app.get('/track/:rideId', async (req: Request, res: Response) => {
   try {
@@ -163,7 +193,6 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
       `);
     }
 
-    // Configuração CSP necessária para o Mapbox carregar Web Workers, Styles e Tiles no Chrome
     res.setHeader(
       "Content-Security-Policy",
       "default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'; " +
@@ -177,6 +206,10 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
 
     const driverLat = ride.driverLat || ride.driver?.currentLat || ride.originLat || 11.8633;
     const driverLng = ride.driverLng || ride.driver?.currentLng || ride.originLng || -15.5833;
+    const originLat = ride.originLat || driverLat;
+    const originLng = ride.originLng || driverLng;
+    const destLat = ride.destinationLat || driverLat;
+    const destLng = ride.destinationLng || driverLng;
 
     const driverName = ride.driver?.fullName || ride.driver?.name || 'Motorista';
     const carModel = ride.driver?.carModel || ride.driver?.vehicleModel || 'Veículo';
@@ -197,46 +230,192 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
           html, body { height: 100%; width: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #0F172A; color: #FFFFFF; }
           body { display: flex; flex-direction: column; }
           #map { flex: 1; width: 100%; height: 100%; }
-          .info-card { background-color: #1E293B; padding: 20px; border-top-left-radius: 24px; border-top-right-radius: 24px; border-top: 1px solid #334155; z-index: 10; }
-          .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-          .title { font-size: 18px; font-weight: 800; color: #EAB308; }
-          .badge { background: #0F172A; color: #10B981; font-weight: 700; font-size: 11px; padding: 4px 10px; border-radius: 12px; border: 1px solid #334155; text-transform: uppercase; }
-          .badge.cancelled { color: #EF4444; }
-          .detail-item { font-size: 14px; color: #CBD5E1; margin-bottom: 6px; }
+          .info-card { background-color: #1E293B; padding: 20px; border-top-left-radius: 24px; border-top-right-radius: 24px; border-top: 1px solid #334155; z-index: 10; box-shadow: 0 -10px 25px rgba(0,0,0,0.5); }
+          .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+          .title { font-size: 18px; font-weight: 800; color: #EAB308; display: flex; align-items: center; gap: 8px; }
+          .badge { background: #0F172A; color: #10B981; font-weight: 700; font-size: 11px; padding: 4px 10px; border-radius: 12px; border: 1px solid #334155; text-transform: uppercase; letter-spacing: 0.5px; }
+          .badge.cancelled { color: #EF4444; border-color: #7F1D1D; }
+          .badge.completed { color: #3B82F6; border-color: #1E3A8A; }
+          
+          .metrics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; background: #0F172A; padding: 12px; border-radius: 14px; margin-bottom: 14px; border: 1px solid #334155; }
+          .metric-box { text-align: center; }
+          .metric-label { font-size: 11px; color: #94A3B8; text-transform: uppercase; font-weight: 600; margin-bottom: 2px; }
+          .metric-value { font-size: 16px; font-weight: 800; color: #F8FAFC; }
+
+          .detail-item { font-size: 13px; color: #CBD5E1; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
           .detail-item strong { color: #FFF; }
+          
+          .car-icon { font-size: 30px; transition: transform 0.8s ease-in-out; filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.4)); }
         </style>
       </head>
       <body>
         <div id="map"></div>
         <div class="info-card">
           <div class="header">
-            <div class="title">🚕 Nobai245 Rastreamento</div>
-            <div class="badge ${ride.status === 'CANCELLED' ? 'cancelled' : ''}">${ride.status || 'EM ANDAMENTO'}</div>
+            <div class="title">🚕 Nô Bai 245</div>
+            <div id="statusBadge" class="badge ${ride.status === 'CANCELLED' ? 'cancelled' : ''}">${ride.status || 'EM ANDAMENTO'}</div>
           </div>
+
+          <div class="metrics-grid">
+            <div class="metric-box">
+              <div class="metric-label">Tempo Estimado</div>
+              <div id="etaValue" class="metric-value">Calculando...</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-label">Distância</div>
+              <div id="distValue" class="metric-value">Calculando...</div>
+            </div>
+          </div>
+
           <div class="detail-item"><strong>👤 Motorista:</strong> ${driverName}</div>
-          <div class="detail-item"><strong>🚘 Veículo:</strong> ${carModel} (${carColor}) - Placa: ${licensePlate}</div>
+          <div class="detail-item"><strong>🚘 Veículo:</strong> ${carModel} (${carColor}) — Placa: <strong>${licensePlate}</strong></div>
           <div class="detail-item"><strong>📍 Destino:</strong> ${ride.destinationAddress || 'Endereço de destino'}</div>
         </div>
 
         <script>
-          mapboxgl.accessToken = 'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZGpkMnVtMDMzdDJ4c2U0NHd3dHBtZiJ9.mT0BfmoFsPTgWFzNnblCZg';
+          const MAPBOX_TOKEN = 'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZGpkMnVtMDMzdDJ4c2U0NHd3dHBtZiJ9.mT0BfmoFsPTgWFzNnblCZg';
+          mapboxgl.accessToken = MAPBOX_TOKEN;
+
+          const origin = [${originLng}, ${originLat}];
+          const destination = [${destLng}, ${destLat}];
+          let lastPos = [${driverLng}, ${driverLat}];
+
           const map = new mapboxgl.Map({
             container: 'map',
             style: 'mapbox://styles/mapbox/dark-v11',
-            center: [${driverLng}, ${driverLat}],
+            center: lastPos,
             zoom: 15
           });
 
-          map.on('load', function() {
+          // Elemento do Veículo com Suporte a Rotação
+          const carContainer = document.createElement('div');
+          carContainer.className = 'car-icon';
+          carContainer.innerHTML = '🚘';
+          const driverMarker = new mapboxgl.Marker(carContainer).setLngLat(lastPos).addTo(map);
+
+          // Marcadores de Origem e Destino
+          const originEl = document.createElement('div');
+          originEl.style.fontSize = '22px';
+          originEl.innerHTML = '🟢';
+          new mapboxgl.Marker(originEl).setLngLat(origin).addTo(map);
+
+          const destEl = document.createElement('div');
+          destEl.style.fontSize = '22px';
+          destEl.innerHTML = '🏁';
+          new mapboxgl.Marker(destEl).setLngLat(destination).addTo(map);
+
+          // Função para calcular o ângulo de direção (Bearing)
+          function calculateBearing(startLat, startLng, destLat, destLng) {
+            const startLatRad = startLat * Math.PI / 180;
+            const startLngRad = startLng * Math.PI / 180;
+            const destLatRad = destLat * Math.PI / 180;
+            const destLngRad = destLng * Math.PI / 180;
+
+            const y = Math.sin(destLngRad - startLngRad) * Math.cos(destLatRad);
+            const x = Math.cos(startLatRad) * Math.sin(destLatRad) -
+                      Math.sin(startLatRad) * Math.cos(destLatRad) * Math.cos(destLngRad - startLngRad);
+            
+            let brng = Math.atan2(y, x) * 180 / Math.PI;
+            return (brng + 360) % 360;
+          }
+
+          // Função para carregar a rota e ETA do Mapbox
+          async function updateRoute(currentPos) {
+            try {
+              const query = await fetch(
+                \`https://api.mapbox.com/directions/v5/mapbox/driving/\${currentPos[0]},\${currentPos[1]};\${destination[0]},\${destination[1]}?steps=true&geometries=geojson&access_token=\${MAPBOX_TOKEN}\`
+              );
+              const json = await query.json();
+              
+              if (json.routes && json.routes[0]) {
+                const route = json.routes[0];
+                const routeCoords = route.geometry.coordinates;
+
+                // Atualizar Métricas na Tela
+                const durationMin = Math.round(route.duration / 60);
+                const distanceKm = (route.distance / 1000).toFixed(1);
+
+                document.getElementById('etaValue').innerText = durationMin > 0 ? durationMin + ' min' : 'Chegando';
+                document.getElementById('distValue').innerText = distanceKm + ' km';
+
+                // Desenhar/Atualizar a Linha da Rota no Mapa
+                if (map.getSource('route')) {
+                  map.getSource('route').setData({
+                    type: 'Feature',
+                    properties: {},
+                    geometry: { type: 'LineString', coordinates: routeCoords }
+                  });
+                } else {
+                  map.addSource('route', {
+                    type: 'geojson',
+                    data: {
+                      type: 'Feature',
+                      properties: {},
+                      geometry: { type: 'LineString', coordinates: routeCoords }
+                    }
+                  });
+
+                  map.addLayer({
+                    id: 'routeLine',
+                    type: 'line',
+                    source: 'route',
+                    layout: { 'line-join': 'round', 'line-cap': 'round' },
+                    paint: { 'line-color': '#EAB308', 'line-width': 5, 'line-opacity': 0.85 }
+                  });
+                }
+              }
+            } catch (err) {
+              console.error('Erro ao buscar rota Mapbox:', err);
+            }
+          }
+
+          map.on('load', async function() {
             map.resize();
+
+            const bounds = new mapboxgl.LngLatBounds();
+            bounds.extend(origin);
+            bounds.extend(destination);
+            bounds.extend(lastPos);
+            map.fitBounds(bounds, { padding: 60, maxZoom: 16 });
+
+            await updateRoute(lastPos);
           });
 
-          const el = document.createElement('div');
-          el.style.fontSize = '30px';
-          el.innerHTML = '🚗';
-          new mapboxgl.Marker(el)
-            .setLngLat([${driverLng}, ${driverLat}])
-            .addTo(map);
+          // Animação e Polling em Tempo Real (a cada 3.5 segundos)
+          setInterval(async () => {
+            try {
+              const res = await fetch('/track/${rideId}/data');
+              if (!res.ok) return;
+              const data = await res.json();
+
+              if (data.driverLat && data.driverLng) {
+                const newPos = [data.driverLng, data.driverLat];
+
+                // Verificar se o carro se moveu
+                if (newPos[0] !== lastPos[0] || newPos[1] !== lastPos[1]) {
+                  const angle = calculateBearing(lastPos[1], lastPos[0], newPos[1], newPos[0]);
+                  carContainer.style.transform = 'rotate(' + angle + 'deg)';
+                  
+                  // Deslocamento suave do marcador
+                  driverMarker.setLngLat(newPos);
+                  lastPos = newPos;
+
+                  // Recalcular ETA e Rota com base na nova posição
+                  updateRoute(newPos);
+                }
+              }
+
+              // Atualizar Badge de Status
+              const badge = document.getElementById('statusBadge');
+              if (badge && data.status) {
+                badge.innerText = data.status;
+                if (data.status === 'CANCELLED') badge.className = 'badge cancelled';
+                else if (data.status === 'COMPLETED') badge.className = 'badge completed';
+              }
+            } catch (e) {
+              console.warn('Erro na atualização em tempo real:', e);
+            }
+          }, 3500);
         </script>
       </body>
       </html>

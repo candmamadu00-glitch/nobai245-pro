@@ -45,12 +45,11 @@ if (process.env.EXPO_PUBLIC_SENTRY_DSN) {
   });
 }
 
-// NOVO: Canal de Chat no Android
+// Canal de Chat no Android (Sem a propriedade sound: 'default' para evitar conflito)
 if (Platform.OS === 'android') {
   Notifications.setNotificationChannelAsync('chat-messages', {
     name: 'Mensagens do Chat',
     importance: Notifications.AndroidImportance.HIGH,
-    sound: 'default',
     vibrationPattern: [0, 250, 250, 250],
   });
 }
@@ -84,7 +83,6 @@ function Rotas() {
         if (data?.rideId) {
           console.log('👆 [PASSAGEIRO] Notificação clicada para corrida:', data.rideId);
           
-          // NOVO: Navega para a Home abrindo o chat se for notificação de mensagem
           if (data?.type === 'CHAT_MESSAGE') {
             if (navigationRef.isReady()) {
               // @ts-ignore

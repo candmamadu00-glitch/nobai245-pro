@@ -7,11 +7,10 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
-import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import { api } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
-const { width } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
 
 export function Login() {
   // 🛡️ Estados de Autenticação
@@ -31,32 +30,17 @@ export function Login() {
 
   // 🛡️ Animações
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(50)).current;
+  const slideAnim = useRef(new Animated.Value(40)).current;
 
   const navigation = useNavigation<any>();
   const { signIn } = useAuth();
   const { t } = useTranslation();
 
   useEffect(() => {
-  try {
-    const webClientId = 
-      process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || 
-      '440747110438-5h95o3q4rbcmc8cg78i2flsi3j00ku8t.apps.googleusercontent.com';
-
-    console.log('🔑 [GOOGLE INIT] Web Client ID:', webClientId);
-
-    GoogleSignin.configure({
-      webClientId,
-      offlineAccess: true,
-      scopes: ['profile', 'email'],
-    });
-  } catch (e) {
-    console.warn('[GOOGLE SIGNIN] Erro ao configurar:', e);
-  }
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 800,
+        duration: 600,
         useNativeDriver: true,
       }),
       Animated.spring(slideAnim, {
@@ -68,57 +52,6 @@ export function Login() {
     ]).start();
   }, []);
 
-  async function handleGoogleLogin() {
-    setLoading(true);
-    try {
-      console.log('🌐 [GOOGLE FRONTEND] Iniciando fluxo de login Google...');
-      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
-      
-      const response: any = await GoogleSignin.signIn();
-      console.log('📄 [GOOGLE FRONTEND] Resposta do SDK Google:', JSON.stringify(response));
-      
-      const idToken = response.data?.idToken || response.idToken;
-
-      if (!idToken) {
-        console.error('❌ [GOOGLE FRONTEND] idToken ausente!');
-        Alert.alert('Erro no Google SDK', 'O Google não retornou o idToken de verificação. Verifique se o Web Client ID está correto.');
-        return;
-      }
-
-      console.log('📡 [GOOGLE FRONTEND] Enviando idToken para a API (/passengers/auth/google)...');
-      const apiResponse = await api.post('/passengers/auth/google', { idToken });
-      console.log('📥 [GOOGLE FRONTEND] Resposta do Backend:', JSON.stringify(apiResponse.data));
-
-      if (apiResponse.data.isNewUser) {
-        Alert.alert(
-          t('complete_registration', 'Concluir Cadastro'),
-          t('google_phone_prompt', 'Sua conta Google foi autenticada. Informe seu número de telefone para ativar o perfil.')
-        );
-        return navigation.navigate('Register', { 
-          googleData: apiResponse.data.googleData 
-        });
-      }
-
-      const { accessToken, refreshToken, passenger } = apiResponse.data;
-      await signIn(passenger, accessToken, refreshToken);
-      navigation.replace('Home');
-
-    } catch (error: any) {
-      console.error('❌ [GOOGLE FRONTEND ERRO COMPLETO]:', error);
-      console.error('❌ [AXIOS RESPONSE DATA]:', JSON.stringify(error.response?.data));
-      console.error('❌ [AXIOS STATUS CODE]:', error.response?.status);
-
-      const serverDetail = error.response?.data?.error || error.response?.data?.message;
-      const fallbackMsg = error.message || 'Problema de conexão com o servidor.';
-      
-      Alert.alert(
-        'Erro ao Entrar com Google', 
-        serverDetail ? `[Servidor]: ${serverDetail}` : `[Detalhe]: ${fallbackMsg}`
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
   // ==========================================
   // 🚀 FUNÇÃO DE LOGIN PADRÃO
   // ==========================================
@@ -198,8 +131,9 @@ export function Login() {
     <KeyboardAvoidingView 
       style={styles.container} 
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
     >
-      <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
+      <StatusBar barStyle="light-content" backgroundColor="#0F172A" translucent />
       
       <View style={styles.backgroundBlob1} />
       <View style={styles.backgroundBlob2} />
@@ -208,6 +142,7 @@ export function Login() {
         contentContainerStyle={styles.scrollContainer}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        bounces={false}
       >
         <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
           
@@ -332,24 +267,6 @@ export function Login() {
               )}
             </TouchableOpacity>
 
-            {/* DIVISOR */}
-            <View style={styles.dividerContainer}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>{t('or_continue_with', 'ou continue com')}</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            {/* GOOGLE */}
-            <TouchableOpacity 
-              style={styles.googleButton} 
-              onPress={handleGoogleLogin} 
-              disabled={loading}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="logo-google" size={20} color="#FFFFFF" style={{ marginRight: 10 }} />
-              <Text style={styles.googleButtonText}>{t('google_login_btn', 'Entrar com o Google')}</Text>
-            </TouchableOpacity>
-
           </View>
 
           {/* REGISTRO */}
@@ -365,7 +282,7 @@ export function Login() {
         </Animated.View>
       </ScrollView>
 
-      {/* 🔐 MODAL DE RECUPERAÇÃO DE SENHA */}
+      {/* 🔐 MODAL DE RECUPERAÇÃO DE SENHA (COM KEYBOARD AVOIDING VIEW DEDICADO) */}
       <Modal
         visible={isForgotModalVisible}
         transparent
@@ -374,91 +291,100 @@ export function Login() {
       >
         <TouchableWithoutFeedback onPress={() => setForgotModalVisible(false)}>
           <View style={styles.modalOverlay}>
-            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+            <KeyboardAvoidingView 
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              style={styles.modalKeyboardContainer}
+            >
               <TouchableWithoutFeedback>
                 <View style={styles.modalContent}>
-                  <View style={styles.modalHeader}>
-                    <View style={styles.modalIconContainer}>
-                      <MaterialCommunityIcons name="lock-reset" size={32} color="#EAB308" />
-                    </View>
-                    <TouchableOpacity onPress={() => setForgotModalVisible(false)} style={styles.closeModalButton}>
-                      <Ionicons name="close" size={24} color="#64748B" />
-                    </TouchableOpacity>
-                  </View>
-
-                  <Text style={styles.modalTitle}>{t('recover_password_title', 'Recuperar Senha')}</Text>
-                  <Text style={styles.modalSubtitle}>
-                    Selecione o método e informe os dados cadastrados para redefinir sua senha.
-                  </Text>
-
-                  {/* TABS DE RECUPERAÇÃO */}
-                  <View style={styles.tabContainer}>
-                    <TouchableOpacity 
-                      style={[styles.tabButton, recoveryMethod === 'phone' && styles.tabButtonActive]}
-                      onPress={() => setRecoveryMethod('phone')}
-                      activeOpacity={0.8}
-                    >
-                      <Ionicons name="call" size={16} color={recoveryMethod === 'phone' ? '#0F172A' : '#94A3B8'} />
-                      <Text style={[styles.tabText, recoveryMethod === 'phone' && styles.tabTextActive]}>
-                        Telefone
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity 
-                      style={[styles.tabButton, recoveryMethod === 'email' && styles.tabButtonActive]}
-                      onPress={() => setRecoveryMethod('email')}
-                      activeOpacity={0.8}
-                    >
-                      <Ionicons name="mail" size={16} color={recoveryMethod === 'email' ? '#0F172A' : '#94A3B8'} />
-                      <Text style={[styles.tabText, recoveryMethod === 'email' && styles.tabTextActive]}>
-                        E-mail
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* INPUT TELEFONE OU EMAIL DE RECUPERAÇÃO */}
-                  {recoveryMethod === 'phone' ? (
-                    <View style={styles.inputContainer}>
-                      <View style={styles.prefixContainer}>
-                        <Text style={styles.prefixText}>+245</Text>
-                        <View style={styles.prefixDivider} />
-                      </View>
-                      <TextInput
-                        style={styles.input}
-                        placeholder="950000000"
-                        placeholderTextColor="#94A3B8"
-                        value={recoveryPhone}
-                        onChangeText={(text) => setRecoveryPhone(text.replace(/[^0-9]/g, ''))}
-                        keyboardType="phone-pad"
-                        maxLength={9}
-                      />
-                    </View>
-                  ) : (
-                    <View style={styles.inputContainer}>
-                      <Ionicons name="mail-outline" size={20} color="#64748B" style={styles.inputIcon} />
-                      <TextInput
-                        style={styles.input}
-                        placeholder="seu.nome@gmail.com"
-                        placeholderTextColor="#94A3B8"
-                        value={recoveryEmail}
-                        onChangeText={setRecoveryEmail}
-                        keyboardType="email-address"
-                        autoCapitalize="none"
-                      />
-                    </View>
-                  )}
-
-                  <TouchableOpacity 
-                    style={[styles.button, recoveryLoading && styles.buttonDisabled, { marginTop: 24 }]} 
-                    onPress={handleRecoverPassword} 
-                    disabled={recoveryLoading}
-                    activeOpacity={0.8}
+                  <ScrollView 
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={false}
+                    bounces={false}
                   >
-                    {recoveryLoading ? (
-                      <ActivityIndicator color="#0F172A" />
+                    <View style={styles.modalHeader}>
+                      <View style={styles.modalIconContainer}>
+                        <MaterialCommunityIcons name="lock-reset" size={32} color="#EAB308" />
+                      </View>
+                      <TouchableOpacity onPress={() => setForgotModalVisible(false)} style={styles.closeModalButton}>
+                        <Ionicons name="close" size={24} color="#64748B" />
+                      </TouchableOpacity>
+                    </View>
+
+                    <Text style={styles.modalTitle}>{t('recover_password_title', 'Recuperar Senha')}</Text>
+                    <Text style={styles.modalSubtitle}>
+                      Selecione o método e informe os dados cadastrados para redefinir sua senha.
+                    </Text>
+
+                    {/* TABS DE RECUPERAÇÃO */}
+                    <View style={styles.tabContainer}>
+                      <TouchableOpacity 
+                        style={[styles.tabButton, recoveryMethod === 'phone' && styles.tabButtonActive]}
+                        onPress={() => setRecoveryMethod('phone')}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="call" size={16} color={recoveryMethod === 'phone' ? '#0F172A' : '#94A3B8'} />
+                        <Text style={[styles.tabText, recoveryMethod === 'phone' && styles.tabTextActive]}>
+                          Telefone
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity 
+                        style={[styles.tabButton, recoveryMethod === 'email' && styles.tabButtonActive]}
+                        onPress={() => setRecoveryMethod('email')}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="mail" size={16} color={recoveryMethod === 'email' ? '#0F172A' : '#94A3B8'} />
+                        <Text style={[styles.tabText, recoveryMethod === 'email' && styles.tabTextActive]}>
+                          E-mail
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* INPUT TELEFONE OU EMAIL DE RECUPERAÇÃO */}
+                    {recoveryMethod === 'phone' ? (
+                      <View style={styles.inputContainer}>
+                        <View style={styles.prefixContainer}>
+                          <Text style={styles.prefixText}>+245</Text>
+                          <View style={styles.prefixDivider} />
+                        </View>
+                        <TextInput
+                          style={styles.input}
+                          placeholder="950000000"
+                          placeholderTextColor="#94A3B8"
+                          value={recoveryPhone}
+                          onChangeText={(text) => setRecoveryPhone(text.replace(/[^0-9]/g, ''))}
+                          keyboardType="phone-pad"
+                          maxLength={9}
+                        />
+                      </View>
                     ) : (
-                      <Text style={styles.buttonText}>Enviar Código OTP</Text>
+                      <View style={styles.inputContainer}>
+                        <Ionicons name="mail-outline" size={20} color="#64748B" style={styles.inputIcon} />
+                        <TextInput
+                          style={styles.input}
+                          placeholder="seu.nome@gmail.com"
+                          placeholderTextColor="#94A3B8"
+                          value={recoveryEmail}
+                          onChangeText={setRecoveryEmail}
+                          keyboardType="email-address"
+                          autoCapitalize="none"
+                        />
+                      </View>
                     )}
-                  </TouchableOpacity>
+
+                    <TouchableOpacity 
+                      style={[styles.button, recoveryLoading && styles.buttonDisabled, { marginTop: 24 }]} 
+                      onPress={handleRecoverPassword} 
+                      disabled={recoveryLoading}
+                      activeOpacity={0.8}
+                    >
+                      {recoveryLoading ? (
+                        <ActivityIndicator color="#0F172A" />
+                      ) : (
+                        <Text style={styles.buttonText}>Enviar Código OTP</Text>
+                      )}
+                    </TouchableOpacity>
+                  </ScrollView>
                 </View>
               </TouchableWithoutFeedback>
             </KeyboardAvoidingView>
@@ -474,20 +400,20 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0F172A' },
   backgroundBlob1: { position: 'absolute', top: -100, right: -50, width: 300, height: 300, borderRadius: 150, backgroundColor: 'rgba(234, 179, 8, 0.15)' },
   backgroundBlob2: { position: 'absolute', bottom: -50, left: -100, width: 250, height: 250, borderRadius: 125, backgroundColor: 'rgba(56, 189, 248, 0.08)' },
-  scrollContainer: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 40, paddingBottom: 60 },
-  headerDecoration: { alignItems: 'center', marginBottom: 30 },
-  brandBadge: { width: 72, height: 72, borderRadius: 24, backgroundColor: '#EAB308', justifyContent: 'center', alignItems: 'center', marginBottom: 16, shadowColor: '#EAB308', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 8 },
-  brandTitle: { fontSize: 36, fontWeight: '900', color: '#FFFFFF', letterSpacing: -1 },
+  scrollContainer: { flexGrow: 1, paddingHorizontal: 24, paddingTop: Platform.OS === 'android' ? 50 : 30, paddingBottom: 40 },
+  headerDecoration: { alignItems: 'center', marginBottom: 24 },
+  brandBadge: { width: 68, height: 68, borderRadius: 22, backgroundColor: '#EAB308', justifyContent: 'center', alignItems: 'center', marginBottom: 12, shadowColor: '#EAB308', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 8 },
+  brandTitle: { fontSize: 34, fontWeight: '900', color: '#FFFFFF', letterSpacing: -1 },
   brandHighlight: { color: '#EAB308' },
-  subtitle: { fontSize: 15, color: '#94A3B8', marginTop: 8, fontWeight: '500', letterSpacing: 0.5 },
-  glassCard: { backgroundColor: '#1E293B', borderRadius: 28, padding: 24, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)', shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.3, shadowRadius: 30, elevation: 10 },
+  subtitle: { fontSize: 14, color: '#94A3B8', marginTop: 6, fontWeight: '500', letterSpacing: 0.5 },
+  glassCard: { backgroundColor: '#1E293B', borderRadius: 28, padding: 22, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)', shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.3, shadowRadius: 30, elevation: 10 },
   tabContainer: { flexDirection: 'row', backgroundColor: '#0F172A', borderRadius: 16, padding: 4, marginBottom: 20 },
   tabButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: 12 },
   tabButtonActive: { backgroundColor: '#EAB308', shadowColor: '#EAB308', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
   tabText: { fontSize: 14, fontWeight: '600', color: '#94A3B8', marginLeft: 6 },
   tabTextActive: { color: '#0F172A', fontWeight: '700' },
-  inputGroup: { marginBottom: 20 },
-  inputLabel: { fontSize: 13, fontWeight: '600', color: '#CBD5E1', marginBottom: 8, marginLeft: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
+  inputGroup: { marginBottom: 18 },
+  inputLabel: { fontSize: 12, fontWeight: '600', color: '#CBD5E1', marginBottom: 8, marginLeft: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
   inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155', borderRadius: 16, paddingHorizontal: 16, height: 56 },
   inputIcon: { marginRight: 12 },
   prefixContainer: { flexDirection: 'row', alignItems: 'center' },
@@ -495,25 +421,21 @@ const styles = StyleSheet.create({
   prefixDivider: { height: 24, width: 1, backgroundColor: '#334155', marginHorizontal: 12 },
   input: { flex: 1, fontSize: 16, color: '#FFFFFF', fontWeight: '500' },
   eyeIcon: { padding: 4 },
-  forgotPasswordContainer: { alignSelf: 'flex-end', marginBottom: 24 },
+  forgotPasswordContainer: { alignSelf: 'flex-end', marginBottom: 20 },
   forgotPasswordText: { color: '#38BDF8', fontSize: 14, fontWeight: '600' },
   button: { backgroundColor: '#EAB308', height: 56, borderRadius: 16, justifyContent: 'center', alignItems: 'center', shadowColor: '#EAB308', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 12, elevation: 6 },
   buttonDisabled: { opacity: 0.6 },
   buttonContent: { flexDirection: 'row', alignItems: 'center' },
   buttonText: { color: '#0F172A', fontSize: 16, fontWeight: '800', letterSpacing: 0.5 },
-  dividerContainer: { flexDirection: 'row', alignItems: 'center', marginVertical: 20 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: '#334155' },
-  dividerText: { color: '#94A3B8', fontSize: 13, paddingHorizontal: 12, fontWeight: '500' },
-  googleButton: { flexDirection: 'row', backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155', height: 56, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
-  googleButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
-  linkButton: { marginTop: 24, alignItems: 'center' },
+  linkButton: { marginTop: 20, alignItems: 'center' },
   linkText: { color: '#94A3B8', fontSize: 15 },
   linkTextBold: { color: '#EAB308', fontWeight: '700' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.85)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#1E293B', borderTopLeftRadius: 32, borderTopRightRadius: 32, padding: 32, paddingBottom: Platform.OS === 'ios' ? 40 : 32, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)' },
+  modalKeyboardContainer: { width: '100%' },
+  modalContent: { backgroundColor: '#1E293B', borderTopLeftRadius: 32, borderTopRightRadius: 32, padding: 28, maxHeight: height * 0.85, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)' },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
-  modalIconContainer: { width: 56, height: 56, borderRadius: 16, backgroundColor: 'rgba(234, 179, 8, 0.1)', justifyContent: 'center', alignItems: 'center' },
+  modalIconContainer: { width: 52, height: 52, borderRadius: 16, backgroundColor: 'rgba(234, 179, 8, 0.1)', justifyContent: 'center', alignItems: 'center' },
   closeModalButton: { padding: 8, backgroundColor: '#0F172A', borderRadius: 20 },
-  modalTitle: { fontSize: 24, fontWeight: '800', color: '#FFFFFF', marginBottom: 8 },
-  modalSubtitle: { fontSize: 14, color: '#94A3B8', lineHeight: 20, marginBottom: 20 },
+  modalTitle: { fontSize: 22, fontWeight: '800', color: '#FFFFFF', marginBottom: 6 },
+  modalSubtitle: { fontSize: 13, color: '#94A3B8', lineHeight: 18, marginBottom: 18 },
 });
