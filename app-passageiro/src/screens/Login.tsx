@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, 
-  ActivityIndicator, KeyboardAvoidingView, ScrollView, Platform, StatusBar,
-  Animated, Modal, Dimensions, TouchableWithoutFeedback
+  ActivityIndicator, ScrollView, Platform, StatusBar,
+  Animated, Dimensions, TouchableWithoutFeedback, Keyboard
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -10,23 +10,20 @@ import { useTranslation } from 'react-i18next';
 import { api } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
-const { width, height } = Dimensions.get('window');
-
 export function Login() {
-  // 🛡️ Estados de Autenticação
-  const [loginMethod, setLoginMethod] = useState<'phone' | 'email'>('phone');
+  // 🛡️ Estados de Autenticação (Apenas Telefone)
   const [phone, setPhone] = useState('');
-  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   
   // 🛡️ Estados de UI & Modal
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [isForgotModalVisible, setForgotModalVisible] = useState(false);
-  const [recoveryMethod, setRecoveryMethod] = useState<'phone' | 'email'>('phone');
   const [recoveryPhone, setRecoveryPhone] = useState('');
-  const [recoveryEmail, setRecoveryEmail] = useState('');
   const [recoveryLoading, setRecoveryLoading] = useState(false);
+
+  // ⌨️ Monitor Dinâmico da Altura do Teclado
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   // 🛡️ Animações
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -37,6 +34,17 @@ export function Login() {
   const { t } = useTranslation();
 
   useEffect(() => {
+    // Escuta a abertura e fecho do teclado em tempo real no Android/iOS
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -50,20 +58,21 @@ export function Login() {
         useNativeDriver: true,
       })
     ]).start();
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
   }, []);
 
   // ==========================================
-  // 🚀 FUNÇÃO DE LOGIN PADRÃO
+  // 🚀 FUNÇÃO DE LOGIN PADRÃO (POR TELEFONE)
   // ==========================================
   async function handleLogin() {
-    const isPhoneLogin = loginMethod === 'phone';
     const cleanPhone = phone.replace(/[^0-9]/g, '');
     
-    if (isPhoneLogin && !cleanPhone) {
+    if (!cleanPhone) {
       return Alert.alert(t('warning_title', 'Atenção ⚠️'), t('login_fill_phone', 'Digite seu número de telefone.'));
-    }
-    if (!isPhoneLogin && !email.trim()) {
-      return Alert.alert(t('warning_title', 'Atenção ⚠️'), t('login_fill_email', 'Digite seu e-mail.'));
     }
     if (!password) {
       return Alert.alert(t('warning_title', 'Atenção ⚠️'), t('login_fill_password', 'Digite sua senha.'));
@@ -71,9 +80,7 @@ export function Login() {
 
     setLoading(true);
     try {
-      const payload = isPhoneLogin 
-        ? { phone: `+245${cleanPhone}`, password }
-        : { email: email.trim().toLowerCase(), password };
+      const payload = { phone: `+245${cleanPhone}`, password };
       
       const response = await api.post('/passengers/login', payload);
       const { accessToken, refreshToken, passenger } = response.data;
@@ -89,35 +96,26 @@ export function Login() {
   }
 
   // ==========================================
-  // 🔐 RECUPERAÇÃO DE SENHA
+  // 🔐 RECUPERAÇÃO DE SENHA (POR TELEFONE/SMS)
   // ==========================================
   async function handleRecoverPassword() {
-    const isPhoneRecovery = recoveryMethod === 'phone';
     const cleanRecoveryPhone = recoveryPhone.replace(/[^0-9]/g, '');
 
-    if (isPhoneRecovery && !cleanRecoveryPhone) {
+    if (!cleanRecoveryPhone) {
       return Alert.alert(t('warning_title', 'Atenção ⚠️'), 'Informe o número de telefone cadastrado.');
-    }
-    if (!isPhoneRecovery && !recoveryEmail.trim()) {
-      return Alert.alert(t('warning_title', 'Atenção ⚠️'), t('fill_recovery_email', 'Informe o seu e-mail cadastrado.'));
     }
 
     setRecoveryLoading(true);
     try {
-      const payload = isPhoneRecovery 
-        ? { phone: `+245${cleanRecoveryPhone}` } 
-        : { email: recoveryEmail.trim().toLowerCase() };
+      const payload = { phone: `+245${cleanRecoveryPhone}` };
 
       await api.post('/passengers/forgot-password', payload);
       
       Alert.alert(
         t('success_title', 'Instruções Enviadas! ✉️'), 
-        isPhoneRecovery 
-          ? 'Enviamos o código de verificação por SMS para o seu número via Termii.'
-          : t('recovery_success_msg', 'As instruções para redefinir sua senha foram enviadas para o seu e-mail.')
+        'Enviamos o código de verificação por SMS para o seu número via Termii.'
       );
       setForgotModalVisible(false);
-      setRecoveryEmail('');
       setRecoveryPhone('');
     } catch (error: any) {
       const errorMessage = error.response?.data?.error || error.response?.data?.message || t('server_error_msg', 'Erro ao processar solicitação.');
@@ -128,18 +126,17 @@ export function Login() {
   }
 
   return (
-    <KeyboardAvoidingView 
-      style={styles.container} 
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
-    >
+    <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0F172A" translucent />
       
       <View style={styles.backgroundBlob1} />
       <View style={styles.backgroundBlob2} />
 
       <ScrollView  
-        contentContainerStyle={styles.scrollContainer}
+        contentContainerStyle={[
+          styles.scrollContainer,
+          { paddingBottom: keyboardHeight > 0 ? keyboardHeight + 20 : 40 }
+        ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         bounces={false}
@@ -157,69 +154,26 @@ export function Login() {
 
           {/* CARD PRINCIPAL */}
           <View style={styles.glassCard}>
-            
-            {/* TABS DE SELEÇÃO */}
-            <View style={styles.tabContainer}>
-              <TouchableOpacity 
-                style={[styles.tabButton, loginMethod === 'phone' && styles.tabButtonActive]}
-                onPress={() => setLoginMethod('phone')}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="call" size={16} color={loginMethod === 'phone' ? '#0F172A' : '#94A3B8'} />
-                <Text style={[styles.tabText, loginMethod === 'phone' && styles.tabTextActive]}>
-                  Telefone
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.tabButton, loginMethod === 'email' && styles.tabButtonActive]}
-                onPress={() => setLoginMethod('email')}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="mail" size={16} color={loginMethod === 'email' ? '#0F172A' : '#94A3B8'} />
-                <Text style={[styles.tabText, loginMethod === 'email' && styles.tabTextActive]}>
-                  E-mail
-                </Text>
-              </TouchableOpacity>
-            </View>
 
-            {/* INPUT TELEFONE OU EMAIL */}
-            {loginMethod === 'phone' ? (
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>{t('phone_number_label', 'Número de Telefone')}</Text>
-                <View style={styles.inputContainer}>
-                  <View style={styles.prefixContainer}>
-                    <Text style={styles.prefixText}>+245</Text>
-                    <View style={styles.prefixDivider} />
-                  </View>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="950000000"
-                    placeholderTextColor="#94A3B8"
-                    value={phone}
-                    onChangeText={(text) => setPhone(text.replace(/[^0-9]/g, ''))}
-                    keyboardType="phone-pad"
-                    maxLength={9}
-                  />
+            {/* INPUT TELEFONE */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>{t('phone_number_label', 'Número de Telefone')}</Text>
+              <View style={styles.inputContainer}>
+                <View style={styles.prefixContainer}>
+                  <Text style={styles.prefixText}>+245</Text>
+                  <View style={styles.prefixDivider} />
                 </View>
+                <TextInput
+                  style={styles.input}
+                  placeholder="950000000"
+                  placeholderTextColor="#94A3B8"
+                  value={phone}
+                  onChangeText={(text) => setPhone(text.replace(/[^0-9]/g, ''))}
+                  keyboardType="phone-pad"
+                  maxLength={9}
+                />
               </View>
-            ) : (
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>{t('email_label', 'E-mail')}</Text>
-                <View style={styles.inputContainer}>
-                  <Ionicons name="mail-outline" size={20} color="#64748B" style={styles.inputIcon} />
-                  <TextInput
-                    style={styles.input}
-                    placeholder="seu.email@exemplo.com"
-                    placeholderTextColor="#94A3B8"
-                    value={email}
-                    onChangeText={setEmail}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                  />
-                </View>
-              </View>
-            )}
+            </View>
 
             {/* SENHA */}
             <View style={styles.inputGroup}>
@@ -282,120 +236,72 @@ export function Login() {
         </Animated.View>
       </ScrollView>
 
-      {/* 🔐 MODAL DE RECUPERAÇÃO DE SENHA */}
-      <Modal
-        visible={isForgotModalVisible}
-        transparent
-        animationType="slide"
-        statusBarTranslucent
-        onRequestClose={() => setForgotModalVisible(false)}
-      >
-        <TouchableWithoutFeedback onPress={() => setForgotModalVisible(false)}>
-          <View style={styles.modalOverlay}>
-            <KeyboardAvoidingView 
-              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-              style={styles.modalKeyboardContainer}
-              keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+      {/* 🔐 OVERLAY INLINE DE RECUPERAÇÃO COM ELEVAÇÃO EM TEMPO REAL PELO TECLADO */}
+      {isForgotModalVisible && (
+        <View style={styles.modalOverlay}>
+          <TouchableWithoutFeedback onPress={() => { Keyboard.dismiss(); setForgotModalVisible(false); }}>
+            <View style={styles.backdrop} />
+          </TouchableWithoutFeedback>
+          <View style={[styles.modalContent, { marginBottom: keyboardHeight }]}>
+            <ScrollView 
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              bounces={false}
             >
-              <TouchableWithoutFeedback>
-                <View style={styles.modalContent}>
-                  <ScrollView 
-                    keyboardShouldPersistTaps="handled"
-                    showsVerticalScrollIndicator={false}
-                    bounces={false}
-                    contentContainerStyle={{ flexGrow: 1 }}
-                  >
-                    <View style={styles.modalHeader}>
-                      <View style={styles.modalIconContainer}>
-                        <MaterialCommunityIcons name="lock-reset" size={32} color="#EAB308" />
-                      </View>
-                      <TouchableOpacity onPress={() => setForgotModalVisible(false)} style={styles.closeModalButton}>
-                        <Ionicons name="close" size={24} color="#64748B" />
-                      </TouchableOpacity>
-                    </View>
-
-                    <Text style={styles.modalTitle}>{t('recover_password_title', 'Recuperar Senha')}</Text>
-                    <Text style={styles.modalSubtitle}>
-                      Selecione o método e informe os dados cadastrados para redefinir sua senha.
-                    </Text>
-
-                    {/* TABS DE RECUPERAÇÃO */}
-                    <View style={styles.tabContainer}>
-                      <TouchableOpacity 
-                        style={[styles.tabButton, recoveryMethod === 'phone' && styles.tabButtonActive]}
-                        onPress={() => setRecoveryMethod('phone')}
-                        activeOpacity={0.8}
-                      >
-                        <Ionicons name="call" size={16} color={recoveryMethod === 'phone' ? '#0F172A' : '#94A3B8'} />
-                        <Text style={[styles.tabText, recoveryMethod === 'phone' && styles.tabTextActive]}>
-                          Telefone
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity 
-                        style={[styles.tabButton, recoveryMethod === 'email' && styles.tabButtonActive]}
-                        onPress={() => setRecoveryMethod('email')}
-                        activeOpacity={0.8}
-                      >
-                        <Ionicons name="mail" size={16} color={recoveryMethod === 'email' ? '#0F172A' : '#94A3B8'} />
-                        <Text style={[styles.tabText, recoveryMethod === 'email' && styles.tabTextActive]}>
-                          E-mail
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-
-                    {/* INPUT TELEFONE OU EMAIL DE RECUPERAÇÃO */}
-                    {recoveryMethod === 'phone' ? (
-                      <View style={styles.inputContainer}>
-                        <View style={styles.prefixContainer}>
-                          <Text style={styles.prefixText}>+245</Text>
-                          <View style={styles.prefixDivider} />
-                        </View>
-                        <TextInput
-                          style={styles.input}
-                          placeholder="950000000"
-                          placeholderTextColor="#94A3B8"
-                          value={recoveryPhone}
-                          onChangeText={(text) => setRecoveryPhone(text.replace(/[^0-9]/g, ''))}
-                          keyboardType="phone-pad"
-                          maxLength={9}
-                        />
-                      </View>
-                    ) : (
-                      <View style={styles.inputContainer}>
-                        <Ionicons name="mail-outline" size={20} color="#64748B" style={styles.inputIcon} />
-                        <TextInput
-                          style={styles.input}
-                          placeholder="seu.email@exemplo.com"
-                          placeholderTextColor="#94A3B8"
-                          value={recoveryEmail}
-                          onChangeText={setRecoveryEmail}
-                          keyboardType="email-address"
-                          autoCapitalize="none"
-                        />
-                      </View>
-                    )}
-
-                    <TouchableOpacity 
-                      style={[styles.button, recoveryLoading && styles.buttonDisabled, { marginTop: 24 }]} 
-                      onPress={handleRecoverPassword} 
-                      disabled={recoveryLoading}
-                      activeOpacity={0.8}
-                    >
-                      {recoveryLoading ? (
-                        <ActivityIndicator color="#0F172A" />
-                      ) : (
-                        <Text style={styles.buttonText}>Enviar Código OTP</Text>
-                      )}
-                    </TouchableOpacity>
-                  </ScrollView>
+              <View style={styles.modalHeader}>
+                <View style={styles.modalIconContainer}>
+                  <MaterialCommunityIcons name="lock-reset" size={32} color="#EAB308" />
                 </View>
-              </TouchableWithoutFeedback>
-            </KeyboardAvoidingView>
-          </View>
-        </TouchableWithoutFeedback>
-      </Modal>
+                <TouchableOpacity 
+                  onPress={() => { Keyboard.dismiss(); setForgotModalVisible(false); }} 
+                  style={styles.closeModalButton}
+                >
+                  <Ionicons name="close" size={24} color="#64748B" />
+                </TouchableOpacity>
+              </View>
 
-    </KeyboardAvoidingView>
+              <Text style={styles.modalTitle}>{t('recover_password_title', 'Recuperar Senha')}</Text>
+              <Text style={styles.modalSubtitle}>
+                Informe seu número de telefone cadastrado para receber o código OTP de verificação.
+              </Text>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>{t('phone_number_label', 'Número de Telefone')}</Text>
+                <View style={styles.inputContainer}>
+                  <View style={styles.prefixContainer}>
+                    <Text style={styles.prefixText}>+245</Text>
+                    <View style={styles.prefixDivider} />
+                  </View>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="950000000"
+                    placeholderTextColor="#94A3B8"
+                    value={recoveryPhone}
+                    onChangeText={(text) => setRecoveryPhone(text.replace(/[^0-9]/g, ''))}
+                    keyboardType="phone-pad"
+                    maxLength={9}
+                  />
+                </View>
+              </View>
+
+              <TouchableOpacity 
+                style={[styles.button, recoveryLoading && styles.buttonDisabled, { marginTop: 16, marginBottom: 12 }]} 
+                onPress={handleRecoverPassword} 
+                disabled={recoveryLoading}
+                activeOpacity={0.8}
+              >
+                {recoveryLoading ? (
+                  <ActivityIndicator color="#0F172A" />
+                ) : (
+                  <Text style={styles.buttonText}>Enviar Código OTP</Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      )}
+
+    </View>
   );
 }
 
@@ -410,11 +316,6 @@ const styles = StyleSheet.create({
   brandHighlight: { color: '#EAB308' },
   subtitle: { fontSize: 14, color: '#94A3B8', marginTop: 6, fontWeight: '500', letterSpacing: 0.5 },
   glassCard: { backgroundColor: '#1E293B', borderRadius: 28, padding: 22, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)', shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.3, shadowRadius: 30, elevation: 10 },
-  tabContainer: { flexDirection: 'row', backgroundColor: '#0F172A', borderRadius: 16, padding: 4, marginBottom: 20 },
-  tabButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: 12 },
-  tabButtonActive: { backgroundColor: '#EAB308', shadowColor: '#EAB308', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
-  tabText: { fontSize: 14, fontWeight: '600', color: '#94A3B8', marginLeft: 6 },
-  tabTextActive: { color: '#0F172A', fontWeight: '700' },
   inputGroup: { marginBottom: 18 },
   inputLabel: { fontSize: 12, fontWeight: '600', color: '#CBD5E1', marginBottom: 8, marginLeft: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
   inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155', borderRadius: 16, paddingHorizontal: 16, height: 56 },
@@ -433,12 +334,14 @@ const styles = StyleSheet.create({
   linkButton: { marginTop: 20, alignItems: 'center' },
   linkText: { color: '#94A3B8', fontSize: 15 },
   linkTextBold: { color: '#EAB308', fontWeight: '700' },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.85)', justifyContent: 'flex-end' },
-  modalKeyboardContainer: { width: '100%' },
-  modalContent: { backgroundColor: '#1E293B', borderTopLeftRadius: 32, borderTopRightRadius: 32, padding: 28, maxHeight: height * 0.85, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)' },
+  
+  // 🔐 OVERLAY DE RECUPERAÇÃO ELEVADO
+  modalOverlay: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(15, 23, 42, 0.85)', justifyContent: 'flex-end', zIndex: 999 },
+  backdrop: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 },
+  modalContent: { backgroundColor: '#1E293B', borderTopLeftRadius: 32, borderTopRightRadius: 32, padding: 24, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)' },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
   modalIconContainer: { width: 52, height: 52, borderRadius: 16, backgroundColor: 'rgba(234, 179, 8, 0.1)', justifyContent: 'center', alignItems: 'center' },
   closeModalButton: { padding: 8, backgroundColor: '#0F172A', borderRadius: 20 },
   modalTitle: { fontSize: 22, fontWeight: '800', color: '#FFFFFF', marginBottom: 6 },
   modalSubtitle: { fontSize: 13, color: '#94A3B8', lineHeight: 18, marginBottom: 18 },
-});
+}); 
