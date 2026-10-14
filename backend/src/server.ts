@@ -128,25 +128,14 @@ app.get('/health', (_req, res) => {
 // =============================================================================
 app.get('/track/:rideId', async (req: Request, res: Response) => {
   try {
-    const { rideId } = req.params;
+    const rideId = String(req.params.rideId);
 
-    // Busca os dados da corrida no Prisma
-    const ride = await prisma.ride.findUnique({
+    // Busca os dados da corrida no Prisma com relacionamentos flexíveis
+    const ride: any = await prisma.ride.findUnique({
       where: { id: rideId },
       include: { 
-        driver: {
-          select: {
-            fullName: true,
-            carModel: true,
-            carColor: true,
-            licensePlate: true,
-          }
-        },
-        passenger: {
-          select: {
-            fullName: true
-          }
-        }
+        driver: true,
+        passenger: true
       }
     });
 
@@ -181,8 +170,13 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
       "default-src 'self' https: data: 'unsafe-inline' 'unsafe-eval';"
     );
 
-    const driverLat = ride.driverLat || ride.originLat || 11.8633;
-    const driverLng = ride.driverLng || ride.originLng || -15.5833;
+    const driverLat = ride.driverLat || ride.driver?.currentLat || ride.originLat || 11.8633;
+    const driverLng = ride.driverLng || ride.driver?.currentLng || ride.originLng || -15.5833;
+
+    const driverName = ride.driver?.fullName || ride.driver?.name || 'Motorista';
+    const carModel = ride.driver?.carModel || ride.driver?.vehicleModel || 'Veículo';
+    const carColor = ride.driver?.carColor || ride.driver?.vehicleColor || 'N/A';
+    const licensePlate = ride.driver?.licensePlate || ride.driver?.vehiclePlate || 'N/A';
 
     res.send(`
       <!DOCTYPE html>
@@ -210,10 +204,10 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
         <div class="info-card">
           <div class="header">
             <div class="title">🚕 Nobai245 Rastreamento</div>
-            <div class="badge">${ride.status}</div>
+            <div class="badge">${ride.status || 'EM ANDAMENTO'}</div>
           </div>
-          <div class="detail-item"><strong>👤 Motorista:</strong> ${ride.driver?.fullName || 'Motorista'}</div>
-          <div class="detail-item"><strong>🚘 Veículo:</strong> ${ride.driver?.carModel || 'Veículo'} (${ride.driver?.carColor || 'Cor N/A'}) - Placa: ${ride.driver?.licensePlate || 'N/A'}</div>
+          <div class="detail-item"><strong>👤 Motorista:</strong> ${driverName}</div>
+          <div class="detail-item"><strong>🚘 Veículo:</strong> ${carModel} (${carColor}) - Placa: ${licensePlate}</div>
           <div class="detail-item"><strong>📍 Destino:</strong> ${ride.destinationAddress || 'Endereço de destino'}</div>
         </div>
 
@@ -226,7 +220,6 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
             zoom: 15
           });
 
-          // Adiciona marcador no mapa para o veículo
           const el = document.createElement('div');
           el.style.fontSize = '30px';
           el.innerHTML = '🚗';
