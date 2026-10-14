@@ -38,16 +38,21 @@ export function Login() {
   const { t } = useTranslation();
 
   useEffect(() => {
-    try {
-      GoogleSignin.configure({
-        webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
-        offlineAccess: true,
-        scopes: ['profile', 'email'],
-      });
-    } catch (e) {
-      console.warn('[GOOGLE SIGNIN] Erro ao configurar:', e);
-    }
+  try {
+    const webClientId = 
+      process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || 
+      '440747110438-5h95o3q4rbcmc8cg78i2flsi3j00ku8t.apps.googleusercontent.com';
 
+    console.log('🔑 [GOOGLE INIT] Web Client ID:', webClientId);
+
+    GoogleSignin.configure({
+      webClientId,
+      offlineAccess: true,
+      scopes: ['profile', 'email'],
+    });
+  } catch (e) {
+    console.warn('[GOOGLE SIGNIN] Erro ao configurar:', e);
+  }
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
