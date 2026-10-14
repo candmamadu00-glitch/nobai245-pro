@@ -14,7 +14,7 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 
 const TERMII_API_KEY = process.env.TERMII_API_KEY;
 const TERMII_BASE_URL = process.env.TERMII_BASE_URL || 'https://v4.api.termii.com/';
-const TERMII_SENDER_ID = process.env.TERMII_SENDER_ID || 'NOBAI245';
+const TERMII_SENDER_ID = process.env.TERMII_SENDER_ID || 'BAI245';
 
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
@@ -38,9 +38,36 @@ const sanitizeText = (text?: string, maxLength = 255): string => {
 
 const DISABLED_STATUSES = ['SUSPENDED', 'BANNED', 'REJECTED', 'INACTIVE'];
 
+// Helper centralizado para envio de SMS via Termii
+async function sendTermiiSMS(formattedPhone: string, otpCode: string): Promise<boolean> {
+  const targetPhoneNoPlus = formattedPhone.replace(/^\+/, '');
+  const baseUrlClean = TERMII_BASE_URL.endsWith('/') ? TERMII_BASE_URL : `${TERMII_BASE_URL}/`;
+  const termiiEndpoint = `${baseUrlClean}api/sms/send`;
+
+  const termiiPayload = {
+    to: targetPhoneNoPlus,
+    from: TERMII_SENDER_ID,
+    sms: `O seu codigo de verificacao Nobai245 e ${otpCode}. Expira em 10 min.`,
+    type: 'plain',
+    channel: 'generic',
+    api_key: TERMII_API_KEY,
+  };
+
+  console.log(`📱 [ENVIO SMS TERMII] Enviando OTP ${otpCode} para +${targetPhoneNoPlus}...`);
+
+  try {
+    const termiiRes = await axios.post(termiiEndpoint, termiiPayload, { timeout: 10000 });
+    console.log(`✅ [TERMII SMS SUCESSO]:`, termiiRes.data);
+    return true;
+  } catch (termiiErr: any) {
+    console.error('❌ [ERRO TERMII SMS]:', termiiErr?.response?.data || termiiErr?.message);
+    return false;
+  }
+}
+
 export class PassengerAuthController {
 
-  // 1. REGISTRO DE PASSAGEIRO
+  // 1. REGISTRO DE PASSAGEIRO (COM ENVIO AUTOMÁTICO DE OTP)
   async register(req: Request, res: Response): Promise<Response> {
     try {
       const { fullName, password, documentType, email } = req.body;
@@ -88,6 +115,17 @@ export class PassengerAuthController {
 
       const passwordHash = await bcrypt.hash(String(password), 12);
 
+      // Gerar OTP de verificação inicial de cadastro
+      const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
+      const otpCodeHash = await bcrypt.hash(otpCode, 10);
+      const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+      // Log visível no terminal do servidor para agilizar testes
+      console.log(`\n🔑 =================================================`);
+      console.log(`🔑 [NOVO CADASTRO PASSAGEIRO] Telefone: ${formattedPhone}`);
+      console.log(`🔑 [CÓDIGO OTP GERADO]: ${otpCode}`);
+      console.log(`🔑 =================================================\n`);
+
       const passenger = await prisma.passenger.create({
         data: {
           fullName: cleanFullName,
@@ -98,9 +136,14 @@ export class PassengerAuthController {
           documentNumber: documentNumber || null,
           paymentProvider: 'ORANGE_MONEY',
           paymentAccountNumber: formattedPhone,
-          isVerified: false
+          isVerified: false,
+          otpCodeHash,
+          otpExpiresAt
         },
       });
+
+      // Dispara o SMS via Termii
+      await sendTermiiSMS(formattedPhone, otpCode);
 
       if (passenger.email) {
         Promise.resolve(sendWelcomeEmail(passenger.email, passenger.fullName)).catch((err) => {
@@ -129,8 +172,8 @@ export class PassengerAuthController {
     try {
       const { phone, password, deviceToken } = req.body;
 
-      if (!phone || !password) {
-        return res.status(400).json({ success: false, error: 'Telefone e senha são obrigatórios.' });
+      if (!phone) {
+        return res.status(400).json({ success: false, error: 'Telefone é obrigatório.' });
       }
 
       const formattedPhone = formatPhoneNumber(String(phone));
@@ -138,7 +181,7 @@ export class PassengerAuthController {
 
       const dummyHash = '$2b$12$e8Y547uXN8L8i0S9sS9O9e0mQxV1L3yS0N0c0W0X0Y0Z0a0b0c0d';
       const hashToCompare = passenger ? passenger.passwordHash : dummyHash;
-      const isPasswordValid = await bcrypt.compare(String(password), hashToCompare);
+      const isPasswordValid = await bcrypt.compare(String(password || ''), hashToCompare);
 
       if (!passenger || !isPasswordValid) {
         return res.status(401).json({ success: false, error: 'Credenciais inválidas.' });
@@ -194,7 +237,7 @@ export class PassengerAuthController {
     }
   }
 
-  // 3. SOLICITAR / REENVIAR CÓDIGO OTP VIA TERMII (SMS REAL)
+  // 3. SOLICITAR / REENVIAR CÓDIGO OTP (SOLICITAÇÃO DE SMS / ESQUECEU A SENHA)
   async requestOTP(req: Request, res: Response): Promise<Response> {
     try {
       const { phone } = req.body;
@@ -214,6 +257,11 @@ export class PassengerAuthController {
       const otpCodeHash = await bcrypt.hash(otpCode, 10);
       const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
+      console.log(`\n🔑 =================================================`);
+      console.log(`🔑 [SOLICITAÇÃO DE OTP] Telefone: ${formattedPhone}`);
+      console.log(`🔑 [CÓDIGO OTP GERADO]: ${otpCode}`);
+      console.log(`🔑 =================================================\n`);
+
       await prisma.passenger.update({
         where: { id: passenger.id },
         data: {
@@ -222,25 +270,7 @@ export class PassengerAuthController {
         },
       });
 
-      const targetPhoneNoPlus = formattedPhone.replace(/^\+/, '');
-      const baseUrlClean = TERMII_BASE_URL.endsWith('/') ? TERMII_BASE_URL : `${TERMII_BASE_URL}/`;
-      const termiiEndpoint = `${baseUrlClean}api/sms/send`;
-
-      const termiiPayload = {
-        to: targetPhoneNoPlus,
-        from: TERMII_SENDER_ID,
-        sms: `O seu codigo de verificacao Nobai245 e ${otpCode}. Expira em 10 min.`,
-        type: 'plain',
-        channel: 'generic',
-        api_key: TERMII_API_KEY,
-      };
-
-      try {
-        const termiiRes = await axios.post(termiiEndpoint, termiiPayload, { timeout: 10000 });
-        console.log(`✅ [TERMII ENVIADO PARA ${targetPhoneNoPlus}]:`, termiiRes.data);
-      } catch (termiiErr: any) {
-        console.error('❌ [ERRO TERMII SMS]:', termiiErr?.response?.data || termiiErr?.message);
-      }
+      await sendTermiiSMS(formattedPhone, otpCode);
 
       return res.status(200).json({
         success: true,
