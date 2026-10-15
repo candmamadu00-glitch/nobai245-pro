@@ -119,17 +119,29 @@ export function Register() {
       
       formData.append('documentType', documentType);
       formData.append('documentNumber', documentNumber.trim().toUpperCase());
-
-      const appendImage = (key: string, uri: string) => {
+const appendImage = (key: string, uri: string) => {
         const filename = uri.split('/').pop() || `${key}.jpg`;
-        formData.append(key, { uri, name: filename, type: 'image/jpeg' } as any);
+        const match = /\.(\w+)$/.exec(filename);
+        const ext = match ? match[1].toLowerCase() : 'jpg';
+        const type = ext === 'png' ? 'image/png' : 'image/jpeg';
+
+        formData.append(key, {
+          uri: Platform.OS === 'android' ? uri : uri.replace('file://', ''),
+          name: filename,
+          type,
+        } as any);
       };
 
       appendImage('selfie', selfie);
       appendImage('licenseFront', licenseFront);
       appendImage('licenseBack', licenseBack);
 
-      const response = await api.post('/drivers/register', formData);
+      // 🟢 Envia com o header explícito multipart/form-data
+      const response = await api.post('/drivers/register', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
 
       console.log('=== ✅ [DEBUG CADASTRO] SUCESSO ===', response.data);
       
@@ -147,7 +159,6 @@ export function Register() {
       setLoading(false);
     }
   }
-
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={theme.colors.primaryDark} translucent />
