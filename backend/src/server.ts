@@ -602,10 +602,10 @@ io.on('connection', (socket) => {
     socket.join(userId);
     socket.join(`user_${userId}`);
     socket.join(`passenger_${userId}`);
-    socket.join(`passenger:${userId}`); // Suporte a ambas as notações
+    socket.join(`passenger:${userId}`); // Suporte para ambas as notações de sala
   }
 
-  // 📌 HANDLER 'join_room': Permite ao app entrar nas salas dinâmicas da corrida (rideId)
+  // 📌 HANDLER 'join_room': Permite ao app entrar nas salas dinâmicas de corrida
   socket.on('join_room', (roomName: string) => {
     if (roomName) {
       socket.join(roomName);
@@ -620,7 +620,7 @@ io.on('connection', (socket) => {
       console.log(`📡 [PASSENGER REJOINED] User ${socket.data.user?.id} entrou na sala ${rideId}`);
     }
   });
-});
+
   // --- DESCONEXÃO (GRACE PERIOD MOTORISTA 15s E LIMPEZA DE MEMÓRIA) ---
   socket.on('disconnect', () => {
     console.log(`[-] Cliente desconectado: ${socket.id} (ID: ${socket.data.user?.id})`);
