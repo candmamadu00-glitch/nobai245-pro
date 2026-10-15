@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma';
 import { enqueuePayoutJob, enqueueRefundJob } from '../jobs/payoutQueue';
 import { chargePassengerMobileMoney, isValidBissauPhone, executeRideDisbursement } from './mobileMoneyService';
 import { sendPushNotification, PUSH_CHANNELS } from './pushNotifications';
+import { io } from '../server';
 
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
 const IS_MOCK_MODE = process.env.ENABLE_MOCK_PAYMENTS === 'true' || process.env.NODE_ENV !== 'production';
@@ -17,6 +18,19 @@ export const FALLBACK_TARIFFS: Record<string, { baseFare: number; perKm: number;
   PARTICULAR: { baseFare: 700, perKm: 350, perMin: 60, commissionRate: 15 },
   TOCA_TOCA: { baseFare: 500, perKm: 200, perMin: 30, commissionRate: 15 },
 };
+
+// -----------------------------------------------------------------------------
+// HELPER PARA EMISSÃO SEGURA DE SOCKET
+// -----------------------------------------------------------------------------
+function safeSocketEmit(room: string, event: string, payload: any) {
+  try {
+    if (io) {
+      io.to(room).emit(event, payload);
+    }
+  } catch (err) {
+    console.warn(`⚠️ [SOCKET EMIT ERROR] Falha ao disparar ${event} para ${room}:`, err);
+  }
+}
 
 // -----------------------------------------------------------------------------
 // HELPER PARA NOTIFICAÇÃO PUSH DE MOTORISTAS PRÓXIMOS/ONLINE (FILTRADO)
@@ -89,7 +103,7 @@ export function maskPhoneNumber(phone?: string | null): string {
 }
 
 // -----------------------------------------------------------------------------
-// 1. HELPERS E CÁLCULOS GEOGRÁFICOS (MAPPING & HAVERSINE)
+// 1. HELPERS E CÁLCULOS GEOGRÁFICOS
 // -----------------------------------------------------------------------------
 export function isValidCoordinate(lat: number, lng: number): boolean {
   return typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
@@ -97,14 +111,14 @@ export function isValidCoordinate(lat: number, lng: number): boolean {
 
 export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   if (!isValidCoordinate(lat1, lon1) || !isValidCoordinate(lat2, lon2)) return 0.5;
-  const R = 6371; // Raio da Terra em KM
+  const R = 6371;
   const dLat = (lat2 - lat1) * (Math.PI / 180);
   const dLon = (lon2 - lon1) * (Math.PI / 180);
   const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
             Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * 
             Math.sin(dLon / 2) * Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return Math.max(0.1, Number((R * c * 1.35).toFixed(2))); // Fator 1.35 para compensar curvas reais
+  return Math.max(0.1, Number((R * c * 1.35).toFixed(2)));
 }
 
 export function calculateHaversineFallback(lat1: number, lon1: number, lat2: number, lon2: number) {
@@ -112,7 +126,7 @@ export function calculateHaversineFallback(lat1: number, lon1: number, lat2: num
     throw new Error('INVALID_COORDINATES: Coordenadas geográficas inválidas.');
   }
   const distanceKm = calculateDistance(lat1, lon1, lat2, lon2);
-  const durationMin = Math.max(1, Math.ceil((distanceKm / 30) * 60)); // Média urbana de 30km/h
+  const durationMin = Math.max(1, Math.ceil((distanceKm / 30) * 60));
   return { distanceKm, durationMin };
 }
 
@@ -159,7 +173,7 @@ export async function getRouteDistanceAndDuration(
       };
     }
   } catch (error) {
-    console.warn('⚠️ [MAPS] API externa indisponível/timeout. Utilizando cálculo Haversine de contingência.');
+    console.warn('⚠️ [MAPS] API externa indisponível. Utilizando Haversine de contingência.');
   }
   
   return calculateHaversineFallback(lat1, lon1, lat2, lon2);
@@ -184,13 +198,13 @@ export async function calculateRidePrice(distanceKm: number, durationMin: number
   const commissionRate = dbTariff ? Number(dbTariff.commissionRate) : fallback.commissionRate;
 
   let totalPrice = baseFare + (distanceKm * perKm) + (durationMin * perMin);
-  if (sType === ServiceType.DELIVERY) totalPrice *= 1.20; // Taxa de entrega/encomenda
+  if (sType === ServiceType.DELIVERY) totalPrice *= 1.20;
 
   return { totalPrice: Math.round(totalPrice), commissionRate };
 }
 
 // -----------------------------------------------------------------------------
-// 3. CRIAÇÃO DE CORRIDA E RETENÇÃO EM CAUÇÃO (ESCROW) / DINHEIRO
+// 3. CRIAÇÃO DE CORRIDA E RETENÇÃO EM CAUÇÃO / DINHEIRO
 // -----------------------------------------------------------------------------
 export async function createRideAndInitiateEscrow(passengerId: string, data: {
   originLat: number; originLng: number; destinationLat: number; destinationLng: number;
@@ -216,7 +230,6 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     throw new Error('UNAUTHORIZED: Conta de passageiro inexistente, inativa ou suspensa.');
   }
 
-  // Normalização segura do método de pagamento (CASH / DINHEIRO)
   const rawMethod = data.paymentMethod || passenger.paymentProvider || 'CASH';
   const chosenMethod = String(rawMethod).toUpperCase().trim();
   const isCash = chosenMethod === 'CASH' || chosenMethod === 'DINHEIRO';
@@ -292,14 +305,12 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     return { ride: newRide, transaction: newTx };
   });
 
-  // 💵 TRAVA ABSOLUTA: Se for pagamento em dinheiro ou modo Mock, notifica os motoristas e finaliza imediatamente
   if (isCash || IS_MOCK_MODE) {
     console.log(`💵 [RIDE SUCCESS] Corrida em Dinheiro (${chosenMethod}). Ignorando Mobile Money.`);
     notifyDriversNewRide(ride.id).catch(err => console.error('Erro ao notificar motoristas:', err));
     return { success: true, pendingVerification: false, ride };
   }
 
-  // 📲 COBRANÇA VIA MOBILE MONEY (Apenas se NÃO for CASH)
   const paymentPhone = passenger.paymentAccountNumber || passenger.phone!;
 
   try {
@@ -339,6 +350,7 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     throw new Error('Não foi possível realizar a cobrança via Mobile Money. Verifique o saldo do seu PIN/Carteira.');
   }
 }
+
 // -----------------------------------------------------------------------------
 // 4. ACEITE DE CORRIDA E CHEGADA DO MOTORISTA
 // -----------------------------------------------------------------------------
@@ -388,7 +400,7 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
           select: { id: true, fullName: true, profilePicture: true, ratingAverage: true, phone: true, deviceToken: true } 
         }, 
         driver: { 
-          select: { id: true, fullName: true, profilePicture: true, vehicleBrand: true, vehicleColor: true, vehiclePlate: true, ratingAverage: true, phone: true } 
+          select: { id: true, fullName: true, profilePicture: true, vehicleBrand: true, vehicleModel: true, vehicleColor: true, vehiclePlate: true, ratingAverage: true, phone: true } 
         } 
       } 
     });
@@ -398,6 +410,21 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     return res;
   });
 
+  // 📡 1. Notificação de Tempo Real no App (Socket.io)
+  safeSocketEmit(`passenger_${result.passengerId}`, 'ride:accepted', {
+    rideId: result.id,
+    status: 'ACCEPTED',
+    driver: {
+      name: result.driver?.fullName,
+      phone: maskPhoneNumber(result.driver?.phone),
+      rating: result.driver?.ratingAverage,
+      vehicleBrand: result.driver?.vehicleBrand,
+      vehicleColor: result.driver?.vehicleColor,
+      vehiclePlate: result.driver?.vehiclePlate
+    }
+  });
+
+  // 🔔 2. Notificação Push em Segundo Plano
   if (result.passenger?.deviceToken) {
     sendPushNotification(
       result.passenger.deviceToken,
@@ -410,14 +437,8 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
 
   return {
     ...result,
-    passenger: result.passenger ? {
-      ...result.passenger,
-      phone: maskPhoneNumber(result.passenger.phone)
-    } : null,
-    driver: result.driver ? {
-      ...result.driver,
-      phone: maskPhoneNumber(result.driver.phone)
-    } : null
+    passenger: result.passenger ? { ...result.passenger, phone: maskPhoneNumber(result.passenger.phone) } : null,
+    driver: result.driver ? { ...result.driver, phone: maskPhoneNumber(result.driver.phone) } : null
   };
 }
 
@@ -438,41 +459,89 @@ export async function driverArrivedLogic(rideId: string, driverId: string) {
     }
   });
 
+  // 📡 1. Notificação de Tempo Real no App (Socket.io)
+  safeSocketEmit(`passenger_${updated.passengerId}`, 'ride:arrived', {
+    rideId: updated.id,
+    status: 'ARRIVED',
+    startOtp: updated.startOtp
+  });
+
+  // 🔔 2. Notificação Push
   if (updated.passenger?.deviceToken) {
     sendPushNotification(
       updated.passenger.deviceToken,
       '📍 Motorista Chegou!',
-      'Seu motorista está no local de embarque aguardando por você.',
-      { type: 'DRIVER_ARRIVED', rideId: updated.id },
+      `Seu motorista está no local. Informe o código OTP ${updated.startOtp} ao embarcar.`,
+      { type: 'DRIVER_ARRIVED', rideId: updated.id, startOtp: updated.startOtp },
       PUSH_CHANNELS.RIDE_UPDATE
     ).catch(err => console.error('⚠️ Falha ao enviar push de chegada ao passageiro:', err));
   }
 
   return {
     ...updated,
-    passenger: updated.passenger ? {
-      ...updated.passenger,
-      phone: maskPhoneNumber(updated.passenger.phone)
-    } : null
+    passenger: updated.passenger ? { ...updated.passenger, phone: maskPhoneNumber(updated.passenger.phone) } : null
   };
 }
 
 export async function startRideLogic(rideId: string, driverId: string, otpInput: string) {
-  const ride = await prisma.ride.findUnique({ where: { id: rideId } });
+  const ride = await prisma.ride.findUnique({ 
+    where: { id: rideId },
+    include: { passenger: { select: { deviceToken: true } } }
+  });
   if (!ride || ride.driverId !== driverId) throw new Error('UNAUTHORIZED: Operação não autorizada.');
 
   if (ride.startOtp && ride.startOtp !== otpInput.trim()) {
     throw new Error('INVALID_OTP: Código OTP informado está incorreto.');
   }
 
-  return await prisma.ride.update({
+  const updatedRide = await prisma.ride.update({
     where: { id: rideId },
     data: { status: RideStatus.IN_PROGRESS, startedAt: new Date(), version: { increment: 1 } }
   });
+
+  // 📡 Socket + Push de Início de Viagem
+  safeSocketEmit(`passenger_${ride.passengerId}`, 'ride:started', { rideId: ride.id, status: 'IN_PROGRESS' });
+
+  if (ride.passenger?.deviceToken) {
+    sendPushNotification(
+      ride.passenger.deviceToken,
+      '🚕 Viagem Iniciada!',
+      'Sua viagem com o Nô Bai 245 começou. Tenha uma excelente viagem!',
+      { type: 'RIDE_STARTED', rideId: ride.id },
+      PUSH_CHANNELS.RIDE_UPDATE
+    ).catch(() => null);
+  }
+
+  return updatedRide;
 }
 
 // -----------------------------------------------------------------------------
-// 5. FINALIZAÇÃO DA CORRIDA E LIQUIDAÇÃO (CASH x MOBILE MONEY)
+// HELPER: NOTIFICAR MOTORISTA PRÓXIMO (MENOS DE 300 METROS)
+// -----------------------------------------------------------------------------
+export async function notifyDriverNearbyIfClose(rideId: string, distanceMeters: number) {
+  if (distanceMeters > 300) return;
+
+  const ride = await prisma.ride.findUnique({ 
+    where: { id: rideId },
+    include: { passenger: { select: { deviceToken: true } } }
+  });
+  if (!ride || ride.status !== 'ACCEPTED') return;
+
+  safeSocketEmit(`passenger_${ride.passengerId}`, 'ride:driver_nearby', { rideId: ride.id });
+
+  if (ride.passenger?.deviceToken) {
+    sendPushNotification(
+      ride.passenger.deviceToken,
+      '📍 Motorista Chegando!',
+      'Seu motorista está a menos de 300 metros do local de embarque.',
+      { type: 'DRIVER_NEARBY', rideId: ride.id },
+      PUSH_CHANNELS.RIDE_UPDATE
+    ).catch(() => null);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 5. FINALIZAÇÃO DA CORRIDA E LIQUIDAÇÃO
 // -----------------------------------------------------------------------------
 export async function finalizeRideAndCharge(rideId: string, finalLat: number, finalLng: number) {
   if (!isValidCoordinate(finalLat, finalLng)) throw new Error('INVALID_COORDINATES: Coordenadas finais de desembarque inválidas.');
@@ -586,6 +655,23 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
       create: { id: 'bai245-main-wallet', balance: platformFee, totalCollected: calculatedFare }
     });
   });
+
+  // 📡 Socket + Push de Conclusão da Viagem
+  safeSocketEmit(`passenger_${ride.passengerId}`, 'ride:completed', {
+    rideId: ride.id,
+    status: 'COMPLETED',
+    priceXof: calculatedFare
+  });
+
+  if (ride.passenger?.deviceToken) {
+    sendPushNotification(
+      ride.passenger.deviceToken,
+      '🏁 Viagem Concluída!',
+      `Você chegou ao seu destino. Valor total: ${calculatedFare} XOF. Avalie seu motorista!`,
+      { type: 'RIDE_COMPLETED', rideId: ride.id, priceXof: calculatedFare },
+      PUSH_CHANNELS.RIDE_UPDATE
+    ).catch(() => null);
+  }
 
   if (isCash) {
     return { success: true, fareXOF: calculatedFare, driverEarnings, platformFee, distanceKm, paymentMethod: 'CASH' };
@@ -765,6 +851,32 @@ export async function cancelRideLogic(
 
     return { appliedPenalty: penaltyAmount > 0, penaltyAmount };
   });
+
+  // 📡 1. Notificar Passageiro e Motorista via Socket
+  safeSocketEmit(`passenger_${ride.passengerId}`, 'ride:cancelled', {
+    rideId: ride.id,
+    cancelledBy: userType,
+    reason: cleanReason
+  });
+
+  if (ride.driverId) {
+    safeSocketEmit(`driver_${ride.driverId}`, 'ride:cancelled', {
+      rideId: ride.id,
+      cancelledBy: userType,
+      reason: cleanReason
+    });
+  }
+
+  // 🔔 2. Notificação Push de Cancelamento (Se cancelado pelo motorista)
+  if (userType === 'DRIVER' && ride.passenger?.deviceToken) {
+    sendPushNotification(
+      ride.passenger.deviceToken,
+      '⚠️ Corrida Cancelada pelo Motorista',
+      `O motorista precisou cancelar a corrida. Motivo: ${cleanReason}`,
+      { type: 'RIDE_CANCELLED', rideId: ride.id },
+      PUSH_CHANNELS.RIDE_UPDATE
+    ).catch(() => null);
+  }
 
   return dbResult;
 }

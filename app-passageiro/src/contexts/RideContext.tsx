@@ -55,7 +55,7 @@ interface RideContextData {
   paymentMethod: PaymentMethod;
   setPaymentMethod: (method: PaymentMethod) => void;
   isLoading: boolean;
-  
+
   requestRide: (ridePayload: any) => Promise<boolean>;
   cancelRide: (reason?: string) => Promise<boolean>;
   resetRide: () => void;
@@ -92,38 +92,61 @@ export const RideProvider = ({ children, passengerId }: { children: ReactNode; p
       socket.emit('join_room', `passenger:${passengerId}`);
     }
 
-    const handleRideAccepted = (data: { ride: any }) => {
-      if (data?.ride) {
-        setActiveRide(data.ride);
-        if (data.ride.driver) {
+    // 1. MOTORISTA ACEITOU A CORRIDA
+    const handleRideAccepted = (data: any) => {
+      const ride = data?.ride || data;
+      if (ride) {
+        setActiveRide(ride);
+        if (ride.driver) {
           setDriverInfo({
-            id: data.ride.driver.id || data.ride.driverId,
-            name: data.ride.driver.fullName || 'Motorista',
-            photoUrl: formatPhotoUrl(data.ride.driver.profilePicture),
-            carModel: data.ride.driver.vehicleBrand,
-            carColor: data.ride.driver.vehicleColor,
-            licensePlate: data.ride.driver.vehiclePlate,
-            rating: data.ride.driver.ratingAverage,
-            phone: data.ride.driver.phone,
-            startOtp: data.ride.startOtp
+            id: ride.driver.id || ride.driverId,
+            name: ride.driver.name || ride.driver.fullName || 'Motorista',
+            photoUrl: formatPhotoUrl(ride.driver.profilePicture || ride.driver.avatarUrl),
+            carModel: ride.driver.vehicleBrand || ride.driver.carModel,
+            carColor: ride.driver.vehicleColor || ride.driver.carColor,
+            licensePlate: ride.driver.vehiclePlate || ride.driver.licensePlate,
+            rating: ride.driver.ratingAverage || ride.driver.rating || 5.0,
+            phone: ride.driver.phone,
+            startOtp: ride.startOtp
           });
         }
         setRideStatus('accepted');
       }
     };
 
-    const handleRideArrived = () => {
-      setRideStatus('arrived');
+    // 2. MOTORISTA PRÓXIMO (< 300m)
+    const handleDriverNearby = () => {
+      Alert.alert('📍 Motorista Próximo!', 'Seu motorista está a menos de 300 metros do local de embarque.');
     };
 
+    // 3. MOTORISTA CHEGOU AO LOCAL
+    const handleRideArrived = (data: any) => {
+      setRideStatus('arrived');
+      const otp = data?.startOtp || activeRide?.startOtp || '****';
+      Alert.alert(
+        '🚗 O Motorista Chegou!',
+        `Seu motorista está no local. Informe o código OTP abaixo ao embarcar:\n\n🔑 CÓDIGO: ${otp}`,
+        [{ text: 'Entendido' }]
+      );
+    };
+
+    // 4. VIAGEM INICIADA
     const handleRideStarted = () => {
       setRideStatus('in_progress');
     };
 
-    const handleRideCompleted = () => {
+    // 5. VIAGEM CONCLUÍDA
+    const handleRideCompleted = (data: any) => {
       setRideStatus('completed');
+      const price = data?.priceXof || activeRide?.priceXof || '';
+      Alert.alert(
+        '🏁 Viagem Concluída!',
+        `Você chegou ao seu destino.${price ? ` Total: ${price} XOF.` : ''}\nObrigado por viajar com o Nô Bai 245!`,
+        [{ text: 'Avaliar Motorista', onPress: () => console.log('Abrir modal de avaliação') }]
+      );
     };
 
+    // 6. CORRIDA CANCELADA
     const handleRideCancelled = (data: { reason?: string }) => {
       setRideStatus('cancelled');
       Alert.alert(
@@ -133,22 +156,39 @@ export const RideProvider = ({ children, passengerId }: { children: ReactNode; p
       resetRide();
     };
 
+    // 7. CHECAGEM DE SEGURANÇA (VEÍCULO PARADO > 5 MINUTOS)
+    const handleSafetyCheck = (data: { message?: string }) => {
+      Alert.alert(
+        '🛡️ Checagem de Segurança Nô Bai 245',
+        data?.message || 'Notamos que seu veículo está parado há algum tempo. Está tudo bem com você?',
+        [
+          { text: 'Estou Bem 👍', style: 'cancel' },
+          { text: 'Preciso de Ajuda (SOS) 🚨', style: 'destructive', onPress: () => Alert.alert('Alerta SOS', 'Acionando contatos de emergência e central de segurança...') }
+        ],
+        { cancelable: false }
+      );
+    };
+
     socket.on('ride:accepted', handleRideAccepted);
+    socket.on('ride:driver_nearby', handleDriverNearby);
     socket.on('ride:arrived', handleRideArrived);
     socket.on('ride:started', handleRideStarted);
     socket.on('ride:completed', handleRideCompleted);
     socket.on('ride:finished', handleRideCompleted);
     socket.on('ride:cancelled', handleRideCancelled);
+    socket.on('ride:safety_check', handleSafetyCheck);
 
     return () => {
       socket.off('ride:accepted', handleRideAccepted);
+      socket.off('ride:driver_nearby', handleDriverNearby);
       socket.off('ride:arrived', handleRideArrived);
       socket.off('ride:started', handleRideStarted);
       socket.off('ride:completed', handleRideCompleted);
       socket.off('ride:finished', handleRideCompleted);
       socket.off('ride:cancelled', handleRideCancelled);
+      socket.off('ride:safety_check', handleSafetyCheck);
     };
-  }, [passengerId, resetRide]);
+  }, [passengerId, resetRide, activeRide?.startOtp, activeRide?.priceXof]);
 
   const requestRide = async (ridePayload: any): Promise<boolean> => {
     try {
@@ -162,7 +202,7 @@ export const RideProvider = ({ children, passengerId }: { children: ReactNode; p
         const createdRide = response.data.ride;
         setActiveRide(createdRide);
         setRideStatus('searching');
-        
+
         if (socket.connected) {
           socket.emit('join_room', createdRide.id);
         }
