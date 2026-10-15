@@ -145,10 +145,19 @@ export function Profile() {
       if (selectedImage) {
         const filename = selectedImage.split('/').pop() || 'avatar.jpg';
         const match = /\.(\w+)$/.exec(filename);
-        const type = match ? `image/${match[1]}` : 'image/jpeg';
+        const ext = match ? match[1].toLowerCase() : 'jpg';
+        const type = ext === 'png' ? 'image/png' : 'image/jpeg';
+        const formattedUri = Platform.OS === 'android' ? selectedImage : selectedImage.replace('file://', '');
+
+        // Envia com a chave oficial profilePicture e fallback avatar
+        formData.append('profilePicture', {
+          uri: formattedUri,
+          name: filename,
+          type,
+        } as any);
 
         formData.append('avatar', {
-          uri: selectedImage,
+          uri: formattedUri,
           name: filename,
           type,
         } as any);
@@ -156,7 +165,6 @@ export function Profile() {
 
       const response = await api.put('/passengers/me', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
-        transformRequest: (data) => data,
       });
 
       const updatedPassenger = response.data?.passenger || response.data?.user;

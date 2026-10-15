@@ -557,38 +557,34 @@ export class DriverAuthController {
     }
   }
 
- // ==========================================
-  // 🗑️ EXCLUSÃO DE CONTA DO MOTORISTA (STATUS ENUM VALIDADOR)
-  // ==========================================
-  async deleteAccount(req: Request, res: Response): Promise<Response> {
-    try {
-      const driverId = (req as any).user?.id;
-      if (!driverId) {
-        return res.status(401).json({ success: false, error: 'Não autorizado.' });
-      }
+ async deleteAccount(req: Request, res: Response): Promise<Response> {
+  try {
+    const driverId = (req as any).user?.id;
+    if (!driverId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
 
-      const driver = await prisma.driver.findUnique({ where: { id: driverId } });
-      if (!driver) {
-        return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
-      }
+    const driver = await prisma.driver.findUnique({
+      where: { id: driverId },
+      include: { rides: { take: 1 }, transactions: { take: 1 } },
+    });
 
-      // 🛡️ Identificadores ultra-curtos (< 12 chars)
-      const stamp = Date.now().toString().slice(-8); 
-      
-      const delPhone = `d_${stamp}`;   // Ex: d_75829123
-      const delPlate = `p_${stamp}`;   // Ex: p_75829123
-      const delDoc   = `doc_${stamp}`; // Ex: doc_75829123
+    if (!driver) return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
 
+    const hasHistory = driver.rides.length > 0 || driver.transactions.length > 0;
+
+    if (!hasHistory) {
+      await prisma.driver.delete({ where: { id: driverId } });
+    } else {
+      const stamp = Date.now().toString().slice(-8);
       await prisma.driver.update({
         where: { id: driverId },
         data: {
-          phone: delPhone,
-          vehiclePlate: delPlate,
-          documentNumber: delDoc,
+          phone: `d_${stamp}`,
+          vehiclePlate: `p_${stamp}`,
+          documentNumber: `doc_${stamp}`,
           orangeNumber: null,
           mtnNumber: null,
           paymentAccountNumber: null,
-          status: 'SUSPENDED', // 👈 'SUSPENDED' é 100% compatível com o enum do PostgreSQL
+          status: 'SUSPENDED',
           isOnline: false,
           isAvailable: false,
           currentRideId: null,
@@ -597,38 +593,62 @@ export class DriverAuthController {
           deviceToken: null,
         },
       });
-
-      return res.status(200).json({
-        success: true,
-        message: 'Sua conta foi desativada e excluída com sucesso.',
-      });
-    } catch (error: any) {
-      console.error('❌ [EXCLUSÃO DE CONTA MOTORISTA]:', error?.message || error);
-      return res.status(500).json({ success: false, error: 'Erro ao processar exclusão de conta.' });
     }
-  } 
 
+    return res.status(200).json({ success: true, message: 'Sua conta foi excluída e seus dados foram liberados com sucesso.' });
+  } catch (error: any) {
+    console.error('❌ [EXCLUSÃO DE CONTA MOTORISTA]:', error?.message || error);
+    return res.status(500).json({ success: false, error: 'Erro ao processar exclusão de conta.' });
+  }
+}
   // ==========================================
-  // 📱 ATUALIZAR MOBILE MONEY
+  // 📱 ATUALIZAR MOBILE MONEY (ORANGE / MTN)
   // ==========================================
   async updatePaymentInfo(req: Request, res: Response): Promise<Response> {
     try {
       const driverId = (req as any).user?.id;
       if (!driverId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
 
-      const { mobileMoneyProvider, mobileMoneyNumber } = req.body;
+      const { 
+        mobileMoneyProvider, 
+        paymentProvider, 
+        provider,
+        mobileMoneyNumber, 
+        paymentAccountNumber, 
+        orangeNumber, 
+        mtnNumber 
+      } = req.body;
 
-      if (!mobileMoneyProvider || !mobileMoneyNumber) {
-        return res.status(400).json({ success: false, error: 'Selecione a operadora e informe o número de telefone.' });
+      const rawNumber = mobileMoneyNumber || paymentAccountNumber || orangeNumber || mtnNumber;
+      if (!rawNumber) {
+        return res.status(400).json({ success: false, error: 'Informe o número de telefone do Mobile Money.' });
       }
 
-      const formattedNumber = formatPhoneNumber(String(mobileMoneyNumber));
-
-      if (!isValidBissauPhone(formattedNumber)) {
-        return res.status(400).json({ success: false, error: 'O número da conta Mobile Money é inválido para Guiné-Bissau (+245).' });
+      // Remove caracteres não numéricos
+      let cleanDigits = String(rawNumber).replace(/\D/g, '');
+      if (cleanDigits.startsWith('245')) {
+        cleanDigits = cleanDigits.substring(3);
       }
 
-      const isOrange = String(mobileMoneyProvider).toUpperCase().includes('ORANGE');
+      if (cleanDigits.length !== 9) {
+        return res.status(400).json({ success: false, error: 'O número deve conter exatamente 9 dígitos (ex: 955800991).' });
+      }
+
+      const prefix = cleanDigits.substring(0, 2);
+      const provStr = String(mobileMoneyProvider || paymentProvider || provider || '').toUpperCase();
+      
+      const isOrange = provStr.includes('ORANGE') || prefix === '95';
+      const isMtn = provStr.includes('MTN') || ['96', '97'].includes(prefix);
+
+      if (isOrange && prefix !== '95') {
+        return res.status(400).json({ success: false, error: 'O número do Orange Money deve começar com 95.' });
+      }
+
+      if (isMtn && !['96', '97'].includes(prefix)) {
+        return res.status(400).json({ success: false, error: 'O número do MTN Mobile Money deve começar com 96 ou 97.' });
+      }
+
+      const formattedNumber = `+245${cleanDigits}`;
 
       const updateData = isOrange 
         ? { orangeNumber: formattedNumber, mtnNumber: null, paymentAccountNumber: formattedNumber }
@@ -638,6 +658,7 @@ export class DriverAuthController {
         where: { id: driverId },
         data: updateData,
         select: {
+          id: true,
           paymentAccountNumber: true,
           orangeNumber: true,
           mtnNumber: true
@@ -646,7 +667,7 @@ export class DriverAuthController {
 
       return res.status(200).json({ 
         success: true,
-        message: 'Conta de recebimento atualizada com sucesso!',
+        message: 'Conta de recebimento salva com sucesso!',
         paymentInfo: updatedDriver
       });
     } catch (error: any) {

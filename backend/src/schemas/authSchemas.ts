@@ -115,13 +115,12 @@ export const loginDriverSchema = z.object({
 });
 
 export const updateDriverPaymentSchema = z.object({
-  mobileMoneyProvider: z.enum(['ORANGE_MONEY', 'MTN_MOMO'] as const, {
-    message: 'Provedor deve ser ORANGE_MONEY ou MTN_MOMO.',
-  }),
-  mobileMoneyNumber: z
-    .string({ message: 'O número da conta é obrigatório.' })
-    .trim()
-    .min(7, 'O número da conta Mobile Money é obrigatório.'),
+  mobileMoneyProvider: z.string().trim().optional(),
+  mobileMoneyNumber: z.string().trim().optional(),
+  paymentProvider: z.string().trim().optional(),
+  paymentAccountNumber: z.string().trim().optional(),
+  orangeNumber: z.string().trim().optional(),
+  mtnNumber: z.string().trim().optional(),
 });
 
 export const requestProfileUpdateSchema = z

@@ -18,7 +18,13 @@ import { estimateRidePrice, getRideChatHistory, rateRide } from '../controllers/
 const passengerRoutes = Router();
 const authController = new PassengerAuthController();
 const ticketController = new TicketController();
-
+// 🛡️ Middleware flexível para aceitar qualquer nome de campo de avatar enviado pelo App Passageiro
+const handlePassengerAvatarUpload = upload.fields([
+  { name: 'profilePicture', maxCount: 1 },
+  { name: 'avatar', maxCount: 1 },
+  { name: 'photo', maxCount: 1 },
+  { name: 'file', maxCount: 1 },
+]);
 // -----------------------------------------------------------------------------
 // 🟢 ROTAS PÚBLICAS
 // -----------------------------------------------------------------------------
@@ -40,7 +46,7 @@ passengerRoutes.post('/auth/google/complete', validate(completeGoogleRegistratio
 passengerRoutes.use(authenticate, authorizeRole(['PASSENGER']));
 
 passengerRoutes.get('/profile', (req, res) => authController.getProfile(req, res));
-passengerRoutes.put('/me', upload.single('profilePicture'), (req, res) => authController.updateProfile(req, res));
+passengerRoutes.put('/me', handlePassengerAvatarUpload, (req, res) => authController.updateProfile(req, res));
 passengerRoutes.get('/finance', (req, res) => authController.getFinance(req, res));
 passengerRoutes.post('/wallet/recharge', (req, res) => authController.rechargeWallet(req, res));
 passengerRoutes.get('/rides', (req, res) => authController.getRideHistory(req, res));

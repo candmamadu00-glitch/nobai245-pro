@@ -382,7 +382,7 @@ export class PassengerAuthController {
     }
   }
 
-  // 7. ATUALIZAR PERFIL
+  // 7. ATUALIZAR PERFIL (SUPORTE A MULTIPLOS CAMPOS DE AVATAR)
   async updateProfile(req: Request, res: Response): Promise<Response> {
     try {
       const passengerId = (req as any).user?.id;
@@ -404,9 +404,13 @@ export class PassengerAuthController {
         dataToUpdate.email = cleanEmail;
       }
 
-      if (req.file) {
+      // 🛡️ Captura o arquivo via req.file ou req.files (aceita 'profilePicture', 'avatar', 'photo', 'file')
+      const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+      const uploadedFile = req.file || files?.['profilePicture']?.[0] || files?.['avatar']?.[0] || files?.['photo']?.[0] || files?.['file']?.[0];
+
+      if (uploadedFile) {
         const baseUrl = process.env.APP_URL ? process.env.APP_URL.replace(/\/$/, '') : `${req.protocol}://${req.get('host')}`;
-        const safeFilename = encodeURIComponent(req.file.filename);
+        const safeFilename = encodeURIComponent(uploadedFile.filename);
         dataToUpdate.profilePicture = `${baseUrl}/uploads/${safeFilename}`;
       }
 
@@ -430,6 +434,7 @@ export class PassengerAuthController {
         success: true,
         message: 'Perfil atualizado com sucesso!',
         passenger: updatedPassenger,
+        user: updatedPassenger,
       });
     } catch (error: any) {
       console.error('❌ [ATUALIZAR PERFIL PASSAGEIRO]:', error?.message || error);
@@ -1041,52 +1046,60 @@ export class PassengerAuthController {
   // 🗑️ 20. EXCLUIR / ANONIMIZAR CONTA DO PASSAGEIRO (VARCHAR 20 BLINDADO)
   // ==========================================
   async deleteAccount(req: Request, res: Response): Promise<Response> {
-    try {
-      const passengerId = (req as any).user?.id;
-      if (!passengerId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
+  try {
+    const passengerId = (req as any).user?.id;
+    if (!passengerId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
 
-      const activeRide = await prisma.ride.findFirst({
-        where: {
-          passengerId,
-          status: { in: ['PENDING', 'SEARCHING', 'AWAITING_PAYMENT', 'ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] }
-        }
-      });
-
-      if (activeRide) {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'Você possui uma corrida ativa ou em andamento. Finalize ou cancele a corrida antes de encerrar a conta.' 
-        });
+    const activeRide = await prisma.ride.findFirst({
+      where: {
+        passengerId,
+        status: { in: ['PENDING', 'SEARCHING', 'AWAITING_PAYMENT', 'ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] }
       }
+    });
 
-      // 🛡️ Identificador ultra-curto (< 14 caracteres) para caber no VarChar(20)
-      const stamp = Date.now().toString().slice(-8); 
+    if (activeRide) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Você possui uma corrida ativa ou em andamento. Finalize ou cancele a corrida antes de encerrar a conta.' 
+      });
+    }
+
+    const passenger = await prisma.passenger.findUnique({
+      where: { id: passengerId },
+      include: { rides: { take: 1 }, transactions: { take: 1 } }
+    });
+
+    if (!passenger) return res.status(404).json({ success: false, error: 'Passageiro não encontrado.' });
+
+    const hasHistory = passenger.rides.length > 0 || passenger.transactions.length > 0;
+
+    if (!hasHistory) {
+      await prisma.passenger.delete({ where: { id: passengerId } });
+    } else {
+      const stamp = Date.now().toString().slice(-8);
       const rand = Math.floor(100 + Math.random() * 900);
-      
-      const delPhone = `p_${stamp}_${rand}`; // Ex: p_75829123_123 (14 caracteres)
-      const delEmail = `del_${stamp}_${rand}@anon.com`;
-
       await prisma.passenger.update({
         where: { id: passengerId },
         data: {
-          status: 'SUSPENDED',
           fullName: 'Passageiro Anônimo',
-          phone: delPhone,
-          email: delEmail,
+          phone: `p_${stamp}_${rand}`,
+          email: `del_${stamp}_${rand}@anon.com`,
           documentNumber: null,
           paymentAccountNumber: null,
+          status: 'SUSPENDED',
+          deletedAt: new Date(),
           refreshTokenHash: null,
           deviceToken: null,
-          deletedAt: new Date(),
         },
       });
-
-      return res.status(200).json({ success: true, message: 'Conta e dados sensíveis desativados com sucesso.' });
-    } catch (error: any) {
-      console.error('❌ [EXCLUIR PASSAGEIRO]:', error?.message || error);
-      return res.status(500).json({ success: false, error: 'Erro ao solicitar encerramento da conta.' });
     }
+
+    return res.status(200).json({ success: true, message: 'Conta e dados sensíveis desativados com sucesso.' });
+  } catch (error: any) {
+    console.error('❌ [EXCLUIR PASSAGEIRO]:', error?.message || error);
+    return res.status(500).json({ success: false, error: 'Erro ao solicitar encerramento da conta.' });
   }
+}
 }
 
 const passengerAuthController = new PassengerAuthController();
