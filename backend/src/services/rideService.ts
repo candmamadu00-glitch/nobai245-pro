@@ -4,7 +4,7 @@ import { prisma } from '../lib/prisma';
 import { enqueuePayoutJob, enqueueRefundJob } from '../jobs/payoutQueue';
 import { chargePassengerMobileMoney, isValidBissauPhone, executeRideDisbursement } from './mobileMoneyService';
 import { sendPushNotification, PUSH_CHANNELS } from './pushNotifications';
-import { io } from '../server';
+import { getIo } from '../server';
 
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
 const IS_MOCK_MODE = process.env.ENABLE_MOCK_PAYMENTS === 'true' || process.env.NODE_ENV !== 'production';
@@ -19,11 +19,9 @@ export const FALLBACK_TARIFFS: Record<string, { baseFare: number; perKm: number;
   TOCA_TOCA: { baseFare: 500, perKm: 200, perMin: 30, commissionRate: 15 },
 };
 
-// -----------------------------------------------------------------------------
-// HELPER PARA EMISSÃO SEGURA DE SOCKET
-// -----------------------------------------------------------------------------
 function safeSocketEmit(room: string, event: string, payload: any) {
   try {
+    const io = getIo();
     if (io) {
       io.to(room).emit(event, payload);
     }
