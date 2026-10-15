@@ -166,7 +166,20 @@ function calculateDirectDistance(lat1: number, lon1: number, lat2: number, lon2:
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
+// 🧭 Calcula a direção real (0° a 360°) entre dois pontos GPS
+function calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const toDeg = (rad: number) => (rad * 180) / Math.PI;
 
+  const dLon = toRad(lon2 - lon1);
+  const y = Math.sin(dLon) * Math.cos(toRad(lat2));
+  const x =
+    Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+    Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
+
+  const brng = toDeg(Math.atan2(y, x));
+  return Math.round((brng + 360) % 360);
+}
 export function Home() {
   const { driver } = useAuth();
   const navigation = useNavigation<any>();
@@ -214,7 +227,7 @@ const lastSpokenInstructionRef = useRef<string>('');
   const activeRideIdRef = useRef(activeRideId);
   const isOnlineRef = useRef(isOnline);
   const serviceFiltersRef = useRef(serviceFilters);
-
+const lastDriverCoordsRef = useRef<{ latitude: number; longitude: number; heading: number } | null>(null);
   useEffect(() => { incomingRideRef.current = incomingRide; }, [incomingRide]);
   useEffect(() => { activeRideIdRef.current = activeRideId; }, [activeRideId]);
   useEffect(() => { isOnlineRef.current = isOnline; }, [isOnline]);
@@ -400,14 +413,18 @@ const lastSpokenInstructionRef = useRef<string>('');
   const updateCameraThrottled = useCallback((lng: number, lat: number) => {
     if (!isMapReady || !cameraRef.current) return;
     const now = Date.now();
-    if (now - lastCameraUpdateRef.current > 3000) {
+    if (now - lastCameraUpdateRef.current > 2000) {
       lastCameraUpdateRef.current = now;
       try {
-        cameraRef.current.setCamera({ centerCoordinate: [lng, lat], zoomLevel: 16, animationDuration: 1000 });
+        cameraRef.current.setCamera({ 
+          centerCoordinate: [lng, lat], 
+          heading: lastDriverCoordsRef.current?.heading || 0, // Acompanha as curvas do motorista
+          zoomLevel: 17, 
+          animationDuration: 1000 
+        });
       } catch (e) {}
     }
   }, [isMapReady]);
-
   const persistActiveRideState = async (rideData: IncomingRideData | null, state: RideState, rideId: string | null) => {
     try {
       if (rideData && rideId && state !== 'idle' && state !== 'completed') {
@@ -713,18 +730,61 @@ const translateToKriol = (text: string): string => {
         (newLocation) => {
           if (!isMountedRef.current) return;
           setLocation(newLocation);
-          updateCameraThrottled(newLocation.coords.longitude, newLocation.coords.latitude);
+
+          const { latitude, longitude } = newLocation.coords;
+          let calculatedHeading = newLocation.coords.heading;
+
+          // 🛡️ Se o celular não fornecer bússola válida (< 0 ou null), calcula pelo deslocamento
+          if (calculatedHeading == null || calculatedHeading < 0) {
+            if (lastDriverCoordsRef.current) {
+              const distKm = calculateDirectDistance(
+                lastDriverCoordsRef.current.latitude,
+                lastDriverCoordsRef.current.longitude,
+                latitude,
+                longitude
+              );
+
+              // Se moveu mais de 2 metros, calcula a nova direção
+              if (distKm * 1000 > 2) {
+                calculatedHeading = calculateBearing(
+                  lastDriverCoordsRef.current.latitude,
+                  lastDriverCoordsRef.current.longitude,
+                  latitude,
+                  longitude
+                );
+              } else {
+                // Se parado, mantêm a última direção conhecida
+                calculatedHeading = lastDriverCoordsRef.current.heading || 0;
+              }
+            } else {
+              calculatedHeading = 0;
+            }
+          }
+
+          // Atualiza a referência com a posição e direção tratada
+          lastDriverCoordsRef.current = { latitude, longitude, heading: calculatedHeading };
+
+          updateCameraThrottled(longitude, latitude);
+
+          // Transmite a localização com a direção exata para o servidor / passageiro
+          // Transmite a localização com a direção exata para o servidor / passageiro
           if (driver?.id && socket.connected) {
             socket.emit('driver:location_update', {
-              driverId: driver.id, rideId: activeRideIdRef.current || undefined,
-              latitude: newLocation.coords.latitude, longitude: newLocation.coords.longitude,
-              speed: newLocation.coords.speed || 0, heading: newLocation.coords.heading || 0
+              driverId: driver.id,
+              rideId: activeRideIdRef.current || undefined,
+              latitude,
+              longitude,
+              speed: Math.max(0, newLocation.coords.speed || 0),
+              heading: calculatedHeading,
             });
           }
-        }
-      );
-    } catch (e) { console.warn('⚠️ Erro watchPositionAsync:', e); }
-  };
+        } // 👈 Fecha o callback (newLocation) => {
+      ); // 👈 Fecha o Location.watchPositionAsync(
+    } catch (e) {
+      console.warn('⚠️ Erro watchPositionAsync:', e);
+    }
+  }; // 👈 Fecha a função startTrackingForState
+      
 
   async function startTracking() {
     if (driver?.status !== 'APPROVED') return Alert.alert('Conta em Análise', 'Aguarde aprovação de documentos.');

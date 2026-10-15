@@ -155,13 +155,47 @@ function calculateVehiclePrice(type: VehicleType, distanceKm: number | null): nu
   return Math.round(calculatedPrice / 50) * 50;
 }
 
+// 🛡️ Normalizador universal do tipo de veículo (COLOQUE AQUI)
+const normalizeVehicleType = (type?: string): string => {
+  if (!type) return 'particular';
+  const clean = type.toLowerCase().replace(/[-_]/g, '').trim();
+  if (clean.includes('motocarro')) return 'moto-carro';
+  if (clean.includes('moto')) return 'moto';
+  if (clean.includes('taxi')) return 'taxi';
+  if (clean.includes('toca')) return 'toca-toca';
+  return 'particular';
+};
+
+// 🖼️ Imagem oficial do Veículo para o Cartão de Corrida
+const getVehicleImage = (type?: string) => {
+  const norm = normalizeVehicleType(type);
+  switch (norm) {
+    case 'moto':
+      return require('../assets/vehicles/moto.png');
+    case 'moto-carro':
+      return require('../assets/vehicles/motocarro.jpg');
+    case 'taxi':
+      return require('../assets/vehicles/taxi_yellow.png');
+    case 'particular':
+    default:
+      return require('../assets/vehicles/carro_white.png');
+  }
+};
+
+// 🛵 Ícone do Veículo para o Marcador do Mapa (SUBSTITUIU O ANTIGO)
 const getVehicleIcon = (type?: string) => {
-  if (!type) return 'car';
-  const cleanType = type.toLowerCase().replace('-', '_').trim();
-  if (cleanType.includes('moto') && !cleanType.includes('carro')) return 'motorbike';
-  if (cleanType.includes('moto_carro') || cleanType.includes('motocarro')) return 'rickshaw';
-  if (cleanType.includes('taxi')) return 'taxi';
-  return 'car';
+  const norm = normalizeVehicleType(type);
+  switch (norm) {
+    case 'moto':
+      return 'motorbike';
+    case 'moto-carro':
+      return 'rickshaw';
+    case 'taxi':
+      return 'taxi';
+    case 'particular':
+    default:
+      return 'car';
+  }
 };
 
 const getVehicleColorHex = (colorName?: string) => {
@@ -457,56 +491,160 @@ export function Home() {
   }, [rideStatus, vehicleType]);
 
   const handleMapboxSearch = async (text: string) => {
-    setSearchQuery(text);
-    if (!text || text.trim().length < 2) {
-      setSearchResults([]);
-      return;
+  setSearchQuery(text);
+  if (!text || text.trim().length < 2) {
+    setSearchResults([]);
+    console.log('🔍 [BUSCA] Texto muito curto ou vazio. Pesquisa ignorada.');
+    return;
+  }
+
+  console.log(`\n==================================================`);
+  console.log(`🔍 [BUSCA INICIADA] Termo: "${text}"`);
+  console.log(`==================================================`);
+
+  const normalizedQuery = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  // 1️⃣ Busca rápida no catálogo local
+  const localMatches = GUINEA_BISSAU_BAIRROS.filter(item => {
+    const normDesc = item.description.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    return normDesc.includes(normalizedQuery);
+  });
+  console.log(`📍 [1. CATÁLOGO LOCAL] Encontrados: ${localMatches.length} locais no banco interno.`);
+
+  setIsSearchingMapbox(true);
+
+  try {
+    const photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&lat=${BISSAU_CENTER.latitude}&lon=${BISSAU_CENTER.longitude}&zoom=12&limit=10&lang=pt`;
+    const osmUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(text)}&countrycodes=gw&format=json&addressdetails=1&limit=10&accept-language=pt`;
+    const mapboxUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(text)}.json?country=gw&proximity=${BISSAU_CENTER.longitude},${BISSAU_CENTER.latitude}&autocomplete=true&limit=10&language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`;
+
+    console.log('📡 [REQUISIÇÕES] Disparando consultas para Photon, OpenStreetMap e Mapbox...');
+
+    const [resPhoton, resOsm, resMapbox] = await Promise.allSettled([
+      fetch(photonUrl),
+      fetch(osmUrl, {
+        headers: {
+          'User-Agent': 'NoBai245-Passenger-App/1.0 (contact@nobai245.com)',
+          'Accept-Language': 'pt,fr,en'
+        }
+      }),
+      fetch(mapboxUrl)
+    ]);
+
+    let apiResults: MapboxGeocodingFeature[] = [];
+
+    // 📌 Motor 1: Photon OSM (Avenidas, Ruas e Estabelecimentos)
+    if (resPhoton.status === 'fulfilled') {
+      if (resPhoton.value.ok) {
+        const photonData = await resPhoton.value.json();
+        const features = photonData?.features || [];
+        console.log(`✅ [PHOTON OSM] Status 200 OK | Encontrados: ${features.length} itens`);
+
+        const photonFeatures = features
+          .filter((f: any) => {
+            const country = f.properties?.country || '';
+            return !country || country.toLowerCase().includes('guine') || country.toLowerCase().includes('bissau');
+          })
+          .map((f: any) => {
+            const p = f.properties;
+            const name = p.name || p.street || p.district || 'Local';
+            const city = p.city || p.district || p.county || 'Bissau';
+            const fullDesc = p.street && p.name && p.name !== p.street 
+              ? `${p.name}, ${p.street} (${city})`
+              : `${name}, ${city}`;
+
+            return {
+              id: `photon_${p.osm_id || Math.random()}`,
+              description: fullDesc.replace(/, Guiné-Bissau/gi, '').replace(/, Guinea-Bissau/gi, ''),
+              longitude: f.geometry.coordinates[0],
+              latitude: f.geometry.coordinates[1],
+              isLocalBairro: false,
+            };
+          });
+        apiResults.push(...photonFeatures);
+      } else {
+        console.warn(`❌ [PHOTON OSM] Falha na resposta - Status Code: ${resPhoton.value.status}`);
+      }
+    } else {
+      console.error(`❌ [PHOTON OSM] Erro de conexão/rede:`, resPhoton.reason);
     }
 
-    const normalizedQuery = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    // 📌 Motor 2: OpenStreetMap Nominatim
+    if (resOsm.status === 'fulfilled') {
+      if (resOsm.value.ok) {
+        const osmData = await resOsm.value.json();
+        const count = Array.isArray(osmData) ? osmData.length : 0;
+        console.log(`✅ [NOMINATIM OSM] Status 200 OK | Encontrados: ${count} itens`);
 
-    const localMatches = GUINEA_BISSAU_BAIRROS.filter(item => {
-      const normDesc = item.description.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-      return normDesc.includes(normalizedQuery);
-    });
+        if (Array.isArray(osmData)) {
+          const osmFeatures = osmData.map((item: any) => ({
+            id: `osm_${item.place_id}`,
+            description: (item.display_name || '').split(',').slice(0, 3).join(', ').replace(/, Guiné-Bissau/gi, ''),
+            longitude: parseFloat(item.lon),
+            latitude: parseFloat(item.lat),
+            isLocalBairro: false,
+          }));
+          apiResults.push(...osmFeatures);
+        }
+      } else {
+        console.warn(`❌ [NOMINATIM OSM] Falha na resposta - Status Code: ${resOsm.value.status}`);
+      }
+    } else {
+      console.error(`❌ [NOMINATIM OSM] Erro de conexão/rede:`, resOsm.reason);
+    }
 
-    setIsSearchingMapbox(true);
+    // 📌 Motor 3: Mapbox Geocoding
+    if (resMapbox.status === 'fulfilled') {
+      if (resMapbox.value.ok) {
+        const mapboxData = await resMapbox.value.json();
+        const features = mapboxData?.features || [];
+        console.log(`✅ [MAPBOX API] Status 200 OK | Encontrados: ${features.length} itens`);
 
-    try {
-      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(text)}.json?country=gw&bbox=${BISSAU_BBOX}&proximity=${BISSAU_CENTER.longitude},${BISSAU_CENTER.latitude}&types=neighborhood,locality,place,address,poi&autocomplete=true&language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`;
-      const res = await fetch(url);
-
-      let apiResults: MapboxGeocodingFeature[] = [];
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data?.features && Array.isArray(data.features)) {
-          apiResults = data.features.map((f: any) => ({
+        if (Array.isArray(features)) {
+          const mapboxFeatures = features.map((f: any) => ({
             id: f.id,
-            description: f.place_name,
+            description: (f.place_name || f.text || '').replace(/, Guiné-Bissau/gi, ''),
             longitude: f.center[0],
             latitude: f.center[1],
             isLocalBairro: false,
           }));
+          apiResults.push(...mapboxFeatures);
         }
+      } else {
+        console.warn(`❌ [MAPBOX API] Falha na resposta - Status Code: ${resMapbox.value.status}`);
       }
-
-      if (isMountedRef.current) {
-        const combined = [...localMatches, ...apiResults];
-        const uniqueResults = combined.filter((v, i, a) => a.findIndex(t => t.description.toLowerCase() === v.description.toLowerCase()) === i);
-        setSearchResults(uniqueResults);
-      }
-    } catch (e) {
-      if (isMountedRef.current) {
-        setSearchResults(localMatches);
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setIsSearchingMapbox(false);
-      }
+    } else {
+      console.error(`❌ [MAPBOX API] Erro de conexão/rede:`, resMapbox.reason);
     }
-  };
 
+    if (isMountedRef.current) {
+      const combined = [...localMatches, ...apiResults];
+      // Elimina duplicados exatos e registros sem coordenadas
+      const uniqueResults = combined.filter((v, i, a) => 
+        v.latitude && v.longitude &&
+        a.findIndex(t => t.description.toLowerCase().trim() === v.description.toLowerCase().trim()) === i
+      );
+
+      console.log(`📊 [RESULTADO DA BUSCA] Total final unificado: ${uniqueResults.length} locais.`);
+      if (uniqueResults.length > 0) {
+        console.log('📌 Top 3 resultados:', uniqueResults.slice(0, 3).map(r => r.description));
+      } else {
+        console.warn('⚠️ Nenhuma das APIs retornou resultados para esta palavra. Exibindo fallback local.');
+      }
+
+      setSearchResults(uniqueResults.length > 0 ? uniqueResults : localMatches);
+    }
+  } catch (e) {
+    console.error('💥 [ERRO CRÍTICO NA BUSCA]:', e);
+    if (isMountedRef.current) {
+      setSearchResults(localMatches);
+    }
+  } finally {
+    if (isMountedRef.current) {
+      setIsSearchingMapbox(false);
+    }
+  }
+};
   const getCurrentLocationWithFallback = useCallback(async () => {
     try {
       const isEnabled = await Location.hasServicesEnabledAsync();
@@ -664,20 +802,26 @@ export function Home() {
     return () => backHandlerSubscription.remove();
   }, [isMenuVisible, isChatVisible, isSearchModalVisible, showCancelModal, showRatingModal, bookingStep, rideStatus]);
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', (nextAppState) => {
-      if (nextAppState === 'active') {
-        getCurrentLocationWithFallback();
-        
-        if (!socket.connected) {
-          connectPassengerSocket();
-        } else {
-          socket.emit('passenger:request_state');
-        }
+  const subscription = AppState.addEventListener('change', (nextAppState) => {
+    if (nextAppState === 'active') {
+      getCurrentLocationWithFallback();
+      
+      if (!socket.connected) {
+        connectPassengerSocket();
+        // 🛡️ Garante que solicita o estado assim que a reconexão for concluída
+        setTimeout(() => {
+          if (socket.connected) {
+            socket.emit('passenger:request_state');
+          }
+        }, 800);
+      } else {
+        socket.emit('passenger:request_state');
       }
-    });
-    return () => subscription.remove();
-  }, [getCurrentLocationWithFallback]);
-
+    }
+  });
+  
+  return () => subscription.remove();
+}, [getCurrentLocationWithFallback]);
   const resetRideState = useCallback(() => {
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     persistRideState(null, 'idle');
@@ -730,75 +874,79 @@ export function Home() {
     };
 
     const handleStateRecovered = async (data: any) => {
-      if (!isMountedRef.current || !data) return;
-      try {
-        if (!data?.hasActiveRide) {
-          setRideStatus((currentStatus) => {
-            if (currentStatus === 'searching') return 'searching';
-            return 'idle';
-          });
-
-          await persistRideState(null, 'idle');
-          setActiveRideId(null);
-          return;
+  if (!isMountedRef.current || !data) return;
+  try {
+    // 🛡️ Se o servidor diz que não há corrida ativa, só limpa se o estado local também não tiver corrida aceita/em andamento
+    if (!data?.hasActiveRide) {
+      setRideStatus((currentStatus) => {
+        // Não limpa a tela se o passageiro estiver numa corrida ativa
+        if (['accepted', 'arrived', 'in_progress', 'searching'].includes(currentStatus)) {
+          return currentStatus;
         }
+        return 'idle';
+      });
+      return;
+    }
 
-        if (data?.hasActiveRide && data?.ride) {
-          if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-          setActiveRideId(data.ride.id);
+    if (data?.hasActiveRide && data?.ride) {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      setActiveRideId(data.ride.id);
+      activeRideIdRef.current = data.ride.id;
 
-          if (typeof data.ride.originLat === 'number' && typeof data.ride.originLng === 'number') {
-            const lat = Number(data.ride.originLat);
-            const lng = Number(data.ride.originLng);
-            if (!isNaN(lat) && !isNaN(lng)) setPickupCoords({ latitude: lat, longitude: lng });
-            if (data.ride.originAddress) setPickupAddress(data.ride.originAddress);
-          }
-
-          if (typeof data.ride.destinationLat === 'number' && typeof data.ride.destinationLng === 'number') {
-            const lat = Number(data.ride.destinationLat);
-            const lng = Number(data.ride.destinationLng);
-            if (!isNaN(lat) && !isNaN(lng)) setDropoffCoords({ latitude: lat, longitude: lng });
-            if (data.ride.destinationAddress) setDropoffAddress(data.ride.destinationAddress);
-          }
-          
-          if (data.ride.driverId) {
-            const otpCode = String(data.ride.startOtp || data.ride.otpPin || data.ride.pin || '');
-            setStartOtp(otpCode);
-            setDriverInfo({ 
-              id: data.ride.driverId, 
-              name: data.ride.driverName || 'Motorista',
-              photoUrl: formatPhotoUrl(data.ride.driverPhoto), 
-              profilePicture: formatPhotoUrl(data.ride.driverPhoto),
-              carModel: data.ride.carModel || data.ride.vehicleModel || t('standard_vehicle', 'Veículo Padrão'),
-              carColor: data.ride.carColor || data.ride.vehicleColor || t('color_not_specified', 'Cor não informada'), 
-              vehicleType: data.ride.vehicleType || data.ride.vehicle_type,
-              licensePlate: data.ride.licensePlate || data.ride.plate,
-              rating: data.ride.driverRating || 5.0,
-              phone: data.ride.driverPhone,
-              startOtp: otpCode,
-            });
-          }
-
-          const statusMap: Record<string, RideStatus> = {
-            'SEARCHING': 'searching',
-            'ACCEPTED': 'accepted',
-            'ARRIVED': 'arrived',
-            'IN_PROGRESS': 'in_progress'
-          };
-          
-          if (data.ride.status && statusMap[data.ride.status]) {
-            const newStatus = statusMap[data.ride.status];
-            setRideStatus(newStatus);
-            persistRideState(data.ride.id, newStatus);
-          }
-          
-          socket.emit('passenger:rejoin_ride', { rideId: data.ride.id, driverId: data.ride.driverId });
-        }
-      } catch (err) {
-        console.error('Erro ao processar recuperação de estado:', err);
+      // Restaura Coordenadas de Embarque
+      if (typeof data.ride.originLat === 'number' && typeof data.ride.originLng === 'number') {
+        const lat = Number(data.ride.originLat);
+        const lng = Number(data.ride.originLng);
+        if (!isNaN(lat) && !isNaN(lng)) setPickupCoords({ latitude: lat, longitude: lng });
+        if (data.ride.originAddress) setPickupAddress(data.ride.originAddress);
       }
-    };
 
+      // Restaura Coordenadas de Destino
+      if (typeof data.ride.destinationLat === 'number' && typeof data.ride.destinationLng === 'number') {
+        const lat = Number(data.ride.destinationLat);
+        const lng = Number(data.ride.destinationLng);
+        if (!isNaN(lat) && !isNaN(lng)) setDropoffCoords({ latitude: lat, longitude: lng });
+        if (data.ride.destinationAddress) setDropoffAddress(data.ride.destinationAddress);
+      }
+      
+      // Restaura Dados do Motorista e Veículo
+      if (data.ride.driverId) {
+        const otpCode = String(data.ride.startOtp || data.ride.otpPin || data.ride.pin || '');
+        setStartOtp(otpCode);
+        setDriverInfo({ 
+          id: data.ride.driverId, 
+          name: data.ride.driverName || 'Motorista',
+          photoUrl: formatPhotoUrl(data.ride.driverPhoto), 
+          profilePicture: formatPhotoUrl(data.ride.driverPhoto),
+          carModel: data.ride.carModel || data.ride.vehicleModel || t('standard_vehicle', 'Veículo Padrão'),
+          carColor: data.ride.carColor || data.ride.vehicleColor || t('color_not_specified', 'Cor não informada'), 
+          vehicleType: data.ride.vehicleType || data.ride.vehicle_type,
+          licensePlate: data.ride.licensePlate || data.ride.plate,
+          rating: data.ride.driverRating || 5.0,
+          phone: data.ride.driverPhone,
+          startOtp: otpCode,
+        });
+      }
+
+      const statusMap: Record<string, RideStatus> = {
+        'SEARCHING': 'searching',
+        'ACCEPTED': 'accepted',
+        'ARRIVED': 'arrived',
+        'IN_PROGRESS': 'in_progress'
+      };
+      
+      if (data.ride.status && statusMap[data.ride.status]) {
+        const newStatus = statusMap[data.ride.status];
+        setRideStatus(newStatus);
+        persistRideState(data.ride.id, newStatus);
+      }
+      
+      socket.emit('passenger:rejoin_ride', { rideId: data.ride.id, driverId: data.ride.driverId });
+    }
+  } catch (err) {
+    console.error('Erro ao processar recuperação de estado:', err);
+  }
+};
     const handleDriverPosition = (data: any) => {
       if (!isMountedRef.current || !data || data.latitude == null || data.longitude == null) return;
       const lat = Number(data.latitude);
@@ -1445,7 +1593,7 @@ const handleSosPress = () => {
           </Mapbox.PointAnnotation>
         )}
 
-        {/* MOTORISTA */}
+        {/* MOTORISTA EM MOVIMENTO */}
         {driverLocation?.latitude != null && driverLocation?.longitude != null && (
           <Mapbox.PointAnnotation
             id="driverMarker"
@@ -1457,17 +1605,20 @@ const handleSosPress = () => {
                 { 
                   backgroundColor: getVehicleColorHex(driverInfo?.carColor),
                   borderWidth: 2,
-                  borderColor: driverInfo?.carColor?.toLowerCase().includes('branc') ? '#94A3B8' : '#FFFFFF'
+                  borderColor: driverInfo?.carColor?.toLowerCase().includes('branc') ? '#94A3B8' : '#FFFFFF',
+                  // 🔄 Rotaciona o veículo na direção real em que o motorista está dirigindo
+                  transform: [{ rotate: `${driverLocation.heading || 0}deg` }]
                 }
               ]}
             >
               <MaterialCommunityIcons 
                 name={getVehicleIcon(driverInfo?.vehicleType || vehicleType) as any} 
-                size={20} 
+                size={22} 
                 color={driverInfo?.carColor?.toLowerCase().includes('branc') ? '#0F172A' : '#FFFFFF'} 
               />
             </View>
           </Mapbox.PointAnnotation>
+        
         )}
       </Mapbox.MapView>
 
@@ -1766,11 +1917,7 @@ const handleSosPress = () => {
 
                 <View style={styles.vehicleShowcase}>
                   <Image 
-                    source={
-                      VEHICLE_OPTIONS.find(v => 
-                        v.id.toLowerCase() === (driverInfo?.vehicleType || 'particular').toLowerCase().replace('_', '-')
-                      )?.image || require('../assets/vehicles/carro_white.png')
-                    } 
+                    source={getVehicleImage(driverInfo?.vehicleType || vehicleType)} 
                     style={styles.showcaseVehicleImg} 
                     resizeMode="contain" 
                   />
@@ -1941,10 +2088,18 @@ const handleSosPress = () => {
       </Modal>
 
       {/* MODAL DE PAGAMENTO MOBILE MONEY */}
-      <Modal visible={isPaymentModalVisible} transparent animationType="slide" onRequestClose={() => !isProcessingPayment && setIsPaymentModalVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
+      <Modal 
+        visible={isPaymentModalVisible} 
+        transparent 
+        animationType="slide" 
+        onRequestClose={() => !isProcessingPayment && setIsPaymentModalVisible(false)}
+      >
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+          style={{ flex: 1 }}
+        >
           <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-            <View style={styles.modalOverlayInner}>
+            <View style={styles.modalOverlay}>
               <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
                 <View style={[styles.paymentModalCard, { paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
                   <View style={[styles.operatorHeader, { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#FFCC00' }]}>
@@ -1954,7 +2109,12 @@ const handleSosPress = () => {
                     </Text>
                   </View>
 
-                  <ScrollView style={styles.paymentModalBody} contentContainerStyle={{ paddingBottom: 10 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                  <ScrollView 
+                    style={styles.paymentModalBody} 
+                    contentContainerStyle={{ flexGrow: 1, paddingBottom: 16 }} 
+                    showsVerticalScrollIndicator={false} 
+                    keyboardShouldPersistTaps="handled"
+                  >
                     <Text style={styles.paymentModalSubtitle}>
                       {t('ussd_push_instruction', 'Confirme seu número. Você receberá um alerta seguro da operadora no seu celular para digitar seu PIN.')}
                     </Text>
@@ -1968,18 +2128,24 @@ const handleSosPress = () => {
 
                     <Text style={styles.inputLabel}>{t('mobile_money_account', 'Número da Conta Mobile Money')}</Text>
                     <View style={styles.phoneInputContainer}>
-                      <Text style={styles.countryCode}>+245</Text>
                       <TextInput
-                        style={styles.phoneInput}
+                        style={[styles.phoneInput, { paddingLeft: 12 }]}
                         value={paymentPhone}
                         onChangeText={setPaymentPhone}
                         keyboardType="phone-pad"
                         editable={!isProcessingPayment}
+                        placeholder={t('phone_number_placeholder', 'Ex: 955000000')}
                         placeholderTextColor="#64748B"
                       />
                     </View>
+
                     <View style={styles.modalActionsRow}>
-                      <TouchableOpacity style={styles.cancelModalBtn} disabled={isProcessingPayment} onPress={() => setIsPaymentModalVisible(false)} activeOpacity={0.8}>
+                      <TouchableOpacity 
+                        style={styles.cancelModalBtn} 
+                        disabled={isProcessingPayment} 
+                        onPress={() => setIsPaymentModalVisible(false)} 
+                        activeOpacity={0.8}
+                      >
                         <Text style={styles.cancelModalBtnText}>{t('back_btn', 'Cancelar')}</Text>
                       </TouchableOpacity>
 
@@ -1989,7 +2155,11 @@ const handleSosPress = () => {
                         onPress={confirmPaymentAndRide}
                         activeOpacity={0.85}
                       >
-                        {isProcessingPayment ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Text style={styles.confirmModalBtnText}>{t('confirm_payment_btn', 'Confirmar Solicitação')}</Text>}
+                        {isProcessingPayment ? (
+                          <ActivityIndicator color="#FFFFFF" size="small" />
+                        ) : (
+                          <Text style={styles.confirmModalBtnText}>{t('confirm_payment_btn', 'Confirmar Solicitação')}</Text>
+                        )}
                       </TouchableOpacity>
                     </View>
                   </ScrollView>
@@ -1999,7 +2169,6 @@ const handleSosPress = () => {
           </TouchableWithoutFeedback>
         </KeyboardAvoidingView>
       </Modal>
-
       {/* MENU LATERAL */}
       <Modal visible={isMenuVisible} animationType="fade" transparent onRequestClose={() => setIsMenuVisible(false)}>
         <TouchableOpacity style={styles.menuOverlay} activeOpacity={1} onPress={() => setIsMenuVisible(false)}>
