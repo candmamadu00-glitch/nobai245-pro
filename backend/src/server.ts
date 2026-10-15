@@ -602,16 +602,25 @@ io.on('connection', (socket) => {
     socket.join(userId);
     socket.join(`user_${userId}`);
     socket.join(`passenger_${userId}`);
+    socket.join(`passenger:${userId}`); // Suporte a ambas as notações
   }
+
+  // 📌 HANDLER 'join_room': Permite ao app entrar nas salas dinâmicas da corrida (rideId)
+  socket.on('join_room', (roomName: string) => {
+    if (roomName) {
+      socket.join(roomName);
+      console.log(`📡 [SOCKET ROOM] Cliente ${socket.id} entrou na sala: ${roomName}`);
+    }
+  });
 
   handleSocketEvent(socket, 'passenger:rejoin_ride', async (data) => {
     const { rideId } = data || {};
     if (isUuid(rideId)) {
       socket.join(rideId);
-      console.log(`📡 [PASSENGER REJOINED] User ${socket.data.user.id} entrou na sala ${rideId}`);
+      console.log(`📡 [PASSENGER REJOINED] User ${socket.data.user?.id} entrou na sala ${rideId}`);
     }
   });
-
+});
   // --- DESCONEXÃO (GRACE PERIOD MOTORISTA 15s E LIMPEZA DE MEMÓRIA) ---
   socket.on('disconnect', () => {
     console.log(`[-] Cliente desconectado: ${socket.id} (ID: ${socket.data.user?.id})`);
