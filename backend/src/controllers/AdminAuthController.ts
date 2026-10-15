@@ -12,53 +12,98 @@ if (!JWT_SECRET) {
 }
 
 export class AdminAuthController {
-  // 🗑️ Soft Delete de Motorista pelo Admin
+  // 🗑️ Soft/Hard Delete de Motorista pelo Admin com Liberação de Credenciais
   async deleteDriver(req: Request, res: Response) {
     try {
       const { driverId } = req.params;
 
-      const driver = await prisma.driver.findUnique({ where: { id: String(driverId) } });
+      const driver = await prisma.driver.findUnique({
+        where: { id: String(driverId) },
+        include: { rides: { take: 1 }, transactions: { take: 1 } }
+      });
+
       if (!driver) {
         return res.status(404).json({ error: 'NOT_FOUND', message: 'Motorista não encontrado.' });
       }
 
-      await prisma.driver.update({
-        where: { id: String(driverId) },
-        data: {
-          deletedAt: new Date(),
-          isOnline: false,
-          isAvailable: false,
-          status: 'SUSPENDED'
-        }
-      });
+      const hasHistory = driver.rides.length > 0 || driver.transactions.length > 0;
 
-      return res.status(200).json({ message: 'Conta do motorista desativada/excluída com sucesso.' });
+      if (!hasHistory) {
+        // 🟢 Sem histórico: Remoção definitiva da base de dados
+        await prisma.driver.delete({ where: { id: String(driverId) } });
+      } else {
+        // 🟢 Com histórico: Anonimiza dados únicos para liberar telefone, placa e documento
+        const stamp = Date.now().toString().slice(-8);
+        await prisma.driver.update({
+          where: { id: String(driverId) },
+          data: {
+            phone: `d_${stamp}`,
+            vehiclePlate: `p_${stamp}`,
+            documentNumber: `doc_${stamp}`,
+            orangeNumber: null,
+            mtnNumber: null,
+            paymentAccountNumber: null,
+            status: 'SUSPENDED',
+            isOnline: false,
+            isAvailable: false,
+            currentRideId: null,
+            deletedAt: new Date(),
+            refreshTokenHash: null,
+            deviceToken: null
+          }
+        });
+      }
+
+      return res.status(200).json({ message: 'Conta do motorista excluída e credenciais liberadas com sucesso.' });
     } catch (error) {
-      return res.status(500).json({ error: 'SERVER_ERROR', message: 'Erro ao desativar motorista.' });
+      console.error('[ERRO AO EXCLUIR MOTORISTA]:', error);
+      return res.status(500).json({ error: 'SERVER_ERROR', message: 'Erro ao desativar/excluir motorista.' });
     }
   }
 
-  // 🗑️ Soft Delete de Passageiro pelo Admin
+  // 🗑️ Soft/Hard Delete de Passageiro pelo Admin com Liberação de Telefone
   async deletePassenger(req: Request, res: Response) {
     try {
       const { passengerId } = req.params;
 
-      const passenger = await prisma.passenger.findUnique({ where: { id: String(passengerId) } });
+      const passenger = await prisma.passenger.findUnique({
+        where: { id: String(passengerId) },
+        include: { rides: { take: 1 }, transactions: { take: 1 } }
+      });
+
       if (!passenger) {
         return res.status(404).json({ error: 'NOT_FOUND', message: 'Passageiro não encontrado.' });
       }
 
-      await prisma.passenger.update({
-        where: { id: String(passengerId) },
-        data: {
-          deletedAt: new Date(),
-          status: 'SUSPENDED'
-        }
-      });
+      const hasHistory = passenger.rides.length > 0 || passenger.transactions.length > 0;
 
-      return res.status(200).json({ message: 'Conta do passageiro desativada/excluída com sucesso.' });
+      if (!hasHistory) {
+        // 🟢 Sem histórico: Remoção definitiva da base de dados
+        await prisma.passenger.delete({ where: { id: String(passengerId) } });
+      } else {
+        // 🟢 Com histórico: Anonimiza telefone e e-mail para liberar cadastro futuro
+        const stamp = Date.now().toString().slice(-8);
+        const rand = Math.floor(100 + Math.random() * 900);
+        await prisma.passenger.update({
+          where: { id: String(passengerId) },
+          data: {
+            fullName: 'Passageiro Anônimo',
+            phone: `p_${stamp}_${rand}`,
+            email: `del_${stamp}_${rand}@anon.com`,
+            documentNumber: null,
+            paymentAccountNumber: null,
+            status: 'SUSPENDED',
+            deletedAt: new Date(),
+            refreshTokenHash: null,
+            deviceToken: null
+          }
+        });
+      }
+
+      return res.status(200).json({ message: 'Conta do passageiro excluída e telefone liberado com sucesso.' });
     } catch (error) {
-      return res.status(500).json({ error: 'SERVER_ERROR', message: 'Erro ao desativar passageiro.' });
+      console.error('[ERRO AO EXCLUIR PASSAGEIRO]:', error);
+      return res.status(500).json({ error: 'SERVER_ERROR', message: 'Erro ao desativar/excluir passageiro.' });
     }
   }
 
@@ -83,7 +128,7 @@ export class AdminAuthController {
   async reviewAccountDeletionRequest(req: Request, res: Response) {
     try {
       const { requestId } = req.params;
-      const { status } = req.body; // 'APPROVED' ou 'REJECTED'
+      const { status } = req.body;
 
       const deletionReq = await prisma.accountDeletionRequest.findUnique({ where: { id: String(requestId) } });
       if (!deletionReq) {
@@ -91,17 +136,66 @@ export class AdminAuthController {
       }
 
       if (status === 'APPROVED') {
+        const stamp = Date.now().toString().slice(-8);
+        const rand = Math.floor(100 + Math.random() * 900);
+
         if (deletionReq.passengerId) {
-          await prisma.passenger.update({
+          const passenger = await prisma.passenger.findUnique({
             where: { id: deletionReq.passengerId },
-            data: { deletedAt: new Date(), status: 'SUSPENDED' }
+            include: { rides: { take: 1 }, transactions: { take: 1 } }
           });
+          if (passenger) {
+            const hasHistory = passenger.rides.length > 0 || passenger.transactions.length > 0;
+            if (!hasHistory) {
+              await prisma.passenger.delete({ where: { id: deletionReq.passengerId } });
+            } else {
+              await prisma.passenger.update({
+                where: { id: deletionReq.passengerId },
+                data: {
+                  deletedAt: new Date(),
+                  status: 'SUSPENDED',
+                  fullName: 'Passageiro Anônimo',
+                  phone: `p_${stamp}_${rand}`,
+                  email: `del_${stamp}_${rand}@anon.com`,
+                  documentNumber: null,
+                  paymentAccountNumber: null,
+                  refreshTokenHash: null,
+                  deviceToken: null
+                }
+              });
+            }
+          }
         }
+
         if (deletionReq.driverId) {
-          await prisma.driver.update({
+          const driver = await prisma.driver.findUnique({
             where: { id: deletionReq.driverId },
-            data: { deletedAt: new Date(), status: 'SUSPENDED', isOnline: false }
+            include: { rides: { take: 1 }, transactions: { take: 1 } }
           });
+          if (driver) {
+            const hasHistory = driver.rides.length > 0 || driver.transactions.length > 0;
+            if (!hasHistory) {
+              await prisma.driver.delete({ where: { id: deletionReq.driverId } });
+            } else {
+              await prisma.driver.update({
+                where: { id: deletionReq.driverId },
+                data: {
+                  deletedAt: new Date(),
+                  status: 'SUSPENDED',
+                  isOnline: false,
+                  isAvailable: false,
+                  phone: `d_${stamp}`,
+                  vehiclePlate: `p_${stamp}`,
+                  documentNumber: `doc_${stamp}`,
+                  orangeNumber: null,
+                  mtnNumber: null,
+                  paymentAccountNumber: null,
+                  refreshTokenHash: null,
+                  deviceToken: null
+                }
+              });
+            }
+          }
         }
       }
 
@@ -112,11 +206,12 @@ export class AdminAuthController {
 
       return res.status(200).json(updated);
     } catch (error) {
+      console.error('[ERRO AO REVISAR SOLICITAÇÃO DE DELEÇÃO]:', error);
       return res.status(500).json({ error: 'SERVER_ERROR', message: 'Erro ao processar solicitação.' });
     }
   }
 
-  // 🛡️ 1. REGISTRO DO PRIMEIRO ADMINISTRADOR (COM BLOQUEIO DE SEGURANÇA)
+  // 🛡️ 1. REGISTRO DO PRIMEIRO ADMINISTRADOR
   async register(req: Request, res: Response): Promise<Response> {
     try {
       const { name, email, password } = req.body;
@@ -209,13 +304,16 @@ export class AdminAuthController {
     }
   }
 
-  // 📋 3. LISTAR MOTORISTAS (DADOS COMPLETOS E SINCRONIZADOS)
+  // 📋 3. LISTAR MOTORISTAS (FILTRANDO CONTAS EXCLUÍDAS)
   async listDrivers(req: Request, res: Response): Promise<Response> {
     try {
       const { status } = req.query;
       
       const drivers = await prisma.driver.findMany({
-        where: status ? { status: status as DriverStatus } : {},
+        where: {
+          deletedAt: null, // 🛡️ Oculta contas excluídas da lista do painel
+          ...(status ? { status: status as DriverStatus } : {})
+        },
         orderBy: { createdAt: 'desc' },
         select: {
           id: true,
@@ -224,10 +322,10 @@ export class AdminAuthController {
           vehicleType: true,
           vehiclePlate: true,
           vehicleBrand: true,
-          vehicleColor: true,      // ✅ Adicionado
-          vehicleSeats: true,      // ✅ Adicionado
-          documentType: true,      // ✅ Adicionado
-          documentNumber: true,    // ✅ Adicionado
+          vehicleColor: true,
+          vehicleSeats: true,
+          documentType: true,
+          documentNumber: true,
           status: true,
           isOnline: true,
           profilePicture: true,
@@ -262,7 +360,7 @@ export class AdminAuthController {
     }
   }
 
-  // 💰 ATUALIZAR DADOS DE PAGAMENTO DO MOTORISTA (MOBILE MONEY)
+  // 💰 ATUALIZAR DADOS DE PAGAMENTO DO MOTORISTA
   async updateDriverPaymentInfo(req: Request, res: Response): Promise<Response> {
     try {
       const { driverId } = req.params;
@@ -331,10 +429,13 @@ export class AdminAuthController {
     }
   }
 
-  // 📋 5. LISTAR PASSAGEIROS
+  // 📋 5. LISTAR PASSAGEIROS (FILTRANDO CONTAS EXCLUÍDAS)
   async listPassengers(req: Request, res: Response): Promise<Response> {
     try {
       const passengers = await prisma.passenger.findMany({
+        where: {
+          deletedAt: null // 🛡️ Oculta contas excluídas da lista do painel
+        },
         orderBy: { createdAt: 'desc' },
         select: {
           id: true,
@@ -480,7 +581,7 @@ export class AdminAuthController {
     }
   }
 
-  // 💰 10. RECARGA MANUAL COM TRANSAÇÃO ATÔMICA
+  // 💰 10. RECARGA MANUAL
   async manualRecharge(req: Request, res: Response): Promise<Response> {
     try {
       const { userType, userId, amount } = req.body;
@@ -553,7 +654,7 @@ export class AdminAuthController {
     }
   }
 
-  // 👥 13. LISTAR ADMINISTRADORES DA EQUIPE (SUPER ADMIN)
+  // 👥 13. LISTAR ADMINISTRADORES
   async listAdmins(req: Request, res: Response): Promise<Response> {
     try {
       const admins = await prisma.admin.findMany({
@@ -575,7 +676,7 @@ export class AdminAuthController {
     }
   }
 
-  // 👥 14. CRIAR NOVO ADMINISTRADOR/OPERADOR (SUPER ADMIN)
+  // 👥 14. CRIAR NOVO ADMINISTRADOR/OPERADOR
   async createAdmin(req: Request, res: Response): Promise<Response> {
     try {
       const { name, email, password, role } = req.body;
@@ -624,7 +725,7 @@ export class AdminAuthController {
     }
   }
 
-  // 👥 15. ATIVAR/DESATIVAR ADMINISTRADOR (SUPER ADMIN)
+  // 👥 15. ATIVAR/DESATIVAR ADMINISTRADOR
   async toggleAdminStatus(req: Request, res: Response): Promise<Response> {
     try {
       const { adminId } = req.params;
@@ -705,7 +806,7 @@ export class AdminAuthController {
     }
   }
 
-  // 🚗 LISTAR MOTORISTAS ONLINE (PARA O RADAR DA FROTA / MAPA)
+  // 🚗 LISTAR MOTORISTAS ONLINE
   async getOnlineDrivers(req: Request, res: Response): Promise<Response> {
     try {
       const drivers = await prisma.driver.findMany({
