@@ -1171,7 +1171,7 @@ handleSocketEvent(socket, 'sos:triggered', async (data) => {
       io.to(rideId).emit('ride:finished', result);
       io.to('admin_dashboard').emit('admin:ride_update', { rideId, status: 'FINISHED' });
 
-      // 🔔 Push Notification para o Passageiro
+      // Busca dados do passageiro para o envio do Push
       const ride = await prisma.ride.findUnique({
         where: { id: rideId },
         include: { passenger: { select: { deviceToken: true } } }
@@ -1181,7 +1181,7 @@ handleSocketEvent(socket, 'sos:triggered', async (data) => {
         sendPushNotification([{
           to: ride.passenger.deviceToken,
           title: '🏁 Viagem Concluída!',
-          body: `Você chegou ao seu destino. Total: ${result?.priceXof || ride.priceXof} XOF.`,
+          body: `Você chegou ao seu destino. Total: ${result.fareXOF} XOF.`,
           data: { type: 'RIDE_COMPLETED', rideId }
         }]).catch(() => null);
       }
