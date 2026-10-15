@@ -55,7 +55,192 @@ export class AdminDashboardController {
     }
   }
 
-  // 🚗 HISTÓRICO DE CORRIDAS (GESTÃO DE CORRIDAS E HISTÓRICO DO MOTORISTA)
+  // 🚗 LISTAGEM DE MOTORISTAS (FILTRANDO DELETED_AT)
+  static async getDrivers(req: Request, res: Response): Promise<Response> {
+    try {
+      const page = Math.max(1, Number(req.query.page) || 1);
+      const limit = Math.max(1, Number(req.query.limit) || 20);
+      const search = (req.query.search as string) || '';
+      const skip = (page - 1) * limit;
+
+      const whereClause: any = {
+        deletedAt: null // 🛡️ Oculta contas excluídas/desativadas
+      };
+
+      if (search.trim()) {
+        const searchTerm = search.trim();
+        whereClause.OR = [
+          { fullName: { contains: searchTerm, mode: 'insensitive' } },
+          { phone: { contains: searchTerm, mode: 'insensitive' } },
+          { vehiclePlate: { contains: searchTerm, mode: 'insensitive' } },
+          { documentNumber: { contains: searchTerm, mode: 'insensitive' } }
+        ];
+      }
+
+      const [drivers, totalRecords] = await Promise.all([
+        prisma.driver.findMany({
+          where: whereClause,
+          skip,
+          take: limit,
+          orderBy: { createdAt: 'desc' }
+        }),
+        prisma.driver.count({ where: whereClause })
+      ]);
+
+      return res.status(200).json({
+        data: drivers,
+        meta: {
+          total: totalRecords,
+          page,
+          limit,
+          totalPages: Math.ceil(totalRecords / limit) || 1
+        }
+      });
+    } catch (error) {
+      console.error("❌ [ADMIN GET DRIVERS ERROR]:", error);
+      return res.status(500).json({ error: "Falha ao buscar motoristas." });
+    }
+  }
+
+  // 🗑️ EXCLUSÃO / DESATIVAÇÃO DE MOTORISTA PELO PAINEL ADMIN
+  static async deleteDriver(req: Request, res: Response): Promise<Response> {
+    try {
+      const { id } = req.params;
+      const driver = await prisma.driver.findUnique({
+        where: { id: String(id) },
+        include: { rides: { take: 1 }, transactions: { take: 1 } }
+      });
+
+      if (!driver) {
+        return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
+      }
+
+      const hasHistory = driver.rides.length > 0 || driver.transactions.length > 0;
+
+      if (!hasHistory) {
+        // Sem histórico: Remoção física direta do banco
+        await prisma.driver.delete({ where: { id: String(id) } });
+      } else {
+        // Com histórico: Anonimiza credenciais para LIBERAR telefone/placa/documento
+        const stamp = Date.now().toString().slice(-8);
+        await prisma.driver.update({
+          where: { id: String(id) },
+          data: {
+            phone: `d_${stamp}`,
+            vehiclePlate: `p_${stamp}`,
+            documentNumber: `doc_${stamp}`,
+            orangeNumber: null,
+            mtnNumber: null,
+            paymentAccountNumber: null,
+            status: 'SUSPENDED',
+            isOnline: false,
+            isAvailable: false,
+            deletedAt: new Date(),
+            deviceToken: null,
+            refreshTokenHash: null
+          }
+        });
+      }
+
+      return res.status(200).json({ success: true, message: 'Motorista excluído e dados liberados com sucesso.' });
+    } catch (error) {
+      console.error("❌ [ADMIN DELETE DRIVER ERROR]:", error);
+      return res.status(500).json({ error: "Falha ao excluir motorista." });
+    }
+  }
+
+  // 👤 LISTAGEM DE PASSAGEIROS (FILTRANDO DELETED_AT)
+  static async getPassengers(req: Request, res: Response): Promise<Response> {
+    try {
+      const page = Math.max(1, Number(req.query.page) || 1);
+      const limit = Math.max(1, Number(req.query.limit) || 20);
+      const search = (req.query.search as string) || '';
+      const skip = (page - 1) * limit;
+
+      const whereClause: any = {
+        deletedAt: null // 🛡️ Oculta contas excluídas/desativadas
+      };
+
+      if (search.trim()) {
+        const searchTerm = search.trim();
+        whereClause.OR = [
+          { fullName: { contains: searchTerm, mode: 'insensitive' } },
+          { phone: { contains: searchTerm, mode: 'insensitive' } },
+          { email: { contains: searchTerm, mode: 'insensitive' } }
+        ];
+      }
+
+      const [passengers, totalRecords] = await Promise.all([
+        prisma.passenger.findMany({
+          where: whereClause,
+          skip,
+          take: limit,
+          orderBy: { createdAt: 'desc' }
+        }),
+        prisma.passenger.count({ where: whereClause })
+      ]);
+
+      return res.status(200).json({
+        data: passengers,
+        meta: {
+          total: totalRecords,
+          page,
+          limit,
+          totalPages: Math.ceil(totalRecords / limit) || 1
+        }
+      });
+    } catch (error) {
+      console.error("❌ [ADMIN GET PASSENGERS ERROR]:", error);
+      return res.status(500).json({ error: "Falha ao buscar passageiros." });
+    }
+  }
+
+  // 🗑️ EXCLUSÃO / DESATIVAÇÃO DE PASSAGEIRO PELO PAINEL ADMIN
+  static async deletePassenger(req: Request, res: Response): Promise<Response> {
+    try {
+      const { id } = req.params;
+      const passenger = await prisma.passenger.findUnique({
+        where: { id: String(id) },
+        include: { rides: { take: 1 }, transactions: { take: 1 } }
+      });
+
+      if (!passenger) {
+        return res.status(404).json({ success: false, error: 'Passageiro não encontrado.' });
+      }
+
+      const hasHistory = passenger.rides.length > 0 || passenger.transactions.length > 0;
+
+      if (!hasHistory) {
+        // Sem histórico: Exclusão direta do banco
+        await prisma.passenger.delete({ where: { id: String(id) } });
+      } else {
+        // Com histórico: Anonimiza telefone e e-mail
+        const stamp = Date.now().toString().slice(-8);
+        const rand = Math.floor(100 + Math.random() * 900);
+        await prisma.passenger.update({
+          where: { id: String(id) },
+          data: {
+            fullName: 'Passageiro Anônimo',
+            phone: `p_${stamp}_${rand}`,
+            email: `del_${stamp}_${rand}@anon.com`,
+            documentNumber: null,
+            paymentAccountNumber: null,
+            status: 'SUSPENDED',
+            deletedAt: new Date(),
+            deviceToken: null,
+            refreshTokenHash: null
+          }
+        });
+      }
+
+      return res.status(200).json({ success: true, message: 'Passageiro excluído e telefone liberado com sucesso.' });
+    } catch (error) {
+      console.error("❌ [ADMIN DELETE PASSENGER ERROR]:", error);
+      return res.status(500).json({ error: "Falha ao excluir passageiro." });
+    }
+  }
+
+  // 🚗 HISTÓRICO DE CORRIDAS
   static async getRides(req: Request, res: Response): Promise<Response> {
     try {
       const page = Math.max(1, Number(req.query.page) || 1);
