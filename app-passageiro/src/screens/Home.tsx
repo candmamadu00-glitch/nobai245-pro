@@ -494,7 +494,6 @@ export function Home() {
   setSearchQuery(text);
   if (!text || text.trim().length < 2) {
     setSearchResults([]);
-    console.log('🔍 [BUSCA] Texto muito curto ou vazio. Pesquisa ignorada.');
     return;
   }
 
@@ -504,27 +503,29 @@ export function Home() {
 
   const normalizedQuery = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
-  // 1️⃣ Busca rápida no catálogo local
+  // 1️⃣ Catálogo local interno
   const localMatches = GUINEA_BISSAU_BAIRROS.filter(item => {
     const normDesc = item.description.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     return normDesc.includes(normalizedQuery);
   });
-  console.log(`📍 [1. CATÁLOGO LOCAL] Encontrados: ${localMatches.length} locais no banco interno.`);
 
   setIsSearchingMapbox(true);
 
   try {
-    const photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&lat=${BISSAU_CENTER.latitude}&lon=${BISSAU_CENTER.longitude}&zoom=12&limit=10&lang=pt`;
-    const osmUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(text)}&countrycodes=gw&format=json&addressdetails=1&limit=10&accept-language=pt`;
-    const mapboxUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(text)}.json?country=gw&proximity=${BISSAU_CENTER.longitude},${BISSAU_CENTER.latitude}&autocomplete=true&limit=10&language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`;
+    // 2️⃣ Photon OSM: Parâmetros corrigidos para evitar Erro 400 (removeu zoom e lang=pt)
+    const photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&lat=${BISSAU_CENTER.latitude}&lon=${BISSAU_CENTER.longitude}&limit=15`;
 
-    console.log('📡 [REQUISIÇÕES] Disparando consultas para Photon, OpenStreetMap e Mapbox...');
+    // 3️⃣ OpenStreetMap Nominatim: Com área delimitada da Guiné-Bissau (viewbox)
+    const osmUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(text)}&countrycodes=gw&viewbox=-15.85,11.70,-15.40,12.05&bounded=0&format=json&addressdetails=1&limit=10`;
+
+    // 4️⃣ Mapbox Geocoding: Com suporte a POIs, endereços e bairros
+    const mapboxUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(text)}.json?country=gw&proximity=${BISSAU_CENTER.longitude},${BISSAU_CENTER.latitude}&types=poi,address,neighborhood,locality,place,street&autocomplete=true&limit=10&language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`;
 
     const [resPhoton, resOsm, resMapbox] = await Promise.allSettled([
       fetch(photonUrl),
       fetch(osmUrl, {
         headers: {
-          'User-Agent': 'NoBai245-Passenger-App/1.0 (contact@nobai245.com)',
+          'User-Agent': 'NoBai245-App/1.0 (contact@nobai245.com)',
           'Accept-Language': 'pt,fr,en'
         }
       }),
@@ -533,109 +534,84 @@ export function Home() {
 
     let apiResults: MapboxGeocodingFeature[] = [];
 
-    // 📌 Motor 1: Photon OSM (Avenidas, Ruas e Estabelecimentos)
-    if (resPhoton.status === 'fulfilled') {
-      if (resPhoton.value.ok) {
-        const photonData = await resPhoton.value.json();
-        const features = photonData?.features || [];
-        console.log(`✅ [PHOTON OSM] Status 200 OK | Encontrados: ${features.length} itens`);
+    // 📌 Motor 1: Photon OSM (Autocompletar de Avenidas, Bares, Hotéis e Vias)
+    if (resPhoton.status === 'fulfilled' && resPhoton.value.ok) {
+      const photonData = await resPhoton.value.json();
+      const features = photonData?.features || [];
+      console.log(`✅ [PHOTON OSM] Status 200 OK | Encontrados: ${features.length} itens`);
 
-        const photonFeatures = features
-          .filter((f: any) => {
-            const country = f.properties?.country || '';
-            return !country || country.toLowerCase().includes('guine') || country.toLowerCase().includes('bissau');
-          })
-          .map((f: any) => {
-            const p = f.properties;
-            const name = p.name || p.street || p.district || 'Local';
-            const city = p.city || p.district || p.county || 'Bissau';
-            const fullDesc = p.street && p.name && p.name !== p.street 
-              ? `${p.name}, ${p.street} (${city})`
-              : `${name}, ${city}`;
+      const photonFeatures = features
+        .filter((f: any) => {
+          const country = f.properties?.country || '';
+          return !country || country.toLowerCase().includes('guine') || country.toLowerCase().includes('bissau');
+        })
+        .map((f: any) => {
+          const p = f.properties;
+          const name = p.name || p.street || p.district || 'Local';
+          const city = p.city || p.district || p.county || 'Bissau';
+          const fullDesc = p.street && p.name && p.name !== p.street 
+            ? `${p.name}, ${p.street} (${city})`
+            : `${name}, ${city}`;
 
-            return {
-              id: `photon_${p.osm_id || Math.random()}`,
-              description: fullDesc.replace(/, Guiné-Bissau/gi, '').replace(/, Guinea-Bissau/gi, ''),
-              longitude: f.geometry.coordinates[0],
-              latitude: f.geometry.coordinates[1],
-              isLocalBairro: false,
-            };
-          });
-        apiResults.push(...photonFeatures);
-      } else {
-        console.warn(`❌ [PHOTON OSM] Falha na resposta - Status Code: ${resPhoton.value.status}`);
-      }
-    } else {
-      console.error(`❌ [PHOTON OSM] Erro de conexão/rede:`, resPhoton.reason);
+          return {
+            id: `photon_${p.osm_id || Math.random()}`,
+            description: fullDesc.replace(/, Guiné-Bissau/gi, '').replace(/, Guinea-Bissau/gi, ''),
+            longitude: f.geometry.coordinates[0],
+            latitude: f.geometry.coordinates[1],
+            isLocalBairro: false,
+          };
+        });
+      apiResults.push(...photonFeatures);
+    } else if (resPhoton.status === 'fulfilled') {
+      console.warn(`❌ [PHOTON OSM] Código HTTP: ${resPhoton.value.status}`);
     }
 
     // 📌 Motor 2: OpenStreetMap Nominatim
-    if (resOsm.status === 'fulfilled') {
-      if (resOsm.value.ok) {
-        const osmData = await resOsm.value.json();
-        const count = Array.isArray(osmData) ? osmData.length : 0;
-        console.log(`✅ [NOMINATIM OSM] Status 200 OK | Encontrados: ${count} itens`);
-
-        if (Array.isArray(osmData)) {
-          const osmFeatures = osmData.map((item: any) => ({
-            id: `osm_${item.place_id}`,
-            description: (item.display_name || '').split(',').slice(0, 3).join(', ').replace(/, Guiné-Bissau/gi, ''),
-            longitude: parseFloat(item.lon),
-            latitude: parseFloat(item.lat),
-            isLocalBairro: false,
-          }));
-          apiResults.push(...osmFeatures);
-        }
-      } else {
-        console.warn(`❌ [NOMINATIM OSM] Falha na resposta - Status Code: ${resOsm.value.status}`);
+    if (resOsm.status === 'fulfilled' && resOsm.value.ok) {
+      const osmData = await resOsm.value.json();
+      if (Array.isArray(osmData)) {
+        console.log(`✅ [NOMINATIM OSM] Status 200 OK | Encontrados: ${osmData.length} itens`);
+        const osmFeatures = osmData.map((item: any) => ({
+          id: `osm_${item.place_id}`,
+          description: (item.display_name || '').split(',').slice(0, 3).join(', ').replace(/, Guiné-Bissau/gi, ''),
+          longitude: parseFloat(item.lon),
+          latitude: parseFloat(item.lat),
+          isLocalBairro: false,
+        }));
+        apiResults.push(...osmFeatures);
       }
-    } else {
-      console.error(`❌ [NOMINATIM OSM] Erro de conexão/rede:`, resOsm.reason);
     }
 
     // 📌 Motor 3: Mapbox Geocoding
-    if (resMapbox.status === 'fulfilled') {
-      if (resMapbox.value.ok) {
-        const mapboxData = await resMapbox.value.json();
-        const features = mapboxData?.features || [];
-        console.log(`✅ [MAPBOX API] Status 200 OK | Encontrados: ${features.length} itens`);
+    if (resMapbox.status === 'fulfilled' && resMapbox.value.ok) {
+      const mapboxData = await resMapbox.value.json();
+      const features = mapboxData?.features || [];
+      console.log(`✅ [MAPBOX API] Status 200 OK | Encontrados: ${features.length} itens`);
 
-        if (Array.isArray(features)) {
-          const mapboxFeatures = features.map((f: any) => ({
-            id: f.id,
-            description: (f.place_name || f.text || '').replace(/, Guiné-Bissau/gi, ''),
-            longitude: f.center[0],
-            latitude: f.center[1],
-            isLocalBairro: false,
-          }));
-          apiResults.push(...mapboxFeatures);
-        }
-      } else {
-        console.warn(`❌ [MAPBOX API] Falha na resposta - Status Code: ${resMapbox.value.status}`);
+      if (Array.isArray(features)) {
+        const mapboxFeatures = features.map((f: any) => ({
+          id: f.id,
+          description: (f.place_name || f.text || '').replace(/, Guiné-Bissau/gi, ''),
+          longitude: f.center[0],
+          latitude: f.center[1],
+          isLocalBairro: false,
+        }));
+        apiResults.push(...mapboxFeatures);
       }
-    } else {
-      console.error(`❌ [MAPBOX API] Erro de conexão/rede:`, resMapbox.reason);
     }
 
     if (isMountedRef.current) {
       const combined = [...localMatches, ...apiResults];
-      // Elimina duplicados exatos e registros sem coordenadas
       const uniqueResults = combined.filter((v, i, a) => 
         v.latitude && v.longitude &&
         a.findIndex(t => t.description.toLowerCase().trim() === v.description.toLowerCase().trim()) === i
       );
 
-      console.log(`📊 [RESULTADO DA BUSCA] Total final unificado: ${uniqueResults.length} locais.`);
-      if (uniqueResults.length > 0) {
-        console.log('📌 Top 3 resultados:', uniqueResults.slice(0, 3).map(r => r.description));
-      } else {
-        console.warn('⚠️ Nenhuma das APIs retornou resultados para esta palavra. Exibindo fallback local.');
-      }
-
+      console.log(`📊 [RESULTADO FINAL] Total de locais carregados: ${uniqueResults.length}`);
       setSearchResults(uniqueResults.length > 0 ? uniqueResults : localMatches);
     }
   } catch (e) {
-    console.error('💥 [ERRO CRÍTICO NA BUSCA]:', e);
+    console.error('💥 [ERRO NA BUSCA]:', e);
     if (isMountedRef.current) {
       setSearchResults(localMatches);
     }

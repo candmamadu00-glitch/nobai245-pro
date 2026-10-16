@@ -1329,33 +1329,35 @@ const translateToKriol = (text: string): string => {
 
                 {/* ENDEREÇOS E ROTA */}
                 <View style={styles.routeAddressesContainer}>
-                  <View style={styles.addressItem}>
-                    <Ionicons name="location" size={16} color="#10B981" />
-                    <View style={styles.addressTextWrapper}>
-                      <Text style={styles.addressLabel}>Buscar em:</Text>
-                      <Text style={styles.addressValue} numberOfLines={1}>{incomingRide?.originAddress || 'Endereço de origem'}</Text>
-                    </View>
-                  </View>
+  {/* ORIGEM */}
+  <View style={styles.addressItem}>
+    <Ionicons name="location" size={16} color="#10B981" />
+    <View style={styles.addressTextWrapper}>
+      <Text style={styles.addressLabel}>Buscar em:</Text>
+      <Text style={styles.addressValue} numberOfLines={1}>{incomingRide?.originAddress || 'Endereço de origem'}</Text>
+    </View>
+  </View>
 
-                  {incomingRide?.extraStopAddress ? (
-                    <View style={styles.addressItem}>
-                      <Ionicons name="flag" size={15} color="#EAB308" />
-                      <View style={styles.addressTextWrapper}>
-                        <Text style={[styles.addressLabel, { color: '#EAB308' }]}>Parada Intermediária:</Text>
-                        <Text style={styles.addressValue} numberOfLines={1}>{incomingRide.extraStopAddress}</Text>
-                      </View>
-                    </View>
-                  ) : null}
+  {/* PARADAS INTERMEDIÁRIAS */}
+  {incomingRide?.stops && incomingRide.stops.length > 0 && incomingRide.stops.map((stop: any, idx: number) => (
+    <View key={`active-stop-${idx}`} style={styles.addressItem}>
+      <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
+      <View style={styles.addressTextWrapper}>
+        <Text style={[styles.addressLabel, { color: '#3B82F6' }]}>Parada {idx + 1}:</Text>
+        <Text style={styles.addressValue} numberOfLines={1}>{stop.address || 'Parada intermediária'}</Text>
+      </View>
+    </View>
+  ))}
 
-                  <View style={styles.addressItem}>
-                    <Ionicons name="flag" size={16} color="#EF4444" />
-                    <View style={styles.addressTextWrapper}>
-                      <Text style={styles.addressLabel}>Levar para:</Text>
-                      <Text style={styles.addressValue} numberOfLines={1}>{incomingRide?.destinationAddress || 'Endereço de destino'}</Text>
-                    </View>
-                  </View>
-                </View>
-
+  {/* DESTINO FINAL */}
+  <View style={styles.addressItem}>
+    <Ionicons name="flag" size={16} color="#EF4444" />
+    <View style={styles.addressTextWrapper}>
+      <Text style={[styles.addressLabel, { color: '#EF4444' }]}>Destino final:</Text>
+      <Text style={styles.addressValue} numberOfLines={1}>{incomingRide?.destinationAddress || 'Endereço de destino'}</Text>
+    </View>
+  </View>
+</View>
                 {/* DETALHES DA ENCOMENDA (SE FOR ENTREGA) */}
                 {incomingRide.serviceType === 'DELIVERY' && (
                   <View style={styles.deliveryDetailsCard}>
@@ -1522,22 +1524,35 @@ const translateToKriol = (text: string): string => {
             </View>
 
             <View style={styles.routeTimelineContainer}>
-              <View style={styles.timelineRow}>
-                <Ionicons name="location" size={16} color="#10B981" />
-                <View style={styles.timelineTextContainer}>
-                  <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
-                  <Text style={styles.timelineAddress} numberOfLines={2}>{incomingRide?.originAddress || 'Local de origem'}</Text>
-                </View>
-              </View>
+  {/* EMBARQUE / ORIGEM */}
+  <View style={styles.timelineRow}>
+    <Ionicons name="location" size={16} color="#10B981" />
+    <View style={styles.timelineTextContainer}>
+      <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
+      <Text style={styles.timelineAddress} numberOfLines={2}>{incomingRide?.originAddress || 'Local de origem'}</Text>
+    </View>
+  </View>
 
-              <View style={styles.timelineRow}>
-                <Ionicons name="flag" size={16} color="#EF4444" />
-                <View style={styles.timelineTextContainer}>
-                  <Text style={[styles.timelineLabel, { color: '#EF4444' }]}>LEVAR PARA:</Text>
-                  <Text style={styles.timelineAddress} numberOfLines={2}>{incomingRide?.destinationAddress || 'Endereço de destino'}</Text>
-                </View>
-              </View>
-            </View>
+  {/* PARADAS INTERMEDIÁRIAS (EXIBIDAS ANTES DE ACEITAR) */}
+  {incomingRide?.stops && incomingRide.stops.length > 0 && incomingRide.stops.map((stop: any, idx: number) => (
+    <View key={`modal-stop-${idx}`} style={styles.timelineRow}>
+      <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
+      <View style={styles.timelineTextContainer}>
+        <Text style={[styles.timelineLabel, { color: '#3B82F6' }]}>PARADA {idx + 1}:</Text>
+        <Text style={styles.timelineAddress} numberOfLines={2}>{stop.address || stop.name || 'Parada intermediária'}</Text>
+      </View>
+    </View>
+  ))}
+
+  {/* DESTINO FINAL */}
+  <View style={styles.timelineRow}>
+    <Ionicons name="flag" size={16} color="#EF4444" />
+    <View style={styles.timelineTextContainer}>
+      <Text style={[styles.timelineLabel, { color: '#EF4444' }]}>LEVAR PARA:</Text>
+      <Text style={styles.timelineAddress} numberOfLines={2}>{incomingRide?.destinationAddress || 'Endereço de destino'}</Text>
+    </View>
+  </View>
+</View>
 
             <View style={styles.newRequestActions}>
               <TouchableOpacity 

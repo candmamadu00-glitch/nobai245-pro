@@ -1,263 +1,239 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
-  Modal, View, Text, StyleSheet, TouchableOpacity, Image, 
-  Vibration, Platform, ScrollView 
+  View, Text, StyleSheet, TouchableOpacity, 
+  ScrollView, Platform, StatusBar, Alert 
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Audio } from 'expo-av';
+import { useNavigation } from '@react-navigation/native';
+import { useAuth } from '../contexts/AuthContext';
+import { Ionicons } from '@expo/vector-icons';
+import { useBilingualVoice, STORAGE_VOICE_MODE_KEY, VoiceMode } from '../hooks/useBilingualVoice';
 
-export interface StopData {
-  address: string;
-  lat: number;
-  lng: number;
-}
-
-export interface RideRequestData {
-  rideId: string;
-  passengerName: string;
-  passengerPhoto?: string;
-  passengerRating?: number;
-  originAddress: string;
-  destinationAddress: string;
-  fareXOF?: string | number;
-  priceXof?: string | number;
-  stops?: StopData[];
-  extraStopAddress?: string;
-  paymentMethod: string;
-  vehicleType: string;
-}
-
-interface IncomingRideModalProps {
-  visible: boolean;
-  rideData: RideRequestData | null;
-  onAccept: (rideId: string) => void;
-  onReject: (rideId: string) => void;
-  timeoutSeconds?: number;
-}
-
-export function IncomingRideModal({
-  visible,
-  rideData,
-  onAccept,
-  onReject,
-  timeoutSeconds = 15,
-}: IncomingRideModalProps) {
+export function VehicleSettings() {
+  const navigation = useNavigation<any>();
+  const { driver } = useAuth();
   const insets = useSafeAreaInsets();
-  const [timeLeft, setTimeLeft] = useState(timeoutSeconds);
-  const soundRef = useRef<Audio.Sound | null>(null);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const { speakInstruction } = useBilingualVoice();
+
+  const [voiceMode, setVoiceMode] = useState<VoiceMode>('BOTH');
 
   useEffect(() => {
-    async function playAlertSound() {
+    async function loadVoicePreference() {
       try {
-        await Audio.setAudioModeAsync({
-          playsInSilentModeIOS: true,
-          shouldDuckAndroid: true,
-        });
-
-        const { sound } = await Audio.Sound.createAsync(
-          require('../../assets/sounds/alert.mp3'),
-          { shouldPlay: true, isLooping: true }
-        );
-        soundRef.current = sound;
+        const saved = await AsyncStorage.getItem(STORAGE_VOICE_MODE_KEY);
+        if (saved) setVoiceMode(saved as VoiceMode);
       } catch (err) {
-        console.warn('⚠️ [AUDIO ALERT] Erro ao carregar/tocar áudio:', err);
+        console.error('Erro ao carregar preferência de voz:', err);
       }
     }
+    loadVoicePreference();
+  }, []);
 
-    if (visible && rideData) {
-      setTimeLeft(timeoutSeconds);
-      playAlertSound();
-      Vibration.vibrate([500, 500, 500, 500], true);
-
-      timerRef.current = setInterval(() => {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            handleTimeout();
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    } else {
-      stopAlertAndVibration();
-    }
-
-    return () => {
-      stopAlertAndVibration();
-    };
-  }, [visible, rideData?.rideId]);
-
-  async function stopAlertAndVibration() {
-    Vibration.cancel();
-
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-
+  const handleSelectVoiceMode = async (mode: VoiceMode) => {
     try {
-      if (soundRef.current) {
-        await soundRef.current.stopAsync();
-        await soundRef.current.unloadAsync();
-        soundRef.current = null;
-      }
-    } catch {
-      // Ignora erro durante desmontagem do modal
+      setVoiceMode(mode);
+      await AsyncStorage.setItem(STORAGE_VOICE_MODE_KEY, mode);
+    } catch (err) {
+      Alert.alert('Erro', 'Não foi possível guardar a preferência de voz.');
     }
-  }
+  };
 
-  function handleTimeout() {
-    stopAlertAndVibration();
-    if (rideData) onReject(rideData.rideId);
-  }
+  const handleTestVoice = (modeToTest: VoiceMode) => {
+    console.log(`🧪 [TESTE VOZ] Testando modo no ecrã de configurações: ${modeToTest}`);
+    speakInstruction('new_ride', 'Nova viagem encontrada', modeToTest);
+  };
 
-  function handleAcceptPress() {
-    stopAlertAndVibration();
-    if (rideData) onAccept(rideData.rideId);
-  }
-
-  function handleRejectPress() {
-    stopAlertAndVibration();
-    if (rideData) onReject(rideData.rideId);
-  }
-
-  if (!visible || !rideData) return null;
-
-  const displayFare = rideData.fareXOF ?? rideData.priceXof ?? 0;
-  const hasStops = (rideData.stops && rideData.stops.length > 0) || Boolean(rideData.extraStopAddress);
-
-  // Recuo dinâmico inferior para botões virtuais do Android e barra de gestos do iOS
+  const dynamicTopPadding = Math.max((insets?.top || 0) + 6, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 6 : 14);
   const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 28 : 16);
 
+  const voiceOptions: { key: VoiceMode; label: string; sub: string }[] = [
+    { key: 'BOTH', label: 'Português + Crioulo (Padrão)', sub: 'Instrução em Português seguida de Crioulo' },
+    { key: 'CRI', label: 'Apenas Crioulo', sub: 'Instruções exclusivamente em Crioulo de Bissau' },
+    { key: 'PT', label: 'Apenas Português', sub: 'Instruções no padrão em Português' },
+    { key: 'OFF', label: 'Desativado', sub: 'Sem orientação por voz durante a navegação' },
+  ];
+
   return (
-    <Modal 
-      visible={visible} 
-      transparent 
-      animationType="slide" 
-      statusBarTranslucent
-      onRequestClose={handleRejectPress}
-    >
-      <View style={styles.overlay}>
-        <View style={[styles.card, { paddingBottom: dynamicBottomPadding }]}>
-          <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
-            {/* CABEÇALHO COM TIMER */}
-            <View style={styles.header}>
-              <Text style={styles.title}>Nova Solicitação!</Text>
-              <View style={styles.timerBadge}>
-                <Text style={styles.timerText}>{timeLeft}s</Text>
-              </View>
-            </View>
+    <View style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFF" translucent />
 
-            {/* DADOS DO PASSAGEIRO */}
-            <View style={styles.passengerRow}>
-              {rideData.passengerPhoto ? (
-                <Image source={{ uri: rideData.passengerPhoto }} style={styles.avatar} />
-              ) : (
-                <View style={[styles.avatar, styles.avatarPlaceholder]}>
-                  <Text style={styles.avatarText}>{rideData.passengerName?.charAt(0) || 'P'}</Text>
-                </View>
-              )}
-              <View style={styles.passengerDetails}>
-                <Text style={styles.passengerName}>{rideData.passengerName || 'Passageiro'}</Text>
-                <Text style={styles.rating}>★ {rideData.passengerRating?.toFixed(1) || '5.0'}</Text>
-              </View>
-            </View>
-
-            {/* CAIXA DE ROTA */}
-            <View style={styles.routeBox}>
-              <Text style={styles.label}>EMBARQUE</Text>
-              <Text style={styles.address} numberOfLines={1}>{rideData.originAddress}</Text>
-
-              {hasStops && (
-                <>
-                  <View style={styles.divider} />
-                  <Text style={[styles.label, styles.stopLabel]}>PARADA INTERMEDIÁRIA</Text>
-                  {rideData.stops && rideData.stops.length > 0 ? (
-                    rideData.stops.map((stop, idx) => (
-                      <Text key={idx} style={styles.address} numberOfLines={1}>
-                        • {stop.address}
-                      </Text>
-                    ))
-                  ) : (
-                    <Text style={styles.address} numberOfLines={1}>
-                      • {rideData.extraStopAddress}
-                    </Text>
-                  )}
-                </>
-              )}
-
-              <View style={styles.divider} />
-
-              <Text style={styles.label}>DESTINO</Text>
-              <Text style={styles.address} numberOfLines={1}>{rideData.destinationAddress}</Text>
-            </View>
-
-            {/* VALOR DA CORRIDA */}
-            <View style={styles.fareRow}>
-              <Text style={styles.fareLabel}>Valor:</Text>
-              <Text style={styles.fareValue}>{displayFare} XOF</Text>
-            </View>
-
-            {/* BOTÕES DE AÇÃO */}
-            <View style={styles.buttonGroup}>
-              <TouchableOpacity style={[styles.btn, styles.btnReject]} onPress={handleRejectPress} activeOpacity={0.8}>
-                <Text style={styles.btnRejectText}>Recusar</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={[styles.btn, styles.btnAccept]} onPress={handleAcceptPress} activeOpacity={0.85}>
-                <Text style={styles.btnAcceptText}>Aceitar Corrida</Text>
-              </TouchableOpacity>
-            </View>
-          </ScrollView>
-        </View>
+      <View style={[styles.header, { paddingTop: dynamicTopPadding }]}>
+        <TouchableOpacity 
+          onPress={() => navigation.goBack()} 
+          style={styles.backButton}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons name="arrow-back" size={24} color="#059669" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Configurações do Motorista</Text>
+        <View style={{ width: 40 }} />
       </View>
-    </Modal>
+
+      <ScrollView 
+        contentContainerStyle={[styles.content, { paddingBottom: dynamicBottomPadding + 20 }]} 
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <View style={styles.iconBox}>
+              <Ionicons name="volume-high" size={22} color="#059669" />
+            </View>
+            <Text style={styles.cardTitle}>Orientação por Voz</Text>
+          </View>
+
+          <Text style={styles.cardSubtitle}>
+            Escolha como prefere ouvir os avisos de navegação e novas corridas:
+          </Text>
+
+          {voiceOptions.map((opt) => {
+            const isSelected = voiceMode === opt.key;
+            return (
+              <View key={opt.key} style={[styles.voiceOptionCard, isSelected && styles.voiceOptionCardSelected]}>
+                <TouchableOpacity
+                  style={styles.touchArea}
+                  onPress={() => handleSelectVoiceMode(opt.key)}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons
+                    name={isSelected ? 'radio-button-on' : 'radio-button-off'}
+                    size={22}
+                    color={isSelected ? '#059669' : '#9CA3AF'}
+                  />
+                  <View style={styles.textContainer}>
+                    <Text style={[styles.optionLabel, isSelected && styles.optionLabelSelected]}>
+                      {opt.label}
+                    </Text>
+                    <Text style={styles.optionSub}>{opt.sub}</Text>
+                  </View>
+                </TouchableOpacity>
+
+                {opt.key !== 'OFF' && (
+                  <TouchableOpacity
+                    style={styles.testBtn}
+                    onPress={() => handleTestVoice(opt.key)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="play-circle" size={18} color="#059669" />
+                    <Text style={styles.testBtnText}>Testar</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            );
+          })}
+        </View>
+
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <View style={styles.iconBox}>
+              <Ionicons name="car" size={22} color="#059669" />
+            </View>
+            <Text style={styles.cardTitle}>Dados do Veículo</Text>
+          </View>
+
+          <View style={styles.infoRow}>
+            <Text style={styles.label}>Marca / Modelo</Text>
+            <Text style={styles.value}>{(driver as any)?.vehicleBrand || 'Não informado'}</Text>
+          </View>
+
+          <View style={styles.infoRow}>
+            <Text style={styles.label}>Cor do Veículo</Text>
+            <Text style={styles.value}>{(driver as any)?.vehicleColor || 'Não informada'}</Text>
+          </View>
+
+          <View style={[styles.infoRow, { borderBottomWidth: 0, paddingBottom: 0 }]}>
+            <Text style={styles.label}>Placa Cadastrada</Text>
+            <Text style={styles.plateBadge}>{driver?.vehiclePlate || 'N/A'}</Text>
+          </View>
+        </View>
+
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <View style={styles.iconBox}>
+              <Ionicons name="document-text" size={22} color="#059669" />
+            </View>
+            <Text style={styles.cardTitle}>Documentação</Text>
+          </View>
+
+          <View style={[styles.infoRow, { borderBottomWidth: 0, paddingBottom: 0 }]}>
+            <Text style={styles.label}>Nº do Documento</Text>
+            <Text style={styles.value}>{(driver as any)?.documentNumber || 'Não informado'}</Text>
+          </View>
+
+          <View style={styles.statusBox}>
+            <Ionicons name="checkmark-circle" size={20} color="#059669" />
+            <Text style={styles.statusText}>Documentos verificados e aprovados pela central.</Text>
+          </View>
+        </View>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: { 
-    flex: 1, 
-    backgroundColor: 'rgba(15, 23, 42, 0.6)', 
-    justifyContent: 'flex-end' 
+  container: { flex: 1, backgroundColor: '#F4F4F5' },
+  header: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'space-between', 
+    paddingHorizontal: 16, 
+    paddingBottom: 14, 
+    backgroundColor: '#FFF', 
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+    elevation: 2 
   },
+  backButton: { padding: 4 },
+  headerTitle: { fontSize: 18, fontWeight: '800', color: '#1F2937' },
+  content: { padding: 16 },
   card: { 
-    backgroundColor: '#FFFFFF', 
-    borderTopLeftRadius: 24, 
-    borderTopRightRadius: 24, 
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    maxHeight: '88%',
+    backgroundColor: '#FFF', 
+    padding: 20, 
+    borderRadius: 16, 
+    marginBottom: 16, 
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 12,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  title: { fontSize: 18, fontWeight: '800', color: '#0F172A' },
-  timerBadge: { backgroundColor: '#DC2626', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12 },
-  timerText: { color: '#FFFFFF', fontWeight: '800', fontSize: 13 },
-  passengerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
-  avatar: { width: 48, height: 48, borderRadius: 24, marginRight: 12 },
-  avatarPlaceholder: { backgroundColor: '#0284C7', justifyContent: 'center', alignItems: 'center' },
-  avatarText: { color: '#FFF', fontSize: 18, fontWeight: '800' },
-  passengerDetails: { flex: 1 },
-  passengerName: { fontSize: 16, fontWeight: '700', color: '#0F172A' },
-  rating: { color: '#D97706', fontSize: 13, fontWeight: '700', marginTop: 2 },
-  routeBox: { backgroundColor: '#F8FAFC', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 16 },
-  label: { fontSize: 10, fontWeight: '800', color: '#64748B', marginBottom: 2 },
-  stopLabel: { color: '#EA580C' },
-  address: { fontSize: 13, color: '#1E293B', fontWeight: '500' },
-  divider: { height: 1, backgroundColor: '#E2E8F0', marginVertical: 8 },
-  fareRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 },
-  fareLabel: { fontSize: 15, color: '#475569', fontWeight: '600' },
-  fareValue: { fontSize: 22, fontWeight: '900', color: '#059669' },
-  buttonGroup: { flexDirection: 'row', gap: 12 },
-  btn: { flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  btnReject: { backgroundColor: '#FEE2E2' },
-  btnRejectText: { color: '#DC2626', fontWeight: '800', fontSize: 15 },
-  btnAccept: { backgroundColor: '#059669' },
-  btnAcceptText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
+  cardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  cardSubtitle: { fontSize: 12, color: '#6B7280', marginBottom: 14 },
+  iconBox: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#ECFDF5', justifyContent: 'center', alignItems: 'center', marginRight: 10 },
+  cardTitle: { fontSize: 16, fontWeight: '800', color: '#111827' },
+  voiceOptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F9FAFB',
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  voiceOptionCardSelected: { borderColor: '#059669', backgroundColor: '#ECFDF5' },
+  touchArea: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  textContainer: { marginLeft: 10, flex: 1 },
+  optionLabel: { color: '#374151', fontSize: 13, fontWeight: '600' },
+  optionLabelSelected: { color: '#065F46', fontWeight: '800' },
+  optionSub: { color: '#6B7280', fontSize: 11, marginTop: 2 },
+  testBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#059669',
+    gap: 4,
+  },
+  testBtnText: { fontSize: 11, fontWeight: '700', color: '#059669' },
+  infoRow: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F3F4F6', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  label: { fontSize: 13, color: '#6B7280', fontWeight: '600' },
+  value: { fontSize: 14, color: '#111827', fontWeight: '700' },
+  plateBadge: { backgroundColor: '#111827', color: '#FFF', fontWeight: '800', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, fontSize: 13 },
+  statusBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECFDF5', padding: 12, borderRadius: 10, marginTop: 14, gap: 8 },
+  statusText: { fontSize: 12, color: '#065F46', fontWeight: '700', flex: 1 },
 });

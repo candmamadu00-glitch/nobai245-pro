@@ -31,12 +31,23 @@ function safeSocketEmit(room: string, event: string, payload: any) {
 }
 
 // -----------------------------------------------------------------------------
-// HELPER PARA NOTIFICAÇÃO PUSH DE MOTORISTAS PRÓXIMOS/ONLINE (FILTRADO)
+// HELPER PARA NOTIFICAÇÃO PUSH E SOCKET DE MOTORISTAS PRÓXIMOS/ONLINE
 // -----------------------------------------------------------------------------
 export async function notifyDriversNewRide(rideId: string) {
   console.log(`\n🚨 [RIDE DISPATCH] Buscando motoristas para notificar sobre a corrida ${rideId}...`);
   try {
-    const ride = await prisma.ride.findUnique({ where: { id: rideId } });
+    const ride = await prisma.ride.findUnique({ 
+      where: { id: rideId },
+      include: {
+        passenger: {
+          select: {
+            fullName: true,
+            ratingAverage: true,
+            profilePicture: true,
+          }
+        }
+      }
+    });
     if (!ride) return;
 
     const pLat = Number(ride.originLat);
@@ -73,7 +84,29 @@ export async function notifyDriversNewRide(rideId: string) {
 
     console.log(`🔍 [RIDE DISPATCH] ${qualifiedDrivers.length} motoristas qualificados no raio de 5km.`);
 
+    // Prepara o payload completo incluindo as PARADAS INTERMEDIÁRIAS
+    const ridePayload = {
+      rideId: ride.id,
+      passengerName: ride.passenger?.fullName || 'Passageiro',
+      passengerPhoto: ride.passenger?.profilePicture,
+      passengerRating: ride.passenger?.ratingAverage || 5.0,
+      originAddress: ride.originAddress,
+      originLat: Number(ride.originLat),
+      originLng: Number(ride.originLng),
+      destinationAddress: ride.destinationAddress,
+      destinationLat: Number(ride.destinationLat),
+      destinationLng: Number(ride.destinationLng),
+      priceXof: ride.priceXof,
+      serviceType: ride.serviceType,
+      paymentMethod: ride.paymentMethod,
+      stops: ride.stops || [], // 👈 GARANTE O ENVIO DAS PARADAS NO SOCKET
+    };
+
     for (const driver of qualifiedDrivers) {
+      // 📡 Transmissão em Tempo Real via Socket.io
+      safeSocketEmit(`driver_${driver.id}`, 'ride:new_request', ridePayload);
+
+      // 🔔 Notificação Push em Segundo Plano
       if (driver.deviceToken) {
         console.log(`🔔 [PUSH MOTORISTA] Enviando notificação para: ${driver.fullName} (${driver.id})`);
         sendPushNotification(
@@ -89,7 +122,6 @@ export async function notifyDriversNewRide(rideId: string) {
     console.error('💥 [RIDE DISPATCH ERROR] Falha ao disparar notificações de nova corrida:', error);
   }
 }
-
 // -----------------------------------------------------------------------------
 // HELPER PARA MASCARAMENTO DE TELEFONE
 // -----------------------------------------------------------------------------
