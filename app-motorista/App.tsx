@@ -49,7 +49,13 @@ if (Platform.OS === 'android') {
     // 💡 REMOVIDA A CHAVE 'sound'
   });
 }
-
+// 🛡️ Oculta console.log e console.warn no build final de produção
+if (!__DEV__) {
+  console.log = () => {};
+  console.warn = () => {};
+  console.info = () => {};
+  // Mantenha console.error ativado para o Sentry registrar falhas críticas
+}
 const Stack = createNativeStackNavigator();
 export const navigationRef = createNavigationContainerRef<any>();
 

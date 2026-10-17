@@ -63,6 +63,17 @@
         }
       ],
       [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 24,
+            "targetSdkVersion": 34,
+            "kotlinVersion": "1.8.22",
+            "enableProguardInReleaseBuilds": true
+          }
+        }
+      ],
+      [
         "expo-location",
         {
           "locationAlwaysAndWhenInUsePermission": "Permita o acesso à localização para rastrear rotas durante as corridas.",

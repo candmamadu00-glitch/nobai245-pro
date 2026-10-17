@@ -155,24 +155,25 @@ export function Profile() {
     setMmNumber(numericOnly);
   }
 
+  // --- ABRIR EDIÇÃO DE PAGAMENTO ---
   function handleOpenEdit() {
     setIsEditingPayment(true);
-    if (financeData?.mtnNumber) {
-      setMmProvider('MTN');
-      setMmNumber(financeData.mtnNumber);
-    } else {
-      setMmProvider('ORANGE');
-      setMmNumber(financeData?.orangeNumber || '');
-    }
+    // Força o padrão para Orange Money para evitar seleção de MTN
+    setMmProvider('ORANGE');
+    setMmNumber(financeData?.orangeNumber || financeData?.mobileMoneyAccount || '');
   }
 
+  // --- ALTERAR OPERADORA (BLOQUEIO AMIGÁVEL DA MTN) ---
   function handleProviderChange(provider: 'ORANGE' | 'MTN') {
-    setMmProvider(provider);
-    if (provider === 'ORANGE') {
-      setMmNumber(financeData?.orangeNumber || '');
-    } else {
-      setMmNumber(financeData?.mtnNumber || '');
+    if (provider === 'MTN') {
+      Alert.alert(
+        'Aviso Nobai245 📲',
+        'O serviço de recebimento automático via MTN Mobile Money está temporariamente em fase de atualização técnica. Por favor, utilize a Orange Money para o recebimento dos seus ganhos no momento.'
+      );
+      return; // Impede a alteração do estado para MTN
     }
+    setMmProvider('ORANGE');
+    setMmNumber(financeData?.orangeNumber || financeData?.mobileMoneyAccount || '');
   }
 
   // --- UPLOAD DA FOTO DE PERFIL ---
@@ -226,10 +227,17 @@ export function Profile() {
 
   // --- SALVAR INFORMAÇÕES DE PAGAMENTO ---
   async function handleSavePaymentInfo() {
+    if (mmProvider === 'MTN') {
+      return Alert.alert(
+        'Indisponível ⚠️',
+        'A operadora MTN MoMo está temporariamente desativada. Por favor, cadastre uma conta Orange Money.'
+      );
+    }
+
     const cleanNumber = mmNumber.trim();
 
     if (!cleanNumber) {
-      return Alert.alert('Aviso', 'Digite o número da sua conta Mobile Money.');
+      return Alert.alert('Aviso', 'Digite o número da sua conta Orange Money.');
     }
     if (cleanNumber.length !== 9) {
       return Alert.alert('Número Inválido', 'O número local deve conter exatamente 9 dígitos numéricos.');
@@ -237,24 +245,19 @@ export function Profile() {
 
     const prefix = cleanNumber.substring(0, 2);
     const orangePrefixes = ['95']; 
-    const mtnPrefixes = ['96', '97']; 
 
-    if (mmProvider === 'ORANGE' && !orangePrefixes.includes(prefix)) {
-      return Alert.alert('Operadora Incompatível', 'Os números da Orange Money geralmente começam com 95.');
-    }
-
-    if (mmProvider === 'MTN' && !mtnPrefixes.includes(prefix)) {
-      return Alert.alert('Operadora Incompatível', `Os números da MTN MoMo geralmente começam com ${mtnPrefixes.join(' ou ')}.`);
+    if (!orangePrefixes.includes(prefix)) {
+      return Alert.alert('Operadora Incompatível', 'Os números da Orange Money começam com 95.');
     }
 
     setLoading(true);
     try {
       await api.put('/drivers/payment-info', {
         mobileMoneyNumber: cleanNumber,
-        mobileMoneyProvider: mmProvider
+        mobileMoneyProvider: 'ORANGE'
       });
       
-      Alert.alert('Sucesso', 'Sua conta de recebimento automático foi atualizada!');
+      Alert.alert('Sucesso', 'Sua conta Orange Money para recebimentos foi atualizada!');
       setIsEditingPayment(false);
       await refreshDriverProfile();
       await loadFinanceData(); 
@@ -267,7 +270,6 @@ export function Profile() {
       setLoading(false);
     }
   }
-
   // --- SOLICITAÇÃO DE ALTERAÇÃO DE DADOS ---
   function openUpdateModal() {
     setUpdateData({
@@ -519,19 +521,32 @@ export function Profile() {
           {isEditingPayment && (
             <View style={styles.editFormContainer}>
               <Text style={styles.cardTitle}>Configurar Recebimento</Text>
-              <Text style={styles.infoText}>Os ganhos entram nesta conta Mobile Money.</Text>
+              <Text style={styles.infoText}>Seus ganhos serão transferidos diretamente para esta conta.</Text>
               
               <Text style={styles.inputLabel}>1. Escolha a Operadora:</Text>
               <View style={styles.providerSelect}>
-                <TouchableOpacity style={[styles.providerBtn, mmProvider === 'ORANGE' && styles.providerActiveOrange]} onPress={() => handleProviderChange('ORANGE')}>
+                
+                {/* ORANGE MONEY (ATIVA) */}
+                <TouchableOpacity 
+                  style={[styles.providerBtn, mmProvider === 'ORANGE' && styles.providerActiveOrange]} 
+                  onPress={() => handleProviderChange('ORANGE')}
+                  activeOpacity={0.8}
+                >
                   <Text style={[styles.providerText, mmProvider === 'ORANGE' && { color: '#FFF' }]}>Orange Money</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.providerBtn, mmProvider === 'MTN' && styles.providerActiveMtn]} onPress={() => handleProviderChange('MTN')}>
-                  <Text style={[styles.providerText, mmProvider === 'MTN' && { color: '#FFF' }]}>MTN MoMo</Text>
+
+                {/* MTN MOMO (DESATIVADA COM ALERTA) */}
+                <TouchableOpacity 
+                  style={[styles.providerBtn, { opacity: 0.5, backgroundColor: '#E2E8F0' }]} 
+                  onPress={() => handleProviderChange('MTN')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.providerText, { color: '#64748B' }]}>MTN MoMo (Em Breve)</Text>
                 </TouchableOpacity>
+
               </View>
 
-              <Text style={styles.inputLabel}>2. Número da Conta:</Text>
+              <Text style={styles.inputLabel}>2. Número da Conta Orange Money:</Text>
               <View style={styles.phoneInputContainer}>
                 <View style={styles.countryBadge}>
                   <Text style={styles.countryBadgeText}>🇬🇼 +245</Text>
@@ -551,7 +566,13 @@ export function Profile() {
                 <TouchableOpacity style={styles.cancelBtn} onPress={() => setIsEditingPayment(false)}>
                   <Text style={styles.cancelBtnText}>Cancelar</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.saveBtn, !mmNumber && { opacity: 0.7 }]} onPress={handleSavePaymentInfo} disabled={loading || !mmNumber}>
+
+                <TouchableOpacity 
+                  style={[styles.saveBtn, (!mmNumber || mmProvider === 'MTN') && { opacity: 0.7 }]} 
+                  onPress={handleSavePaymentInfo} 
+                  disabled={loading || !mmNumber || mmProvider === 'MTN'}
+                  activeOpacity={0.85}
+                >
                   {loading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.saveBtnText}>Salvar Conta</Text>}
                 </TouchableOpacity>
               </View>

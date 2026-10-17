@@ -230,7 +230,7 @@ function getVehicle3DIconAsset(vehicleType?: string, vehicleColor?: string) {
       return require('../../assets/images/vehicles/car_white.jpg');
   }
 }
-// 💰 Formatação segura de valores monetários (substitui .toLocaleString)
+// 💰 Formatação segura de valores monetários
 const formatCurrency = (val?: number | string | null): string => {
   const num = Number(val || 0);
   if (isNaN(num)) return '0';
@@ -1534,38 +1534,32 @@ const translateToKriol = (text: string): string => {
                   </View>
                 )}
 
-                {/* BARRA DE AÇÕES (CHAT, GPS, LIGAR, CANCELAR) */}
-                {rideState !== 'in_progress' && (
-                  <View style={styles.actionRow}>
-                    <TouchableOpacity style={styles.actionButtonSecondary} onPress={() => setIsChatVisible(true)}>
-                      <Ionicons name="chatbubbles-outline" size={16} color="#EAB308" />
-                      <Text style={styles.actionButtonSecondaryText}>Chat</Text>
-                    </TouchableOpacity>
+                {/* BARRA DE AÇÕES (CHAT, LIGAR, CANCELAR) */}
+{rideState !== 'in_progress' && (
+  <View style={styles.actionRow}>
+    <TouchableOpacity style={styles.actionButtonSecondary} onPress={() => setIsChatVisible(true)}>
+      <Ionicons name="chatbubbles-outline" size={16} color="#EAB308" />
+      <Text style={styles.actionButtonSecondaryText}>Chat</Text>
+    </TouchableOpacity>
 
-                    <TouchableOpacity style={styles.actionButtonSecondary} onPress={() => setShowNavSheet(true)}>
-                      <Ionicons name="navigate-outline" size={16} color="#3B82F6" />
-                      <Text style={styles.actionButtonSecondaryText}>GPS</Text>
-                    </TouchableOpacity>
+    <TouchableOpacity style={styles.actionButtonSecondary} onPress={handleCallPassenger}>
+      <Ionicons name="call-outline" size={16} color="#10B981" />
+      <Text style={[styles.actionButtonSecondaryText, { color: '#10B981' }]}>Ligar</Text>
+    </TouchableOpacity>
 
-                    <TouchableOpacity style={styles.actionButtonSecondary} onPress={handleCallPassenger}>
-                      <Ionicons name="call-outline" size={16} color="#10B981" />
-                      <Text style={[styles.actionButtonSecondaryText, { color: '#10B981' }]}>Ligar</Text>
-                    </TouchableOpacity>
-
-                    {canCancelNoShow ? (
-                      <TouchableOpacity style={styles.noShowBtnDanger} onPress={handleNoShowCancel}>
-                        <Ionicons name="alert-circle" size={16} color="#FFF" />
-                        <Text style={styles.noShowBtnText}>No-Show</Text>
-                      </TouchableOpacity>
-                    ) : (
-                      <TouchableOpacity style={styles.cancelButtonDanger} onPress={() => setShowCancelModal(true)} activeOpacity={0.85}>
-                        <Ionicons name="close-circle-outline" size={16} color="#EF4444" />
-                        <Text style={styles.cancelButtonText}>Cancelar</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                )}
-
+    {canCancelNoShow ? (
+      <TouchableOpacity style={styles.noShowBtnDanger} onPress={handleNoShowCancel}>
+        <Ionicons name="alert-circle" size={16} color="#FFF" />
+        <Text style={styles.noShowBtnText}>No-Show</Text>
+      </TouchableOpacity>
+    ) : (
+      <TouchableOpacity style={styles.cancelButtonDanger} onPress={() => setShowCancelModal(true)} activeOpacity={0.85}>
+        <Ionicons name="close-circle-outline" size={16} color="#EF4444" />
+        <Text style={styles.cancelButtonText}>Cancelar</Text>
+      </TouchableOpacity>
+    )}
+  </View>
+)}
                 {/* BOTÃO PRINCIPAL DE AVANÇO DE ETAPA */}
                 {rideState === 'accepted' && (
                   <TouchableOpacity 
@@ -1690,13 +1684,15 @@ const translateToKriol = (text: string): string => {
               </View>
             </View>
 
-            <View style={styles.routeTimelineContainer}>
+           <View style={styles.routeTimelineContainer}>
   {/* EMBARQUE / ORIGEM */}
   <View style={styles.timelineRow}>
     <Ionicons name="location" size={16} color="#10B981" />
     <View style={styles.timelineTextContainer}>
       <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
-      <Text style={styles.timelineAddress} numberOfLines={2}>{incomingRide?.originAddress || 'Local de origem'}</Text>
+      <Text style={styles.timelineAddress} numberOfLines={2}>
+        {incomingRide?.originAddress || 'Local de origem'}
+      </Text>
     </View>
   </View>
 
@@ -1711,16 +1707,17 @@ const translateToKriol = (text: string): string => {
     </View>
   ))}
 
-  {/* DESTINO FINAL */}
+  {/* DESTINO */}
   <View style={styles.timelineRow}>
     <Ionicons name="flag" size={16} color="#EF4444" />
     <View style={styles.timelineTextContainer}>
-      <Text style={[styles.timelineLabel, { color: '#EF4444' }]}>LEVAR PARA:</Text>
-      <Text style={styles.timelineAddress} numberOfLines={2}>{incomingRide?.destinationAddress || 'Endereço de destino'}</Text>
+      <Text style={styles.timelineLabel}>LEVAR PARA:</Text>
+      <Text style={styles.timelineAddress} numberOfLines={2}>
+        {incomingRide?.destinationAddress || 'Local de destino'}
+      </Text>
     </View>
   </View>
 </View>
-
             <View style={styles.newRequestActions}>
               <TouchableOpacity 
                 style={styles.rejectBtn} 

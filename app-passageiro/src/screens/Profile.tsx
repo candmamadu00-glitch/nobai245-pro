@@ -361,46 +361,71 @@ export function Profile() {
             </View>
 
             <Text style={styles.sectionTitle}>{t('setup_payment', 'Configurar Pagamento')}</Text>
-            <View style={styles.formCard}>
-              <Text style={styles.inputLabel}>{t('mobile_money_provider', 'Operadora (Mobile Money)')}</Text>
-              <View style={styles.providerContainer}>
-                <TouchableOpacity 
-                  style={[styles.providerButton, paymentProvider === 'ORANGE_MONEY' && styles.providerButtonActive]} 
-                  onPress={() => setPaymentProvider('ORANGE_MONEY')}
-                  disabled={isSavingPayment}
-                >
-                  <Text style={[styles.providerText, paymentProvider === 'ORANGE_MONEY' && styles.providerTextActive]}>Orange Money</Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  style={[styles.providerButton, paymentProvider === 'MTN_MOMO' && styles.providerButtonActive]} 
-                  onPress={() => setPaymentProvider('MTN_MOMO')}
-                  disabled={isSavingPayment}
-                >
-                  <Text style={[styles.providerText, paymentProvider === 'MTN_MOMO' && styles.providerTextActive]}>MTN MoMo</Text>
-                </TouchableOpacity>
-              </View>
+<View style={styles.formCard}>
+  <Text style={styles.inputLabel}>{t('mobile_money_provider', 'Operadora (Mobile Money)')}</Text>
+  <View style={styles.providerContainer}>
+    
+    {/* ORANGE MONEY */}
+    <TouchableOpacity 
+      style={[styles.providerButton, paymentProvider === 'ORANGE_MONEY' && styles.providerButtonActive]} 
+      onPress={() => setPaymentProvider('ORANGE_MONEY')}
+      disabled={isSavingPayment}
+      activeOpacity={0.8}
+    >
+      <Text style={[styles.providerText, paymentProvider === 'ORANGE_MONEY' && styles.providerTextActive]}>Orange Money</Text>
+    </TouchableOpacity>
 
-              <Text style={styles.inputLabel}>{t('account_phone_number', 'Número da Conta / Telefone')}</Text>
-              <View style={styles.inputContainer}>
-                <Ionicons name="phone-portrait-outline" size={20} color="#A0AEC0" />
-                <TextInput 
-                  style={styles.input} 
-                  keyboardType="phone-pad" 
-                  value={accountNumber} 
-                  onChangeText={setAccountNumber} 
-                  maxLength={15}
-                  editable={!isSavingPayment}
-                />
-              </View>
+    {/* MTN MOMO (BLOQUEADO TEMPORARIAMENTE) */}
+    <TouchableOpacity 
+      style={[styles.providerButton, { opacity: 0.5, backgroundColor: '#F1F5F9', borderColor: '#CBD5E1' }]} 
+      onPress={() => {
+        Alert.alert(
+          'Aviso Nobai245 📲',
+          'O serviço de pagamento via MTN Mobile Money está temporariamente em fase de atualização técnica. Por favor, utilize a Orange Money no momento.'
+        );
+      }}
+      activeOpacity={0.7}
+    >
+      <Text style={[styles.providerText, { color: '#94A3B8' }]}>MTN MoMo (Em Breve)</Text>
+    </TouchableOpacity>
+  </View>
 
-              <TouchableOpacity 
-                style={[styles.saveButton, isSavingPayment && styles.saveButtonDisabled]} 
-                onPress={handleSavePaymentInfo} 
-                disabled={isSavingPayment}
-              >
-                {isSavingPayment ? <ActivityIndicator color="#1A202C" /> : <Text style={styles.saveButtonText}>{t('save_payment', 'Salvar Pagamento')}</Text>}
-              </TouchableOpacity>
-            </View>
+  <Text style={styles.inputLabel}>{t('account_phone_number', 'Número da Conta / Telefone (Orange)')}</Text>
+  <View style={styles.inputContainer}>
+    <Ionicons name="phone-portrait-outline" size={20} color="#A0AEC0" />
+    <TextInput 
+      style={styles.input} 
+      keyboardType="phone-pad" 
+      value={accountNumber} 
+      onChangeText={setAccountNumber} 
+      maxLength={15}
+      placeholder="Ex: 955000000"
+      placeholderTextColor="#94A3B8"
+      editable={!isSavingPayment}
+    />
+  </View>
+
+  <TouchableOpacity 
+    style={[styles.saveButton, isSavingPayment && styles.saveButtonDisabled]} 
+    onPress={() => {
+      if (paymentProvider === 'MTN_MOMO') {
+        return Alert.alert(
+          'Indisponível ⚠️',
+          'A operadora MTN MoMo está temporariamente desativada. Selecione Orange Money para salvar seu método de pagamento.'
+        );
+      }
+      handleSavePaymentInfo();
+    }} 
+    disabled={isSavingPayment}
+    activeOpacity={0.85}
+  >
+    {isSavingPayment ? (
+      <ActivityIndicator color="#1A202C" />
+    ) : (
+      <Text style={styles.saveButtonText}>{t('save_payment', 'Salvar Pagamento')}</Text>
+    )}
+  </TouchableOpacity>
+</View>
 
             <TouchableOpacity style={styles.historyButton} onPress={() => navigation.navigate('EmergencyContacts')}>
               <View style={styles.historyButtonLeft}>

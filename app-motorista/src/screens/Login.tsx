@@ -8,12 +8,14 @@ import { api } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { Feather } from '@expo/vector-icons';
 import { theme } from '../theme/theme';
+import { PrivacyPolicyModal } from '../components/PrivacyPolicyModal';
 
 export function Login() {
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [isPrivacyModalOpen, setIsPrivacyModalOpen] = useState(false);
 
   const navigation = useNavigation<any>();
   const { signIn } = useAuth();
@@ -127,10 +129,28 @@ export function Login() {
             <TouchableOpacity style={styles.registerLink} onPress={() => navigation.navigate('Register')}>
               <Text style={styles.registerText}>Não tem uma conta? <Text style={styles.registerTextBold}>Cadastre-se grátis</Text></Text>
             </TouchableOpacity>
+
+            {/* LINK DE POLÍTICAS DE PRIVACIDADE ANTES DO LOGIN */}
+            <TouchableOpacity 
+              style={styles.privacyPolicyLink} 
+              onPress={() => setIsPrivacyModalOpen(true)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.privacyPolicyText}>
+                Ao entrar, você concorda com nossas{' '}
+                <Text style={styles.privacyPolicyTextBold}>Políticas de Privacidade</Text>
+              </Text>
+            </TouchableOpacity>
           </View>
 
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* MODAL DE POLÍTICA DE PRIVACIDADE */}
+      <PrivacyPolicyModal 
+        visible={isPrivacyModalOpen} 
+        onClose={() => setIsPrivacyModalOpen(false)} 
+      />
     </View>
   );
 }
@@ -139,7 +159,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.primaryDark },
   scrollContainer: { 
     flexGrow: 1, 
-    justifyContent: 'center', 
+    justify: 'center', 
     padding: 20, 
     paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 30) + 20 : 40,
     paddingBottom: 30
@@ -211,4 +231,7 @@ const styles = StyleSheet.create({
   registerLink: { marginTop: 24, alignItems: 'center' },
   registerText: { color: theme.colors.textSecondary, fontSize: 14 },
   registerTextBold: { color: theme.colors.accentOrange, fontWeight: '800' },
+  privacyPolicyLink: { marginTop: 18, alignItems: 'center', paddingVertical: 4 },
+  privacyPolicyText: { color: '#64748B', fontSize: 12, textAlign: 'center' },
+  privacyPolicyTextBold: { color: theme.colors.primaryBlue, fontWeight: '700', textDecorationLine: 'underline' },
 });

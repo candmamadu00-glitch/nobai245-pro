@@ -24,7 +24,7 @@ import {
 } from '../services/passengerSocket';
 import { CancelModal } from '../components/CancelModal';
 import { RatingModal } from '../components/RatingModal';
-
+import { api } from '../services/api';
 // Token Mapbox
 const MAPBOX_ACCESS_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_KEY || 'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZTRyc3NmMDBzMTJ5cTA1anJvYjFsOSJ9.pUAoGXwZS8FtYNr85VD1TA';
 if (MAPBOX_ACCESS_TOKEN) {
@@ -829,9 +829,7 @@ export function Home() {
   
   return () => subscription.remove();
 }, [getCurrentLocationWithFallback]);
-// 2. Efeito para buscar motoristas próximos a cada 5 segundos se estiver na tela de seleção
 useEffect(() => {
-  // Obtém latitude e longitude das coordenadas do embarque ou do GPS do passageiro
   const currentLat = pickupCoords?.latitude || passengerLocation?.coords?.latitude;
   const currentLng = pickupCoords?.longitude || passengerLocation?.coords?.longitude;
 
@@ -842,7 +840,7 @@ useEffect(() => {
       const response = await api.get('/passengers/drivers/nearby', {
         params: { lat: currentLat, lng: currentLng }
       });
-      setNearbyDrivers(response.data.drivers || []);
+      setNearbyDrivers(response.data?.drivers || []);
     } catch (err) {
       console.warn('Erro ao carregar motoristas próximos:', err);
     }
@@ -1613,20 +1611,19 @@ const handleSosPress = () => {
   </Mapbox.PointAnnotation>
 ))}
         {/* 📍 PONTO DE EMBARQUE */}
-        {(pickupLocation || (pickupCoords?.latitude != null && pickupCoords?.longitude != null)) && (
-          <Mapbox.PointAnnotation 
-            id="pickupPoint" 
-            coordinate={[
-              Number(pickupLocation?.longitude || pickupCoords?.longitude), 
-              Number(pickupLocation?.latitude || pickupCoords?.latitude)
-            ]}
-          >
-            <View style={styles.pickupMarker}>
-              <Ionicons name="pin" size={22} color="#EAB308" />
-            </View>
-          </Mapbox.PointAnnotation>
-        )}
-
+{(pickupCoords?.latitude != null && pickupCoords?.longitude != null) && (
+  <Mapbox.PointAnnotation 
+    id="pickupPoint" 
+    coordinate={[
+      Number(pickupCoords.longitude), 
+      Number(pickupCoords.latitude)
+    ]}
+  >
+    <View style={styles.pickupMarker}>
+      <Ionicons name="pin" size={22} color="#EAB308" />
+    </View>
+  </Mapbox.PointAnnotation>
+)}
         {/* 🔵 PARADA EXTRA */}
         {extraStopCoords?.latitude != null && extraStopCoords?.longitude != null && (
           <Mapbox.PointAnnotation
@@ -1885,47 +1882,45 @@ const handleSosPress = () => {
               </View>
             )}
 
-            {rideStatus === 'idle' && bookingStep === 'PAYMENT' && (
-              <View style={{ width: '100%' }}>
-                <Text style={styles.sectionLabel}>{t('payment_method', 'Forma de Pagamento')}</Text>
-                <View style={styles.paymentOptionsContainer}>
-                  <TouchableOpacity 
-                    style={[styles.paymentBtn, paymentMethod === 'ORANGE_MONEY' && styles.paymentBtnActive]}
-                    onPress={() => setPaymentMethod('ORANGE_MONEY')}
-                  >
-                    <Ionicons name="phone-portrait-outline" size={18} color={paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#94A3B8'} />
-                    <Text style={[styles.paymentBtnText, paymentMethod === 'ORANGE_MONEY' && styles.paymentBtnTextActive]}>Orange Money</Text>
-                  </TouchableOpacity>
+            {/* 💳 SELEÇÃO DE FORMA DE PAGAMENTO (APENAS ORANGE MONEY E DINHEIRO) */}
+{rideStatus === 'idle' && bookingStep === 'PAYMENT' && (
+  <View style={{ width: '100%' }}>
+    <Text style={styles.sectionLabel}>{t('payment_method', 'Forma de Pagamento')}</Text>
+    <View style={styles.paymentOptionsContainer}>
+      
+      {/* ORANGE MONEY */}
+      <TouchableOpacity 
+        style={[styles.paymentBtn, paymentMethod === 'ORANGE_MONEY' && styles.paymentBtnActive]}
+        onPress={() => setPaymentMethod('ORANGE_MONEY')}
+        activeOpacity={0.8}
+      >
+        <Ionicons name="phone-portrait-outline" size={18} color={paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#94A3B8'} />
+        <Text style={[styles.paymentBtnText, paymentMethod === 'ORANGE_MONEY' && styles.paymentBtnTextActive]}>Orange Money</Text>
+      </TouchableOpacity>
 
-                  <TouchableOpacity 
-                    style={[styles.paymentBtn, paymentMethod === 'MTN_MOMO' && styles.paymentBtnActive]}
-                    onPress={() => setPaymentMethod('MTN_MOMO')}
-                  >
-                    <Ionicons name="phone-portrait-outline" size={18} color={paymentMethod === 'MTN_MOMO' ? '#EAB308' : '#94A3B8'} />
-                    <Text style={[styles.paymentBtnText, paymentMethod === 'MTN_MOMO' && styles.paymentBtnTextActive]}>MTN MoMo</Text>
-                  </TouchableOpacity>
+      {/* DINHEIRO */}
+      <TouchableOpacity 
+        style={[styles.paymentBtn, paymentMethod === 'CASH' && styles.paymentBtnActive]}
+        onPress={() => setPaymentMethod('CASH')}
+        activeOpacity={0.8}
+      >
+        <Ionicons name="cash-outline" size={18} color={paymentMethod === 'CASH' ? '#10B981' : '#94A3B8'} />
+        <Text style={[styles.paymentBtnText, paymentMethod === 'CASH' && styles.paymentBtnTextActive]}>{t('cash', 'Dinheiro')}</Text>
+      </TouchableOpacity>
 
-                  <TouchableOpacity 
-                    style={[styles.paymentBtn, paymentMethod === 'CASH' && styles.paymentBtnActive]}
-                    onPress={() => setPaymentMethod('CASH')}
-                  >
-                    <Ionicons name="cash-outline" size={18} color={paymentMethod === 'CASH' ? '#10B981' : '#94A3B8'} />
-                    <Text style={[styles.paymentBtnText, paymentMethod === 'CASH' && styles.paymentBtnTextActive]}>{t('cash', 'Dinheiro')}</Text>
-                  </TouchableOpacity>
-                </View>
+    </View>
 
-                <View style={styles.actionRow}>
-                  <TouchableOpacity style={styles.cancelButtonOutline} onPress={() => setBookingStep('SERVICE_AND_PRICE')}>
-                    <Text style={styles.cancelButtonOutlineText}>{t('back_btn', 'Voltar')}</Text>
-                  </TouchableOpacity>
+    <View style={styles.actionRow}>
+      <TouchableOpacity style={styles.cancelButtonOutline} onPress={() => setBookingStep('SERVICE_AND_PRICE')}>
+        <Text style={styles.cancelButtonOutlineText}>{t('back_btn', 'Voltar')}</Text>
+      </TouchableOpacity>
 
-                  <TouchableOpacity style={[styles.requestButton, { flex: 1, marginLeft: 10 }]} onPress={handleInitialRequestRide}>
-                    <Text style={styles.requestButtonText}>{t('request_now_btn', 'Pedir Agora')}</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-
+      <TouchableOpacity style={[styles.requestButton, { flex: 1, marginLeft: 10 }]} onPress={handleInitialRequestRide}>
+        <Text style={styles.requestButtonText}>{t('request_now_btn', 'Pedir Agora')}</Text>
+      </TouchableOpacity>
+    </View>
+  </View>
+)}
             {(rideStatus === 'accepted' || rideStatus === 'arrived') && Boolean(activeOtpPin) && (
               <View style={styles.pinCardContainer}>
                 <View style={styles.pinHeader}>
