@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAudioRecorder as useExpoAudioRecorder, AudioModule, RecordingPresets } from 'expo-audio';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy'; // 👈 Importação legada para compatibilidade no Expo SDK 54
 
 export function useAudioRecorder() {
   const [isRecording, setIsRecording] = useState(false);
