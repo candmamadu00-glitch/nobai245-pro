@@ -27,7 +27,8 @@ import { StartRideOtpModal } from '../components/StartRideOtpModal';
 import { api } from '../services/api';
 import { DriverSOSModal } from '../components/DriverSOSModal';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
-
+import { createAudioPlayer, AudioModule } from 'expo-audio';
+import { useBilingualVoice } from '../hooks/useBilingualVoice';
 // 🛡️ BLINDAGEM 1: Token do Mapbox via Variável de Ambiente
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
 if (!MAPBOX_TOKEN) {
@@ -180,6 +181,55 @@ function calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number
   const brng = toDeg(Math.atan2(y, x));
   return Math.round((brng + 360) % 360);
 }
+// 🏎️ Função de resolução de ativos 3D (.jpg)
+function getVehicle3DIconAsset(vehicleType?: string, vehicleColor?: string) {
+  const type = (vehicleType || 'PARTICULAR').toUpperCase().trim();
+  const color = (vehicleColor || 'BRANCO').toUpperCase().trim();
+
+  if (type === 'MOTO') {
+    return require('../../assets/images/vehicles/moto.jpg');
+  }
+  if (type === 'TOCA_TOCA' || type === 'VAN') {
+    return require('../../assets/images/vehicles/toca_toca.jpg');
+  }
+  if (type === 'TAXI') {
+    return require('../../assets/images/vehicles/taxi_yellow.jpg');
+  }
+
+  switch (color) {
+    case 'BLACK':
+    case 'PRETO':
+      return require('../../assets/images/vehicles/car_black.jpg');
+    case 'BLUE':
+    case 'AZUL':
+      return require('../../assets/images/vehicles/car_blue.jpg');
+    case 'RED':
+    case 'VERMELHO':
+      return require('../../assets/images/vehicles/car_red.jpg');
+    case 'ORANGE':
+    case 'LARANJA':
+      return require('../../assets/images/vehicles/car_orange.jpg');
+    case 'GREEN':
+    case 'VERDE':
+      return require('../../assets/images/vehicles/car_green.jpg');
+    case 'GRAY':
+    case 'SILVER':
+    case 'CINZA':
+    case 'PRATA':
+      return require('../../assets/images/vehicles/car_gray.jpg');
+    case 'BROWN':
+    case 'CASTANHO':
+    case 'MARROM':
+      return require('../../assets/images/vehicles/car_brown.jpg');
+    case 'YELLOW':
+    case 'AMARELO':
+      return require('../../assets/images/vehicles/car_yellow.jpg');
+    case 'WHITE':
+    case 'BRANCO':
+    default:
+      return require('../../assets/images/vehicles/car_white.jpg');
+  }
+}
 export function Home() {
   const { driver } = useAuth();
   const navigation = useNavigation<any>();
@@ -228,6 +278,9 @@ const lastSpokenInstructionRef = useRef<string>('');
   const isOnlineRef = useRef(isOnline);
   const serviceFiltersRef = useRef(serviceFilters);
 const lastDriverCoordsRef = useRef<{ latitude: number; longitude: number; heading: number } | null>(null);
+// 🔊 HOOK DE VOZ BILINGUE E REF DO TOCADOR DE ÁUDIO
+const { speakInstruction: playBilingualVoice } = useBilingualVoice();
+const alertPlayerRef = useRef<any>(null);
   useEffect(() => { incomingRideRef.current = incomingRide; }, [incomingRide]);
   useEffect(() => { activeRideIdRef.current = activeRideId; }, [activeRideId]);
   useEffect(() => { isOnlineRef.current = isOnline; }, [isOnline]);
@@ -364,7 +417,48 @@ const lastDriverCoordsRef = useRef<{ latitude: number; longitude: number; headin
     checkBattery();
     return () => { if (sub?.remove) sub.remove(); };
   }, []);
+// 🔔 DISPARAR SOM DE ALERTA, VOZ E VIBRAÇÃO QUANDO CHEGA UMA CORRIDA
+useEffect(() => {
+  let activePlayer: any = null;
 
+  if (incomingRide && rideState === 'idle') {
+    console.log('🔔 [HOME LOG] Nova corrida recebida! Iniciando vibração, alerta sonoro e voz...');
+
+    // 1. Vibração Contínua
+    Vibration.vibrate([0, 1000, 500, 1000], true);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+
+    // 2. Tocar Som de Alerta (alert.mp3) em Loop
+    try {
+      const player = createAudioPlayer(require('../../assets/sounds/alert.mp3'));
+      player.loop = true;
+      player.play();
+      alertPlayerRef.current = player;
+      activePlayer = player;
+      console.log('✅ [HOME LOG] Som alert.mp3 em reprodução!');
+    } catch (audioErr) {
+      console.warn('⚠️ [HOME LOG] Erro ao carregar alert.mp3:', audioErr);
+    }
+
+    // 3. Disparar Anúncio de Voz Bilingue (Português + Crioulo)
+    playBilingualVoice('new_ride', 'Nova viagem encontrada');
+
+  } else {
+    // Parar som e vibração assim que a corrida for aceita, recusada ou expirada
+    Vibration.cancel();
+    if (alertPlayerRef.current) {
+      try { alertPlayerRef.current.pause(); } catch (e) {}
+      alertPlayerRef.current = null;
+    }
+  }
+
+  return () => {
+    Vibration.cancel();
+    if (activePlayer) {
+      try { activePlayer.pause(); } catch (e) {}
+    }
+  };
+}, [incomingRide, rideState, playBilingualVoice]);
   useEffect(() => { if (route.params?.openChat) setIsChatVisible(true); }, [route.params]); 
 
   useEffect(() => {
@@ -1027,14 +1121,44 @@ const translateToKriol = (text: string): string => {
   };
 
   const toggleAudioRecording = async () => {
+  try {
     if (audioRecorder.isRecording) {
-      await audioRecorder.stopRecording();
+      console.log('🎙️ [GRAVAÇÃO] Parando gravação de áudio...');
+      
+      // Tenta stop() ou stopRecording() dependendo da versão
+      if (typeof audioRecorder.stop === 'function') {
+        await audioRecorder.stop();
+      } else if (typeof audioRecorder.stopRecording === 'function') {
+        await (audioRecorder as any).stopRecording();
+      }
+
       Alert.alert('Gravação Encerrada', 'O áudio de segurança foi gravado e salvo localmente.');
     } else {
-      await audioRecorder.startRecording();
+      // 1. Verificar permissões do microfone de forma segura
+      if (AudioModule && typeof AudioModule.requestRecordingPermissionsAsync === 'function') {
+        const permission = await AudioModule.requestRecordingPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert('Permissão Necessária', 'Permita o acesso ao microfone para gravar o áudio.');
+          return;
+        }
+      }
+
+      console.log('🎙️ [GRAVAÇÃO] Iniciando gravação de áudio de segurança...');
+      
+      // 2. Tenta record() ou startRecording()
+      if (typeof audioRecorder.record === 'function') {
+        await audioRecorder.record();
+      } else if (typeof (audioRecorder as any).startRecording === 'function') {
+        await (audioRecorder as any).startRecording();
+      }
+
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
-  };
+  } catch (err: any) {
+    console.error('💥 [GRAVAÇÃO LOG] Erro ao alternar estado da gravação:', err);
+    Alert.alert('Aviso de Gravação', 'Não foi possível alterar o estado do gravador no momento.');
+  }
+};
 
   const formatWaitTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -1076,24 +1200,45 @@ const translateToKriol = (text: string): string => {
           </Mapbox.ShapeSource>
         )}
 
-        {/* MARCADOR DO VEÍCULO */}
-        {isOnline && location?.coords && (
-          <Mapbox.PointAnnotation id="car-location" coordinate={[Number(location.coords.longitude), Number(location.coords.latitude)]}>
-            <View style={styles.carMarkerContainer}>
-              <Ionicons name="car" size={18} color="#FFF" />
-            </View>
-          </Mapbox.PointAnnotation>
+        {/* 🏎️ MARCADOR DO VEÍCULO DO MOTORISTA COM ROTAÇÃO 3D REALISTA E TRATAMENTO SEGURO */}
+{isOnline && location?.coords && (
+  <Mapbox.PointAnnotation 
+    key={`driver-car-${driver?.id || 'active'}`}
+    id="car-location" 
+    coordinate={[
+      Number(location.coords.longitude || 0), 
+      Number(location.coords.latitude || 0)
+    ]}
+    anchor={{ x: 0.5, y: 0.5 }}
+  >
+    <View 
+      style={[
+        styles.vehicle3DContainer, 
+        { 
+          // 🔄 Trata e garante um valor numérico válido para a rotação de 0° a 360°
+          transform: [
+            { 
+              rotate: `${Math.round(
+                Number(lastDriverCoordsRef.current?.heading) || 
+                Number(location.coords.heading) || 0
+              )}deg` 
+            }
+          ]
+        }
+      ]}
+    >
+      <Image
+        source={getVehicle3DIconAsset(
+          driver?.vehicleType || incomingRide?.vehicleType || 'PARTICULAR',
+          driver?.carColor || 'BRANCO'
         )}
-
-        {/* PONTO DE EMBARQUE */}
-        {['accepted', 'arrived'].includes(rideState) && incomingRide && (
-          <Mapbox.PointAnnotation id="pickup-location" coordinate={[Number(incomingRide.pickupLng), Number(incomingRide.pickupLat)]}>
-            <View style={styles.markerPickup}>
-              <Ionicons name="location" size={18} color="#FFF" />
-            </View>
-          </Mapbox.PointAnnotation>
-        )}
-
+        style={styles.vehicle3DImage}
+        fadeDuration={0}
+        resizeMode="contain"
+      />
+    </View>
+  </Mapbox.PointAnnotation>
+)}
         {/* LINHA DA ROTA */}
         {routeCoordinates && routeCoordinates.length > 0 && (
           <Mapbox.ShapeSource id="routeSource" shape={{ type: 'Feature', geometry: { type: 'LineString', coordinates: routeCoordinates } }}>
@@ -1627,149 +1772,784 @@ const translateToKriol = (text: string): string => {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0F172A' },
-  carMarkerContainer: { backgroundColor: '#EAB308', padding: 8, borderRadius: 20, borderWidth: 2, borderColor: '#0F172A', elevation: 4 },
-  markerPickup: { backgroundColor: '#10B981', padding: 8, borderRadius: 20, borderWidth: 2, borderColor: '#0F172A' },
-  markerDestination: { backgroundColor: '#EF4444', padding: 8, borderRadius: 20, borderWidth: 2, borderColor: '#0F172A' },
-  
-  headerContainer: { position: 'absolute', left: 16, right: 16, zIndex: 10 },
-  headerRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  statusPill: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 20, borderWidth: 1, elevation: 6 },
-  pillOnline: { backgroundColor: '#EAB308', borderColor: '#EAB308' },
-  pillOffline: { backgroundColor: '#1E293B', borderColor: '#334155' },
-  statusDot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
-  dotGreen: { backgroundColor: '#0F172A' },
-  dotRed: { backgroundColor: '#EF4444' },
-  statusPillText: { fontSize: 13, fontWeight: '800' },
-  earningsPill: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#1E293B', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 20, borderWidth: 1, borderColor: '#334155', gap: 6, elevation: 6 },
-  earningsPillText: { color: '#F8FAFC', fontSize: 13, fontWeight: '800' },
-  filterPill: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#1E293B', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#334155', elevation: 6 },
-  profilePill: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#1E293B', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#334155', elevation: 6, overflow: 'hidden' },
-  headerProfileImage: { width: '100%', height: '100%' },
-  lowBatteryBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#EF4444', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, marginTop: 8, gap: 6 },
-  lowBatteryText: { color: '#FFF', fontSize: 11, fontWeight: '700' },
+  container: {
+    flex: 1,
+    backgroundColor: '#0F172A',
+  },
 
-  floatingButtonsWrapper: { position: 'absolute', right: 16, bottom: 230, zIndex: 9, alignItems: 'flex-end', gap: 10 },
-  recenterButton: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#1E293B', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#334155', elevation: 6 },
-  sosButton: { backgroundColor: '#EF4444', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 20, elevation: 6 },
-  sosText: { color: '#FFF', fontWeight: '900', fontSize: 12 },
-  audioRecordButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1E293B', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1, borderColor: '#334155', gap: 6 },
-  audioRecordButtonActive: { backgroundColor: '#EF4444', borderColor: '#EF4444' },
-  audioRecordText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
+ vehicle3DContainer: {
+  width: 48,
+  height: 48,
+  alignItems: 'center',
+  justifyContent: 'center',
+  zIndex: 99,
+},
+vehicle3DImage: {
+  width: 44,
+  height: 44,
+  resizeMode: 'contain',
+},
 
-  bottomSheetWrapper: { position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 20 },
+  // MARCADORES DO MAPA
+  carMarkerContainer: {
+    backgroundColor: '#EAB308',
+    padding: 8,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#0F172A',
+    elevation: 5,
+  },
+  markerPickup: {
+    backgroundColor: '#10B981',
+    padding: 8,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    elevation: 5,
+  },
+  markerDestination: {
+    backgroundColor: '#EF4444',
+    padding: 8,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    elevation: 5,
+  },
+
+  // HEADER SUPERIOR FLUTUANTE
+  headerContainer: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    zIndex: 15,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 20,
+    elevation: 6,
+    borderWidth: 1,
+  },
+  pillOnline: {
+    backgroundColor: '#EAB308',
+    borderColor: '#CA8A04',
+  },
+  pillOffline: {
+    backgroundColor: '#1E293B',
+    borderColor: '#334155',
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  dotGreen: {
+    backgroundColor: '#0F172A',
+  },
+  dotRed: {
+    backgroundColor: '#EF4444',
+  },
+  statusPillText: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  earningsPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#334155',
+    elevation: 6,
+    gap: 6,
+  },
+  earningsPillText: {
+    color: '#10B981',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  filterPill: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+    elevation: 6,
+  },
+  profilePill: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+    overflow: 'hidden',
+    elevation: 6,
+  },
+  headerProfileImage: {
+    width: '100%',
+    height: '100%',
+  },
+  lowBatteryBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EF4444',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    marginTop: 8,
+    gap: 6,
+  },
+  lowBatteryText: {
+    color: '#FFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+
+  // BOTÕES FLUTUANTES LATERAIS
+  floatingButtonsWrapper: {
+    position: 'absolute',
+    right: 16,
+    bottom: 220,
+    alignItems: 'flex-end',
+    gap: 10,
+    zIndex: 10,
+  },
+  recenterButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+    elevation: 6,
+  },
+  sosButton: {
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 20,
+    elevation: 6,
+  },
+  sosText: {
+    color: '#FFF',
+    fontWeight: '900',
+    fontSize: 12,
+  },
+  audioRecordButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#334155',
+    gap: 6,
+    elevation: 6,
+  },
+  audioRecordButtonActive: {
+    backgroundColor: '#EF4444',
+    borderColor: '#DC2626',
+  },
+  audioRecordText: {
+    color: '#FFF',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+
+  // SLIDING BOTTOM SHEET
+  bottomSheetWrapper: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    zIndex: 20,
+  },
   bottomSheet: {
     backgroundColor: '#1E293B',
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     paddingHorizontal: 20,
     paddingTop: 8,
-    borderWidth: 1,
+    borderTopWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
     elevation: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -8 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
     minHeight: 180,
-    maxHeight: Dimensions.get('window').height * 0.78,
   },
-  dragHandleArea: { width: '100%', alignItems: 'center', paddingVertical: 10 },
-  dragHandle: { width: 40, height: 5, backgroundColor: '#475569', borderRadius: 3, marginBottom: 4 },
-  dragHintText: { fontSize: 11, color: '#94A3B8', fontWeight: '600' },
+  dragHandleArea: {
+    width: '100%',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  dragHandle: {
+    width: 40,
+    height: 5,
+    backgroundColor: '#475569',
+    borderRadius: 3,
+  },
+  dragHintText: {
+    color: '#64748B',
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 4,
+  },
 
-  idleContainer: { alignItems: 'center', paddingVertical: 14 },
-  idleTitle: { fontSize: 18, fontWeight: '800', color: '#FFF' },
-  idleSub: { fontSize: 13, color: '#94A3B8', textAlign: 'center', marginTop: 4, marginBottom: 16 },
-  goOnlineBtn: { backgroundColor: '#EAB308', paddingHorizontal: 32, paddingVertical: 14, borderRadius: 16, width: '100%', alignItems: 'center' },
-  goOnlineText: { color: '#0F172A', fontWeight: '800', fontSize: 15 },
+  // IDLE (LIVRE)
+  idleContainer: {
+    alignItems: 'center',
+    paddingVertical: 16,
+  },
+  idleTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginBottom: 6,
+  },
+  idleSub: {
+    fontSize: 13,
+    color: '#94A3B8',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 16,
+  },
+  goOnlineBtn: {
+    backgroundColor: '#EAB308',
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    borderRadius: 16,
+    width: '100%',
+    alignItems: 'center',
+  },
+  goOnlineText: {
+    color: '#0F172A',
+    fontWeight: '900',
+    fontSize: 15,
+  },
 
-  activeRideContainer: { gap: 12 },
-  compactHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  serviceBadgeRow: { flexDirection: 'row', gap: 6 },
-  serviceTypeBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, gap: 6 },
-  serviceTypeBadgeText: { color: '#FFF', fontSize: 10, fontWeight: '800' },
-  priceBadgeContainer: { backgroundColor: 'rgba(234, 179, 8, 0.15)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, borderWidth: 1, borderColor: '#EAB308' },
-  priceBadgeText: { color: '#EAB308', fontWeight: '900', fontSize: 15 },
+  // CORRIDA ATIVA
+  activeRideContainer: {
+    paddingTop: 4,
+  },
+  compactHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  serviceBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  serviceTypeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+    gap: 6,
+  },
+  serviceTypeBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  priceBadgeContainer: {
+    backgroundColor: 'rgba(234, 179, 8, 0.15)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#EAB308',
+  },
+  priceBadgeText: {
+    color: '#EAB308',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  etaHeader: {
+    marginBottom: 12,
+  },
+  rideStateTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#F8FAFC',
+  },
+  waitTimerBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
+  },
+  waitTimerText: {
+    color: '#EAB308',
+    fontSize: 12,
+    fontWeight: '700',
+  },
 
-  etaHeader: { gap: 4 },
-  rideStateTitle: { color: '#FFF', fontSize: 18, fontWeight: '800' },
-  waitTimerBox: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  waitTimerText: { color: '#EAB308', fontSize: 13, fontWeight: '700' },
+  // CARD DO PASSAGEIRO
+  passengerProfileCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
+    marginBottom: 12,
+  },
+  passengerPhotoContainer: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    marginRight: 10,
+  },
+  passengerPhoto: {
+    width: '100%',
+    height: '100%',
+  },
+  passengerDetails: {
+    flex: 1,
+  },
+  passengerName: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  ratingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 2,
+  },
+  ratingText: {
+    color: '#EAB308',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  callIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#EAB308',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
-  passengerProfileCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', padding: 12, borderRadius: 16, borderWidth: 1, borderColor: '#334155' },
-  passengerPhotoContainer: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#1E293B', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  passengerPhoto: { width: '100%', height: '100%' },
-  passengerDetails: { flex: 1, marginLeft: 12 },
-  passengerName: { color: '#FFF', fontSize: 15, fontWeight: '800' },
-  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
-  ratingText: { color: '#EAB308', fontSize: 12, fontWeight: '700' },
-  callIconBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#EAB308', alignItems: 'center', justifyContent: 'center' },
+  // ENDEREÇOS E ROTA
+  routeAddressesContainer: {
+    backgroundColor: '#0F172A',
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+    gap: 10,
+    marginBottom: 12,
+  },
+  addressItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  addressTextWrapper: {
+    flex: 1,
+  },
+  addressLabel: {
+    color: '#10B981',
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  addressValue: {
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '600',
+  },
 
-  routeAddressesContainer: { backgroundColor: '#0F172A', padding: 12, borderRadius: 16, borderWidth: 1, borderColor: '#334155', gap: 10 },
-  addressItem: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  addressTextWrapper: { flex: 1 },
-  addressLabel: { fontSize: 11, color: '#94A3B8', fontWeight: '700', textTransform: 'uppercase' },
-  addressValue: { fontSize: 13, color: '#FFF', fontWeight: '600' },
+  // DETALHES DE ENTREGA
+  deliveryDetailsCard: {
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+    marginBottom: 12,
+  },
+  deliveryDetailsTitle: {
+    color: '#3B82F6',
+    fontSize: 12,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  deliveryDetailsText: {
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  deliveryNotes: { 
+  color: '#94A3B8', 
+  fontSize: 12, 
+  fontStyle: 'italic' 
+},
+// 1. Adicione os estilos do marcador 3D do veículo:
+vehicle3DContainer: {
+  width: 48,
+  height: 48,
+  justifyContent: 'center',
+  alignItems: 'center',
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: 3 },
+  shadowOpacity: 0.35,
+  shadowRadius: 5,
+  elevation: 6,
+},
+vehicle3DImage: {
+  width: 44,
+  height: 44,
+  resizeMode: 'contain',
+},
+  // BOTÕES DE AÇÃO
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  actionButtonSecondary: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0F172A',
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+    gap: 6,
+  },
+  actionButtonSecondaryText: {
+    color: '#F8FAFC',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  cancelButtonDanger: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#EF4444',
+    gap: 6,
+  },
+  cancelButtonText: {
+    color: '#EF4444',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  noShowBtnDanger: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#DC2626',
+    paddingVertical: 10,
+    borderRadius: 12,
+    gap: 6,
+  },
+  noShowBtnText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  actionBtnPrimary: {
+    width: '100%',
+    paddingVertical: 14,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 4,
+  },
+  actionBtnText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
 
-  deliveryDetailsCard: { backgroundColor: '#0F172A', padding: 12, borderRadius: 16, borderWidth: 1, borderColor: '#3B82F6', gap: 4 },
-  deliveryDetailsTitle: { color: '#3B82F6', fontWeight: '800', fontSize: 13 },
-  deliveryDetailsText: { color: '#FFF', fontSize: 13 },
-  deliveryNotes: { color: '#94A3B8', fontSize: 12, italic: true },
+  // MODAL FILTROS
+  filterModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    justifyContent: 'flex-end',
+  },
+  filterModalCard: {
+    backgroundColor: '#1E293B',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    padding: 20,
+    borderTopWidth: 1,
+    borderColor: '#334155',
+  },
+  filterModalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FFF',
+    marginBottom: 4,
+  },
+  filterModalSub: {
+    fontSize: 13,
+    color: '#94A3B8',
+    marginBottom: 20,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#0F172A',
+  },
+  filterLabelContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  filterLabelText: {
+    color: '#F8FAFC',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  closeFilterBtn: {
+    backgroundColor: '#EAB308',
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  closeFilterText: {
+    color: '#0F172A',
+    fontWeight: '800',
+    fontSize: 14,
+  },
 
-  actionRow: { flexDirection: 'row', gap: 8 },
-  actionButtonSecondary: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#0F172A', paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: '#334155', gap: 6 },
-  actionButtonSecondaryText: { color: '#FFF', fontSize: 13, fontWeight: '700' },
-  noShowBtnDanger: { backgroundColor: '#EF4444', paddingHorizontal: 12, paddingVertical: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 4 },
-  noShowBtnText: { color: '#FFF', fontWeight: '800', fontSize: 12 },
-  cancelButtonDanger: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#0F172A', paddingHorizontal: 12, paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: '#EF4444', gap: 4 },
-  cancelButtonText: { color: '#EF4444', fontWeight: '700', fontSize: 12 },
+  // MODAL NOVA SOLICITAÇÃO (POPUP)
+  newRequestOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  newRequestCard: {
+    backgroundColor: '#1E293B',
+    borderRadius: 24,
+    padding: 20,
+    borderWidth: 1.5,
+    borderColor: '#EAB308',
+    elevation: 10,
+  },
+  newRequestHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  newRequestTitle: {
+    color: '#F8FAFC',
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  newRequestPriceBadge: {
+    backgroundColor: '#EAB308',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  newRequestPriceText: {
+    color: '#0F172A',
+    fontWeight: '900',
+    fontSize: 15,
+  },
+  progressBarContainer: {
+    height: 6,
+    backgroundColor: '#0F172A',
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 6,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#EAB308',
+  },
+  timerText: {
+    color: '#94A3B8',
+    fontSize: 11,
+    textAlign: 'right',
+    marginBottom: 14,
+    fontWeight: '700',
+  },
+  modalPassengerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    padding: 10,
+    borderRadius: 14,
+    marginBottom: 14,
+  },
+  passengerPhotoContainerSm: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalPassengerName: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  modalPassengerRating: {
+    color: '#EAB308',
+    fontSize: 12,
+    fontWeight: '700',
+    marginLeft: 4,
+  },
+  routeTimelineContainer: {
+    backgroundColor: '#0F172A',
+    borderRadius: 14,
+    padding: 12,
+    gap: 10,
+    marginBottom: 16,
+  },
+  timelineRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  timelineTextContainer: {
+    flex: 1,
+  },
+  timelineLabel: {
+    color: '#10B981',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  timelineAddress: {
+    color: '#CBD5E1',
+    fontSize: 12,
+    marginTop: 1,
+  },
+  newRequestActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  rejectBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#475569',
+    alignItems: 'center',
+  },
+  rejectText: {
+    color: '#94A3B8',
+    fontWeight: '800',
+  },
+  acceptBtn: {
+    flex: 2,
+    backgroundColor: '#EAB308',
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+  },
+  acceptText: {
+    color: '#0F172A',
+    fontWeight: '900',
+    fontSize: 15,
+  },
 
-  actionBtnPrimary: { width: '100%', paddingVertical: 16, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginTop: 4, elevation: 4 },
-  actionBtnText: { color: '#FFF', fontWeight: '900', fontSize: 15, letterSpacing: 0.5 },
-
-  filterModalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.75)', justifyContent: 'flex-end' },
-  filterModalCard: { backgroundColor: '#1E293B', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20, borderWidth: 1, borderColor: '#334155' },
-  filterModalTitle: { fontSize: 18, fontWeight: '800', color: '#FFF', marginBottom: 4 },
-  filterModalSub: { fontSize: 13, color: '#94A3B8', marginBottom: 16 },
-  filterRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#334155' },
-  filterLabelContainer: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  filterLabelText: { fontSize: 14, color: '#FFF', fontWeight: '600' },
-  closeFilterBtn: { backgroundColor: '#EAB308', paddingVertical: 14, borderRadius: 16, alignItems: 'center', marginTop: 20 },
-  closeFilterText: { color: '#0F172A', fontWeight: '800', fontSize: 14 },
-
-  newRequestOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.85)', justifyContent: 'center', padding: 20 },
-  newRequestCard: { backgroundColor: '#1E293B', borderRadius: 24, padding: 20, borderWidth: 1, borderColor: '#EAB308' },
-  newRequestHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  newRequestTitle: { fontSize: 18, fontWeight: '800', color: '#FFF' },
-  newRequestPriceBadge: { backgroundColor: '#EAB308', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 },
-  newRequestPriceText: { color: '#0F172A', fontWeight: '900', fontSize: 15 },
-  progressBarContainer: { height: 6, backgroundColor: '#0F172A', borderRadius: 3, overflow: 'hidden', marginBottom: 6 },
-  progressBarFill: { height: '100%', backgroundColor: '#EAB308' },
-  timerText: { fontSize: 12, color: '#94A3B8', fontWeight: '700', textAlign: 'right', marginBottom: 14 },
-  modalPassengerRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', padding: 12, borderRadius: 16, marginBottom: 14 },
-  passengerPhotoContainerSm: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#1E293B', alignItems: 'center', justifyContent: 'center' },
-  modalPassengerName: { color: '#FFF', fontWeight: '800', fontSize: 14 },
-  modalPassengerRating: { color: '#EAB308', fontSize: 12, fontWeight: '700', marginLeft: 4 },
-  routeTimelineContainer: { backgroundColor: '#0F172A', padding: 12, borderRadius: 16, gap: 12, marginBottom: 20 },
-  timelineRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  timelineTextContainer: { flex: 1 },
-  timelineLabel: { fontSize: 10, color: '#10B981', fontWeight: '800' },
-  timelineAddress: { fontSize: 13, color: '#FFF', fontWeight: '600', marginTop: 2 },
-  newRequestActions: { flexDirection: 'row', gap: 10 },
-  rejectBtn: { flex: 1, paddingVertical: 14, borderRadius: 14, backgroundColor: '#0F172A', alignItems: 'center', borderWidth: 1, borderColor: '#334155' },
-  rejectText: { color: '#94A3B8', fontWeight: '800', fontSize: 14 },
-  acceptBtn: { flex: 1.5, paddingVertical: 14, borderRadius: 14, backgroundColor: '#EAB308', alignItems: 'center', justifyContent: 'center' },
-  acceptText: { color: '#0F172A', fontWeight: '900', fontSize: 14 },
-
-  receiptOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.8)', justifyContent: 'flex-end' },
-  receiptCard: { backgroundColor: '#1E293B', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 24, alignItems: 'center' },
-  receiptHeader: { fontSize: 20, fontWeight: '800', color: '#FFF', marginBottom: 4 },
-  receiptSub: { fontSize: 13, color: '#94A3B8', textAlign: 'center', marginBottom: 16 },
-  divider: { height: 1, backgroundColor: '#334155', width: '100%', marginBottom: 16 },
-  receiptLabel: { fontSize: 13, color: '#94A3B8', fontWeight: '600' },
-  receiptAmount: { fontSize: 28, fontWeight: '900', color: '#10B981', marginVertical: 4 },
-  receiptDist: { fontSize: 12, color: '#64748B', marginBottom: 20 },
-  closeReceiptBtn: { backgroundColor: '#EAB308', paddingVertical: 14, borderRadius: 16, width: '100%', alignItems: 'center' },
-  closeReceiptText: { color: '#0F172A', fontWeight: '800', fontSize: 15 },
+  // MODAL RECIBO
+  receiptOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    justifyContent: 'flex-end',
+  },
+  receiptCard: {
+    backgroundColor: '#1E293B',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    padding: 24,
+    alignItems: 'center',
+  },
+  receiptHeader: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#10B981',
+    marginBottom: 4,
+  },
+  receiptSub: {
+    fontSize: 13,
+    color: '#94A3B8',
+    textAlign: 'center',
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#334155',
+    width: '100%',
+    marginVertical: 16,
+  },
+  receiptLabel: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  receiptAmount: {
+    color: '#EAB308',
+    fontSize: 28,
+    fontWeight: '900',
+    marginVertical: 4,
+  },
+  receiptDist: {
+    color: '#64748B',
+    fontSize: 11,
+    marginBottom: 20,
+  },
+  closeReceiptBtn: {
+    backgroundColor: '#EAB308',
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    width: '100%',
+  },
+  closeReceiptText: {
+    color: '#0F172A',
+    fontWeight: '900',
+    fontSize: 15,
+  },
 });

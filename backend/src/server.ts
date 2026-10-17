@@ -154,7 +154,7 @@ app.get('/track/:rideId/data', async (req: Request, res: Response) => {
 });
 
 // =============================================================================
-// 🌐 ROTA PÚBLICA DE RASTREAMENTO WEB DA VIAGEM (VERSÃO PROFISSIONAL)
+// 🌐 ROTA PÚBLICA DE RASTREAMENTO WEB DA VIAGEM (CORRIGIDA E PROFISSIONAL)
 // =============================================================================
 app.get('/track/:rideId', async (req: Request, res: Response) => {
   try {
@@ -204,16 +204,16 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
       "img-src 'self' blob: data: https://*.mapbox.com;"
     );
 
-    const driverLat = ride.driverLat || ride.driver?.currentLat || ride.originLat || 11.8633;
-    const driverLng = ride.driverLng || ride.driver?.currentLng || ride.originLng || -15.5833;
-    const originLat = ride.originLat || driverLat;
-    const originLng = ride.originLng || driverLng;
-    const destLat = ride.destinationLat || driverLat;
-    const destLng = ride.destinationLng || driverLng;
+    const driverLat = Number(ride.driverLat || ride.driver?.currentLat || ride.originLat || 11.8633);
+    const driverLng = Number(ride.driverLng || ride.driver?.currentLng || ride.originLng || -15.5833);
+    const originLat = Number(ride.originLat || driverLat);
+    const originLng = Number(ride.originLng || driverLng);
+    const destLat = Number(ride.destinationLat || driverLat);
+    const destLng = Number(ride.destinationLng || driverLng);
 
     const driverName = ride.driver?.fullName || ride.driver?.name || 'Motorista';
     const carModel = ride.driver?.carModel || ride.driver?.vehicleModel || 'Veículo';
-    const carColor = ride.driver?.carColor || ride.driver?.vehicleColor || 'N/A';
+    const carColor = ride.driver?.carColor || ride.driver?.vehicleColor || 'BRANCO';
     const licensePlate = ride.driver?.licensePlate || ride.driver?.vehiclePlate || 'N/A';
 
     res.send(`
@@ -245,7 +245,17 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
           .detail-item { font-size: 13px; color: #CBD5E1; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
           .detail-item strong { color: #FFF; }
           
-          .car-icon { font-size: 30px; transition: transform 0.8s ease-in-out; filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.4)); }
+          /* 🏎️ ÍCONE DE VEÍCULO 3D TOP-VIEW COM SUPORTE A ROTAÇÃO SUAVE */
+          .car-icon-wrapper { 
+            width: 42px; 
+            height: 42px; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center;
+            transition: transform 0.6s cubic-bezier(0.25, 1, 0.5, 1);
+            transform-origin: center center;
+          }
+          .car-svg { width: 36px; height: 36px; filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.6)); }
         </style>
       </head>
       <body>
@@ -253,7 +263,7 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
         <div class="info-card">
           <div class="header">
             <div class="title">🚕 Nô Bai 245</div>
-            <div id="statusBadge" class="badge ${ride.status === 'CANCELLED' ? 'cancelled' : ''}">${ride.status || 'EM ANDAMENTO'}</div>
+            <div id="statusBadge" class="badge ${ride.status === 'CANCELLED' ? 'cancelled' : (ride.status === 'COMPLETED' ? 'completed' : '')}">${ride.status || 'EM ANDAMENTO'}</div>
           </div>
 
           <div class="metrics-grid">
@@ -287,24 +297,28 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
             zoom: 15
           });
 
-          // Elemento do Veículo com Suporte a Rotação
+          // SVG do Veículo Top-View com Design Profissional (Amarelo/Ouro Dourado)
           const carContainer = document.createElement('div');
-          carContainer.className = 'car-icon';
-          carContainer.innerHTML = '🚘';
-          const driverMarker = new mapboxgl.Marker(carContainer).setLngLat(lastPos).addTo(map);
+          carContainer.className = 'car-icon-wrapper';
+          carContainer.innerHTML = \`
+            <svg class="car-svg" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5H6.5C5.84 5 5.29 5.42 5.08 6.01L3 12V20C3 20.55 3.45 21 4 21H5C5.55 21 6 20.55 6 20V19H18V20C18 20.55 18.45 21 19 21H20C20.55 21 21 20.55 21 20V12L18.92 6.01ZM6.85 7H17.14L18.22 10.12H5.78L6.85 7ZM19 17H5V12H19V17ZM7.5 16C8.33 16 9 15.33 9 14.5C9 13.67 8.33 13 7.5 13C6.67 13 6 13.67 6 14.5C6 15.33 6.67 16 7.5 16ZM16.5 16C17.33 16 18 15.33 18 14.5C18 13.67 17.33 13 16.5 13C15.67 13 15 13.67 15 14.5C15 15.33 15.67 16 16.5 16Z" fill="#EAB308"/>
+            </svg>
+          \`;
+          
+          const driverMarker = new mapboxgl.Marker({ element: carContainer, anchor: 'center' }).setLngLat(lastPos).addTo(map);
 
           // Marcadores de Origem e Destino
           const originEl = document.createElement('div');
           originEl.style.fontSize = '22px';
           originEl.innerHTML = '🟢';
-          new mapboxgl.Marker(originEl).setLngLat(origin).addTo(map);
+          new mapboxgl.Marker({ element: originEl }).setLngLat(origin).addTo(map);
 
           const destEl = document.createElement('div');
           destEl.style.fontSize = '22px';
           destEl.innerHTML = '🏁';
-          new mapboxgl.Marker(destEl).setLngLat(destination).addTo(map);
+          new mapboxgl.Marker({ element: destEl }).setLngLat(destination).addTo(map);
 
-          // Função para calcular o ângulo de direção (Bearing)
           function calculateBearing(startLat, startLng, destLat, destLng) {
             const startLatRad = startLat * Math.PI / 180;
             const startLngRad = startLng * Math.PI / 180;
@@ -319,7 +333,6 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
             return (brng + 360) % 360;
           }
 
-          // Função para carregar a rota e ETA do Mapbox
           async function updateRoute(currentPos) {
             try {
               const query = await fetch(
@@ -331,14 +344,12 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
                 const route = json.routes[0];
                 const routeCoords = route.geometry.coordinates;
 
-                // Atualizar Métricas na Tela
                 const durationMin = Math.round(route.duration / 60);
                 const distanceKm = (route.distance / 1000).toFixed(1);
 
                 document.getElementById('etaValue').innerText = durationMin > 0 ? durationMin + ' min' : 'Chegando';
                 document.getElementById('distValue').innerText = distanceKm + ' km';
 
-                // Desenhar/Atualizar a Linha da Rota no Mapa
                 if (map.getSource('route')) {
                   map.getSource('route').setData({
                     type: 'Feature',
@@ -371,7 +382,6 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
 
           map.on('load', async function() {
             map.resize();
-
             const bounds = new mapboxgl.LngLatBounds();
             bounds.extend(origin);
             bounds.extend(destination);
@@ -381,7 +391,6 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
             await updateRoute(lastPos);
           });
 
-          // Animação e Polling em Tempo Real (a cada 3.5 segundos)
           setInterval(async () => {
             try {
               const res = await fetch('/track/${rideId}/data');
@@ -389,23 +398,19 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
               const data = await res.json();
 
               if (data.driverLat && data.driverLng) {
-                const newPos = [data.driverLng, data.driverLat];
+                const newPos = [Number(data.driverLng), Number(data.driverLat)];
 
-                // Verificar se o carro se moveu
                 if (newPos[0] !== lastPos[0] || newPos[1] !== lastPos[1]) {
                   const angle = calculateBearing(lastPos[1], lastPos[0], newPos[1], newPos[0]);
                   carContainer.style.transform = 'rotate(' + angle + 'deg)';
                   
-                  // Deslocamento suave do marcador
                   driverMarker.setLngLat(newPos);
                   lastPos = newPos;
 
-                  // Recalcular ETA e Rota com base na nova posição
                   updateRoute(newPos);
                 }
               }
 
-              // Atualizar Badge de Status
               const badge = document.getElementById('statusBadge');
               if (badge && data.status) {
                 badge.innerText = data.status;

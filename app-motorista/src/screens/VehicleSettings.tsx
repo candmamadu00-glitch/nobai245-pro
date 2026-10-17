@@ -13,6 +13,65 @@ import { useBilingualVoice } from '../hooks/useBilingualVoice';
 export const STORAGE_VOICE_MODE_KEY = '@nobai245:driver_voice_mode';
 export type VoiceMode = 'BOTH' | 'CRI' | 'PT' | 'OFF';
 
+// 🏎️ Mapeamento do ícone/imagem do veículo por tipo e cor (.jpg)
+function getVehicle3DIconAsset(vehicleType?: string, vehicleColor?: string) {
+  const type = (vehicleType || 'PARTICULAR').toUpperCase().trim();
+  const color = (vehicleColor || 'BRANCO').toUpperCase().trim();
+
+  // 1. Tipos de Veículos Especiais
+  if (type === 'MOTO') {
+    return require('../../assets/images/vehicles/moto.jpg');
+  }
+  if (type === 'TOCA_TOCA' || type === 'VAN') {
+    return require('../../assets/images/vehicles/toca_toca.jpg');
+  }
+  if (type === 'TAXI') {
+    return require('../../assets/images/vehicles/taxi_yellow.jpg');
+  }
+
+  // 2. Carros Particulares / Aluguel mapeados por Cor
+  switch (color) {
+    case 'BLACK':
+    case 'PRETO':
+      return require('../../assets/images/vehicles/car_black.jpg');
+
+    case 'BLUE':
+    case 'AZUL':
+      return require('../../assets/images/vehicles/car_blue.jpg');
+
+    case 'RED':
+    case 'VERMELHO':
+      return require('../../assets/images/vehicles/car_red.jpg');
+
+    case 'ORANGE':
+    case 'LARANJA':
+      return require('../../assets/images/vehicles/car_orange.jpg');
+
+    case 'GREEN':
+    case 'VERDE':
+      return require('../../assets/images/vehicles/car_green.jpg');
+
+    case 'GRAY':
+    case 'SILVER':
+    case 'CINZA':
+    case 'PRATA':
+      return require('../../assets/images/vehicles/car_gray.jpg');
+
+    case 'BROWN':
+    case 'CASTANHO':
+    case 'MARROM':
+      return require('../../assets/images/vehicles/car_brown.jpg');
+
+    case 'YELLOW':
+    case 'AMARELO':
+      return require('../../assets/images/vehicles/car_yellow.jpg');
+
+    case 'WHITE':
+    case 'BRANCO':
+    default:
+      return require('../../assets/images/vehicles/car_white.jpg');
+  }
+}
 export function VehicleSettings() {
   const navigation = useNavigation<any>();
   const { driver } = useAuth();

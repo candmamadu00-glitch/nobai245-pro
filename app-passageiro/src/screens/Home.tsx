@@ -155,7 +155,7 @@ function calculateVehiclePrice(type: VehicleType, distanceKm: number | null): nu
   return Math.round(calculatedPrice / 50) * 50;
 }
 
-// 🛡️ Normalizador universal do tipo de veículo (COLOQUE AQUI)
+// 🛡️ Normalizador universal do tipo de veículo
 const normalizeVehicleType = (type?: string): string => {
   if (!type) return 'particular';
   const clean = type.toLowerCase().replace(/[-_]/g, '').trim();
@@ -166,23 +166,54 @@ const normalizeVehicleType = (type?: string): string => {
   return 'particular';
 };
 
+// 🏎️ Mapeador de Ícones 3D (Top-View) para o Marcador do Mapa por Cor e Tipo
+export const getVehicle3DIconAsset = (type?: string, colorName?: string) => {
+  const normType = normalizeVehicleType(type);
+  const color = (colorName || 'WHITE').toUpperCase().trim();
+
+  // 1. Veículos Especiais
+  if (normType === 'moto') {
+    return require('../../assets/images/vehicles/moto.jpg');
+  }
+  if (normType === 'moto-carro' || normType === 'toca-toca') {
+    return require('../../assets/images/vehicles/toca_toca.jpg');
+  }
+  if (normType === 'taxi') {
+    return require('../../assets/images/vehicles/taxi_yellow.jpg');
+  }
+
+  // 2. Carros por Cor
+  if (color.includes('PRET') || color.includes('BLACK')) return require('../../assets/images/vehicles/car_black.jpg');
+  if (color.includes('AZUL') || color.includes('BLUE')) return require('../../assets/images/vehicles/car_blue.jpg');
+  if (color.includes('VERMELH') || color.includes('RED')) return require('../../assets/images/vehicles/car_red.jpg');
+  if (color.includes('LARANJ') || color.includes('ORANGE')) return require('../../assets/images/vehicles/car_orange.jpg');
+  if (color.includes('VERD') || color.includes('GREEN')) return require('../../assets/images/vehicles/car_green.jpg');
+  if (color.includes('PRAT') || color.includes('CINZA') || color.includes('GRAY') || color.includes('SILVER')) return require('../../assets/images/vehicles/car_gray.jpg');
+  if (color.includes('CASTANH') || color.includes('MARROM') || color.includes('BROWN')) return require('../../assets/images/vehicles/car_brown.jpg');
+  if (color.includes('AMAREL') || color.includes('YELLOW')) return require('../../assets/images/vehicles/car_yellow.jpg');
+
+  // Padrão: Carro Branco
+  return require('../../assets/images/vehicles/car_white.jpg');
+};
+
 // 🖼️ Imagem oficial do Veículo para o Cartão de Corrida
 const getVehicleImage = (type?: string) => {
   const norm = normalizeVehicleType(type);
   switch (norm) {
     case 'moto':
-      return require('../assets/vehicles/moto.png');
+      return require('../../assets/images/vehicles/moto.jpg');
     case 'moto-carro':
-      return require('../assets/vehicles/motocarro.jpg');
+    case 'toca-toca':
+      return require('../../assets/images/vehicles/toca_toca.jpg');
     case 'taxi':
-      return require('../assets/vehicles/taxi_yellow.png');
+      return require('../../assets/images/vehicles/taxi_yellow.jpg');
     case 'particular':
     default:
-      return require('../assets/vehicles/carro_white.png');
+      return require('../../assets/images/vehicles/car_white.jpg');
   }
 };
 
-// 🛵 Ícone do Veículo para o Marcador do Mapa (SUBSTITUIU O ANTIGO)
+// 🛵 Ícone do Veículo para o Marcador do Mapa
 const getVehicleIcon = (type?: string) => {
   const norm = normalizeVehicleType(type);
   switch (norm) {
@@ -197,7 +228,6 @@ const getVehicleIcon = (type?: string) => {
       return 'car';
   }
 };
-
 const getVehicleColorHex = (colorName?: string) => {
   if (!colorName) return '#0F172A';
   if (colorName.startsWith('#')) return colorName;
@@ -850,88 +880,57 @@ export function Home() {
     };
 
     const handleStateRecovered = async (data: any) => {
-  if (!isMountedRef.current || !data) return;
-  try {
-    // 🛡️ Se o servidor diz que não há corrida ativa, só limpa se o estado local também não tiver corrida aceita/em andamento
-    if (!data?.hasActiveRide) {
-      setRideStatus((currentStatus) => {
-        // Não limpa a tela se o passageiro estiver numa corrida ativa
-        if (['accepted', 'arrived', 'in_progress', 'searching'].includes(currentStatus)) {
-          return currentStatus;
+      if (!isMountedRef.current || !data) return;
+      try {
+        if (!data?.hasActiveRide) {
+          setRideStatus((currentStatus) => {
+            if (['accepted', 'arrived', 'in_progress', 'searching'].includes(currentStatus)) {
+              return currentStatus;
+            }
+            return 'idle';
+          });
+          return;
         }
-        return 'idle';
-      });
-      return;
-    }
 
-    if (data?.hasActiveRide && data?.ride) {
-      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-      setActiveRideId(data.ride.id);
-      activeRideIdRef.current = data.ride.id;
+        if (data?.hasActiveRide && data?.ride) {
+          if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+          setActiveRideId(data.ride.id);
+          activeRideIdRef.current = data.ride.id;
 
-      // Restaura Coordenadas de Embarque
-      if (typeof data.ride.originLat === 'number' && typeof data.ride.originLng === 'number') {
-        const lat = Number(data.ride.originLat);
-        const lng = Number(data.ride.originLng);
-        if (!isNaN(lat) && !isNaN(lng)) setPickupCoords({ latitude: lat, longitude: lng });
-        if (data.ride.originAddress) setPickupAddress(data.ride.originAddress);
-      }
+          if (typeof data.ride.originLat === 'number' && typeof data.ride.originLng === 'number') {
+            const lat = Number(data.ride.originLat);
+            const lng = Number(data.ride.originLng);
+            if (!isNaN(lat) && !isNaN(lng)) setPickupCoords({ latitude: lat, longitude: lng });
+            if (data.ride.originAddress) setPickupAddress(data.ride.originAddress);
+          }
 
-      // Restaura Coordenadas de Destino
-      if (typeof data.ride.destinationLat === 'number' && typeof data.ride.destinationLng === 'number') {
-        const lat = Number(data.ride.destinationLat);
-        const lng = Number(data.ride.destinationLng);
-        if (!isNaN(lat) && !isNaN(lng)) setDropoffCoords({ latitude: lat, longitude: lng });
-        if (data.ride.destinationAddress) setDropoffAddress(data.ride.destinationAddress);
-      }
-      
-      // Restaura Dados do Motorista e Veículo
-      if (data.ride.driverId) {
-        const otpCode = String(data.ride.startOtp || data.ride.otpPin || data.ride.pin || '');
-        setStartOtp(otpCode);
-        setDriverInfo({ 
-          id: data.ride.driverId, 
-          name: data.ride.driverName || 'Motorista',
-          photoUrl: formatPhotoUrl(data.ride.driverPhoto), 
-          profilePicture: formatPhotoUrl(data.ride.driverPhoto),
-          carModel: data.ride.carModel || data.ride.vehicleModel || t('standard_vehicle', 'Veículo Padrão'),
-          carColor: data.ride.carColor || data.ride.vehicleColor || t('color_not_specified', 'Cor não informada'), 
-          vehicleType: data.ride.vehicleType || data.ride.vehicle_type,
-          licensePlate: data.ride.licensePlate || data.ride.plate,
-          rating: data.ride.driverRating || 5.0,
-          phone: data.ride.driverPhone,
-          startOtp: otpCode,
-        });
-      }
+          if (typeof data.ride.destinationLat === 'number' && typeof data.ride.destinationLng === 'number') {
+            const lat = Number(data.ride.destinationLat);
+            const lng = Number(data.ride.destinationLng);
+            if (!isNaN(lat) && !isNaN(lng)) setDropoffCoords({ latitude: lat, longitude: lng });
+            if (data.ride.destinationAddress) setDropoffAddress(data.ride.destinationAddress);
+          }
 
-      const statusMap: Record<string, RideStatus> = {
-        'SEARCHING': 'searching',
-        'ACCEPTED': 'accepted',
-        'ARRIVED': 'arrived',
-        'IN_PROGRESS': 'in_progress'
-      };
-      
-      if (data.ride.status && statusMap[data.ride.status]) {
-        const newStatus = statusMap[data.ride.status];
-        setRideStatus(newStatus);
-        persistRideState(data.ride.id, newStatus);
-      }
-      
-      socket.emit('passenger:rejoin_ride', { rideId: data.ride.id, driverId: data.ride.driverId });
-    }
-  } catch (err) {
-    console.error('Erro ao processar recuperação de estado:', err);
-  }
-};
-    const handleDriverPosition = (data: any) => {
-      if (!isMountedRef.current || !data || data.latitude == null || data.longitude == null) return;
-      const lat = Number(data.latitude);
-      const lng = Number(data.longitude);
-      if (isNaN(lat) || isNaN(lng)) return;
-      
-      setDriverLocation({ latitude: lat, longitude: lng, heading: data.heading || 0 });
-      if (data.durationMinutes !== undefined && data.durationMinutes !== null) {
-        setDriverEta(Math.ceil(data.durationMinutes));
+          if (data.ride.driverId) {
+            const otpCode = String(data.ride.startOtp || data.ride.otpPin || data.ride.pin || '');
+            setStartOtp(otpCode);
+            setDriverInfo({ 
+              id: data.ride.driverId, 
+              name: data.ride.driverName || 'Motorista',
+              photoUrl: formatPhotoUrl(data.ride.driverPhoto), 
+              profilePicture: formatPhotoUrl(data.ride.driverPhoto),
+              carModel: data.ride.carModel || data.ride.vehicleModel || t('standard_vehicle', 'Veículo Padrão'),
+              carColor: data.ride.carColor || data.ride.vehicleColor || data.ride.color || 'BRANCO', 
+              vehicleType: data.ride.vehicleType || data.ride.vehicle_type || 'PARTICULAR',
+              licensePlate: data.ride.licensePlate || data.ride.plate,
+              rating: data.ride.driverRating || 5.0,
+              phone: data.ride.driverPhone,
+              startOtp: otpCode,
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Erro ao processar estado recuperado:', err);
       }
     };
 
@@ -948,8 +947,8 @@ export function Home() {
         photoUrl: formatPhotoUrl(data.driverPhoto), 
         profilePicture: formatPhotoUrl(data.driverPhoto),
         carModel: data.carModel || data.vehicleModel || t('standard_vehicle', 'Veículo Padrão'),
-        carColor: data.carColor || data.vehicleColor || t('color_not_specified', 'Cor não informada'), 
-        vehicleType: data.vehicleType || data.vehicle_type,
+        carColor: data.carColor || data.vehicleColor || data.color || 'BRANCO', 
+        vehicleType: data.vehicleType || data.vehicle_type || 'PARTICULAR',
         licensePlate: data.licensePlate || data.plate,
         rating: data.driverRating || 5.0,
         phone: data.driverPhone,
@@ -959,8 +958,12 @@ export function Home() {
       setRideStatus('accepted');
       persistRideState(data.rideId, 'accepted');
 
-      Alert.alert(t('ride_accepted_title', 'Corrida Aceita! 🚗'), `${data.driverName || 'O motorista'} ${t('ride_accepted_msg', 'aceitou sua viagem e está a caminho.')}`);
+      Alert.alert(
+        t('ride_accepted_title', 'Corrida Aceita! 🚗'), 
+        `${data.driverName || 'O motorista'} ${t('ride_accepted_msg', 'aceitou sua viagem e está a caminho.')}`
+      );
     };
+
     const handleDriverArrived = () => {
       if (!isMountedRef.current) return;
       setRideStatus('arrived');
@@ -1001,7 +1004,7 @@ export function Home() {
       if (activeRideIdRef.current) activeRideIdRef.current = null;
       resetRideState();
     };
-   
+
     const handleReceiveMessage = (messageData: any) => {
       if (!isMountedRef.current || !messageData?.text) return;
       setMessages(prev => {
@@ -1017,13 +1020,26 @@ export function Home() {
       Alert.alert(t('search_ended_title', 'Busca Encerrada'), t('no_drivers_found_msg', 'Não encontramos motoristas disponíveis na sua região. Tente novamente.'));
       resetRideState();
     };
-    
+
     const handlePriceCalculated = (data: any) => {
       if (!isMountedRef.current || !data) return;
       if (typeof data.price === 'number') setEstimatedPrice(data.price);
       if (typeof data.distance === 'number') setEstimatedDistance(data.distance);
     };
+// 🚗 Callback para atualizar a posição em tempo real do motorista no mapa
+const handleDriverPosition = (data: any) => {
+  if (!isMountedRef.current || !data) return;
+  const lat = Number(data.latitude ?? data.lat);
+  const lng = Number(data.longitude ?? data.lng);
 
+  if (!isNaN(lat) && !isNaN(lng)) {
+    setDriverLocation({
+      latitude: lat,
+      longitude: lng,
+      heading: typeof data.heading === 'number' ? data.heading : 0,
+    });
+  }
+};
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on('passenger:state_recovered', handleStateRecovered);
@@ -1569,33 +1585,33 @@ const handleSosPress = () => {
           </Mapbox.PointAnnotation>
         )}
 
-        {/* MOTORISTA EM MOVIMENTO */}
-        {driverLocation?.latitude != null && driverLocation?.longitude != null && (
-          <Mapbox.PointAnnotation
-            id="driverMarker"
-            coordinate={[Number(driverLocation.longitude), Number(driverLocation.latitude)]}
-          >
-            <View 
-              style={[
-                styles.driverMarkerContainer, 
-                { 
-                  backgroundColor: getVehicleColorHex(driverInfo?.carColor),
-                  borderWidth: 2,
-                  borderColor: driverInfo?.carColor?.toLowerCase().includes('branc') ? '#94A3B8' : '#FFFFFF',
-                  // 🔄 Rotaciona o veículo na direção real em que o motorista está dirigindo
-                  transform: [{ rotate: `${driverLocation.heading || 0}deg` }]
-                }
-              ]}
-            >
-              <MaterialCommunityIcons 
-                name={getVehicleIcon(driverInfo?.vehicleType || vehicleType) as any} 
-                size={22} 
-                color={driverInfo?.carColor?.toLowerCase().includes('branc') ? '#0F172A' : '#FFFFFF'} 
-              />
-            </View>
-          </Mapbox.PointAnnotation>
-        
+        {/* 🏎️ MOTORISTA EM MOVIMENTO (VEÍCULO 3D REALISTA NA COR EXATA COM ROTAÇÃO DE CURVA) */}
+{driverLocation?.latitude != null && driverLocation?.longitude != null && (
+  <Mapbox.PointAnnotation
+    id="driverMarker"
+    coordinate={[Number(driverLocation.longitude), Number(driverLocation.latitude)]}
+    anchor={{ x: 0.5, y: 0.5 }}
+  >
+    <View 
+      style={[
+        styles.vehicle3DContainer, 
+        { 
+          // 🔄 Rotaciona o veículo 3D na direção exata da rua (0° a 360°)
+          transform: [{ rotate: `${driverLocation.heading || 0}deg` }]
+        }
+      ]}
+    >
+      <Image
+        source={getVehicle3DIconAsset(
+          driverInfo?.vehicleType || vehicleType,
+          driverInfo?.carColor
         )}
+        style={styles.vehicle3DImage}
+        fadeDuration={0}
+      />
+    </View>
+  </Mapbox.PointAnnotation>
+)}
       </Mapbox.MapView>
 
       {/* PINO CENTRAL FLUTUANTE */}
@@ -2437,7 +2453,10 @@ const handleSosPress = () => {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0F172A' },
+  container: { 
+    flex: 1, 
+    backgroundColor: '#0F172A' 
+  },
   loadingContainer: { 
     flex: 1, 
     justifyContent: 'center', 
@@ -2446,350 +2465,1042 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20 
   },
   loadingText: { 
-    fontSize: 14, 
-    color: '#94A3B8', 
+    color: '#F8FAFC', 
+    fontSize: 15, 
     fontWeight: '600', 
-    textAlign: 'center',
-    lineHeight: 20,
-    marginTop: 12
+    marginTop: 16, 
+    textAlign: 'center' 
   },
   retryLocationBtn: { 
     marginTop: 20, 
-    paddingVertical: 14, 
-    paddingHorizontal: 24, 
     backgroundColor: '#EAB308', 
-    borderRadius: 14,
+    paddingHorizontal: 20, 
+    paddingVertical: 10, 
+    borderRadius: 10 
+  },
+  
+  // 🏎️ ESTILOS DO VEÍCULO 3D COM ROTAÇÃO DE RUA NO MAPA
+  vehicle3DContainer: {
+    width: 48,
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.35,
+    shadowRadius: 5,
+    elevation: 6,
+  },
+  vehicle3DImage: {
+    width: 44,
+    height: 44,
+    resizeMode: 'contain',
+  },
+
+  // MARCADORES E PINOS
+  carMarker: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#EAB308',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#0F172A',
     elevation: 4,
+  },
+  driverMarkerContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 5,
   },
   centerPinContainer: {
     position: 'absolute',
-    top: '50%',
+    top: '44%',
     left: '50%',
     marginLeft: -18,
     marginTop: -36,
     alignItems: 'center',
-    zIndex: 5,
-  },
-  centerPin: { marginBottom: -4 },
-  pinShadow: {
-    width: 14,
-    height: 5,
-    borderRadius: 7,
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
-  },
-  floatingHeader: { 
-    position: 'absolute', 
-    left: 16, 
-    right: 16, 
-    zIndex: 10, 
-  },
-  headerContent: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'center', 
-    backgroundColor: '#1E293B', 
-    borderRadius: 20, 
-    paddingHorizontal: 14, 
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: '#334155',
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 6,
-  },
-  headerUserInfo: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  avatarPlaceholder: { 
-    width: 36, 
-    height: 36, 
-    borderRadius: 18, 
-    backgroundColor: '#EAB308', 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    marginRight: 10, 
-    overflow: 'hidden' 
-  },
-  greetingText: { fontSize: 14, fontWeight: '700', color: '#F8FAFC' },
-  langHeaderBtn: { 
-    backgroundColor: '#0F172A', 
-    paddingHorizontal: 10, 
-    paddingVertical: 6, 
-    borderRadius: 12, 
-    marginRight: 8, 
-    borderWidth: 1, 
-    borderColor: '#334155' 
-  },
-  langHeaderBtnText: { fontSize: 11, fontWeight: '800', color: '#EAB308' },
-  menuIcon: { 
-    padding: 7, 
-    backgroundColor: '#0F172A', 
-    borderRadius: 12, 
-    borderWidth: 1, 
-    borderColor: '#334155',
     justifyContent: 'center',
-    alignItems: 'center'
   },
-  favoritesContainer: { 
-    position: 'absolute', 
-    left: 16, 
-    right: 16, 
-    flexDirection: 'row', 
-    gap: 10, 
-    zIndex: 9 
+  centerPin: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  favoriteButton: { 
-    flex: 1, 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    backgroundColor: '#1E293B', 
-    paddingHorizontal: 12, 
-    paddingVertical: 10, 
-    borderRadius: 16, 
-    borderWidth: 1, 
-    borderColor: '#334155',
-    elevation: 6,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 5,
+  pinShadow: {
+    width: 10,
+    height: 4,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    borderRadius: 5,
+    marginTop: -4,
   },
-  favoriteIconBg: { 
-    width: 28, 
-    height: 28, 
-    borderRadius: 14, 
-    backgroundColor: '#EAB308', 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    marginRight: 8 
-  },
-  favoriteText: { fontSize: 12, fontWeight: '700', color: '#F8FAFC', flex: 1 },
-  recenterButton: { 
-    position: 'absolute', 
-    right: 16, 
-    backgroundColor: '#1E293B', 
-    width: 46, 
-    height: 46, 
-    borderRadius: 23, 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    borderWidth: 1,
-    borderColor: '#334155',
-    elevation: 6, 
-    shadowColor: '#000', 
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-    zIndex: 9 
-  },
-  carMarker: { 
-    backgroundColor: '#EAB308', 
-    padding: 8, 
-    borderRadius: 20, 
-    borderWidth: 2, 
-    borderColor: '#0F172A', 
-    elevation: 4 
-  },
-  driverMarkerContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  recenterButton: {
+    position: 'absolute',
+    right: 16,
+    backgroundColor: '#0F172A',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
-    elevation: 6,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-  },
-  pinSecurityBadge: { 
-    position: 'absolute', 
-    left: 16, 
-    right: 16, 
-    backgroundColor: '#1E293B', 
-    borderRadius: 18, 
-    padding: 12, 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    borderWidth: 1, 
-    borderColor: '#EAB308', 
-    zIndex: 10,
-    elevation: 8,
-  },
-  pinSecurityTextContainer: { flex: 1, marginLeft: 10 },
-  pinSecurityTitle: { fontSize: 12, fontWeight: '800', color: '#EAB308' },
-  pinSecuritySub: { fontSize: 11, color: '#94A3B8', marginTop: 1 },
-  pinCodeBox: { backgroundColor: '#EAB308', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
-  pinCodeText: { color: '#0F172A', fontWeight: '900', fontSize: 15 },
-  bottomSheetWrapper: { position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 20 },
-  bottomSheet: {
-    backgroundColor: '#1E293B',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 20,
-    paddingTop: 8,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    elevation: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -8 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    minHeight: 190,
-    maxHeight: Dimensions.get('window').height * 0.78,
+    borderColor: '#334155',
+    elevation: 5,
   },
-  dragHandlerArea: { width: '100%', alignItems: 'center', paddingVertical: 10 },
-  dragIndicator: { width: 40, height: 5, backgroundColor: '#475569', borderRadius: 3 },
-  sheetTitle: { fontSize: 19, fontWeight: '800', color: '#FFFFFF', marginBottom: 14 },
-  mainSearchInput: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    backgroundColor: '#0F172A', 
-    borderRadius: 16, 
-    paddingHorizontal: 16, 
-    height: 54, 
-    borderWidth: 1, 
-    borderColor: '#334155', 
-    marginBottom: 14 
+
+  // CABEÇALHO FLUTUANTE
+  floatingHeader: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    zIndex: 10,
   },
-  mainSearchText: { fontSize: 14, color: '#94A3B8', flex: 1, fontWeight: '500' },
-  requestButton: { 
-    backgroundColor: '#EAB308', 
-    height: 52, 
-    borderRadius: 16, 
-    justifyContent: 'center', 
-    alignItems: 'center', 
+  headerContent: {
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#334155',
     elevation: 6,
   },
-  requestButtonText: { color: '#0F172A', fontSize: 15, fontWeight: '800' },
-  sectionLabel: { fontSize: 12, fontWeight: '700', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, marginTop: 10 },
-  serviceTypesContainer: { flexDirection: 'row', gap: 8 },
-  serviceTypeButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 12, backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155' },
-  serviceTypeActive: { backgroundColor: '#EAB308', borderColor: '#EAB308' },
-  serviceTypeText: { fontSize: 13, fontWeight: '600', color: '#94A3B8' },
-  serviceTypeTextActive: { color: '#0F172A', fontWeight: '800' },
-  vehicleCategoryContainer: { gap: 10 },
-  categoryCard: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 18, backgroundColor: '#0F172A', borderWidth: 1.5, borderColor: '#334155' },
-  categoryCardActive: { borderColor: '#EAB308', backgroundColor: 'rgba(234, 179, 8, 0.08)' },
-  vehicleImage: { width: 52, height: 38, marginRight: 12 },
-  categoryTextWrapper: { flex: 1 },
-  categoryTitle: { fontSize: 15, fontWeight: '700', color: '#CBD5E1' },
-  categorySubtitle: { fontSize: 12, color: '#64748B', marginTop: 2 },
-  categoryPriceText: { fontSize: 15, fontWeight: '800', color: '#CBD5E1' },
-  categoryTextActive: { color: '#FFFFFF' },
-  categoryPriceTextActive: { color: '#EAB308' },
-  referenceContainer: { marginBottom: 12 },
-  referenceInput: { backgroundColor: '#0F172A', borderRadius: 14, borderWidth: 1, borderColor: '#334155', paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#FFFFFF' },
-  paymentOptionsContainer: { gap: 10, marginBottom: 16 },
-  paymentBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', borderRadius: 18, padding: 14, borderWidth: 1.5, borderColor: '#334155', gap: 10 },
-  paymentBtnActive: { borderColor: '#EAB308', backgroundColor: 'rgba(234, 179, 8, 0.08)' },
-  paymentBtnText: { fontSize: 15, fontWeight: '700', color: '#CBD5E1' },
-  paymentBtnTextActive: { color: '#FFFFFF' },
-  actionRow: { flexDirection: 'row', alignItems: 'center', marginTop: 12 },
-  cancelButtonOutline: { paddingVertical: 14, paddingHorizontal: 18, borderWidth: 1, borderColor: '#334155', borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0F172A' },
-  cancelButtonOutlineText: { color: '#94A3B8', fontWeight: '700', fontSize: 14 },
-  iconCircleButton: { width: 48, height: 48, borderRadius: 14, backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155', alignItems: 'center', justifyContent: 'center', marginRight: 8 },
-  sosButton: { borderColor: '#EF4444', backgroundColor: 'rgba(239, 68, 68, 0.1)' },
-  pinCardContainer: { backgroundColor: '#0F172A', padding: 16, borderRadius: 18, borderWidth: 1, borderColor: '#10B981', marginBottom: 12 },
-  pinHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
-  pinTitle: { color: '#10B981', fontWeight: '800', fontSize: 13 },
-  pinSubtitle: { color: '#94A3B8', fontSize: 12, marginBottom: 10 },
-  pinDigitsRow: { flexDirection: 'row', gap: 8, justifyContent: 'center' },
-  pinDigitBox: { backgroundColor: '#10B981', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
-  pinDigitText: { color: '#FFFFFF', fontWeight: '900', fontSize: 18 },
-  statusBox: { alignItems: 'center', paddingVertical: 12 },
-  statusTitle: { color: '#F8FAFC', fontSize: 16, fontWeight: '800' },
-  statusSub: { color: '#94A3B8', fontSize: 13, marginTop: 4 },
-  driverCardContainer: { backgroundColor: '#0F172A', borderRadius: 18, padding: 14, borderWidth: 1, borderColor: '#334155', marginBottom: 12 },
-  driverMainInfo: { flexDirection: 'row', alignItems: 'center' },
-  driverAvatarProfile: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#334155', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
-  driverDetails: { flex: 1 },
-  driverName: { color: '#FFF', fontSize: 16, fontWeight: '800' },
-  driverRatingBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
-  driverRatingText: { color: '#EAB308', fontWeight: '700', fontSize: 13 },
-  dividerLight: { height: 1, backgroundColor: '#334155', marginVertical: 10 },
-  vehicleShowcase: { flexDirection: 'row', alignItems: 'center' },
-  showcaseVehicleImg: { width: 50, height: 36, marginRight: 10 },
-  vehicleDetailsCol: { flex: 1 },
-  vehicleModelText: { color: '#F8FAFC', fontWeight: '700', fontSize: 14 },
-  colorAndPlateRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4, flexWrap: 'wrap', gap: 6 },
-  modernColorChip: { width: 12, height: 12, borderRadius: 6, borderWidth: 1, borderColor: '#FFF' },
-  vehicleColorText: { color: '#94A3B8', fontSize: 12 },
-  dotSeparator: { width: 4, height: 4, borderRadius: 2, backgroundColor: '#475569' },
-  modernPlateBadge: { backgroundColor: '#EAB308', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
-  modernPlateText: { color: '#0F172A', fontWeight: '900', fontSize: 10 },
-  statusBanner: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#EAB308', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 14, marginBottom: 12 },
-  statusBannerText: { color: '#0F172A', fontWeight: '800', fontSize: 14, flex: 1 },
-  shareButton: { padding: 4 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.75)' },
-  modalOverlayInner: { flex: 1, justifyContent: 'flex-end' },
-  modalContainer: { backgroundColor: '#1E293B', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, width: '100%' },
-  modalTitle: { fontSize: 16, fontWeight: '800', color: '#FFF', marginBottom: 16 },
-  langOption: { paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#334155' },
-  langOptionText: { fontSize: 15, color: '#CBD5E1', fontWeight: '600' },
-  closeButton: { marginTop: 16, alignItems: 'center', paddingVertical: 10 },
-  locationModalCard: { backgroundColor: '#1E293B', borderRadius: 24, padding: 20, alignItems: 'center', width: '90%', alignSelf: 'center', borderWidth: 1, borderColor: '#334155' },
-  locationIconBg: { width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(234, 179, 8, 0.1)', alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
-  locationModalTitle: { fontSize: 18, fontWeight: '800', color: '#FFF', marginBottom: 8 },
-  locationModalText: { fontSize: 13, color: '#94A3B8', textAlign: 'center', lineHeight: 18, marginBottom: 20 },
-  paymentModalCard: { backgroundColor: '#1E293B', borderTopLeftRadius: 28, borderTopRightRadius: 28, borderWidth: 1, borderColor: '#334155', overflow: 'hidden' },
-  operatorHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16, gap: 10 },
-  operatorTitle: { fontSize: 16, fontWeight: '800' },
-  paymentModalBody: { paddingHorizontal: 20, paddingTop: 16 },
-  paymentModalSubtitle: { fontSize: 13, color: '#94A3B8', marginBottom: 16, lineHeight: 18 },
-  amountBadge: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#0F172A', padding: 14, borderRadius: 14, marginBottom: 16, borderWidth: 1, borderColor: '#334155' },
-  amountTextLabel: { fontSize: 13, color: '#94A3B8', fontWeight: '600' },
-  amountValue: { fontSize: 16, fontWeight: '900', color: '#EAB308' },
-  inputLabel: { fontSize: 12, fontWeight: '700', color: '#CBD5E1', marginBottom: 8 },
-  phoneInputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A', borderRadius: 14, borderWidth: 1, borderColor: '#334155', paddingHorizontal: 14, height: 50, marginBottom: 20 },
-  countryCode: { fontSize: 15, fontWeight: '800', color: '#EAB308', marginRight: 10 },
-  phoneInput: { flex: 1, fontSize: 15, color: '#FFFFFF', fontWeight: '600' },
-  modalActionsRow: { flexDirection: 'row', gap: 10, marginTop: 6, marginBottom: 10 },
-  cancelModalBtn: { flex: 1, paddingVertical: 14, borderRadius: 14, alignItems: 'center', backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155' },
-  cancelModalBtnText: { color: '#94A3B8', fontWeight: '800', fontSize: 14 },
-  confirmModalBtn: { flex: 1.5, paddingVertical: 14, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  confirmModalBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 14 },
-  menuOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.6)' },
-  menuDrawer: { width: '80%', height: '100%', backgroundColor: '#1E293B', paddingHorizontal: 20, borderRightWidth: 1, borderRightColor: '#334155' },
-  menuHeader: { paddingVertical: 20, borderBottomWidth: 1, borderBottomColor: '#334155' },
-  avatarPlaceholderLarge: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#EAB308', alignItems: 'center', justifyContent: 'center', marginBottom: 12, overflow: 'hidden' },
-  menuUserName: { fontSize: 18, fontWeight: '800', color: '#FFFFFF' },
-  menuUserPhone: { fontSize: 13, color: '#94A3B8', marginTop: 2 },
-  menuItems: { marginTop: 16, gap: 4 },
-  menuItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 10, borderRadius: 12, gap: 12 },
-  menuItemText: { fontSize: 15, fontWeight: '600', color: '#F8FAFC' },
-  menuDivider: { height: 1, backgroundColor: '#334155', marginVertical: 10 },
-  chatOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(15, 23, 42, 0.5)' },
-  chatContainer: { flex: 1, backgroundColor: '#1E293B', borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden' },
-  chatHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#334155' },
-  chatHeaderUserInfo: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  headerAvatar: { width: 32, height: 32, borderRadius: 16 },
-  headerAvatarPlaceholder: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center' },
-  chatTitle: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
-  chatList: { paddingHorizontal: 16, paddingVertical: 16, flexGrow: 1, justifyContent: 'flex-end' },
-  messageRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 12, gap: 8 },
-  rowPassenger: { justifyContent: 'flex-end' },
-  rowDriver: { justifyContent: 'flex-start' },
-  chatBubbleAvatar: { width: 26, height: 26, borderRadius: 13 },
-  chatBubbleAvatarPlaceholder: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center' },
-  messageBubble: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 16, maxWidth: '75%' },
-  messagePassenger: { backgroundColor: '#EAB308', borderBottomRightRadius: 4 },
-  messageDriver: { backgroundColor: '#0F172A', borderBottomLeftRadius: 4 },
-  messageText: { fontSize: 14, lineHeight: 20 },
-  textPassenger: { color: '#0F172A', fontWeight: '600' },
-  textDriver: { color: '#FFFFFF' },
-  chatInputContainer: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#334155', gap: 10, backgroundColor: '#1E293B' },
-  chatInput: { flex: 1, backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8, minHeight: 42, maxHeight: 90, fontSize: 14, color: '#FFFFFF' },
-  chatSendButton: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#EAB308', alignItems: 'center', justifyContent: 'center' },
-  searchModalContainer: { flex: 1, backgroundColor: '#0F172A' },
-  searchHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#1E293B' },
-  backButton: { padding: 8 },
-  passengerSelector: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1E293B', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
-  passengerSelectorText: { fontSize: 13, fontWeight: '600', color: '#CBD5E1' },
-  modalBody: { flex: 1, paddingHorizontal: 16, paddingTop: 14 },
-  mapboxSearchInputWrapper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1E293B', borderRadius: 12, paddingHorizontal: 12, height: 46 },
-  mapboxSearchInput: { flex: 1, fontSize: 14, color: '#FFFFFF' },
-  searchResultItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#1E293B' },
-  searchResultText: { fontSize: 14, color: '#CBD5E1', flex: 1 },
+  headerUserInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  avatarPlaceholder: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#EAB308',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+    overflow: 'hidden',
+  },
+  greetingText: {
+    color: '#F8FAFC',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  langHeaderBtn: {
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#475569',
+    marginRight: 8,
+  },
+  langHeaderBtnText: {
+    color: '#EAB308',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  menuIcon: {
+    padding: 6,
+  },
+
+  // FAVORITOS E PIN DE SEGURANÇA
+  favoritesContainer: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    gap: 8,
+    zIndex: 9,
+  },
+  favoriteButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  favoriteIconBg: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#EAB308',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 6,
+  },
+  favoriteText: {
+    color: '#F8FAFC',
+    fontSize: 11,
+    fontWeight: '600',
+    flex: 1,
+  },
+  pinSecurityBadge: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    backgroundColor: '#0F172A',
+    padding: 12,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#EAB308',
+    zIndex: 9,
+  },
+  pinSecurityTextContainer: {
+    flex: 1,
+    marginLeft: 10,
+  },
+  pinSecurityTitle: {
+    color: '#EAB308',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  pinSecuritySub: {
+    color: '#94A3B8',
+    fontSize: 10,
+  },
+  pinCodeBox: {
+    backgroundColor: '#FEF08A',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  pinCodeText: {
+    color: '#0F172A',
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: 2,
+  },
+
+  // SLIDING BOTTOM SHEET
+  bottomSheetWrapper: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+  },
+  bottomSheet: {
+    backgroundColor: '#0F172A',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    borderTopWidth: 1,
+    borderColor: '#334155',
+    elevation: 20,
+  },
+  dragHandlerArea: {
+    width: '100%',
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  dragIndicator: {
+    width: 40,
+    height: 4,
+    backgroundColor: '#475569',
+    borderRadius: 2,
+  },
+  sheetTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#F8FAFC',
+    marginBottom: 12,
+  },
+  mainSearchInput: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  mainSearchText: {
+    color: '#94A3B8',
+    fontSize: 14,
+    flex: 1,
+  },
+  requestButton: {
+    backgroundColor: '#EAB308',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  requestButtonText: {
+    color: '#0F172A',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+
+  // SERVIÇOS E VEÍCULOS
+  sectionLabel: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  serviceTypesContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  serviceTypeButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    backgroundColor: '#1E293B',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
+    gap: 6,
+  },
+  serviceTypeActive: {
+    backgroundColor: '#EAB308',
+    borderColor: '#EAB308',
+  },
+  serviceTypeText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  serviceTypeTextActive: {
+    color: '#0F172A',
+  },
+  vehicleCategoryContainer: {
+    gap: 8,
+    marginBottom: 12,
+  },
+  categoryCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  categoryCardActive: {
+    borderColor: '#EAB308',
+    backgroundColor: '#1E293B',
+  },
+  vehicleImage: {
+    width: 44,
+    height: 44,
+    marginRight: 10,
+  },
+  categoryTextWrapper: {
+    flex: 1,
+  },
+  categoryTitle: {
+    color: '#F8FAFC',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  categoryTextActive: {
+    color: '#EAB308',
+  },
+  categorySubtitle: {
+    color: '#64748B',
+    fontSize: 11,
+  },
+  categoryPriceText: {
+    color: '#94A3B8',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  categoryPriceTextActive: {
+    color: '#EAB308',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  referenceContainer: {
+    marginBottom: 12,
+  },
+  referenceInput: {
+    backgroundColor: '#1E293B',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#F8FAFC',
+    fontSize: 13,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  cancelButtonOutline: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#475569',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelButtonOutlineText: {
+    color: '#94A3B8',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+
+  // PAGAMENTOS E CARDS DO MOTORISTA
+  paymentOptionsContainer: {
+    gap: 8,
+    marginBottom: 16,
+  },
+  paymentBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
+    gap: 10,
+  },
+  paymentBtnActive: {
+    borderColor: '#EAB308',
+  },
+  paymentBtnText: {
+    color: '#94A3B8',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  paymentBtnTextActive: {
+    color: '#F8FAFC',
+    fontWeight: '800',
+  },
+  pinCardContainer: {
+    backgroundColor: '#064E3B',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#10B981',
+  },
+  pinHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  pinTitle: {
+    color: '#10B981',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  pinSubtitle: {
+    color: '#A7F3D0',
+    fontSize: 11,
+    marginBottom: 8,
+  },
+  pinDigitsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+  },
+  pinDigitBox: {
+    backgroundColor: '#022C22',
+    width: 38,
+    height: 44,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#059669',
+  },
+  pinDigitText: {
+    color: '#A7F3D0',
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  statusBox: {
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  statusTitle: {
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  statusSub: {
+    color: '#94A3B8',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  driverCardContainer: {
+    backgroundColor: '#1E293B',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  driverMainInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  driverAvatarProfile: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#334155',
+    marginRight: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  driverDetails: {
+    flex: 1,
+  },
+  driverName: {
+    color: '#F8FAFC',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  driverRatingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 2,
+  },
+  driverRatingText: {
+    color: '#EAB308',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  dividerLight: {
+    height: 1,
+    backgroundColor: '#334155',
+    marginVertical: 10,
+  },
+  vehicleShowcase: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  showcaseVehicleImg: {
+    width: 50,
+    height: 36,
+    marginRight: 10,
+  },
+  vehicleDetailsCol: {
+    flex: 1,
+  },
+  vehicleModelText: {
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  colorAndPlateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  modernColorChip: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: '#64748B',
+  },
+  vehicleColorText: {
+    color: '#94A3B8',
+    fontSize: 11,
+  },
+  dotSeparator: {
+    width: 3,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: '#64748B',
+    marginHorizontal: 8,
+  },
+  modernPlateBadge: {
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#475569',
+  },
+  modernPlateText: {
+    color: '#EAB308',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  statusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FEF08A',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    marginBottom: 10,
+  },
+  statusBannerText: {
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '800',
+    flex: 1,
+  },
+  shareButton: {
+    padding: 4,
+  },
+  iconCircleButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+    marginRight: 8,
+  },
+  sosButton: {
+    borderColor: '#EF4444',
+  },
+
+  // MODAIS
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'flex-end',
+  },
+  modalOverlayInner: {
+    width: '100%',
+  },
+  modalContainer: {
+    backgroundColor: '#0F172A',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    borderTopWidth: 1,
+    borderColor: '#334155',
+  },
+  modalTitle: {
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: '800',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  langOption: {
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+  },
+  langOptionText: {
+    color: '#F8FAFC',
+    fontSize: 14,
+    textAlign: 'center',
+  },
+  closeButton: {
+    marginTop: 16,
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  locationModalCard: {
+    backgroundColor: '#0F172A',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderColor: '#334155',
+  },
+  locationIconBg: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#FEF08A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  locationModalTitle: {
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: '800',
+    marginBottom: 8,
+  },
+  locationModalText: {
+    color: '#94A3B8',
+    fontSize: 13,
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 18,
+  },
+
+  // MODAL DE PAGAMENTO
+  paymentModalCard: {
+    backgroundColor: '#0F172A',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '85%',
+  },
+  operatorHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    gap: 8,
+  },
+  operatorTitle: {
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  paymentModalBody: {
+    padding: 20,
+  },
+  paymentModalSubtitle: {
+    color: '#94A3B8',
+    fontSize: 12,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  amountBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#1E293B',
+    padding: 14,
+    borderRadius: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  amountTextLabel: {
+    color: '#94A3B8',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  amountValue: {
+    color: '#EAB308',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  inputLabel: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  phoneInputContainer: {
+    backgroundColor: '#1E293B',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+    marginBottom: 20,
+  },
+  phoneInput: {
+    color: '#F8FAFC',
+    fontSize: 15,
+    paddingVertical: 12,
+    fontWeight: '700',
+  },
+  modalActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  cancelModalBtn: {
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#475569',
+  },
+  cancelModalBtnText: {
+    color: '#94A3B8',
+    fontWeight: '700',
+  },
+  confirmModalBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmModalBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+
+  // MENU LATERAL DRAWER
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  menuDrawer: {
+    width: '78%',
+    height: '100%',
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 20,
+    borderRightWidth: 1,
+    borderColor: '#334155',
+  },
+  menuHeader: {
+    marginBottom: 24,
+  },
+  avatarPlaceholderLarge: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#EAB308',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  menuUserName: {
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  menuUserPhone: {
+    color: '#64748B',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  menuItems: {
+    gap: 6,
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    gap: 12,
+  },
+  menuItemText: {
+    color: '#F8FAFC',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: '#1E293B',
+    marginVertical: 10,
+  },
+
+  // CHAT INTERNO
+  chatOverlay: {
+    flex: 1,
+    backgroundColor: '#0F172A',
+  },
+  chatContainer: {
+    flex: 1,
+  },
+  chatHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+  },
+  chatHeaderUserInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  headerAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+  },
+  headerAvatarPlaceholder: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chatTitle: {
+    color: '#F8FAFC',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  chatList: {
+    padding: 16,
+    gap: 12,
+  },
+  messageRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  rowPassenger: {
+    justifyContent: 'flex-end',
+  },
+  rowDriver: {
+    justifyContent: 'flex-start',
+  },
+  chatBubbleAvatar: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+  },
+  chatBubbleAvatarPlaceholder: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  messageBubble: {
+    maxWidth: '75%',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 16,
+  },
+  messagePassenger: {
+    backgroundColor: '#EAB308',
+    borderBottomRightRadius: 2,
+  },
+  messageDriver: {
+    backgroundColor: '#1E293B',
+    borderBottomLeftRadius: 2,
+  },
+  messageText: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  textPassenger: {
+    color: '#0F172A',
+    fontWeight: '600',
+  },
+  textDriver: {
+    color: '#F8FAFC',
+  },
+  chatInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#1E293B',
+    gap: 8,
+  },
+  chatInput: {
+    flex: 1,
+    backgroundColor: '#1E293B',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    color: '#F8FAFC',
+    fontSize: 13,
+    maxHeight: 100,
+  },
+  chatSendButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#EAB308',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // BUSCA MAPBOX
+  searchModalContainer: {
+    flex: 1,
+    backgroundColor: '#0F172A',
+  },
+  searchHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+  },
+  backButton: {
+    padding: 4,
+  },
+  passengerSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  passengerSelectorText: {
+    color: '#F8FAFC',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  modalBody: {
+    flex: 1,
+    padding: 16,
+  },
+  mapboxSearchInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 44,
+  },
+  mapboxSearchInput: {
+    flex: 1,
+    color: '#F8FAFC',
+    fontSize: 13,
+  },
+  searchResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+  },
+  searchResultText: {
+    color: '#F8FAFC',
+    fontSize: 13,
+    flex: 1,
+  },
+  // 🏎️ Adicione dentro do StyleSheet.create se ainda não estiver presente:
+vehicle3DContainer: {
+  width: 48,
+  height: 48,
+  justifyContent: 'center',
+  alignItems: 'center',
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: 3 },
+  shadowOpacity: 0.35,
+  shadowRadius: 5,
+  elevation: 6,
+},
+vehicle3DImage: {
+  width: 44,
+  height: 44,
+  resizeMode: 'contain',
+},
 });
