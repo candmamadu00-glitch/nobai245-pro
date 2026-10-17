@@ -354,9 +354,8 @@ export function Home() {
   const [langModalVisible, setLangModalVisible] = useState(false);
 
   const [routeGeometry, setRouteGeometry] = useState<any>(null);
-/ 1. Estado para guardar os motoristas próximos recebidos da API / Socket
-const [nearbyDrivers, setNearbyDrivers] = useState<Array<{ id: string; lat: number; lng: number; heading?: number }>>([]);
-const [isSearchingRide, setIsSearchingRide] = useState(false);
+  const [nearbyDrivers, setNearbyDrivers] = useState<Array<{ id: string; lat: number; lng: number; heading?: number }>>([]);
+  const [isSearchingRide, setIsSearchingRide] = useState(false);
   const VEHICLE_OPTIONS = [
     { id: 'moto' as VehicleType, title: 'Moto', subtitle: t('moto_subtitle', 'Rápido e econômico'), image: require('../assets/vehicles/moto.png') },
     { id: 'particular' as VehicleType, title: t('standard_vehicle', 'Particular'), subtitle: t('particular_subtitle', 'Viagem exclusiva'), image: require('../assets/vehicles/carro_white.png') },
@@ -832,12 +831,16 @@ const [isSearchingRide, setIsSearchingRide] = useState(false);
 }, [getCurrentLocationWithFallback]);
 // 2. Efeito para buscar motoristas próximos a cada 5 segundos se estiver na tela de seleção
 useEffect(() => {
-  if (!pickupLocation) return;
+  // Obtém latitude e longitude das coordenadas do embarque ou do GPS do passageiro
+  const currentLat = pickupCoords?.latitude || passengerLocation?.coords?.latitude;
+  const currentLng = pickupCoords?.longitude || passengerLocation?.coords?.longitude;
+
+  if (!currentLat || !currentLng) return;
 
   const fetchNearby = async () => {
     try {
       const response = await api.get('/passengers/drivers/nearby', {
-        params: { lat: pickupLocation.latitude, lng: pickupLocation.longitude }
+        params: { lat: currentLat, lng: currentLng }
       });
       setNearbyDrivers(response.data.drivers || []);
     } catch (err) {
@@ -848,7 +851,7 @@ useEffect(() => {
   fetchNearby();
   const interval = setInterval(fetchNearby, 5000);
   return () => clearInterval(interval);
-}, [pickupLocation]);
+}, [pickupCoords, passengerLocation]);
   const resetRideState = useCallback(() => {
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     persistRideState(null, 'idle');
@@ -1487,6 +1490,25 @@ const handleSosPress = () => {
     );
   }
 
+ if (locationError && !passengerLocation) {
+    return (
+      <View style={[styles.loadingContainer, { paddingTop: Math.max(insets?.top || 0, 40), paddingBottom: Math.max(insets?.bottom || 0, 20) }]}>
+        <StatusBar barStyle="light-content" backgroundColor="#0F172A" translucent />
+        <MaterialCommunityIcons name="map-marker-radius" size={54} color="#EAB308" />
+        <Text style={styles.loadingText}>{locationError || t('getting_location', 'Obtendo localização exata...')}</Text>
+        {locationError && (
+          <TouchableOpacity 
+            style={styles.retryLocationBtn} 
+            onPress={getCurrentLocationWithFallback}
+            activeOpacity={0.8}
+          >
+            <Text style={{ color: '#0F172A', fontWeight: 'bold' }}>{t('try_again', 'Tentar Novamente')}</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  }
+
   const activeOtpPin = String(startOtp || driverInfo?.startOtp || '');
   const topHeaderInset = Math.max((insets?.top || 0) + 12, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 12 : 20);
 
@@ -1494,7 +1516,7 @@ const handleSosPress = () => {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
-      {/* HEADER FLUTUANTE AJUSTADO PARA NÃO INVADIR A BARRA DE STATUS */}
+      {/* 1. HEADER FLUTUANTE */}
       <View style={[styles.floatingHeader, { top: topHeaderInset }]}>
         <View style={styles.headerContent}>
           <TouchableOpacity 
@@ -1531,94 +1553,81 @@ const handleSosPress = () => {
         </View>
       </View>
 
-  {/* MAPA DE NAVEGAÇÃO MAPBOX (PASSAGEIRO) */}
-  <Mapbox.MapView
-    style={StyleSheet.absoluteFill}
-    styleURL={Mapbox.StyleURL.Street}
-    logoEnabled={false}
-    attributionEnabled={false}
-    onCameraChanged={(e) => {
-      if (e.gestures.isGestureActive) {
-        setIsMapMoving(true);
-        isManualPickupRef.current = false;
-      }
-    }}
-    onMapIdle={onMapRegionDidChange}
-  >
-    <Mapbox.Camera
-      ref={cameraRef}
-      zoomLevel={14}
-      centerCoordinate={[
-        passengerLocation?.coords?.longitude || BISSAU_CENTER.longitude,
-        passengerLocation?.coords?.latitude || BISSAU_CENTER.latitude,
-      ]}
-      animationMode="flyTo"
-      animationDuration={1000}
-    />
-
-    {/* ROTA MAPBOX */}
-    {routeGeometry?.type === 'Feature' && routeGeometry?.geometry?.coordinates && (
-      <Mapbox.ShapeSource id="routeSource" shape={routeGeometry}>
-        <Mapbox.LineLayer
-          id="routeLine"
-          style={{
-            lineColor: '#EAB308',
-            lineWidth: 5,
-            lineCap: 'round',
-            lineJoin: 'round',
-          }}
-        />
-      </Mapbox.ShapeSource>
-    )}
-
-    {/* 🚗 1. MARCADORES DOS MOTORISTAS ONLINE (EXIBIDOS DENTRO DO MAPA) */}
-    {nearbyDrivers && nearbyDrivers.map((driver: any) => (
-      <Mapbox.PointAnnotation
-        key={`online-driver-${driver.id}`}
-        id={`online-driver-${driver.id}`}
-        coordinate={[Number(driver.lng), Number(driver.lat)]}
+      {/* 2. MAPA DE NAVEGAÇÃO MAPBOX */}
+      <Mapbox.MapView
+        style={StyleSheet.absoluteFill}
+        styleURL={Mapbox.StyleURL.Street}
+        logoEnabled={false}
+        attributionEnabled={false}
+        onCameraChanged={(e) => {
+          if (e.gestures.isGestureActive) {
+            setIsMapMoving(true);
+            isManualPickupRef.current = false;
+          }
+        }}
+        onMapIdle={onMapRegionDidChange}
       >
-        <View style={styles.driverMarkerWrapper}>
-          <Image
-            source={require('../../assets/images/car-top-view.png')}
-            style={[
-              styles.driverMarkerImage,
-              { transform: [{ rotate: `${driver.heading || 0}deg` }] }
+        <Mapbox.Camera
+          ref={cameraRef}
+          zoomLevel={14}
+          centerCoordinate={[
+            passengerLocation?.coords?.longitude || BISSAU_CENTER.longitude,
+            passengerLocation?.coords?.latitude || BISSAU_CENTER.latitude,
+          ]}
+          animationMode="flyTo"
+          animationDuration={1000}
+        />
+
+        {/* ROTA MAPBOX */}
+        {routeGeometry?.type === 'Feature' && routeGeometry?.geometry?.coordinates && (
+          <Mapbox.ShapeSource id="routeSource" shape={routeGeometry}>
+            <Mapbox.LineLayer
+              id="routeLine"
+              style={{
+                lineColor: '#EAB308',
+                lineWidth: 5,
+                lineCap: 'round',
+                lineJoin: 'round',
+              }}
+            />
+          </Mapbox.ShapeSource>
+        )}
+
+        {/* 🚗 MARCADORES DOS MOTORISTAS ONLINE PRÓXIMOS */}
+{nearbyDrivers && nearbyDrivers.map((driver: any) => (
+  <Mapbox.PointAnnotation
+    key={`online-driver-${driver.id}`}
+    id={`online-driver-${driver.id}`}
+    coordinate={[Number(driver.lng), Number(driver.lat)]}
+  >
+    <View style={styles.driverMarkerWrapper}>
+      <Image
+        source={getVehicle3DIconAsset(driver.vehicleType || 'TAXI', driver.carColor || 'AMARELO')}
+        style={[
+          styles.driverMarkerImage,
+          { transform: [{ rotate: `${driver.heading || 0}deg` }] }
+        ]}
+        resizeMode="contain"
+      />
+    </View>
+  </Mapbox.PointAnnotation>
+))}
+        {/* 📍 PONTO DE EMBARQUE */}
+        {(pickupLocation || (pickupCoords?.latitude != null && pickupCoords?.longitude != null)) && (
+          <Mapbox.PointAnnotation 
+            id="pickupPoint" 
+            coordinate={[
+              Number(pickupLocation?.longitude || pickupCoords?.longitude), 
+              Number(pickupLocation?.latitude || pickupCoords?.latitude)
             ]}
-            resizeMode="contain"
-          />
-        </View>
-      </Mapbox.PointAnnotation>
-    ))}
-
-    {/* 📍 2. MARCADOR DE EMBARQUE DO PASSAGEIRO (EXIBIDO DENTRO DO MAPA) */}
-    {pickupLocation && (
-      <Mapbox.PointAnnotation id="pickupPoint" coordinate={[pickupLocation.longitude, pickupLocation.latitude]}>
-        <View style={styles.pickupMarker}>
-          <Ionicons name="pin" size={22} color="#EAB308" />
-        </View>
-      </Mapbox.PointAnnotation>
-    )}
-  </Mapbox.MapView>
-
-  {/* 📡 3. ONDAS DE RADAR DE BUSCA (FLUTUA FORA E ACIMA DO MAPA) */}
-  {isSearchingRide && (
-    <SearchingRadarPulse statusText="Procurando motorista Nô Bai próximo..." />
-  )}
-
-        {/* PONTO DE EMBARQUE */}
-        {pickupCoords?.latitude != null && pickupCoords?.longitude != null && rideStatus !== 'idle' && (
-          <Mapbox.PointAnnotation
-            id="pickupMarker"
-            coordinate={[Number(pickupCoords.longitude), Number(pickupCoords.latitude)]}
           >
-            <View style={styles.carMarker}>
-              <Ionicons name="location" size={18} color="#0F172A" />
+            <View style={styles.pickupMarker}>
+              <Ionicons name="pin" size={22} color="#EAB308" />
             </View>
           </Mapbox.PointAnnotation>
         )}
 
-        {/* PARADA EXTRA */}
+        {/* 🔵 PARADA EXTRA */}
         {extraStopCoords?.latitude != null && extraStopCoords?.longitude != null && (
           <Mapbox.PointAnnotation
             id="extraStopMarker"
@@ -1630,7 +1639,7 @@ const handleSosPress = () => {
           </Mapbox.PointAnnotation>
         )}
 
-        {/* DESTINO FINAL */}
+        {/* 🚩 DESTINO FINAL */}
         {dropoffCoords?.latitude != null && dropoffCoords?.longitude != null && (
           <Mapbox.PointAnnotation
             id="dropoffMarker"
@@ -1642,34 +1651,37 @@ const handleSosPress = () => {
           </Mapbox.PointAnnotation>
         )}
 
-        {/* 🏎️ MOTORISTA EM MOVIMENTO (VEÍCULO 3D REALISTA NA COR EXATA COM ROTAÇÃO DE CURVA) */}
-{driverLocation?.latitude != null && driverLocation?.longitude != null && (
-  <Mapbox.PointAnnotation
-    id="driverMarker"
-    coordinate={[Number(driverLocation.longitude), Number(driverLocation.latitude)]}
-    anchor={{ x: 0.5, y: 0.5 }}
-  >
-    <View 
-      style={[
-        styles.vehicle3DContainer, 
-        { 
-          // 🔄 Rotaciona o veículo 3D na direção exata da rua (0° a 360°)
-          transform: [{ rotate: `${driverLocation.heading || 0}deg` }]
-        }
-      ]}
-    >
-      <Image
-        source={getVehicle3DIconAsset(
-          driverInfo?.vehicleType || vehicleType,
-          driverInfo?.carColor
+        {/* 🏎️ MOTORISTA EM MOVIMENTO (CORRIDA ACEITA) */}
+        {driverLocation?.latitude != null && driverLocation?.longitude != null && (
+          <Mapbox.PointAnnotation
+            id="driverMarker"
+            coordinate={[Number(driverLocation.longitude), Number(driverLocation.latitude)]}
+            anchor={{ x: 0.5, y: 0.5 }}
+          >
+            <View 
+              style={[
+                styles.vehicle3DContainer, 
+                { transform: [{ rotate: `${driverLocation.heading || 0}deg` }] }
+              ]}
+            >
+              <Image
+                source={getVehicle3DIconAsset(
+                  driverInfo?.vehicleType || vehicleType,
+                  driverInfo?.carColor
+                )}
+                style={styles.vehicle3DImage}
+                fadeDuration={0}
+                resizeMode="contain"
+              />
+            </View>
+          </Mapbox.PointAnnotation>
         )}
-        style={styles.vehicle3DImage}
-        fadeDuration={0}
-      />
-    </View>
-  </Mapbox.PointAnnotation>
-)}
       </Mapbox.MapView>
+
+      {/* 📡 ONDAS DE RADAR DE BUSCA */}
+      {isSearchingRide && (
+        <SearchingRadarPulse statusText="Procurando motorista Nô Bai próximo..." />
+      )}
 
       {/* PINO CENTRAL FLUTUANTE */}
       {rideStatus === 'idle' && bookingStep === 'ADDRESS' && (
@@ -1698,7 +1710,7 @@ const handleSosPress = () => {
         <Ionicons name="locate" size={22} color="#EAB308" />
       </TouchableOpacity>
 
-      {/* ATALHOS FAVORITOS (DESLOCADOS PARA BAIXO DO CABEÇALHO) */}
+      {/* ATALHOS FAVORITOS */}
       {rideStatus === 'idle' && bookingStep === 'ADDRESS' && (
         <View style={[styles.favoritesContainer, { top: topHeaderInset + 68 }]}>
           <TouchableOpacity style={styles.favoriteButton} activeOpacity={0.8} onPress={() => handleFavoritePress('home')}>
@@ -1735,7 +1747,7 @@ const handleSosPress = () => {
         </View>
       )}
 
-      {/* KEYBOARD AVOIDING VIEW - PAINEL PRINCIPAL SLIDING SHEET */}
+      {/* 3. PAINEL SLIDING BOTTOM SHEET */}
       <KeyboardAvoidingView 
         behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
         style={styles.bottomSheetWrapper} 
@@ -2033,6 +2045,7 @@ const handleSosPress = () => {
         </Animated.View>
       </KeyboardAvoidingView>
 
+      {/* 4. MODAIS DO SISTEMA */}
       {/* MODAL DE IDIOMAS */}
       <Modal visible={langModalVisible} transparent animationType="slide" onRequestClose={() => setLangModalVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
@@ -2218,6 +2231,7 @@ const handleSosPress = () => {
           </TouchableWithoutFeedback>
         </KeyboardAvoidingView>
       </Modal>
+
       {/* MENU LATERAL */}
       <Modal visible={isMenuVisible} animationType="fade" transparent onRequestClose={() => setIsMenuVisible(false)}>
         <TouchableOpacity style={styles.menuOverlay} activeOpacity={1} onPress={() => setIsMenuVisible(false)}>
@@ -2266,7 +2280,7 @@ const handleSosPress = () => {
         </TouchableOpacity>
       </Modal>
 
-      {/* CHAT INTERNO COM TECLADO AJUSTADO */}
+      {/* CHAT INTERNO */}
       <Modal 
         visible={isChatVisible} 
         animationType="slide" 
@@ -2379,15 +2393,14 @@ const handleSosPress = () => {
 
             <View style={styles.modalBody}>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15, paddingHorizontal: 10 }}>
-                
                 <View style={{ alignItems: 'center', marginRight: 15 }}>
                   <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#94A3B8' }} />
                   <View style={{ width: 1, height: showExtraStop ? 45 : 35, backgroundColor: '#E2E8F0', marginVertical: 4 }} />
                   {showExtraStop && (
-                     <>
-                       <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#3B82F6' }} />
-                       <View style={{ width: 1, height: 45, backgroundColor: '#E2E8F0', marginVertical: 4 }} />
-                     </>
+                    <>
+                      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#3B82F6' }} />
+                      <View style={{ width: 1, height: 45, backgroundColor: '#E2E8F0', marginVertical: 4 }} />
+                    </>
                   )}
                   <View style={{ width: 8, height: 8, backgroundColor: '#0F172A' }} />
                 </View>
@@ -2406,19 +2419,19 @@ const handleSosPress = () => {
                   </View>
 
                   {showExtraStop && (
-                     <View style={[styles.mapboxSearchInputWrapper, searchType === 'extraStop' ? { borderColor: '#3B82F6', borderWidth: 1 } : { marginBottom: 10, borderWidth: 0 }]}>
-                       <TextInput
-                         style={styles.mapboxSearchInput}
-                         placeholder="Adicionar parada..."
-                         placeholderTextColor="#94A3B8"
-                         value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
-                         onFocus={() => { setSearchType('extraStop'); setSearchQuery(extraStopAddress); }}
-                         onChangeText={handleMapboxSearch}
-                       />
-                       <TouchableOpacity onPress={() => { setShowExtraStop(false); setExtraStopAddress(''); setExtraStopCoords(null); }}>
-                          <Ionicons name="close-circle" size={20} color="#94A3B8" />
-                       </TouchableOpacity>
-                     </View>
+                    <View style={[styles.mapboxSearchInputWrapper, searchType === 'extraStop' ? { borderColor: '#3B82F6', borderWidth: 1 } : { marginBottom: 10, borderWidth: 0 }]}>
+                      <TextInput
+                        style={styles.mapboxSearchInput}
+                        placeholder="Adicionar parada..."
+                        placeholderTextColor="#94A3B8"
+                        value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
+                        onFocus={() => { setSearchType('extraStop'); setSearchQuery(extraStopAddress); }}
+                        onChangeText={handleMapboxSearch}
+                      />
+                      <TouchableOpacity onPress={() => { setShowExtraStop(false); setExtraStopAddress(''); setExtraStopCoords(null); }}>
+                        <Ionicons name="close-circle" size={20} color="#94A3B8" />
+                      </TouchableOpacity>
+                    </View>
                   )}
 
                   <View style={[styles.mapboxSearchInputWrapper, searchType === 'dropoff' ? { borderColor: '#EAB308', borderWidth: 1 } : { borderWidth: 0 }]}>
@@ -2440,7 +2453,6 @@ const handleSosPress = () => {
                       <Text style={{ color: '#3B82F6', fontWeight: '600', marginLeft: 4, fontSize: 13 }}>Adicionar parada</Text>
                     </TouchableOpacity>
                   )}
-
                 </View>
               </View>
 
@@ -2492,6 +2504,7 @@ const handleSosPress = () => {
         </SafeAreaView>
       </Modal>
 
+      {/* MODAL DE CANCELAMENTO */}
       <CancelModal
         visible={showCancelModal}
         userType="PASSENGER"
@@ -2500,6 +2513,7 @@ const handleSosPress = () => {
         onConfirm={handleConfirmCancel} 
       />
 
+      {/* MODAL DE AVALIAÇÃO */}
       <RatingModal
         visible={showRatingModal}
         targetName={driverInfo?.name || 'Motorista'}
