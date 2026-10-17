@@ -230,6 +230,27 @@ function getVehicle3DIconAsset(vehicleType?: string, vehicleColor?: string) {
       return require('../../assets/images/vehicles/car_white.jpg');
   }
 }
+// 💰 Formatação segura de valores monetários (substitui .toLocaleString)
+const formatCurrency = (val?: number | string | null): string => {
+  const num = Number(val || 0);
+  if (isNaN(num)) return '0';
+  return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+};
+
+// ⏱️ Formatação de tempo de espera em segundos (ex: 02:30)
+const formatWaitTime = (seconds: number = 0): string => {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+};
+
+// 🖼️ Formatação segura da URL da imagem
+const formatImageUrl = (url?: string | null): string | undefined => {
+  if (!url) return undefined;
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  const baseUrl = process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com';
+  return `${baseUrl}${url.startsWith('/') ? '' : '/'}${url}`;
+};
 export function Home() {
   const { driver } = useAuth();
   const navigation = useNavigation<any>();
@@ -1192,7 +1213,7 @@ const translateToKriol = (text: string): string => {
           animationMode="flyTo"
           animationDuration={1000}
         />
-
+     
         {/* ZONAS DE DEMANDA */}
         {isOnline && (
           <Mapbox.ShapeSource id="demandZonesSource" shape={demandZonesData as any}>
@@ -1200,7 +1221,7 @@ const translateToKriol = (text: string): string => {
           </Mapbox.ShapeSource>
         )}
 
-        {/* 🏎️ MARCADOR DO VEÍCULO DO MOTORISTA COM ROTAÇÃO 3D REALISTA E TRATAMENTO SEGURO */}
+        {/* 🏎️ MARCADOR DO VEÍCULO COM MÁSCARA TRANSPARENTE E ROTAÇÃO REALISTA */}
 {isOnline && location?.coords && (
   <Mapbox.PointAnnotation 
     key={`driver-car-${driver?.id || 'active'}`}
@@ -1211,31 +1232,32 @@ const translateToKriol = (text: string): string => {
     ]}
     anchor={{ x: 0.5, y: 0.5 }}
   >
-    <View 
-      style={[
-        styles.vehicle3DContainer, 
-        { 
-          // 🔄 Trata e garante um valor numérico válido para a rotação de 0° a 360°
-          transform: [
-            { 
-              rotate: `${Math.round(
-                Number(lastDriverCoordsRef.current?.heading) || 
-                Number(location.coords.heading) || 0
-              )}deg` 
-            }
-          ]
-        }
-      ]}
-    >
-      <Image
-        source={getVehicle3DIconAsset(
-          driver?.vehicleType || incomingRide?.vehicleType || 'PARTICULAR',
-          driver?.carColor || 'BRANCO'
-        )}
-        style={styles.vehicle3DImage}
-        fadeDuration={0}
-        resizeMode="contain"
-      />
+    <View style={styles.vehicle3DContainer}>
+      <View 
+        style={[
+          styles.vehicle3DRotator, 
+          { 
+            transform: [
+              { 
+                rotate: `${Math.round(
+                  Number(lastDriverCoordsRef.current?.heading) || 
+                  Number(location.coords.heading) || 0
+                )}deg` 
+              }
+            ]
+          }
+        ]}
+      >
+        <Image
+          source={getVehicle3DIconAsset(
+            driver?.vehicleType || incomingRide?.vehicleType || 'PARTICULAR',
+            driver?.carColor || 'BRANCO'
+          )}
+          style={styles.vehicle3DImage}
+          fadeDuration={0}
+          resizeMode="contain"
+        />
+      </View>
     </View>
   </Mapbox.PointAnnotation>
 )}
@@ -1285,7 +1307,7 @@ const translateToKriol = (text: string): string => {
 
           <TouchableOpacity style={styles.earningsPill} onPress={() => navigation.navigate('Earnings')} activeOpacity={0.85}>
             <Ionicons name="wallet-outline" size={15} color="#10B981" />
-            <Text style={styles.earningsPillText}>{(todayEarnings || 0).toLocaleString('pt-BR')} XOF</Text>
+            <Text style={styles.earningsPillText}>{formatCurrency(todayEarnings)} XOF</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.filterPill} onPress={() => setShowFilterModal(true)} activeOpacity={0.85}>
@@ -1425,7 +1447,7 @@ const translateToKriol = (text: string): string => {
 
                   {incomingRide?.priceXof ? (
                     <View style={styles.priceBadgeContainer}>
-                      <Text style={styles.priceBadgeText}>{incomingRide.priceXof.toLocaleString('pt-BR')} XOF</Text>
+                      <Text style={styles.priceBadgeText}>{formatCurrency(incomingRide?.priceXof)} XOF</Text>
                     </View>
                   ) : null}
                 </View>
@@ -1640,9 +1662,9 @@ const translateToKriol = (text: string): string => {
                 <Text style={styles.newRequestTitle}>Nova Corrida!</Text>
               </View>
               <View style={styles.newRequestPriceBadge}>
-                <Text style={styles.newRequestPriceText}>
-                  {Number(incomingRide?.priceXof || 0).toLocaleString('pt-BR')} XOF
-                </Text>
+                  <Text style={styles.newRequestPriceText}>
+               {formatCurrency(incomingRide?.priceXof)} XOF
+             </Text>
               </View>
             </View>
 
@@ -1753,8 +1775,8 @@ const translateToKriol = (text: string): string => {
             <View style={styles.divider} />
             <Text style={styles.receiptLabel}>Total Ganho:</Text>
             <Text style={styles.receiptAmount}>
-              {(completedInfo?.fareXOF || 0).toLocaleString('pt-BR')} XOF
-            </Text>
+            {formatCurrency(completedInfo?.fareXOF)} XOF
+          </Text>
             <Text style={styles.receiptDist}>ID da Transação: {completedInfo?.transactionId || 'N/A'}</Text>
             <View style={{ width: '100%', gap: 10 }}>
               <TouchableOpacity style={styles.closeReceiptBtn} onPress={() => { setShowReceiptModal(false); setShowRatingModal(true); }} activeOpacity={0.85}>
@@ -1778,18 +1800,26 @@ const styles = StyleSheet.create({
   },
 
  vehicle3DContainer: {
-  width: 48,
-  height: 48,
+  width: 46,
+  height: 46,
   alignItems: 'center',
   justifyContent: 'center',
-  zIndex: 99,
+  backgroundColor: 'transparent',
+},
+vehicle3DRotator: {
+  width: 40,
+  height: 40,
+  borderRadius: 20,
+  overflow: 'hidden',
+  alignItems: 'center',
+  justifyContent: 'center',
+  backgroundColor: 'transparent',
 },
 vehicle3DImage: {
-  width: 44,
-  height: 44,
+  width: 38,
+  height: 38,
   resizeMode: 'contain',
 },
-
   // MARCADORES DO MAPA
   carMarkerContainer: {
     backgroundColor: '#EAB308',

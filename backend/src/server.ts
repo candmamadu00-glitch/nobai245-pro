@@ -123,6 +123,43 @@ app.get('/health', (_req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
+app.get('/api/passengers/drivers/nearby', async (req: Request, res: Response) => {
+  try {
+    const lat = Number(req.query.lat);
+    const lng = Number(req.query.lng);
+
+    if (isNaN(lat) || isNaN(lng)) {
+      return res.status(400).json({ error: 'Coordenadas inválidas' });
+    }
+
+    // Busca motoristas no raio de 5 km via Redis GEOSEARCH
+    const nearbyDriverIds = await redisClient.geoSearch(
+      'drivers:locations',
+      { longitude: lng, latitude: lat },
+      { radius: 5, unit: 'km' }
+    );
+
+    // Mapeia coordenadas atuais dos motoristas
+    const drivers = await Promise.all(
+      nearbyDriverIds.map(async (driverId) => {
+        const pos = await redisClient.geoPos('drivers:locations', driverId);
+        if (pos && pos[0]) {
+          return {
+            id: driverId,
+            lng: pos[0].longitude,
+            lat: pos[0].latitude,
+          };
+        }
+        return null;
+      })
+    );
+
+    return res.json({ drivers: drivers.filter(Boolean) });
+  } catch (error) {
+    console.error('Erro ao buscar motoristas próximos:', error);
+    return res.status(500).json({ error: 'Erro interno ao buscar motoristas' });
+  }
+});
 // =============================================================================
 // 🌐 API JSON DE DADOS EM TEMPO REAL DO RASTREAMENTO
 // =============================================================================

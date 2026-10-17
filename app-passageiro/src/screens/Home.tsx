@@ -354,7 +354,9 @@ export function Home() {
   const [langModalVisible, setLangModalVisible] = useState(false);
 
   const [routeGeometry, setRouteGeometry] = useState<any>(null);
-
+/ 1. Estado para guardar os motoristas próximos recebidos da API / Socket
+const [nearbyDrivers, setNearbyDrivers] = useState<Array<{ id: string; lat: number; lng: number; heading?: number }>>([]);
+const [isSearchingRide, setIsSearchingRide] = useState(false);
   const VEHICLE_OPTIONS = [
     { id: 'moto' as VehicleType, title: 'Moto', subtitle: t('moto_subtitle', 'Rápido e econômico'), image: require('../assets/vehicles/moto.png') },
     { id: 'particular' as VehicleType, title: t('standard_vehicle', 'Particular'), subtitle: t('particular_subtitle', 'Viagem exclusiva'), image: require('../assets/vehicles/carro_white.png') },
@@ -828,6 +830,25 @@ export function Home() {
   
   return () => subscription.remove();
 }, [getCurrentLocationWithFallback]);
+// 2. Efeito para buscar motoristas próximos a cada 5 segundos se estiver na tela de seleção
+useEffect(() => {
+  if (!pickupLocation) return;
+
+  const fetchNearby = async () => {
+    try {
+      const response = await api.get('/passengers/drivers/nearby', {
+        params: { lat: pickupLocation.latitude, lng: pickupLocation.longitude }
+      });
+      setNearbyDrivers(response.data.drivers || []);
+    } catch (err) {
+      console.warn('Erro ao carregar motoristas próximos:', err);
+    }
+  };
+
+  fetchNearby();
+  const interval = setInterval(fetchNearby, 5000);
+  return () => clearInterval(interval);
+}, [pickupLocation]);
   const resetRideState = useCallback(() => {
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     persistRideState(null, 'idle');
@@ -1510,44 +1531,80 @@ const handleSosPress = () => {
         </View>
       </View>
 
-      <Mapbox.MapView
-        style={StyleSheet.absoluteFill}
-        styleURL={Mapbox.StyleURL.Street}
-        logoEnabled={false}
-        attributionEnabled={false}
-        onCameraChanged={(e) => {
-          if (e.gestures.isGestureActive) {
-            setIsMapMoving(true);
-            isManualPickupRef.current = false;
-          }
-        }}
-        onMapIdle={onMapRegionDidChange}
-      >
-        <Mapbox.Camera
-          ref={cameraRef}
-          zoomLevel={14}
-          centerCoordinate={[
-            passengerLocation?.coords?.longitude || BISSAU_CENTER.longitude,
-            passengerLocation?.coords?.latitude || BISSAU_CENTER.latitude,
-          ]}
-          animationMode="flyTo"
-          animationDuration={1000}
-        />
+  {/* MAPA DE NAVEGAÇÃO MAPBOX (PASSAGEIRO) */}
+  <Mapbox.MapView
+    style={StyleSheet.absoluteFill}
+    styleURL={Mapbox.StyleURL.Street}
+    logoEnabled={false}
+    attributionEnabled={false}
+    onCameraChanged={(e) => {
+      if (e.gestures.isGestureActive) {
+        setIsMapMoving(true);
+        isManualPickupRef.current = false;
+      }
+    }}
+    onMapIdle={onMapRegionDidChange}
+  >
+    <Mapbox.Camera
+      ref={cameraRef}
+      zoomLevel={14}
+      centerCoordinate={[
+        passengerLocation?.coords?.longitude || BISSAU_CENTER.longitude,
+        passengerLocation?.coords?.latitude || BISSAU_CENTER.latitude,
+      ]}
+      animationMode="flyTo"
+      animationDuration={1000}
+    />
 
-        {/* ROTA MAPBOX */}
-        {routeGeometry?.type === 'Feature' && routeGeometry?.geometry?.coordinates && (
-          <Mapbox.ShapeSource id="routeSource" shape={routeGeometry}>
-            <Mapbox.LineLayer
-              id="routeLine"
-              style={{
-                lineColor: '#EAB308',
-                lineWidth: 5,
-                lineCap: 'round',
-                lineJoin: 'round',
-              }}
-            />
-          </Mapbox.ShapeSource>
-        )}
+    {/* ROTA MAPBOX */}
+    {routeGeometry?.type === 'Feature' && routeGeometry?.geometry?.coordinates && (
+      <Mapbox.ShapeSource id="routeSource" shape={routeGeometry}>
+        <Mapbox.LineLayer
+          id="routeLine"
+          style={{
+            lineColor: '#EAB308',
+            lineWidth: 5,
+            lineCap: 'round',
+            lineJoin: 'round',
+          }}
+        />
+      </Mapbox.ShapeSource>
+    )}
+
+    {/* 🚗 1. MARCADORES DOS MOTORISTAS ONLINE (EXIBIDOS DENTRO DO MAPA) */}
+    {nearbyDrivers && nearbyDrivers.map((driver: any) => (
+      <Mapbox.PointAnnotation
+        key={`online-driver-${driver.id}`}
+        id={`online-driver-${driver.id}`}
+        coordinate={[Number(driver.lng), Number(driver.lat)]}
+      >
+        <View style={styles.driverMarkerWrapper}>
+          <Image
+            source={require('../../assets/images/car-top-view.png')}
+            style={[
+              styles.driverMarkerImage,
+              { transform: [{ rotate: `${driver.heading || 0}deg` }] }
+            ]}
+            resizeMode="contain"
+          />
+        </View>
+      </Mapbox.PointAnnotation>
+    ))}
+
+    {/* 📍 2. MARCADOR DE EMBARQUE DO PASSAGEIRO (EXIBIDO DENTRO DO MAPA) */}
+    {pickupLocation && (
+      <Mapbox.PointAnnotation id="pickupPoint" coordinate={[pickupLocation.longitude, pickupLocation.latitude]}>
+        <View style={styles.pickupMarker}>
+          <Ionicons name="pin" size={22} color="#EAB308" />
+        </View>
+      </Mapbox.PointAnnotation>
+    )}
+  </Mapbox.MapView>
+
+  {/* 📡 3. ONDAS DE RADAR DE BUSCA (FLUTUA FORA E ACIMA DO MAPA) */}
+  {isSearchingRide && (
+    <SearchingRadarPulse statusText="Procurando motorista Nô Bai próximo..." />
+  )}
 
         {/* PONTO DE EMBARQUE */}
         {pickupCoords?.latitude != null && pickupCoords?.longitude != null && rideStatus !== 'idle' && (
@@ -3502,5 +3559,25 @@ vehicle3DImage: {
   width: 44,
   height: 44,
   resizeMode: 'contain',
+},
+driverMarkerWrapper: {
+  width: 36,
+  height: 36,
+  justifyContent: 'center',
+  alignItems: 'center',
+},
+driverMarkerImage: {
+  width: 32,
+  height: 32,
+},
+pickupMarker: {
+  width: 36,
+  height: 36,
+  borderRadius: 18,
+  backgroundColor: '#0F172A',
+  borderWidth: 2,
+  borderColor: '#EAB308',
+  justifyContent: 'center',
+  alignItems: 'center',
 },
 });
