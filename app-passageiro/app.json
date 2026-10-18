@@ -3,7 +3,6 @@
     "name": "nobai245-passageiro",
     "slug": "nobai245-passageiro",
     "version": "1.0.0",
-    "jsEngine": "hermes",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
