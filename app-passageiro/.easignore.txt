@@ -1,6 +1,0 @@
-# Ignorar a pasta raiz e outros projetos
-../
-node_modules/
-.expo/
-dist/
-.git/
