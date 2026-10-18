@@ -21,7 +21,6 @@
       }
     },
     "android": {
-      "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#0E243C",
         "foregroundImage": "./assets/android-icon-foreground.png"
