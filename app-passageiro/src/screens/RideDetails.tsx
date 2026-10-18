@@ -4,7 +4,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useTranslation } from 'react-i18next';
-import axios from 'axios';
 import { api } from '../services/api';
 import { Ride } from '../types/ride';
 
@@ -71,12 +70,9 @@ export function RideDetails() {
                 message: 'Solicitação de ajuda registrada via detalhes da viagem.'
               });
               Alert.alert(t('success', 'Sucesso'), t('ticket_recorded_msg', 'Seu chamado foi registrado! Entraremos em contato em breve.'));
-            } catch (error) {
-              if (axios.isAxiosError(error)) {
-                Alert.alert(t('error_title', 'Erro'), error.response?.data?.error || error.response?.data?.message || t('ticket_error_msg', 'Não foi possível registrar o chamado.'));
-              } else {
-                Alert.alert(t('error_title', 'Erro'), t('unexpected_error_msg', 'Ocorreu um erro inesperado ao processar sua solicitação.'));
-              }
+            } catch (error: any) {
+              const errorMsg = error?.response?.data?.error || error?.response?.data?.message || t('ticket_error_msg', 'Não foi possível registrar o chamado.');
+              Alert.alert(t('error_title', 'Erro'), errorMsg);
             } finally {
               setIsSendingSupport(false);
             }
@@ -102,9 +98,9 @@ export function RideDetails() {
     );
   };
 
- // Pega a URL da foto exata do seu banco de dados
   const driverPhoto = ride.driver?.profilePicture;
   const photoUri = driverPhoto?.startsWith('http') ? driverPhoto : `${api.defaults.baseURL}/uploads/${driverPhoto}`;
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFF" />
@@ -156,10 +152,10 @@ export function RideDetails() {
                 )}
                 <View style={{ marginLeft: 12, flex: 1 }}>
                   <Text style={styles.driverName}>{ride.driver.fullName}</Text>
-  <Text style={styles.carInfo}>
-    {ride.driver.vehicleBrand ? `${ride.driver.vehicleBrand} • ` : ''}
-    {ride.driver.vehiclePlate || t('plate_ni', 'Placa N/I')}
-  </Text>
+                  <Text style={styles.carInfo}>
+                    {ride.driver.vehicleBrand ? `${ride.driver.vehicleBrand} - ` : ''}
+                    {ride.driver.vehiclePlate || t('plate_ni', 'Placa N/I')}
+                  </Text>
                 </View>
               </View>
             </View>

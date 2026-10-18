@@ -53,12 +53,10 @@ if (Platform.OS === 'android') {
     vibrationPattern: [0, 250, 250, 250],
   });
 }
-// 🛡️ Oculta console.log e console.warn no build final de produção
 if (!__DEV__) {
   console.log = () => {};
   console.warn = () => {};
   console.info = () => {};
-  // Mantenha console.error ativado para o Sentry registrar falhas críticas
 }
 const Stack = createNativeStackNavigator();
 

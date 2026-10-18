@@ -7,12 +7,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": false,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#0E243C"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.mamadubalde.nobai245passageiro",
@@ -28,11 +22,6 @@
     },
     "android": {
       "usesCleartextTraffic": true,
-      "splash": {
-        "image": "./assets/splash-icon.png",
-        "resizeMode": "contain",
-        "backgroundColor": "#0E243C"
-      },
       "adaptiveIcon": {
         "backgroundColor": "#0E243C",
         "foregroundImage": "./assets/android-icon-foreground.png"
@@ -44,7 +33,14 @@
         "ACCESS_BACKGROUND_LOCATION",
         "CAMERA",
         "RECORD_AUDIO",
-        "VIBRATE"
+        "VIBRATE",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -64,8 +60,9 @@
           "android": {
             "minSdkVersion": 24,
             "targetSdkVersion": 34,
-            "kotlinVersion": "1.8.22",
-            "enableProguardInReleaseBuilds": true
+            "kotlinVersion": "2.1.20",
+            "enableProguardInReleaseBuilds": true,
+            "enableMinifyInReleaseBuilds": true
           }
         }
       ],
@@ -102,13 +99,13 @@
             "backgroundColor": "#0E243C"
           }
         }
-      ]
+      ],
+      "expo-asset"
     ],
     "extra": {
       "eas": {
-        "projectId": "0fb16cb3-4228-4f52-93b2-d39040bb9ddc"
+        "projectId": "98d4d827-efe4-41f3-a5f5-2d8ff1c47dcb"
       }
-    },
-    "owner": "mamadubalde"
+    }
   }
 }
