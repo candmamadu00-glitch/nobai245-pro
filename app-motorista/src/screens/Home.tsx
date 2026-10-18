@@ -1435,7 +1435,7 @@ const translateToKriol = (text: string): string => {
                     ) : incomingRide.serviceType === 'RENTAL' ? (
                       <View style={[styles.serviceTypeBadge, { backgroundColor: '#7C3AED' }]}>
                         <Ionicons name="time" size={12} color="#FFF" />
-                        <Text style={styles.serviceTypeBadgeText}>ALUGUEL POR HORA</Text>
+                        <Text style={styles.serviceTypeBadgeText}>ALUGUEL</Text>
                       </View>
                     ) : (
                       <View style={[styles.serviceTypeBadge, { backgroundColor: '#EAB308' }]}>
@@ -1625,7 +1625,7 @@ const translateToKriol = (text: string): string => {
             <View style={styles.filterRow}>
               <View style={styles.filterLabelContainer}>
                 <Ionicons name="time" size={18} color="#7C3AED" />
-                <Text style={styles.filterLabelText}>Aluguel por Hora</Text>
+                <Text style={styles.filterLabelText}>Aluguel</Text>
               </View>
               <Switch value={serviceFilters.RENTAL} onValueChange={(val) => setServiceFilters(prev => ({ ...prev, RENTAL: val }))} trackColor={{ false: '#334155', true: '#7C3AED' }} />
             </View>

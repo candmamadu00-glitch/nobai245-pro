@@ -6,11 +6,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#0E243C"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.mamadubalde.nobai245motorista",
@@ -25,12 +20,6 @@
       }
     },
     "android": {
-      "newArchEnabled": false,
-      "splash": {
-        "image": "./assets/splash-icon.png",
-        "resizeMode": "contain",
-        "backgroundColor": "#0E243C"
-      },
       "adaptiveIcon": {
         "backgroundColor": "#0E243C",
         "foregroundImage": "./assets/android-icon-foreground.png"
@@ -48,7 +37,16 @@
         "FOREGROUND_SERVICE_LOCATION",
         "WAKE_LOCK",
         "VIBRATE",
-        "POST_NOTIFICATIONS"
+        "POST_NOTIFICATIONS",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
       ]
     },
     "web": {
@@ -68,8 +66,9 @@
           "android": {
             "minSdkVersion": 24,
             "targetSdkVersion": 34,
-            "kotlinVersion": "1.8.22",
-            "enableProguardInReleaseBuilds": true
+            "kotlinVersion": "2.1.20",
+            "enableProguardInReleaseBuilds": true,
+            "enableMinifyInReleaseBuilds": true
           }
         }
       ],
@@ -109,13 +108,13 @@
         }
       ],
       "expo-audio",
-      "expo-sharing"
+      "expo-sharing",
+      "expo-asset"
     ],
     "extra": {
       "eas": {
-        "projectId": "68c6b217-605c-4762-8f26-9a4890b2c29b"
+        "projectId": "1a0d202c-7545-4695-bb69-8bde59a94543"
       }
-    },
-    "owner": "mamadubalde"
+    }
   }
 }
