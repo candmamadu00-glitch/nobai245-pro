@@ -1,239 +1,279 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { 
-  View, Text, StyleSheet, TouchableOpacity, 
-  ScrollView, Platform, StatusBar, Alert 
+  View, Text, StyleSheet, Modal, TouchableOpacity, 
+  Image, Animated, Dimensions 
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
-import { useAuth } from '../contexts/AuthContext';
 import { Ionicons } from '@expo/vector-icons';
-import { useBilingualVoice, STORAGE_VOICE_MODE_KEY, VoiceMode } from '../hooks/useBilingualVoice';
 
-export function VehicleSettings() {
-  const navigation = useNavigation<any>();
-  const { driver } = useAuth();
-  const insets = useSafeAreaInsets();
-  const { speakInstruction } = useBilingualVoice();
+interface Stop {
+  address: string;
+}
 
-  const [voiceMode, setVoiceMode] = useState<VoiceMode>('BOTH');
+interface IncomingRideData {
+  rideId: string;
+  passengerId: string;
+  passengerName?: string;
+  passengerPhoto?: string;
+  passengerRating?: number;
+  pickupLat: number;
+  pickupLng: number;
+  originAddress?: string;
+  destinationAddress?: string;
+  serviceType?: 'RIDE' | 'DELIVERY' | 'RENTAL';
+  paymentMethod?: 'ORANGE_MONEY' | 'MTN_MOMO' | 'WALLET' | 'CASH';
+  priceXof?: number;
+  stops?: Stop[];
+  extraStopAddress?: string;
+  isQueuedOffer?: boolean;
+}
 
-  useEffect(() => {
-    async function loadVoicePreference() {
-      try {
-        const saved = await AsyncStorage.getItem(STORAGE_VOICE_MODE_KEY);
-        if (saved) setVoiceMode(saved as VoiceMode);
-      } catch (err) {
-        console.error('Erro ao carregar preferência de voz:', err);
-      }
-    }
-    loadVoicePreference();
-  }, []);
+interface IncomingRideModalProps {
+  visible: boolean;
+  ride: IncomingRideData | null;
+  timeLeft: number;
+  onAccept: () => void;
+  onReject: () => void;
+  isQueuedOffer?: boolean;
+}
 
-  const handleSelectVoiceMode = async (mode: VoiceMode) => {
-    try {
-      setVoiceMode(mode);
-      await AsyncStorage.setItem(STORAGE_VOICE_MODE_KEY, mode);
-    } catch (err) {
-      Alert.alert('Erro', 'Não foi possível guardar a preferência de voz.');
-    }
-  };
+const formatCurrency = (val?: number | null): string => {
+  const num = Number(val || 0);
+  if (isNaN(num)) return '0';
+  return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+};
 
-  const handleTestVoice = (modeToTest: VoiceMode) => {
-    console.log(`🧪 [TESTE VOZ] Testando modo no ecrã de configurações: ${modeToTest}`);
-    speakInstruction('new_ride', 'Nova viagem encontrada', modeToTest);
-  };
+export function IncomingRideModal({
+  visible,
+  ride,
+  timeLeft,
+  onAccept,
+  onReject,
+  isQueuedOffer = false
+}: IncomingRideModalProps) {
+  if (!visible || !ride) return null;
 
-  const dynamicTopPadding = Math.max((insets?.top || 0) + 6, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 6 : 14);
-  const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 28 : 16);
-
-  const voiceOptions: { key: VoiceMode; label: string; sub: string }[] = [
-    { key: 'BOTH', label: 'Português + Crioulo (Padrão)', sub: 'Instrução em Português seguida de Crioulo' },
-    { key: 'CRI', label: 'Apenas Crioulo', sub: 'Instruções exclusivamente em Crioulo de Bissau' },
-    { key: 'PT', label: 'Apenas Português', sub: 'Instruções no padrão em Português' },
-    { key: 'OFF', label: 'Desativado', sub: 'Sem orientação por voz durante a navegação' },
-  ];
+  const isQueued = isQueuedOffer || ride.isQueuedOffer;
 
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFF" translucent />
-
-      <View style={[styles.header, { paddingTop: dynamicTopPadding }]}>
-        <TouchableOpacity 
-          onPress={() => navigation.goBack()} 
-          style={styles.backButton}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Ionicons name="arrow-back" size={24} color="#059669" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Configurações do Motorista</Text>
-        <View style={{ width: 40 }} />
-      </View>
-
-      <ScrollView 
-        contentContainerStyle={[styles.content, { paddingBottom: dynamicBottomPadding + 20 }]} 
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <View style={styles.iconBox}>
-              <Ionicons name="volume-high" size={22} color="#059669" />
-            </View>
-            <Text style={styles.cardTitle}>Orientação por Voz</Text>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onReject}
+    >
+      <View style={styles.overlay}>
+        <View style={styles.container}>
+          
+          {/* BANNER SUPERIOR - CORRIDA EM FILA OU NORMAL */}
+          <View style={[styles.badgeBanner, isQueued ? styles.queuedBanner : styles.normalBanner]}>
+            <Ionicons 
+              name={isQueued ? "layers-outline" : "flash-outline"} 
+              size={18} 
+              color="#FFF" 
+            />
+            <Text style={styles.badgeText}>
+              {isQueued ? '🔄 PRÓXIMA CORRIDA (EM FILA)' : '🚗 NOVA SOLICITAÇÃO'}
+            </Text>
           </View>
 
-          <Text style={styles.cardSubtitle}>
-            Escolha como prefere ouvir os avisos de navegação e novas corridas:
-          </Text>
+          {/* TEMPO RESTANTE */}
+          <View style={styles.timerContainer}>
+            <Text style={styles.timerText}>{timeLeft}s</Text>
+          </View>
 
-          {voiceOptions.map((opt) => {
-            const isSelected = voiceMode === opt.key;
-            return (
-              <View key={opt.key} style={[styles.voiceOptionCard, isSelected && styles.voiceOptionCardSelected]}>
-                <TouchableOpacity
-                  style={styles.touchArea}
-                  onPress={() => handleSelectVoiceMode(opt.key)}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons
-                    name={isSelected ? 'radio-button-on' : 'radio-button-off'}
-                    size={22}
-                    color={isSelected ? '#059669' : '#9CA3AF'}
-                  />
-                  <View style={styles.textContainer}>
-                    <Text style={[styles.optionLabel, isSelected && styles.optionLabelSelected]}>
-                      {opt.label}
-                    </Text>
-                    <Text style={styles.optionSub}>{opt.sub}</Text>
-                  </View>
-                </TouchableOpacity>
-
-                {opt.key !== 'OFF' && (
-                  <TouchableOpacity
-                    style={styles.testBtn}
-                    onPress={() => handleTestVoice(opt.key)}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="play-circle" size={18} color="#059669" />
-                    <Text style={styles.testBtnText}>Testar</Text>
-                  </TouchableOpacity>
-                )}
+          {/* DADOS DO PASSAGEIRO */}
+          <View style={styles.passengerRow}>
+            {ride.passengerPhoto ? (
+              <Image source={{ uri: ride.passengerPhoto }} style={styles.avatar} />
+            ) : (
+              <View style={styles.avatarPlaceholder}>
+                <Ionicons name="person" size={24} color="#059669" />
               </View>
-            );
-          })}
-        </View>
-
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <View style={styles.iconBox}>
-              <Ionicons name="car" size={22} color="#059669" />
+            )}
+            <View style={styles.passengerInfo}>
+              <Text style={styles.passengerName}>{ride.passengerName || 'Passageiro'}</Text>
+              <View style={styles.ratingRow}>
+                <Ionicons name="star" size={14} color="#EAB308" />
+                <Text style={styles.ratingText}>
+                  {Number(ride.passengerRating || 5.0).toFixed(1)}
+                </Text>
+              </View>
             </View>
-            <Text style={styles.cardTitle}>Dados do Veículo</Text>
-          </View>
-
-          <View style={styles.infoRow}>
-            <Text style={styles.label}>Marca / Modelo</Text>
-            <Text style={styles.value}>{(driver as any)?.vehicleBrand || 'Não informado'}</Text>
-          </View>
-
-          <View style={styles.infoRow}>
-            <Text style={styles.label}>Cor do Veículo</Text>
-            <Text style={styles.value}>{(driver as any)?.vehicleColor || 'Não informada'}</Text>
-          </View>
-
-          <View style={[styles.infoRow, { borderBottomWidth: 0, paddingBottom: 0 }]}>
-            <Text style={styles.label}>Placa Cadastrada</Text>
-            <Text style={styles.plateBadge}>{driver?.vehiclePlate || 'N/A'}</Text>
-          </View>
-        </View>
-
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <View style={styles.iconBox}>
-              <Ionicons name="document-text" size={22} color="#059669" />
+            <View style={styles.priceContainer}>
+              <Text style={styles.priceValue}>{formatCurrency(ride.priceXof)}</Text>
+              <Text style={styles.priceUnit}>XOF</Text>
             </View>
-            <Text style={styles.cardTitle}>Documentação</Text>
           </View>
 
-          <View style={[styles.infoRow, { borderBottomWidth: 0, paddingBottom: 0 }]}>
-            <Text style={styles.label}>Nº do Documento</Text>
-            <Text style={styles.value}>{(driver as any)?.documentNumber || 'Não informado'}</Text>
+          {/* ROTA DA CORRIDA */}
+          <View style={styles.routeBox}>
+            <View style={styles.routeItem}>
+              <Ionicons name="location-sharp" size={18} color="#10B981" />
+              <Text style={styles.routeText} numberOfLines={2}>
+                {ride.originAddress || 'Ponto de Embarque'}
+              </Text>
+            </View>
+
+            {/* EXIBIÇÃO DE PARADAS SE HOUVER */}
+            {ride.stops && ride.stops.length > 0 && (
+              <View style={styles.routeItem}>
+                <Ionicons name="ellipsis-vertical" size={18} color="#EAB308" />
+                <Text style={styles.routeTextSub} numberOfLines={1}>
+                  +{ride.stops.length} parada(s) no trajeto
+                </Text>
+              </View>
+            )}
+
+            <View style={styles.routeItem}>
+              <Ionicons name="flag-sharp" size={18} color="#EF4444" />
+              <Text style={styles.routeText} numberOfLines={2}>
+                {ride.destinationAddress || 'Destino Final'}
+              </Text>
+            </View>
           </View>
 
-          <View style={styles.statusBox}>
-            <Ionicons name="checkmark-circle" size={20} color="#059669" />
-            <Text style={styles.statusText}>Documentos verificados e aprovados pela central.</Text>
+          {/* MÉTODO DE PAGAMENTO */}
+          <View style={styles.paymentTag}>
+            <Ionicons name="wallet-outline" size={14} color="#6B7280" />
+            <Text style={styles.paymentText}>
+              Pagamento: {ride.paymentMethod === 'CASH' ? 'Dinheiro' : 'Mobile Money'}
+            </Text>
           </View>
+
+          {/* BOTÕES DE AÇÃO */}
+          <View style={styles.actionsRow}>
+            <TouchableOpacity 
+              style={styles.rejectButton} 
+              onPress={onReject} 
+              activeOpacity={0.8}
+            >
+              <Ionicons name="close" size={24} color="#EF4444" />
+              <Text style={styles.rejectText}>Recusar</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={[styles.acceptButton, isQueued && styles.acceptQueuedButton]} 
+              onPress={onAccept} 
+              activeOpacity={0.85}
+            >
+              <Ionicons name="checkmark-sharp" size={24} color="#FFF" />
+              <Text style={styles.acceptText}>
+                {isQueued ? 'Aceitar e Pôr na Fila' : 'Aceitar Corrida'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
         </View>
-      </ScrollView>
-    </View>
+      </View>
+    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4F4F5' },
-  header: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    justifyContent: 'space-between', 
-    paddingHorizontal: 16, 
-    paddingBottom: 14, 
-    backgroundColor: '#FFF', 
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-    elevation: 2 
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    justifyContent: 'flex-end',
   },
-  backButton: { padding: 4 },
-  headerTitle: { fontSize: 18, fontWeight: '800', color: '#1F2937' },
-  content: { padding: 16 },
-  card: { 
-    backgroundColor: '#FFF', 
-    padding: 20, 
-    borderRadius: 16, 
-    marginBottom: 16, 
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+  container: {
+    backgroundColor: '#FFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    alignItems: 'center',
   },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
-  cardSubtitle: { fontSize: 12, color: '#6B7280', marginBottom: 14 },
-  iconBox: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#ECFDF5', justifyContent: 'center', alignItems: 'center', marginRight: 10 },
-  cardTitle: { fontSize: 16, fontWeight: '800', color: '#111827' },
-  voiceOptionCard: {
+  badgeBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    gap: 6,
+    marginBottom: 12,
+  },
+  normalBanner: { backgroundColor: '#059669' },
+  queuedBanner: { backgroundColor: '#D97706' },
+  badgeText: { color: '#FFF', fontWeight: '800', fontSize: 12 },
+  timerContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FEF3C7',
+    borderWidth: 2,
+    borderColor: '#F59E0B',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  timerText: { fontSize: 16, fontWeight: '900', color: '#D97706' },
+  passengerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 16,
+  },
+  avatar: { width: 50, height: 50, borderRadius: 25 },
+  avatarPlaceholder: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#ECFDF5',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  passengerInfo: { flex: 1, marginLeft: 12 },
+  passengerName: { fontSize: 16, fontWeight: '800', color: '#111827' },
+  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  ratingText: { fontSize: 13, fontWeight: '700', color: '#4B5563' },
+  priceContainer: { alignItems: 'flex-end' },
+  priceValue: { fontSize: 20, fontWeight: '900', color: '#059669' },
+  priceUnit: { fontSize: 11, fontWeight: '700', color: '#6B7280' },
+  routeBox: {
+    width: '100%',
     backgroundColor: '#F9FAFB',
-    padding: 12,
     borderRadius: 12,
-    marginBottom: 10,
+    padding: 12,
+    gap: 10,
     borderWidth: 1,
     borderColor: '#E5E7EB',
+    marginBottom: 12,
   },
-  voiceOptionCardSelected: { borderColor: '#059669', backgroundColor: '#ECFDF5' },
-  touchArea: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  textContainer: { marginLeft: 10, flex: 1 },
-  optionLabel: { color: '#374151', fontSize: 13, fontWeight: '600' },
-  optionLabelSelected: { color: '#065F46', fontWeight: '800' },
-  optionSub: { color: '#6B7280', fontSize: 11, marginTop: 2 },
-  testBtn: {
+  routeItem: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  routeText: { fontSize: 13, fontWeight: '600', color: '#374151', flex: 1 },
+  routeTextSub: { fontSize: 12, fontWeight: '700', color: '#D97706', flex: 1 },
+  paymentTag: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFF',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#059669',
-    gap: 4,
+    gap: 6,
+    marginBottom: 16,
   },
-  testBtnText: { fontSize: 11, fontWeight: '700', color: '#059669' },
-  infoRow: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F3F4F6', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  label: { fontSize: 13, color: '#6B7280', fontWeight: '600' },
-  value: { fontSize: 14, color: '#111827', fontWeight: '700' },
-  plateBadge: { backgroundColor: '#111827', color: '#FFF', fontWeight: '800', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, fontSize: 13 },
-  statusBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECFDF5', padding: 12, borderRadius: 10, marginTop: 14, gap: 8 },
-  statusText: { fontSize: 12, color: '#065F46', fontWeight: '700', flex: 1 },
+  paymentText: { fontSize: 12, color: '#6B7280', fontWeight: '600' },
+  actionsRow: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: 12,
+  },
+  rejectButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#FEE2E2',
+    gap: 6,
+  },
+  rejectText: { color: '#DC2626', fontWeight: '800', fontSize: 15 },
+  acceptButton: {
+    flex: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#059669',
+    gap: 6,
+  },
+  acceptQueuedButton: { backgroundColor: '#D97706' },
+  acceptText: { color: '#FFF', fontWeight: '800', fontSize: 15 },
 });

@@ -292,7 +292,7 @@ export function Home() {
   const isInaccessibleAlertShowingRef = useRef(false);
   const isManualPickupRef = useRef(false);
   const route = useRoute<any>();
-
+  const appStateRef = useRef(AppState.currentState);
   const [bookingStep, setBookingStep] = useState<BookingStep>('ADDRESS');
   const [rideStatus, setRideStatus] = useState<RideStatus>('idle');
   const [activeRideId, setActiveRideId] = useState<string | null>(null);
@@ -487,7 +487,76 @@ useEffect(() => {
       console.error('Erro ao salvar estado local:', e);
     }
   };
+// 📡 Sincroniza a corrida ativa diretamente com o servidor via API HTTP
+  const syncActiveRideWithServer = useCallback(async () => {
+    try {
+      if (!api || typeof api.get !== 'function') return;
 
+      const response = await api.get('/rides/active').catch(() => null);
+      
+      if (response?.data?.ride && isMountedRef.current) {
+        const ride = response.data.ride;
+        const mappedStatus: RideStatus = 
+          ride.status === 'SEARCHING' ? 'searching' :
+          ride.status === 'ACCEPTED' ? 'accepted' :
+          ride.status === 'ARRIVED' ? 'arrived' :
+          ride.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
+
+        if (mappedStatus !== 'idle') {
+          setActiveRideId(ride.id);
+          activeRideIdRef.current = ride.id;
+          setRideStatus(mappedStatus);
+          if (ride.startOtp) setStartOtp(ride.startOtp);
+
+          // Restaura dados completos do motorista na tela
+          if (ride.driver) {
+            setDriverInfo({
+              id: ride.driver.id,
+              name: ride.driver.fullName || 'Motorista',
+              photoUrl: formatPhotoUrl(ride.driver.profilePicture),
+              carModel: ride.driver.vehicleModel || ride.driver.vehicleBrand,
+              carColor: ride.driver.vehicleColor,
+              licensePlate: ride.driver.vehiclePlate,
+              rating: Number(ride.driver.ratingAverage || 5.0),
+              phone: ride.driver.phone,
+            });
+
+            if (ride.driver.currentLat && ride.driver.currentLng) {
+              setDriverLocation({
+                latitude: Number(ride.driver.currentLat),
+                longitude: Number(ride.driver.currentLng),
+                heading: Number(ride.driver.heading || 0),
+              });
+            }
+          }
+
+          // Restaura locais de partida e destino
+          if (ride.originLat && ride.originLng) {
+            setPickupCoords({ latitude: Number(ride.originLat), longitude: Number(ride.originLng) });
+            if (ride.originAddress) setPickupAddress(ride.originAddress);
+          }
+
+          if (ride.destinationLat && ride.destinationLng) {
+            setDropoffCoords({ latitude: Number(ride.destinationLat), longitude: Number(ride.destinationLng) });
+            if (ride.destinationAddress) setDropoffAddress(ride.destinationAddress);
+          }
+
+          if (ride.priceXof) setEstimatedPrice(Number(ride.priceXof));
+
+          // Ativa a tela sempre acesa durante a corrida
+          activateKeepAwakeAsync('PASSENGER_RIDE_KEEP_AWAKE').catch(() => {});
+
+          // Salva no AsyncStorage local
+          await AsyncStorage.setItem(STORAGE_RIDE_KEY, JSON.stringify({ 
+            rideId: ride.id, 
+            status: mappedStatus 
+          }));
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ [PASSENGER] Erro ao sincronizar corrida ativa com servidor:', err);
+    }
+  }, []);
   const fitMapBounds = useCallback((coordsArray: Array<{ latitude: number; longitude: number }>) => {
     if (!cameraRef.current || !coordsArray || coordsArray.length < 2) return;
     
@@ -845,27 +914,34 @@ useEffect(() => {
     const backHandlerSubscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => backHandlerSubscription.remove();
   }, [isMenuVisible, isChatVisible, isSearchModalVisible, showCancelModal, showRatingModal, bookingStep, rideStatus]);
+  // 📱 Monitora a saída e retorno do passageiro no aplicativo (Background -> Foreground)
   useEffect(() => {
-  const subscription = AppState.addEventListener('change', (nextAppState) => {
-    if (nextAppState === 'active') {
-      getCurrentLocationWithFallback();
-      
-      if (!socket.connected) {
-        connectPassengerSocket();
-        // 🛡️ Garante que solicita o estado assim que a reconexão for concluída
+    const subscription = AppState.addEventListener('change', async (nextAppState) => {
+      if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
+        console.log('📱 [PASSENGER APP RESUME] Passageiro voltou para o aplicativo!');
+        
+        getCurrentLocationWithFallback();
+
+        // 1. Reconecta o Socket se tiver caído
+        if (!socket.connected) {
+          connectPassengerSocket();
+        }
+
+        // 2. Garante que busca a corrida ativa no Banco de Dados/API
+        await syncActiveRideWithServer();
+
+        // 3. Solicita estado via socket
         setTimeout(() => {
           if (socket.connected) {
             socket.emit('passenger:request_state');
           }
         }, 800);
-      } else {
-        socket.emit('passenger:request_state');
       }
-    }
-  });
-  
-  return () => subscription.remove();
-}, [getCurrentLocationWithFallback]);
+      appStateRef.current = nextAppState;
+    });
+
+    return () => subscription.remove();
+  }, [getCurrentLocationWithFallback, syncActiveRideWithServer]);
 useEffect(() => {
   const currentLat = pickupCoords?.latitude || passengerLocation?.coords?.latitude;
   const currentLng = pickupCoords?.longitude || passengerLocation?.coords?.longitude;
@@ -914,6 +990,10 @@ useEffect(() => {
   useEffect(() => {
     async function initAppAndPermissions() {
       await getCurrentLocationWithFallback();
+      
+      // 🛡️ Tenta restaurar do servidor primeiro (API HTTP)
+      await syncActiveRideWithServer();
+
       try {
         const savedState = await AsyncStorage.getItem(STORAGE_RIDE_KEY);
         if (savedState && isMountedRef.current) {
@@ -928,7 +1008,6 @@ useEffect(() => {
 
     initAppAndPermissions();
     connectPassengerSocket();
-
     const handleConnect = () => {
       if (isMountedRef.current) setIsConnected(true);
       socket.emit('passenger:request_state');
@@ -1188,41 +1267,47 @@ useEffect(() => {
   };
 }, [rideStatus]);
   async function handleInitialRequestRide() {
-  const needsDropoff = serviceType !== 'aluguel';
-  if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
-    Alert.alert(
-      t('warning_title', 'Aviso ⚠️'), 
-      t('select_origin_destination_msg', 'Selecione a origem e o destino antes de solicitar.')
-    );
-    return;
-  }
-
-  // 🛡️ 1. TRAVA CONTRA GPS FAKE NO PASSAGEIRO
-  try {
-    const currentLoc = await Location.getCurrentPositionAsync({ 
-      accuracy: Location.Accuracy.Balanced 
-    });
-    const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
-
-    if (isMocked) {
+    const needsDropoff = serviceType !== 'aluguel';
+    if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
       Alert.alert(
-        "🚨 Localização Simulada Detectada",
-        "Por motivos de segurança, não é possível solicitar corridas utilizando aplicativos de GPS falso. Desative a simulação de localização para continuar.",
-        [{ text: "Entendido" }]
+        t('warning_title', 'Aviso ⚠️'), 
+        t('select_origin_destination_msg', 'Selecione a origem e o destino antes de solicitar.')
       );
-      return; // Bloqueia a solicitação
+      return;
     }
-  } catch (e) {
-    // Caso ocorra timeout de leitura, segue o fluxo para não travar o usuário
-  }
 
-  // 💳 2. FLUXO EXCLUSIVO ORANGE MONEY (DINHEIRO DESATIVADO)
-  setPaymentMethod('ORANGE_MONEY');
-  if (!paymentPhone && user?.phone) {
-    setPaymentPhone(user.phone);
+    // 🛡️ 1. TRAVA CONTRA GPS FAKE NO PASSAGEIRO
+    try {
+      const currentLoc = await Location.getCurrentPositionAsync({ 
+        accuracy: Location.Accuracy.Balanced 
+      });
+      const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
+
+      if (isMocked) {
+        Alert.alert(
+          "🚨 Localização Simulada Detectada",
+          "Por motivos de segurança, não é possível solicitar corridas utilizando aplicativos de GPS falso. Desative a simulação de localização para continuar.",
+          [{ text: "Entendido" }]
+        );
+        return; // Bloqueia a solicitação
+      }
+    } catch (e) {
+      // Caso ocorra timeout de leitura, segue o fluxo para não travar o usuário
+    }
+
+    // 💳 2. VERIFICAÇÃO DO MÉTODO DE PAGAMENTO
+    if (paymentMethod === 'CASH') {
+      // Se for Dinheiro, executa o pedido diretamente sem abrir o modal do Orange Money
+      executeRideRequest();
+      return;
+    }
+
+    // Se for Orange Money / Mobile Money, abre o modal para solicitar e confirmar o telefone
+    if (!paymentPhone && user?.phone) {
+      setPaymentPhone(user.phone);
+    }
+    setIsPaymentModalVisible(true);
   }
-  setIsPaymentModalVisible(true);
-}
 
   async function confirmPaymentAndRide() {
     if (!user?.id) {
@@ -1290,7 +1375,6 @@ useEffect(() => {
       );
     }
   }
-
   function executeRideRequest() {
     if (!user?.id || !pickupCoords) {
       Alert.alert(t('warning_title', 'Aviso ⚠️'), t('missing_data_msg', 'Dados insuficientes para iniciar a corrida. Verifique sua localização.'));
@@ -1628,7 +1712,7 @@ const handleSosPress = () => {
         </View>
       </View>
 
-      {/* 2. MAPA DE NAVEGAÇÃO MAPBOX */}
+{/* 2. MAPA DE NAVEGAÇÃO MAPBOX */}
       <Mapbox.MapView
         style={StyleSheet.absoluteFill}
         styleURL={Mapbox.StyleURL.Street}
@@ -1668,39 +1752,42 @@ const handleSosPress = () => {
           </Mapbox.ShapeSource>
         )}
 
-        {/* 🚗 MARCADORES DOS MOTORISTAS ONLINE PRÓXIMOS */}
-{nearbyDrivers && nearbyDrivers.map((driver: any) => (
-  <Mapbox.PointAnnotation
-    key={`online-driver-${driver.id}`}
-    id={`online-driver-${driver.id}`}
-    coordinate={[Number(driver.lng), Number(driver.lat)]}
-  >
-    <View style={styles.driverMarkerWrapper}>
-      <Image
-        source={getVehicle3DIconAsset(driver.vehicleType || 'TAXI', driver.carColor || 'AMARELO')}
-        style={[
-          styles.driverMarkerImage,
-          { transform: [{ rotate: `${driver.heading || 0}deg` }] }
-        ]}
-        resizeMode="contain"
-      />
-    </View>
-  </Mapbox.PointAnnotation>
-))}
+        {/* 🚗 MARCADORES DOS MOTORISTAS ONLINE PRÓXIMOS (LIVRES) */}
+        {nearbyDrivers && nearbyDrivers.map((driver: any) => (
+          <Mapbox.PointAnnotation
+            key={`online-driver-${driver.id}`}
+            id={`online-driver-${driver.id}`}
+            coordinate={[Number(driver.lng), Number(driver.lat)]}
+            anchor={{ x: 0.5, y: 0.5 }}
+          >
+            <View style={styles.driverMarkerWrapper}>
+              <View style={{ transform: [{ rotate: `${driver.heading || 0}deg` }] }}>
+                <Image
+                  source={getVehicle3DIconAsset(driver.vehicleType || 'TAXI', driver.carColor || 'AMARELO')}
+                  style={styles.driverMarkerImage}
+                  fadeDuration={0}
+                  resizeMode="contain"
+                />
+              </View>
+            </View>
+          </Mapbox.PointAnnotation>
+        ))}
+
         {/* 📍 PONTO DE EMBARQUE */}
-{(pickupCoords?.latitude != null && pickupCoords?.longitude != null) && (
-  <Mapbox.PointAnnotation 
-    id="pickupPoint" 
-    coordinate={[
-      Number(pickupCoords.longitude), 
-      Number(pickupCoords.latitude)
-    ]}
-  >
-    <View style={styles.pickupMarker}>
-      <Ionicons name="pin" size={22} color="#EAB308" />
-    </View>
-  </Mapbox.PointAnnotation>
-)}
+        {(pickupCoords?.latitude != null && pickupCoords?.longitude != null) && (
+          <Mapbox.PointAnnotation 
+            id="pickupPoint" 
+            coordinate={[
+              Number(pickupCoords.longitude), 
+              Number(pickupCoords.latitude)
+            ]}
+          >
+            <View style={styles.pickupMarker}>
+              <Ionicons name="pin" size={22} color="#EAB308" />
+            </View>
+          </Mapbox.PointAnnotation>
+        )}
+
         {/* 🔵 PARADA EXTRA */}
         {extraStopCoords?.latitude != null && extraStopCoords?.longitude != null && (
           <Mapbox.PointAnnotation
@@ -1725,28 +1812,25 @@ const handleSosPress = () => {
           </Mapbox.PointAnnotation>
         )}
 
-        {/* 🏎️ MOTORISTA EM MOVIMENTO (CORRIDA ACEITA) */}
+        {/* 🏎️ MOTORISTA ATIVO EM MOVIMENTO (CORRIDA ACEITA) */}
         {driverLocation?.latitude != null && driverLocation?.longitude != null && (
           <Mapbox.PointAnnotation
             id="driverMarker"
             coordinate={[Number(driverLocation.longitude), Number(driverLocation.latitude)]}
             anchor={{ x: 0.5, y: 0.5 }}
           >
-            <View 
-              style={[
-                styles.vehicle3DContainer, 
-                { transform: [{ rotate: `${driverLocation.heading || 0}deg` }] }
-              ]}
-            >
-              <Image
-                source={getVehicle3DIconAsset(
-                  driverInfo?.vehicleType || vehicleType,
-                  driverInfo?.carColor
-                )}
-                style={styles.vehicle3DImage}
-                fadeDuration={0}
-                resizeMode="contain"
-              />
+            <View style={styles.vehicle3DContainer}>
+              <View style={{ transform: [{ rotate: `${driverLocation.heading || 0}deg` }] }}>
+                <Image
+                  source={getVehicle3DIconAsset(
+                    driverInfo?.vehicleType || vehicleType,
+                    driverInfo?.carColor
+                  )}
+                  style={styles.vehicle3DImage}
+                  fadeDuration={0}
+                  resizeMode="contain"
+                />
+              </View>
             </View>
           </Mapbox.PointAnnotation>
         )}
@@ -1965,9 +2049,19 @@ const handleSosPress = () => {
     <Text style={styles.sectionLabel}>{t('payment_method', 'Forma de Pagamento')}</Text>
     
     <View style={styles.paymentOptionsContainer}>
-      {/* ORANGE MONEY - SELECIONADO POR PADRÃO */}
+      {/* 1. OPÇÃO: ORANGE MONEY */}
       <TouchableOpacity 
-        style={[styles.paymentBtn, styles.paymentBtnActive, { backgroundColor: '#1E293B', borderColor: '#FF6600', paddingVertical: 14 }]}
+        style={[
+          styles.paymentBtn, 
+          paymentMethod === 'ORANGE_MONEY' && styles.paymentBtnActive, 
+          { 
+            backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#1E293B' : '#0F172A', 
+            borderColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#334155', 
+            borderWidth: 1,
+            paddingVertical: 14,
+            marginBottom: 10
+          }
+        ]}
         onPress={() => setPaymentMethod('ORANGE_MONEY')}
         activeOpacity={0.9}
       >
@@ -1975,7 +2069,7 @@ const handleSosPress = () => {
           <Ionicons name="phone-portrait" size={18} color="#FF6600" />
         </View>
         
-        <View style={{ flex: 1, marginLeft: 4 }}>
+        <View style={{ flex: 1, marginLeft: 10 }}>
           <Text style={[styles.paymentBtnText, { color: '#F8FAFC', fontWeight: '800', fontSize: 14 }]}>
             Orange Money
           </Text>
@@ -1984,10 +2078,49 @@ const handleSosPress = () => {
           </Text>
         </View>
 
-        <Ionicons name="checkmark-circle" size={22} color="#FF6600" />
+        <Ionicons 
+          name={paymentMethod === 'ORANGE_MONEY' ? "checkmark-circle" : "ellipse-outline"} 
+          size={22} 
+          color={paymentMethod === 'ORANGE_MONEY' ? "#FF6600" : "#64748B"} 
+        />
       </TouchableOpacity>
-    </View>
 
+      {/* 2. OPÇÃO: DINHEIRO (CASH) */}
+      <TouchableOpacity 
+        style={[
+          styles.paymentBtn, 
+          paymentMethod === 'CASH' && styles.paymentBtnActive, 
+          { 
+            backgroundColor: paymentMethod === 'CASH' ? '#1E293B' : '#0F172A', 
+            borderColor: paymentMethod === 'CASH' ? '#10B981' : '#334155', 
+            borderWidth: 1,
+            paddingVertical: 14 
+          }
+        ]}
+        onPress={() => setPaymentMethod('CASH')}
+        activeOpacity={0.9}
+      >
+        <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(16, 185, 129, 0.15)', justifyContent: 'center', alignItems: 'center' }}>
+          <Ionicons name="cash-outline" size={18} color="#10B981" />
+        </View>
+
+        <View style={{ flex: 1, marginLeft: 10 }}>
+          <Text style={[styles.paymentBtnText, { color: '#F8FAFC', fontWeight: '800', fontSize: 14 }]}>
+            {t('cash_payment', 'Dinheiro')}
+          </Text>
+          <Text style={{ color: '#94A3B8', fontSize: 11, marginTop: 2 }}>
+            {t('cash_desc', 'Pague diretamente ao motorista no final da viagem')}
+          </Text>
+        </View>
+
+        <Ionicons 
+          name={paymentMethod === 'CASH' ? "checkmark-circle" : "ellipse-outline"} 
+          size={22} 
+          color={paymentMethod === 'CASH' ? "#10B981" : "#64748B"} 
+        />
+      </TouchableOpacity>
+
+    </View>
     {/* BOTOES DE AÇÃO */}
     <View style={styles.actionRow}>
       <TouchableOpacity 
@@ -2745,24 +2878,7 @@ const styles = StyleSheet.create({
     borderRadius: 10 
   },
   
-  // 🏎️ ESTILOS DO VEÍCULO 3D COM ROTAÇÃO DE RUA NO MAPA
-  vehicle3DContainer: {
-    width: 48,
-    height: 48,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.35,
-    shadowRadius: 5,
-    elevation: 6,
-  },
-  vehicle3DImage: {
-    width: 44,
-    height: 44,
-    resizeMode: 'contain',
-  },
-
+  
   // MARCADORES E PINOS
   carMarker: {
     width: 32,
@@ -3754,39 +3870,39 @@ const styles = StyleSheet.create({
   },
   // 🏎️ Adicione dentro do StyleSheet.create se ainda não estiver presente:
 vehicle3DContainer: {
-  width: 48,
-  height: 48,
-  justifyContent: 'center',
-  alignItems: 'center',
-  shadowColor: '#000',
-  shadowOffset: { width: 0, height: 3 },
-  shadowOpacity: 0.35,
-  shadowRadius: 5,
-  elevation: 6,
-},
-vehicle3DImage: {
-  width: 44,
-  height: 44,
-  resizeMode: 'contain',
-},
-driverMarkerWrapper: {
-  width: 36,
-  height: 36,
-  justifyContent: 'center',
-  alignItems: 'center',
-},
-driverMarkerImage: {
-  width: 32,
-  height: 32,
-},
-pickupMarker: {
-  width: 36,
-  height: 36,
-  borderRadius: 18,
-  backgroundColor: '#0F172A',
-  borderWidth: 2,
-  borderColor: '#EAB308',
-  justifyContent: 'center',
-  alignItems: 'center',
-},
+    width: 44,
+    height: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+  },
+  vehicle3DImage: {
+    width: 38,
+    height: 38,
+    resizeMode: 'contain',
+    backgroundColor: 'transparent',
+  },
+  driverMarkerWrapper: {
+    width: 36,
+    height: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+  },
+  driverMarkerImage: {
+    width: 32,
+    height: 32,
+    resizeMode: 'contain',
+    backgroundColor: 'transparent',
+  },
+  pickupMarker: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#0F172A',
+    borderWidth: 2,
+    borderColor: '#EAB308',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
 });

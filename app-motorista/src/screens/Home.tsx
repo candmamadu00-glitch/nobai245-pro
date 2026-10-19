@@ -2,8 +2,9 @@ import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { 
   View, Text, TouchableOpacity, StyleSheet, Alert, Modal, 
   KeyboardAvoidingView, Platform, StatusBar, Dimensions, Image, Vibration, Switch,
-  Animated, PanResponder, Easing, ScrollView
+  Animated, PanResponder, Easing, ScrollView, AppState, AppStateStatus
 } from 'react-native';
+import { useKeepAwake } from 'expo-keep-awake'; // 💡 1. MANTÉM A TELA ACESA
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
@@ -187,6 +188,32 @@ function calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number
   const brng = toDeg(Math.atan2(y, x));
   return Math.round((brng + 360) % 360);
 }
+// 🧭 Calcula o ângulo exato para a frente do carro apontar para a linha da rota
+function getVehicleRotation(
+  currentLat: number, 
+  currentLng: number, 
+  heading: number | null | undefined, 
+  routeCoordinates: number[][] | null
+): number {
+  // 1. Se o GPS forneceu uma bússola/direção real válida
+  if (heading != null && heading > 0) {
+    return Math.round(heading);
+  }
+
+  // 2. Se a bússola do GPS falhou, alinha com o próximo ponto da linha no mapa
+  if (routeCoordinates && routeCoordinates.length > 1) {
+    const nextPoint = routeCoordinates[1] || routeCoordinates[0];
+    const targetLng = nextPoint[0];
+    const targetLat = nextPoint[1];
+    
+    const distKm = calculateDirectDistance(currentLat, currentLng, targetLat, targetLng);
+    if (distKm * 1000 > 0.5) { 
+      return calculateBearing(currentLat, currentLng, targetLat, targetLng);
+    }
+  }
+
+  return 0;
+}
 // 🏎️ Função de resolução de ativos 3D (.jpg)
 function getVehicle3DIconAsset(vehicleType?: string, vehicleColor?: string) {
   const type = (vehicleType || 'PARTICULAR').toUpperCase().trim();
@@ -258,12 +285,15 @@ const formatImageUrl = (url?: string | null): string | undefined => {
   return `${baseUrl}${url.startsWith('/') ? '' : '/'}${url}`;
 };
 export function Home() {
+  useKeepAwake();
+
   const { driver } = useAuth();
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const audioRecorder = useAudioRecorder();
   const route = useRoute<any>();
   const isMountedRef = useRef(true);
+  const appStateRef = useRef(AppState.currentState);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -742,6 +772,7 @@ const translateToKriol = (text: string): string => {
     persistActiveRideState(incomingRide, rideState, activeRideId);
   }, [rideState, activeRideId]);
 
+  // 📡 ESCUTA DE SOCKETS COM SUPORTE A CORRIDAS EM FILA (BACK-TO-BACK)
   useEffect(() => {
     const handleConnect = async () => {
       if (driver?.id) {
@@ -753,23 +784,7 @@ const translateToKriol = (text: string): string => {
       }
     };
 
-    const handleRideAccepted = async (data: any) => {
-      Vibration.cancel();
-      if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
-      if (!isMountedRef.current) return;
-      setIsLoading(false);
-      if (data.driverId === driver?.id) {
-        setActiveRideId(data.rideId);
-        setRideState('accepted');
-        snapToState(true);
-        if (incomingRideRef.current) persistActiveRideState(incomingRideRef.current, 'accepted', data.rideId);
-      } else {
-        setIncomingRide(null);
-        Alert.alert('Corrida Indisponível', 'Outro motorista aceitou esta corrida.');
-      }
-    };
-
-    const handleNewRideRequest = (data: IncomingRideData) => {
+    const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean }) => {
       if (!isOnlineRef.current || !isMountedRef.current) return;
       
       const rawType = (data.serviceType || 'RIDE').toString().toUpperCase();
@@ -782,7 +797,14 @@ const translateToKriol = (text: string): string => {
       const rawPrice = (data as any).fareXOF ?? data.priceXof ?? 0;
       const stopsArray = Array.isArray(data.stops) && data.stops.length > 0 ? data.stops : ((data as any).extraStopAddress ? [{ address: (data as any).extraStopAddress }] : []);
 
-      setRideState('idle'); 
+      // 🛡️ Se o motorista já está numa corrida, NÃO altera o rideState atual!
+      // Apenas define a oferta recebida para que o modal/banner de fila apareça sobreposto.
+      const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(rideState);
+      
+      if (!isCurrentlyInRide) {
+        setRideState('idle'); 
+      }
+
       setTimeLeft(15);
       setIncomingRide({
         ...data,
@@ -794,6 +816,30 @@ const translateToKriol = (text: string): string => {
         stops: stopsArray,
         extraStopAddress: (data as any).extraStopAddress || (stopsArray[0]?.address || undefined),
       });
+    };
+
+    const handleRideAccepted = async (data: any) => {
+      Vibration.cancel();
+      if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
+      if (!isMountedRef.current) return;
+      setIsLoading(false);
+
+      if (data.driverId === driver?.id) {
+        // Se o motorista já estava numa corrida, a nova corrida aceita entra na fila
+        const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(rideState);
+        
+        if (!isCurrentlyInRide) {
+          setActiveRideId(data.rideId);
+          setRideState('accepted');
+          snapToState(true);
+          if (incomingRideRef.current) persistActiveRideState(incomingRideRef.current, 'accepted', data.rideId);
+        } else {
+          Alert.alert('Fila Confirmada 🔄', 'Nova corrida adicionada à sua fila com sucesso! Conclua a viagem atual para iniciar o novo embarque.');
+        }
+      } else {
+        setIncomingRide(null);
+        Alert.alert('Corrida Indisponível', 'Outro motorista aceitou esta corrida.');
+      }
     };
 
     const handleRideStarted = () => {
@@ -808,13 +854,32 @@ const translateToKriol = (text: string): string => {
     const handleRideFinished = (data: any) => {
       if (!isMountedRef.current) return;
       setIsLoading(false);
-      setRideState('completed');
       setCompletedInfo({ fareXOF: data.fareXOF, distanceKm: data.distanceKm, transactionId: data.transactionId });
-      setShowReceiptModal(true);
-      setShowNavSheet(false);
-      stopBackgroundLocation();
-      persistActiveRideState(null, 'idle', null);
-      fetchTodayEarnings();
+
+      // 🔄 Se o servidor retornar que existe uma corrida na fila
+      if (data.hasQueuedRide && data.nextRideId) {
+        Alert.alert('Viagem Concluída! 🏁', 'Direcionando você para a próxima corrida que estava na fila.');
+        setActiveRideId(data.nextRideId);
+        setRideState('accepted');
+        setShowReceiptModal(false);
+        fetchTodayEarnings();
+      } else {
+        setRideState('completed');
+        setShowReceiptModal(true);
+        setShowNavSheet(false);
+        stopBackgroundLocation();
+        persistActiveRideState(null, 'idle', null);
+        fetchTodayEarnings();
+      }
+    };
+
+    // 🔄 EVENTO: Promoção de Corrida da Fila para Ativa
+    const handleQueuedNowActive = (data: { rideId: string; status: string }) => {
+      if (!isMountedRef.current) return;
+      setActiveRideId(data.rideId);
+      setRideState('accepted');
+      snapToState(true);
+      Alert.alert('Próxima Corrida Ativa 🚀', 'Seu novo passageiro já foi notificado de que você está a caminho!');
     };
 
     const handleRideCancelled = (data: { cancelledBy?: string }) => {
@@ -829,6 +894,7 @@ const translateToKriol = (text: string): string => {
     socket.on('ride:accepted', handleRideAccepted);
     socket.on('ride:started', handleRideStarted);
     socket.on('ride:finished', handleRideFinished);
+    socket.on('ride:queued_now_active', handleQueuedNowActive);
     socket.on('ride:cancelled', handleRideCancelled);
 
     return () => {
@@ -838,13 +904,76 @@ const translateToKriol = (text: string): string => {
       socket.off('ride:accepted', handleRideAccepted);
       socket.off('ride:started', handleRideStarted);
       socket.off('ride:finished', handleRideFinished);
+      socket.off('ride:queued_now_active', handleQueuedNowActive);
       socket.off('ride:cancelled', handleRideCancelled);
       stopTracking();
     };
-  }, [driver?.id, resetDriverState, snapToState]);
+  }, [driver?.id, resetDriverState, snapToState, rideState]);
 
+  // 💡 2. FUNÇÃO DE RESTAURAÇÃO DE CORRIDA ATIVA VIA API SERVIDOR
+  const syncActiveRideWithServer = useCallback(async () => {
+    try {
+      if (!api || typeof api.get !== 'function') return;
+      
+      const response = await api.get('/drivers/active-ride').catch(() => null);
+      if (response?.data?.ride && isMountedRef.current) {
+        const activeRide = response.data.ride;
+        const mappedState: RideState = 
+          activeRide.status === 'ACCEPTED' ? 'accepted' :
+          activeRide.status === 'ARRIVED' ? 'arrived' :
+          activeRide.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
+
+        if (mappedState !== 'idle') {
+          setActiveRideId(activeRide.id);
+          setRideState(mappedState);
+          setIncomingRide({
+            rideId: activeRide.id,
+            passengerId: activeRide.passengerId,
+            passengerName: activeRide.passenger?.fullName || 'Passageiro',
+            passengerPhone: activeRide.passenger?.phone,
+            passengerPhoto: activeRide.passenger?.profilePicture,
+            passengerRating: activeRide.passenger?.ratingAverage || 5.0,
+            pickupLat: Number(activeRide.originLat),
+            pickupLng: Number(activeRide.originLng),
+            originAddress: activeRide.originAddress,
+            destinationLat: Number(activeRide.destinationLat),
+            destinationLng: Number(activeRide.destinationLng),
+            destinationAddress: activeRide.destinationAddress,
+            priceXof: Number(activeRide.priceXof),
+            paymentMethod: activeRide.paymentMethod,
+            stops: activeRide.stops || [],
+          });
+          persistActiveRideState(activeRide, mappedState, activeRide.id);
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ Erro ao sincronizar corrida ativa com servidor:', err);
+    }
+  }, []);
+
+  // 💡 3. ESCUTA MUDANÇA DE SEGUNDO PLANO PARA PRIMEIR PLANO (AppState)
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', async (nextAppState: AppStateStatus) => {
+      if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
+        console.log('📱 [APP RESUME] Motorista voltou para o aplicativo!');
+        // Reconecta o socket e sincroniza o estado da corrida ativa
+        if (socket && !socket.connected) {
+          await connectDriverSocket();
+        }
+        await syncActiveRideWithServer();
+      }
+      appStateRef.current = nextAppState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [syncActiveRideWithServer]);
+
+  // 💡 4. CORREÇÃO CRÍTICA DO TIMER DE 15 SEGUNDOS (SÓ RODA SE ESTIVER EM IDLE)
   useEffect(() => {
     let timer: NodeJS.Timeout;
+    // SÓ conta o tempo se houver oferta pendente E o motorista estiver livre (rideState === 'idle')
     if (incomingRide && rideState === 'idle' && timeLeft > 0) {
       timer = setInterval(() => {
         if (isMountedRef.current) setTimeLeft((prev) => prev - 1);
@@ -855,7 +984,6 @@ const translateToKriol = (text: string): string => {
     }
     return () => clearInterval(timer);
   }, [incomingRide, rideState, timeLeft]);
-
   async function stopBackgroundLocation() {
     const hasTask = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
     if (hasTask) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
@@ -883,7 +1011,6 @@ const translateToKriol = (text: string): string => {
           const { latitude, longitude } = newLocation.coords;
           let calculatedHeading = newLocation.coords.heading;
 
-          // 🛡️ Se o celular não fornecer bússola válida (< 0 ou null), calcula pelo deslocamento
           if (calculatedHeading == null || calculatedHeading < 0) {
             if (lastDriverCoordsRef.current) {
               const distKm = calculateDirectDistance(
@@ -893,7 +1020,6 @@ const translateToKriol = (text: string): string => {
                 longitude
               );
 
-              // Se moveu mais de 2 metros, calcula a nova direção
               if (distKm * 1000 > 2) {
                 calculatedHeading = calculateBearing(
                   lastDriverCoordsRef.current.latitude,
@@ -902,7 +1028,6 @@ const translateToKriol = (text: string): string => {
                   longitude
                 );
               } else {
-                // Se parado, mantêm a última direção conhecida
                 calculatedHeading = lastDriverCoordsRef.current.heading || 0;
               }
             } else {
@@ -910,13 +1035,10 @@ const translateToKriol = (text: string): string => {
             }
           }
 
-          // Atualiza a referência com a posição e direção tratada
           lastDriverCoordsRef.current = { latitude, longitude, heading: calculatedHeading };
 
           updateCameraThrottled(longitude, latitude);
 
-          // Transmite a localização com a direção exata para o servidor / passageiro
-          // Transmite a localização com a direção exata para o servidor / passageiro
           if (driver?.id && socket.connected) {
             socket.emit('driver:location_update', {
               driverId: driver.id,
@@ -927,63 +1049,60 @@ const translateToKriol = (text: string): string => {
               heading: calculatedHeading,
             });
           }
-        } // 👈 Fecha o callback (newLocation) => {
-      ); // 👈 Fecha o Location.watchPositionAsync(
+        }
+      );
     } catch (e) {
       console.warn('⚠️ Erro watchPositionAsync:', e);
     }
-  }; // 👈 Fecha a função startTrackingForState
-      
+  };
 
   async function startTracking() {
-  if (driver?.status !== 'APPROVED') return Alert.alert('Conta em Análise', 'Aguarde aprovação de documentos.');
-  
-  const foreground = await Location.requestForegroundPermissionsAsync();
-  if (foreground.status !== 'granted') return Alert.alert('Permissão Necessária', 'Permita o acesso à localização para ficar online.');
+    if (driver?.status !== 'APPROVED') return Alert.alert('Conta em Análise', 'Aguarde aprovação de documentos.');
+    
+    const foreground = await Location.requestForegroundPermissionsAsync();
+    if (foreground.status !== 'granted') return Alert.alert('Permissão Necessária', 'Permita o acesso à localização para ficar online.');
 
-  try {
-    // 1. Obtém a localização atual primeiro
-    const currentLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+    try {
+      const currentLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
 
-    // 🚨 2. TRAVA DE GPS FAKE: Verifica se a coordenada foi simulada por algum app
-    const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
-    if (isMocked) {
-      if (isMountedRef.current) setIsOnline(false);
-      return Alert.alert(
-        'GPS Simulado Detectado',
-        'Desative o aplicativo de GPS Falso no seu dispositivo para conseguir ficar online e receber corridas.'
-      );
-    }
+      const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
+      if (isMocked) {
+        if (isMountedRef.current) setIsOnline(false);
+        return Alert.alert(
+          'GPS Simulado Detectado',
+          'Desative o aplicativo de GPS Falso no seu dispositivo para conseguir ficar online e receber corridas.'
+        );
+      }
 
-    // 3. Se for GPS legítimo, ativa a conta e conecta no Socket
-    setIsOnline(true);
-    await connectDriverSocket();
+      setIsOnline(true);
+      await connectDriverSocket();
 
-    if (isMountedRef.current) {
-      setLocation(currentLoc);
-      if (cameraRef.current) {
-        cameraRef.current.setCamera({ 
-          centerCoordinate: [currentLoc.coords.longitude, currentLoc.coords.latitude], 
-          zoomLevel: 16 
+      if (isMountedRef.current) {
+        setLocation(currentLoc);
+        if (cameraRef.current) {
+          cameraRef.current.setCamera({ 
+            centerCoordinate: [currentLoc.coords.longitude, currentLoc.coords.latitude], 
+            zoomLevel: 16 
+          });
+        }
+      }
+
+      if (socket && socket.connected) {
+        socket.emit('driver:online', { 
+          driverId: driver?.id, 
+          lat: currentLoc.coords.latitude, 
+          lng: currentLoc.coords.longitude 
         });
       }
+
+      await startTrackingForState(rideState);
+
+    } catch (e) {
+      Alert.alert('Erro de Localização', 'Verifique o GPS do seu dispositivo.');
+      if (isMountedRef.current) setIsOnline(false);
     }
-
-    if (socket && socket.connected) {
-      socket.emit('driver:online', { 
-        driverId: driver?.id, 
-        lat: currentLoc.coords.latitude, 
-        lng: currentLoc.coords.longitude 
-      });
-    }
-
-    await startTrackingForState(rideState);
-
-  } catch (e) {
-    Alert.alert('Erro de Localização', 'Verifique o GPS do seu dispositivo.');
-    if (isMountedRef.current) setIsOnline(false);
   }
-}
+
   function stopTracking() {
     if (driver?.id && socket && socket.connected) {
       socket.timeout(2000).emit('driver:offline', { driverId: driver.id }, (err: any) => {
@@ -1020,11 +1139,18 @@ const translateToKriol = (text: string): string => {
         setIncomingRide(null); 
         return Alert.alert('Aviso', response.message);
       }
+
+      const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(rideState);
       
-      setActiveRideId(rideId);
-      setRideState('accepted');
-      snapToState(true);
-      if (incomingRide) persistActiveRideState(incomingRide, 'accepted', rideId);
+      if (!isCurrentlyInRide) {
+        setActiveRideId(rideId);
+        setRideState('accepted');
+        snapToState(true);
+        if (incomingRide) persistActiveRideState(incomingRide, 'accepted', rideId);
+      } else {
+        setIncomingRide(null);
+        Alert.alert('Corrida Agendada 🔄', 'A corrida foi aceita e colocada na sua fila.');
+      }
     });
   }
 
@@ -1857,28 +1983,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0F172A',
   },
-
- vehicle3DContainer: {
-  width: 46,
-  height: 46,
-  alignItems: 'center',
-  justifyContent: 'center',
-  backgroundColor: 'transparent',
-},
-vehicle3DRotator: {
-  width: 40,
-  height: 40,
-  borderRadius: 20,
-  overflow: 'hidden',
-  alignItems: 'center',
-  justifyContent: 'center',
-  backgroundColor: 'transparent',
-},
-vehicle3DImage: {
-  width: 38,
-  height: 38,
-  resizeMode: 'contain',
-},
   // MARCADORES DO MAPA
   carMarkerContainer: {
     backgroundColor: '#EAB308',
@@ -2304,22 +2408,9 @@ vehicle3DImage: {
   fontStyle: 'italic' 
 },
 // 1. Adicione os estilos do marcador 3D do veículo:
-vehicle3DContainer: {
-  width: 48,
-  height: 48,
-  justifyContent: 'center',
-  alignItems: 'center',
-  shadowColor: '#000',
-  shadowOffset: { width: 0, height: 3 },
-  shadowOpacity: 0.35,
-  shadowRadius: 5,
-  elevation: 6,
-},
-vehicle3DImage: {
-  width: 44,
-  height: 44,
-  resizeMode: 'contain',
-},
+vehicle3DContainer: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
+vehicle3DRotator: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
+vehicle3DImage: { width: 38, height: 38, resizeMode: 'contain', backgroundColor: 'transparent' },
   // BOTÕES DE AÇÃO
   actionRow: {
     flexDirection: 'row',
