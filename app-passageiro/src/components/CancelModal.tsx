@@ -65,10 +65,11 @@ export const CancelModal = memo(function CancelModal({
     }
     
     if (!finalReason) return;
-    onConfirm(finalReason);
+    
+    // 🔄 Reseta os campos do modal e dispara a confirmação sem atraso
     resetInternalState();
+    onConfirm(finalReason);
   }
-
   function handleClose() {
     resetInternalState();
     onClose();

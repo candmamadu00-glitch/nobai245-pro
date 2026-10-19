@@ -1133,24 +1133,41 @@ const handleDriverPosition = (data: any) => {
   }, [pickupCoords, dropoffCoords, extraStopCoords, serviceType, vehicleType, calculateEstimate]);
 
   async function handleInitialRequestRide() {
-    const needsDropoff = serviceType !== 'aluguel';
-    if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
-      Alert.alert(
-        t('warning_title', 'Aviso ⚠️'), 
-        t('select_origin_destination_msg', 'Selecione a origem e o destino antes de solicitar.')
-      );
-      return;
-    }
-
-    if (paymentMethod === 'CASH') {
-      executeRideRequest();
-    } else {
-      if (!paymentPhone && user?.phone) {
-        setPaymentPhone(user.phone);
-      }
-      setIsPaymentModalVisible(true);
-    }
+  const needsDropoff = serviceType !== 'aluguel';
+  if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
+    Alert.alert(
+      t('warning_title', 'Aviso ⚠️'), 
+      t('select_origin_destination_msg', 'Selecione a origem e o destino antes de solicitar.')
+    );
+    return;
   }
+
+  // 🛡️ 1. TRAVA CONTRA GPS FAKE NO PASSAGEIRO
+  try {
+    const currentLoc = await Location.getCurrentPositionAsync({ 
+      accuracy: Location.Accuracy.Balanced 
+    });
+    const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
+
+    if (isMocked) {
+      Alert.alert(
+        "🚨 Localização Simulada Detectada",
+        "Por motivos de segurança, não é possível solicitar corridas utilizando aplicativos de GPS falso. Desative a simulação de localização para continuar.",
+        [{ text: "Entendido" }]
+      );
+      return; // Bloqueia a solicitação
+    }
+  } catch (e) {
+    // Caso ocorra timeout de leitura, segue o fluxo para não travar o usuário
+  }
+
+  // 💳 2. FLUXO EXCLUSIVO ORANGE MONEY (DINHEIRO DESATIVADO)
+  setPaymentMethod('ORANGE_MONEY');
+  if (!paymentPhone && user?.phone) {
+    setPaymentPhone(user.phone);
+  }
+  setIsPaymentModalVisible(true);
+}
 
   async function confirmPaymentAndRide() {
     if (!user?.id) {
@@ -1292,27 +1309,32 @@ const handleDriverPosition = (data: any) => {
   const handleCloseCancelModal = useCallback(() => setShowCancelModal(false), []);
 
   const handleConfirmCancel = useCallback((reason: string) => {
-    if (!activeRideId || !user?.id) {
-      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-      resetRideState();
-      return;
-    }
-    
-    cancelRideByPassenger(activeRideId, user.id, reason);
-    setShowCancelModal(false);
-    
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    persistRideState(null, 'idle');
-    setActiveRideId(null);
-    setRideStatus('idle');
-    setDriverInfo(null);
-    setDriverLocation(null);
-    setStartOtp('');
-    
-    if (activeRideIdRef.current) activeRideIdRef.current = null;
-    resetRideState();
-  }, [activeRideId, user?.id, resetRideState]);
+  // 1. Fecha o modal de cancelamento imediatamente
+  setShowCancelModal(false);
 
+  if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+
+  // 2. Se não houver corrida ativa, apenas reseta a tela
+  if (!activeRideId || !user?.id) {
+    resetRideState();
+    return;
+  }
+  
+  // 3. Notifica a API/Backend sobre o cancelamento
+  cancelRideByPassenger(activeRideId, user.id, reason);
+  
+  // 🔄 4. RESET IMEDIATO DE TODOS OS ESTADOS DA TELA
+  persistRideState(null, 'idle');
+  setActiveRideId(null);
+  setRideStatus('idle');
+  setBookingStep('SEARCH'); // Retorna diretamente para a tela de busca de endereço
+  setDriverInfo(null);
+  setDriverLocation(null);
+  setStartOtp('');
+  
+  if (activeRideIdRef.current) activeRideIdRef.current = null;
+  resetRideState();
+}, [activeRideId, user?.id, resetRideState]);
   const onMapRegionDidChange = useCallback(async (feature: any) => {
   setIsMapMoving(false);
   if (rideStatus !== 'idle' || bookingStep !== 'ADDRESS') return;
@@ -1882,40 +1904,52 @@ const handleSosPress = () => {
               </View>
             )}
 
-            {/* 💳 SELEÇÃO DE FORMA DE PAGAMENTO (APENAS ORANGE MONEY E DINHEIRO) */}
+            {/* 💳 SELEÇÃO DE FORMA DE PAGAMENTO (EXCLUSIVO ORANGE MONEY) */}
 {rideStatus === 'idle' && bookingStep === 'PAYMENT' && (
   <View style={{ width: '100%' }}>
     <Text style={styles.sectionLabel}>{t('payment_method', 'Forma de Pagamento')}</Text>
+    
     <View style={styles.paymentOptionsContainer}>
-      
-      {/* ORANGE MONEY */}
+      {/* ORANGE MONEY - SELECIONADO POR PADRÃO */}
       <TouchableOpacity 
-        style={[styles.paymentBtn, paymentMethod === 'ORANGE_MONEY' && styles.paymentBtnActive]}
+        style={[styles.paymentBtn, styles.paymentBtnActive, { backgroundColor: '#1E293B', borderColor: '#FF6600', paddingVertical: 14 }]}
         onPress={() => setPaymentMethod('ORANGE_MONEY')}
-        activeOpacity={0.8}
+        activeOpacity={0.9}
       >
-        <Ionicons name="phone-portrait-outline" size={18} color={paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#94A3B8'} />
-        <Text style={[styles.paymentBtnText, paymentMethod === 'ORANGE_MONEY' && styles.paymentBtnTextActive]}>Orange Money</Text>
-      </TouchableOpacity>
+        <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(255, 102, 0, 0.15)', justifyContent: 'center', alignItems: 'center' }}>
+          <Ionicons name="phone-portrait" size={18} color="#FF6600" />
+        </View>
+        
+        <View style={{ flex: 1, marginLeft: 4 }}>
+          <Text style={[styles.paymentBtnText, { color: '#F8FAFC', fontWeight: '800', fontSize: 14 }]}>
+            Orange Money
+          </Text>
+          <Text style={{ color: '#94A3B8', fontSize: 11, marginTop: 2 }}>
+            {t('orange_money_desc', 'Pagamento automático e seguro via USSD')}
+          </Text>
+        </View>
 
-      {/* DINHEIRO */}
-      <TouchableOpacity 
-        style={[styles.paymentBtn, paymentMethod === 'CASH' && styles.paymentBtnActive]}
-        onPress={() => setPaymentMethod('CASH')}
-        activeOpacity={0.8}
-      >
-        <Ionicons name="cash-outline" size={18} color={paymentMethod === 'CASH' ? '#10B981' : '#94A3B8'} />
-        <Text style={[styles.paymentBtnText, paymentMethod === 'CASH' && styles.paymentBtnTextActive]}>{t('cash', 'Dinheiro')}</Text>
+        <Ionicons name="checkmark-circle" size={22} color="#FF6600" />
       </TouchableOpacity>
-
     </View>
 
+    {/* BOTOES DE AÇÃO */}
     <View style={styles.actionRow}>
-      <TouchableOpacity style={styles.cancelButtonOutline} onPress={() => setBookingStep('SERVICE_AND_PRICE')}>
+      <TouchableOpacity 
+        style={styles.cancelButtonOutline} 
+        onPress={() => setBookingStep('SERVICE_AND_PRICE')}
+      >
         <Text style={styles.cancelButtonOutlineText}>{t('back_btn', 'Voltar')}</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity style={[styles.requestButton, { flex: 1, marginLeft: 10 }]} onPress={handleInitialRequestRide}>
+      <TouchableOpacity 
+        style={[styles.requestButton, { flex: 1, marginLeft: 10 }]} 
+        onPress={() => {
+          // Garante que o método está definido antes de prosseguir
+          setPaymentMethod('ORANGE_MONEY');
+          handleInitialRequestRide();
+        }}
+      >
         <Text style={styles.requestButtonText}>{t('request_now_btn', 'Pedir Agora')}</Text>
       </TouchableOpacity>
     </View>
@@ -2145,87 +2179,124 @@ const handleSosPress = () => {
       </Modal>
 
       {/* MODAL DE PAGAMENTO MOBILE MONEY */}
-      <Modal 
-        visible={isPaymentModalVisible} 
-        transparent 
-        animationType="slide" 
-        onRequestClose={() => !isProcessingPayment && setIsPaymentModalVisible(false)}
-      >
-        <KeyboardAvoidingView 
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
-          style={{ flex: 1 }}
-        >
-          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-            <View style={styles.modalOverlay}>
-              <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
-                <View style={[styles.paymentModalCard, { paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
-                  <View style={[styles.operatorHeader, { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#FFCC00' }]}>
-                    <Ionicons name="phone-portrait-sharp" size={24} color={paymentMethod === 'ORANGE_MONEY' ? '#FFFFFF' : '#000000'} />
-                    <Text style={[styles.operatorTitle, { color: paymentMethod === 'ORANGE_MONEY' ? '#FFFFFF' : '#000000' }]}>
-                      {paymentMethod === 'ORANGE_MONEY' ? 'Orange Money' : 'MTN Mobile Money'}
-                    </Text>
-                  </View>
-
-                  <ScrollView 
-                    style={styles.paymentModalBody} 
-                    contentContainerStyle={{ flexGrow: 1, paddingBottom: 16 }} 
-                    showsVerticalScrollIndicator={false} 
-                    keyboardShouldPersistTaps="handled"
-                  >
-                    <Text style={styles.paymentModalSubtitle}>
-                      {t('ussd_push_instruction', 'Confirme seu número. Você receberá um alerta seguro da operadora no seu celular para digitar seu PIN.')}
-                    </Text>
-
-                    <View style={styles.amountBadge}>
-                      <Text style={styles.amountTextLabel}>{t('total_amount', 'Valor Total:')}</Text>
-                      <Text style={styles.amountValue}>
-                        {estimatedPrice ? `${estimatedPrice.toLocaleString('pt-GW')} XOF` : t('calculating', 'Calculando...')}
-                      </Text>
-                    </View>
-
-                    <Text style={styles.inputLabel}>{t('mobile_money_account', 'Número da Conta Mobile Money')}</Text>
-                    <View style={styles.phoneInputContainer}>
-                      <TextInput
-                        style={[styles.phoneInput, { paddingLeft: 12 }]}
-                        value={paymentPhone}
-                        onChangeText={setPaymentPhone}
-                        keyboardType="phone-pad"
-                        editable={!isProcessingPayment}
-                        placeholder={t('phone_number_placeholder', 'Ex: 955000000')}
-                        placeholderTextColor="#64748B"
-                      />
-                    </View>
-
-                    <View style={styles.modalActionsRow}>
-                      <TouchableOpacity 
-                        style={styles.cancelModalBtn} 
-                        disabled={isProcessingPayment} 
-                        onPress={() => setIsPaymentModalVisible(false)} 
-                        activeOpacity={0.8}
-                      >
-                        <Text style={styles.cancelModalBtnText}>{t('back_btn', 'Cancelar')}</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity 
-                        style={[styles.confirmModalBtn, { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#004F9F' }]}
-                        disabled={isProcessingPayment}
-                        onPress={confirmPaymentAndRide}
-                        activeOpacity={0.85}
-                      >
-                        {isProcessingPayment ? (
-                          <ActivityIndicator color="#FFFFFF" size="small" />
-                        ) : (
-                          <Text style={styles.confirmModalBtnText}>{t('confirm_payment_btn', 'Confirmar Solicitação')}</Text>
-                        )}
-                      </TouchableOpacity>
-                    </View>
-                  </ScrollView>
-                </View>
-              </TouchableWithoutFeedback>
+<Modal 
+  visible={isPaymentModalVisible} 
+  transparent 
+  animationType="fade" 
+  onRequestClose={() => !isProcessingPayment && setIsPaymentModalVisible(false)}
+>
+  <KeyboardAvoidingView 
+    behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+    style={{ flex: 1 }}
+  >
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+      <View style={styles.modalOverlay}>
+        <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+          <View style={[styles.paymentModalCard, { paddingBottom: Math.max((insets?.bottom || 0) + 20, 24) }]}>
+            
+            {/* CABEÇALHO DO OPERADOR */}
+            <View style={[
+              styles.operatorHeader, 
+              { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#004F9F' }
+            ]}>
+              <View style={styles.operatorHeaderContent}>
+                <Ionicons 
+                  name={paymentMethod === 'ORANGE_MONEY' ? "wallet-outline" : "card-outline"} 
+                  size={26} 
+                  color="#FFFFFF" 
+                />
+                <Text style={styles.operatorTitle}>
+                  {paymentMethod === 'ORANGE_MONEY' ? 'Orange Money' : 'MTN Mobile Money'}
+                </Text>
+              </View>
+              <TouchableOpacity 
+                onPress={() => !isProcessingPayment && setIsPaymentModalVisible(false)}
+                disabled={isProcessingPayment}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close-circle" size={26} color="rgba(255,255,255,0.8)" />
+              </TouchableOpacity>
             </View>
-          </TouchableWithoutFeedback>
-        </KeyboardAvoidingView>
-      </Modal>
+
+            <ScrollView 
+              style={styles.paymentModalBody} 
+              contentContainerStyle={{ flexGrow: 1, paddingTop: 16, paddingBottom: 12 }} 
+              showsVerticalScrollIndicator={false} 
+              keyboardShouldPersistTaps="always"
+            >
+              {/* INSTRUÇÃO USSD */}
+              <Text style={styles.paymentModalSubtitle}>
+                {t('ussd_push_instruction', 'Confirme o seu número. Receberá uma notificação segura no telemóvel para digitar o seu PIN.')}
+              </Text>
+
+              {/* BADGE DE VALOR TOTAL */}
+              <View style={styles.amountBadgeContainer}>
+                <Text style={styles.amountTextLabel}>{t('total_amount', 'VALOR A PAGAR')}</Text>
+                <Text style={styles.amountValue}>
+                  {estimatedPrice ? `${estimatedPrice.toLocaleString('pt-GW')} XOF` : t('calculating', 'Calculando...')}
+                </Text>
+              </View>
+
+              {/* INPUT DE TELEFONE COM BOTÃO DE LIMPAR */}
+              <Text style={styles.inputLabel}>{t('mobile_money_account', 'Número de Telefone da Conta')}</Text>
+              <View style={styles.phoneInputContainer}>
+                <Ionicons name="call-outline" size={20} color="#64748B" style={{ marginLeft: 12 }} />
+                <TextInput
+                  style={styles.phoneInput}
+                  value={paymentPhone}
+                  onChangeText={(text) => setPaymentPhone(text.replace(/[^0-9]/g, ''))}
+                  keyboardType="number-pad"
+                  autoCorrect={false}
+                  maxLength={12}
+                  editable={!isProcessingPayment}
+                  placeholder={t('phone_number_placeholder', 'Ex: 955000000')}
+                  placeholderTextColor="#94A3B8"
+                />
+                {paymentPhone.length > 0 && !isProcessingPayment && (
+                  <TouchableOpacity 
+                    onPress={() => setPaymentPhone('')}
+                    style={{ padding: 8 }}
+                  >
+                    <Ionicons name="backspace-outline" size={20} color="#94A3B8" />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* BOTAO DE AÇÃO */}
+              <View style={styles.modalActionsRow}>
+                <TouchableOpacity 
+                  style={styles.cancelModalBtn} 
+                  disabled={isProcessingPayment} 
+                  onPress={() => setIsPaymentModalVisible(false)} 
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.cancelModalBtnText}>{t('back_btn', 'Cancelar')}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={[
+                    styles.confirmModalBtn, 
+                    { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#004F9F' },
+                    isProcessingPayment && { opacity: 0.7 }
+                  ]}
+                  disabled={isProcessingPayment}
+                  onPress={confirmPaymentAndRide}
+                  activeOpacity={0.85}
+                >
+                  {isProcessingPayment ? (
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                  ) : (
+                    <Text style={styles.confirmModalBtnText}>{t('confirm_payment_btn', 'Confirmar e Pagar')}</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </TouchableWithoutFeedback>
+      </View>
+    </TouchableWithoutFeedback>
+  </KeyboardAvoidingView>
+</Modal>
 
       {/* MENU LATERAL */}
       <Modal visible={isMenuVisible} animationType="fade" transparent onRequestClose={() => setIsMenuVisible(false)}>
@@ -2369,136 +2440,210 @@ const handleSosPress = () => {
       </Modal>
 
       {/* MODAL DE BUSCA DE ENDEREÇO MAPBOX */}
-      <Modal visible={isSearchModalVisible} animationType="slide" transparent={false} onRequestClose={() => setIsSearchModalVisible(false)}>
-        <SafeAreaView style={styles.searchModalContainer}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-            <View style={styles.searchHeader}>
-              <TouchableOpacity onPress={() => setIsSearchModalVisible(false)} style={styles.backButton} activeOpacity={0.7}>
-                <Ionicons name="arrow-back" size={22} color="#0F172A" />
-              </TouchableOpacity>
-              
-              <TouchableOpacity style={styles.passengerSelector} onPress={() => setIsGuestModalVisible(true)} activeOpacity={0.8}>
-                <Ionicons name="person" size={13} color="#475569" style={{ marginRight: 6 }} />
-                <Text style={styles.passengerSelectorText}>
-                  {isForAnotherPerson ? (guestName || 'Outra Pessoa') : t('for_me', 'Para mim')}
+<Modal 
+  visible={isSearchModalVisible} 
+  animationType="slide" 
+  transparent={false} 
+  onRequestClose={() => setIsSearchModalVisible(false)}
+>
+  <SafeAreaView style={styles.searchModalContainer}>
+    <KeyboardAvoidingView 
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
+      style={{ flex: 1 }}
+    >
+      {/* CABEÇALHO */}
+      <View style={styles.searchHeader}>
+        <TouchableOpacity 
+          onPress={() => setIsSearchModalVisible(false)} 
+          style={styles.backButton} 
+          activeOpacity={0.7}
+        >
+          <Ionicons name="arrow-back" size={24} color="#F8FAFC" />
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={styles.passengerSelector} 
+          onPress={() => setIsGuestModalVisible(true)} 
+          activeOpacity={0.8}
+        >
+          <Ionicons name="person" size={13} color="#EAB308" style={{ marginRight: 6 }} />
+          <Text style={styles.passengerSelectorText}>
+            {isForAnotherPerson ? (guestName || 'Outra Pessoa') : t('for_me', 'Para mim')}
+          </Text>
+        </TouchableOpacity>
+
+        <View style={{ width: 40 }} />
+      </View>
+
+      {/* CORPO DO FORMULÁRIO DE BUSCA */}
+      <View style={styles.modalBody}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15, paddingHorizontal: 4 }}>
+          
+          {/* LINHA INDICADORA DE PONTOS NO MAPA */}
+          <View style={{ alignItems: 'center', marginRight: 12 }}>
+            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#EAB308' }} />
+            <View style={{ width: 2, height: showExtraStop ? 42 : 32, backgroundColor: '#334155', marginVertical: 4 }} />
+            {showExtraStop && (
+              <>
+                <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#3B82F6' }} />
+                <View style={{ width: 2, height: 42, backgroundColor: '#334155', marginVertical: 4 }} />
+              </>
+            )}
+            <View style={{ width: 10, height: 10, backgroundColor: '#10B981', borderRadius: 2 }} />
+          </View>
+
+          {/* INPUTS DE ENDEREÇO */}
+          <View style={{ flex: 1 }}>
+            
+            {/* 1. LOCAL DE PARTIDA */}
+            <View style={[
+              styles.mapboxSearchInputWrapper, 
+              searchType === 'pickup' ? { borderColor: '#EAB308', borderWidth: 1 } : { marginBottom: 10, borderWidth: 1, borderColor: '#334155' }
+            ]}>
+              <TextInput
+                style={styles.mapboxSearchInput}
+                placeholder={t('pickup_location', 'Local de Partida')}
+                placeholderTextColor="#64748B"
+                value={searchType === 'pickup' ? searchQuery : pickupAddress}
+                autoCorrect={false}
+                autoCapitalize="sentences"
+                onFocus={() => { setSearchType('pickup'); setSearchQuery(pickupAddress); }}
+                onChangeText={(text) => {
+                  setSearchQuery(text);
+                  handleMapboxSearch(text);
+                }}
+              />
+              {isSearchingMapbox && searchType === 'pickup' ? (
+                <ActivityIndicator size="small" color="#EAB308" style={{ marginRight: 6 }} />
+              ) : (searchType === 'pickup' ? searchQuery : pickupAddress) ? (
+                <TouchableOpacity onPress={() => { setSearchQuery(''); setPickupAddress(''); }}>
+                  <Ionicons name="close-circle" size={18} color="#64748B" />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            {/* 2. PARADA EXTRA (OPCIONAL) */}
+            {showExtraStop && (
+              <View style={[
+                styles.mapboxSearchInputWrapper, 
+                searchType === 'extraStop' ? { borderColor: '#3B82F6', borderWidth: 1 } : { marginBottom: 10, borderWidth: 1, borderColor: '#334155' }
+              ]}>
+                <TextInput
+                  style={styles.mapboxSearchInput}
+                  placeholder="Adicionar parada..."
+                  placeholderTextColor="#64748B"
+                  value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
+                  autoCorrect={false}
+                  autoCapitalize="sentences"
+                  onFocus={() => { setSearchType('extraStop'); setSearchQuery(extraStopAddress); }}
+                  onChangeText={(text) => {
+                    setSearchQuery(text);
+                    handleMapboxSearch(text);
+                  }}
+                />
+                <TouchableOpacity 
+                  onPress={() => { setShowExtraStop(false); setExtraStopAddress(''); setExtraStopCoords(null); }}
+                  style={{ padding: 4 }}
+                >
+                  <Ionicons name="close-circle" size={20} color="#EF4444" />
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* 3. DESTINO */}
+            <View style={[
+              styles.mapboxSearchInputWrapper, 
+              searchType === 'dropoff' ? { borderColor: '#10B981', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
+            ]}>
+              <TextInput
+                style={styles.mapboxSearchInput}
+                placeholder={t('where_to', 'Para onde vamos?')}
+                placeholderTextColor="#64748B"
+                value={searchType === 'dropoff' ? searchQuery : dropoffAddress}
+                autoCorrect={false}
+                autoCapitalize="sentences"
+                onFocus={() => { setSearchType('dropoff'); setSearchQuery(dropoffAddress); }}
+                onChangeText={(text) => {
+                  setSearchQuery(text);
+                  handleMapboxSearch(text);
+                }}
+                autoFocus
+              />
+              {isSearchingMapbox && searchType === 'dropoff' ? (
+                <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 6 }} />
+              ) : (searchType === 'dropoff' ? searchQuery : dropoffAddress) ? (
+                <TouchableOpacity onPress={() => { setSearchQuery(''); setDropoffAddress(''); }}>
+                  <Ionicons name="close-circle" size={18} color="#64748B" />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            {/* BOTAO ADICIONAR PARADA */}
+            {!showExtraStop && (
+              <TouchableOpacity 
+                style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center' }} 
+                onPress={() => { setShowExtraStop(true); setSearchType('extraStop'); setSearchQuery(''); }}
+              >
+                <Ionicons name="add-circle-outline" size={18} color="#3B82F6" />
+                <Text style={{ color: '#3B82F6', fontWeight: '700', marginLeft: 6, fontSize: 13 }}>
+                  Adicionar parada
                 </Text>
               </TouchableOpacity>
-              <View style={{ width: 40 }} />
-            </View>
+            )}
+          </View>
+        </View>
 
-            <View style={styles.modalBody}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15, paddingHorizontal: 10 }}>
-                <View style={{ alignItems: 'center', marginRight: 15 }}>
-                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#94A3B8' }} />
-                  <View style={{ width: 1, height: showExtraStop ? 45 : 35, backgroundColor: '#E2E8F0', marginVertical: 4 }} />
-                  {showExtraStop && (
-                    <>
-                      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#3B82F6' }} />
-                      <View style={{ width: 1, height: 45, backgroundColor: '#E2E8F0', marginVertical: 4 }} />
-                    </>
-                  )}
-                  <View style={{ width: 8, height: 8, backgroundColor: '#0F172A' }} />
-                </View>
-
-                <View style={{ flex: 1 }}>
-                  <View style={[styles.mapboxSearchInputWrapper, searchType === 'pickup' ? { borderColor: '#EAB308', borderWidth: 1 } : { marginBottom: 10, borderWidth: 0 }]}>
-                    <TextInput
-                      style={styles.mapboxSearchInput}
-                      placeholder={t('pickup_location', 'Local de Partida')}
-                      placeholderTextColor="#94A3B8"
-                      value={searchType === 'pickup' ? searchQuery : pickupAddress}
-                      onFocus={() => { setSearchType('pickup'); setSearchQuery(pickupAddress); }}
-                      onChangeText={handleMapboxSearch}
-                    />
-                    {isSearchingMapbox && searchType === 'pickup' && <ActivityIndicator size="small" color="#EAB308" />}
-                  </View>
-
-                  {showExtraStop && (
-                    <View style={[styles.mapboxSearchInputWrapper, searchType === 'extraStop' ? { borderColor: '#3B82F6', borderWidth: 1 } : { marginBottom: 10, borderWidth: 0 }]}>
-                      <TextInput
-                        style={styles.mapboxSearchInput}
-                        placeholder="Adicionar parada..."
-                        placeholderTextColor="#94A3B8"
-                        value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
-                        onFocus={() => { setSearchType('extraStop'); setSearchQuery(extraStopAddress); }}
-                        onChangeText={handleMapboxSearch}
-                      />
-                      <TouchableOpacity onPress={() => { setShowExtraStop(false); setExtraStopAddress(''); setExtraStopCoords(null); }}>
-                        <Ionicons name="close-circle" size={20} color="#94A3B8" />
-                      </TouchableOpacity>
-                    </View>
-                  )}
-
-                  <View style={[styles.mapboxSearchInputWrapper, searchType === 'dropoff' ? { borderColor: '#EAB308', borderWidth: 1 } : { borderWidth: 0 }]}>
-                    <TextInput
-                      style={styles.mapboxSearchInput}
-                      placeholder={t('where_to', 'Para onde vamos?')}
-                      placeholderTextColor="#94A3B8"
-                      value={searchType === 'dropoff' ? searchQuery : dropoffAddress}
-                      onFocus={() => { setSearchType('dropoff'); setSearchQuery(dropoffAddress); }}
-                      onChangeText={handleMapboxSearch}
-                      autoFocus
-                    />
-                    {isSearchingMapbox && searchType === 'dropoff' && <ActivityIndicator size="small" color="#EAB308" />}
-                  </View>
-
-                  {!showExtraStop && (
-                    <TouchableOpacity style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center' }} onPress={() => { setShowExtraStop(true); setSearchType('extraStop'); setSearchQuery(''); }}>
-                      <Ionicons name="add" size={16} color="#3B82F6" />
-                      <Text style={{ color: '#3B82F6', fontWeight: '600', marginLeft: 4, fontSize: 13 }}>Adicionar parada</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
+        {/* LISTA DE RESULTADOS DA BUSCA */}
+        <FlatList
+          data={searchResults}
+          keyExtractor={(item) => item.id}
+          keyboardShouldPersistTaps="always"
+          showsVerticalScrollIndicator={false}
+          style={{ marginTop: 8 }}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={styles.searchResultItem}
+              activeOpacity={0.7}
+              onPress={() => {
+                if (searchType === 'pickup') {
+                  isManualPickupRef.current = true;
+                  setPickupAddress(item.description);
+                  setPickupCoords({ latitude: item.latitude, longitude: item.longitude });
+                  if (cameraRef.current) {
+                    cameraRef.current.setCamera({
+                      centerCoordinate: [item.longitude, item.latitude],
+                      zoomLevel: 15,
+                      animationDuration: 800,
+                    });
+                  }
+                  setSearchType(showExtraStop && !extraStopCoords ? 'extraStop' : 'dropoff');
+                  setSearchQuery('');
+                  setSearchResults([]);
+                } else if (searchType === 'extraStop') {
+                  setExtraStopAddress(item.description);
+                  setExtraStopCoords({ latitude: item.latitude, longitude: item.longitude });
+                  setSearchType('dropoff');
+                  setSearchQuery('');
+                  setSearchResults([]);
+                } else {
+                  setDropoffAddress(item.description);
+                  setDropoffCoords({ latitude: item.latitude, longitude: item.longitude });
+                  setIsSearchModalVisible(false);
+                  setBookingStep('SERVICE_AND_PRICE');
+                }
+              }}
+            >
+              <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#1E293B', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
+                <Ionicons name="location" size={18} color="#EAB308" />
               </View>
-
-              <FlatList
-                data={searchResults}
-                keyExtractor={(item) => item.id}
-                keyboardShouldPersistTaps="handled"
-                style={{ marginTop: 5 }}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={styles.searchResultItem}
-                    activeOpacity={0.7}
-                    onPress={() => {
-                      if (searchType === 'pickup') {
-                        isManualPickupRef.current = true;
-                        setPickupAddress(item.description);
-                        setPickupCoords({ latitude: item.latitude, longitude: item.longitude });
-                        if (cameraRef.current) {
-                          cameraRef.current.setCamera({
-                            centerCoordinate: [item.longitude, item.latitude],
-                            zoomLevel: 15,
-                            animationDuration: 800,
-                          });
-                        }
-                        setSearchType(showExtraStop && !extraStopCoords ? 'extraStop' : 'dropoff');
-                        setSearchQuery('');
-                        setSearchResults([]);
-                      } else if (searchType === 'extraStop') {
-                        setExtraStopAddress(item.description);
-                        setExtraStopCoords({ latitude: item.latitude, longitude: item.longitude });
-                        setSearchType('dropoff');
-                        setSearchQuery('');
-                        setSearchResults([]);
-                      } else {
-                        setDropoffAddress(item.description);
-                        setDropoffCoords({ latitude: item.latitude, longitude: item.longitude });
-                        setIsSearchModalVisible(false);
-                        setBookingStep('SERVICE_AND_PRICE');
-                      }
-                    }}
-                  >
-                    <Ionicons name="location-outline" size={18} color="#0F172A" style={{ marginRight: 10 }} />
-                    <Text style={styles.searchResultText}>{item.description}</Text>
-                  </TouchableOpacity>
-                )}
-              />
-            </View>
-          </KeyboardAvoidingView>
-        </SafeAreaView>
-      </Modal>
-
+              <Text style={[styles.searchResultText, { color: '#F8FAFC' }]}>{item.description}</Text>
+            </TouchableOpacity>
+          )}
+        />
+      </View>
+    </KeyboardAvoidingView>
+  </SafeAreaView>
+</Modal>
       {/* MODAL DE CANCELAMENTO */}
       <CancelModal
         visible={showCancelModal}
