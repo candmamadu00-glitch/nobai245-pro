@@ -433,7 +433,43 @@ export function Home() {
       setPaymentPhone((user as any).phone);
     }
   }, [user]);
+// 💬 ESCUTA MENSAGENS RECEBIDAS NO CHAT EM TEMPO REAL
+useEffect(() => {
+  if (!socket) return;
 
+  const handleIncomingChatMessage = (data: { id?: string; sender: string; text: string; senderName?: string }) => {
+    // Processa apenas mensagens vindas do motorista
+    if (data.sender === 'driver' || data.sender !== 'passenger') {
+      const newMsgId = data.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`;
+      
+      // 1. Adiciona a mensagem recebida na lista de mensagens do chat
+      setMessages(prev => {
+        if (prev.some(m => m.id === newMsgId || m.text === data.text)) return prev;
+        return [...prev, { id: newMsgId, sender: 'driver', text: data.text }];
+      });
+
+      // 2. Se o modal do chat estive FECHADO, exibe o alerta na tela para o passageiro abrir
+      if (!isChatVisible) {
+        Alert.alert(
+          `💬 Mensagem do Motorista`,
+          data.text,
+          [
+            { text: 'Fechar', style: 'cancel' },
+            { text: 'Responder', onPress: () => setIsChatVisible(true) }
+          ]
+        );
+      }
+    }
+  };
+
+  socket.on('chat:message', handleIncomingChatMessage);
+  socket.on('chat:new_message', handleIncomingChatMessage);
+
+  return () => {
+    socket.off('chat:message', handleIncomingChatMessage);
+    socket.off('chat:new_message', handleIncomingChatMessage);
+  };
+}, [socket, isChatVisible]);
   const isNightTimeForPin = useCallback(() => {
     const currentHour = new Date().getHours();
     return currentHour >= 18 || currentHour < 6;

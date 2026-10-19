@@ -487,7 +487,35 @@ useEffect(() => {
   };
 }, [incomingRide, rideState, playBilingualVoice]);
   useEffect(() => { if (route.params?.openChat) setIsChatVisible(true); }, [route.params]); 
+// 💬 ESCUTA MENSAGENS DO CHAT EM TEMPO REAL NO APP DO MOTORISTA
+  useEffect(() => {
+    if (!socket) return;
 
+    const handleNewChatMessage = (data: any) => {
+      const text = data.message || data.text || '';
+      const senderName = data.senderName || 'Passageiro';
+
+      // Se o modal do chat não estiver aberto no momento, exibe o alerta flutuante
+      if (!isChatVisible) {
+        Alert.alert(
+          `💬 Mensagem de ${senderName}`,
+          text,
+          [
+            { text: 'Fechar', style: 'cancel' },
+            { text: 'Responder', onPress: () => setIsChatVisible(true) }
+          ]
+        );
+      }
+    };
+
+    socket.on('chat:new_message', handleNewChatMessage);
+    socket.on('chat:receive_message', handleNewChatMessage);
+
+    return () => {
+      socket.off('chat:new_message', handleNewChatMessage);
+      socket.off('chat:receive_message', handleNewChatMessage);
+    };
+  }, [socket, isChatVisible]);
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (rideState === 'arrived') {
