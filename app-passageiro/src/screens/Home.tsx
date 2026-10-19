@@ -433,7 +433,43 @@ export function Home() {
       setPaymentPhone((user as any).phone);
     }
   }, [user]);
+// 💬 ESCUTA MENSAGENS RECEBIDAS NO CHAT EM TEMPO REAL
+useEffect(() => {
+  if (!socket) return;
 
+  const handleIncomingChatMessage = (data: { id?: string; sender: string; text: string; senderName?: string }) => {
+    // Processa apenas mensagens vindas do motorista
+    if (data.sender === 'driver' || data.sender !== 'passenger') {
+      const newMsgId = data.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`;
+      
+      // 1. Adiciona a mensagem recebida na lista de mensagens do chat
+      setMessages(prev => {
+        if (prev.some(m => m.id === newMsgId || m.text === data.text)) return prev;
+        return [...prev, { id: newMsgId, sender: 'driver', text: data.text }];
+      });
+
+      // 2. Se o modal do chat estive FECHADO, exibe o alerta na tela para o passageiro abrir
+      if (!isChatVisible) {
+        Alert.alert(
+          `💬 Mensagem do Motorista`,
+          data.text,
+          [
+            { text: 'Fechar', style: 'cancel' },
+            { text: 'Responder', onPress: () => setIsChatVisible(true) }
+          ]
+        );
+      }
+    }
+  };
+
+  socket.on('chat:message', handleIncomingChatMessage);
+  socket.on('chat:new_message', handleIncomingChatMessage);
+
+  return () => {
+    socket.off('chat:message', handleIncomingChatMessage);
+    socket.off('chat:new_message', handleIncomingChatMessage);
+  };
+}, [socket, isChatVisible]);
   const isNightTimeForPin = useCallback(() => {
     const currentHour = new Date().getHours();
     return currentHour >= 18 || currentHour < 6;
@@ -1133,24 +1169,41 @@ const handleDriverPosition = (data: any) => {
   }, [pickupCoords, dropoffCoords, extraStopCoords, serviceType, vehicleType, calculateEstimate]);
 
   async function handleInitialRequestRide() {
-    const needsDropoff = serviceType !== 'aluguel';
-    if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
-      Alert.alert(
-        t('warning_title', 'Aviso ⚠️'), 
-        t('select_origin_destination_msg', 'Selecione a origem e o destino antes de solicitar.')
-      );
-      return;
-    }
-
-    if (paymentMethod === 'CASH') {
-      executeRideRequest();
-    } else {
-      if (!paymentPhone && user?.phone) {
-        setPaymentPhone(user.phone);
-      }
-      setIsPaymentModalVisible(true);
-    }
+  const needsDropoff = serviceType !== 'aluguel';
+  if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
+    Alert.alert(
+      t('warning_title', 'Aviso ⚠️'), 
+      t('select_origin_destination_msg', 'Selecione a origem e o destino antes de solicitar.')
+    );
+    return;
   }
+
+  // 🛡️ 1. TRAVA CONTRA GPS FAKE NO PASSAGEIRO
+  try {
+    const currentLoc = await Location.getCurrentPositionAsync({ 
+      accuracy: Location.Accuracy.Balanced 
+    });
+    const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
+
+    if (isMocked) {
+      Alert.alert(
+        "🚨 Localização Simulada Detectada",
+        "Por motivos de segurança, não é possível solicitar corridas utilizando aplicativos de GPS falso. Desative a simulação de localização para continuar.",
+        [{ text: "Entendido" }]
+      );
+      return; // Bloqueia a solicitação
+    }
+  } catch (e) {
+    // Caso ocorra timeout de leitura, segue o fluxo para não travar o usuário
+  }
+
+  // 💳 2. FLUXO EXCLUSIVO ORANGE MONEY (DINHEIRO DESATIVADO)
+  setPaymentMethod('ORANGE_MONEY');
+  if (!paymentPhone && user?.phone) {
+    setPaymentPhone(user.phone);
+  }
+  setIsPaymentModalVisible(true);
+}
 
   async function confirmPaymentAndRide() {
     if (!user?.id) {
@@ -1292,27 +1345,32 @@ const handleDriverPosition = (data: any) => {
   const handleCloseCancelModal = useCallback(() => setShowCancelModal(false), []);
 
   const handleConfirmCancel = useCallback((reason: string) => {
-    if (!activeRideId || !user?.id) {
-      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-      resetRideState();
-      return;
-    }
-    
-    cancelRideByPassenger(activeRideId, user.id, reason);
-    setShowCancelModal(false);
-    
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    persistRideState(null, 'idle');
-    setActiveRideId(null);
-    setRideStatus('idle');
-    setDriverInfo(null);
-    setDriverLocation(null);
-    setStartOtp('');
-    
-    if (activeRideIdRef.current) activeRideIdRef.current = null;
-    resetRideState();
-  }, [activeRideId, user?.id, resetRideState]);
+  // 1. Fecha o modal de cancelamento imediatamente
+  setShowCancelModal(false);
 
+  if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+
+  // 2. Se não houver corrida ativa, apenas reseta a tela
+  if (!activeRideId || !user?.id) {
+    resetRideState();
+    return;
+  }
+  
+  // 3. Notifica a API/Backend sobre o cancelamento
+  cancelRideByPassenger(activeRideId, user.id, reason);
+  
+  // 🔄 4. RESET IMEDIATO DE TODOS OS ESTADOS DA TELA
+  persistRideState(null, 'idle');
+  setActiveRideId(null);
+  setRideStatus('idle');
+  setBookingStep('SEARCH'); // Retorna diretamente para a tela de busca de endereço
+  setDriverInfo(null);
+  setDriverLocation(null);
+  setStartOtp('');
+  
+  if (activeRideIdRef.current) activeRideIdRef.current = null;
+  resetRideState();
+}, [activeRideId, user?.id, resetRideState]);
   const onMapRegionDidChange = useCallback(async (feature: any) => {
   setIsMapMoving(false);
   if (rideStatus !== 'idle' || bookingStep !== 'ADDRESS') return;

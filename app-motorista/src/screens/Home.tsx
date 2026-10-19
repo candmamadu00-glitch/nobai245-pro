@@ -63,13 +63,20 @@ const demandZonesData = {
   ],
 };
 
-// 🛡️ TASK EM SEGUNDO PLANO BLINDADA
+// 🛡️ TASK EM SEGUNDO PLANO BLINDADA (COM TRAVA DE GPS FAKE)
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) => {
   if (error || !data) return;
   const { locations } = data;
   const location = locations?.[0];
 
   if (location?.coords) {
+    // 🚨 BLOQUEIO DE GPS FAKE: Se for posição simulada, ignora o envio
+    const isMocked = location.mocked || (location.coords as any)?.mocked;
+    if (isMocked) {
+      console.warn('🚨 [SECURITY] Coordenada simulada por GPS Fake descartada.');
+      return; // Interrompe a execução para não enviar localização falsa
+    }
+
     try {
       const storedUser = await AsyncStorage.getItem('@nobai245:driverUser');
       const driverId = storedUser ? JSON.parse(storedUser)?.id : null;
@@ -123,7 +130,6 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) =>
     }
   }
 });
-
 type RideState = 'idle' | 'searching' | 'accepted' | 'arrived' | 'in_progress' | 'completed';
 
 interface IncomingRideData {
@@ -481,7 +487,35 @@ useEffect(() => {
   };
 }, [incomingRide, rideState, playBilingualVoice]);
   useEffect(() => { if (route.params?.openChat) setIsChatVisible(true); }, [route.params]); 
+// 💬 ESCUTA MENSAGENS DO CHAT EM TEMPO REAL NO APP DO MOTORISTA
+  useEffect(() => {
+    if (!socket) return;
 
+    const handleNewChatMessage = (data: any) => {
+      const text = data.message || data.text || '';
+      const senderName = data.senderName || 'Passageiro';
+
+      // Se o modal do chat não estiver aberto no momento, exibe o alerta flutuante
+      if (!isChatVisible) {
+        Alert.alert(
+          `💬 Mensagem de ${senderName}`,
+          text,
+          [
+            { text: 'Fechar', style: 'cancel' },
+            { text: 'Responder', onPress: () => setIsChatVisible(true) }
+          ]
+        );
+      }
+    };
+
+    socket.on('chat:new_message', handleNewChatMessage);
+    socket.on('chat:receive_message', handleNewChatMessage);
+
+    return () => {
+      socket.off('chat:new_message', handleNewChatMessage);
+      socket.off('chat:receive_message', handleNewChatMessage);
+    };
+  }, [socket, isChatVisible]);
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (rideState === 'arrived') {
@@ -902,26 +936,54 @@ const translateToKriol = (text: string): string => {
       
 
   async function startTracking() {
-    if (driver?.status !== 'APPROVED') return Alert.alert('Conta em Análise', 'Aguarde aprovação de documentos.');
-    const foreground = await Location.requestForegroundPermissionsAsync();
-    if (foreground.status !== 'granted') return Alert.alert('Permissão Necessária', 'Permita o acesso à localização para ficar online.');
+  if (driver?.status !== 'APPROVED') return Alert.alert('Conta em Análise', 'Aguarde aprovação de documentos.');
+  
+  const foreground = await Location.requestForegroundPermissionsAsync();
+  if (foreground.status !== 'granted') return Alert.alert('Permissão Necessária', 'Permita o acesso à localização para ficar online.');
 
+  try {
+    // 1. Obtém a localização atual primeiro
+    const currentLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+
+    // 🚨 2. TRAVA DE GPS FAKE: Verifica se a coordenada foi simulada por algum app
+    const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
+    if (isMocked) {
+      if (isMountedRef.current) setIsOnline(false);
+      return Alert.alert(
+        'GPS Simulado Detectado',
+        'Desative o aplicativo de GPS Falso no seu dispositivo para conseguir ficar online e receber corridas.'
+      );
+    }
+
+    // 3. Se for GPS legítimo, ativa a conta e conecta no Socket
     setIsOnline(true);
     await connectDriverSocket();
-    try {
-      const currentLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      if (isMountedRef.current) {
-        setLocation(currentLoc);
-        if (cameraRef.current) cameraRef.current.setCamera({ centerCoordinate: [currentLoc.coords.longitude, currentLoc.coords.latitude], zoomLevel: 16 });
-      }
-      if (socket && socket.connected) socket.emit('driver:online', { driverId: driver?.id, lat: currentLoc.coords.latitude, lng: currentLoc.coords.longitude });
-      await startTrackingForState(rideState);
-    } catch (e) {
-      Alert.alert('Erro de Localização', 'Verifique o GPS do seu dispositivo.');
-      if (isMountedRef.current) setIsOnline(false);
-    }
-  }
 
+    if (isMountedRef.current) {
+      setLocation(currentLoc);
+      if (cameraRef.current) {
+        cameraRef.current.setCamera({ 
+          centerCoordinate: [currentLoc.coords.longitude, currentLoc.coords.latitude], 
+          zoomLevel: 16 
+        });
+      }
+    }
+
+    if (socket && socket.connected) {
+      socket.emit('driver:online', { 
+        driverId: driver?.id, 
+        lat: currentLoc.coords.latitude, 
+        lng: currentLoc.coords.longitude 
+      });
+    }
+
+    await startTrackingForState(rideState);
+
+  } catch (e) {
+    Alert.alert('Erro de Localização', 'Verifique o GPS do seu dispositivo.');
+    if (isMountedRef.current) setIsOnline(false);
+  }
+}
   function stopTracking() {
     if (driver?.id && socket && socket.connected) {
       socket.timeout(2000).emit('driver:offline', { driverId: driver.id }, (err: any) => {
