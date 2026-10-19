@@ -25,6 +25,7 @@ import {
 import { CancelModal } from '../components/CancelModal';
 import { RatingModal } from '../components/RatingModal';
 import { api } from '../services/api';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 // Token Mapbox
 const MAPBOX_ACCESS_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_KEY || 'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZTRyc3NmMDBzMTJ5cTA1anJvYjFsOSJ9.pUAoGXwZS8FtYNr85VD1TA';
 if (MAPBOX_ACCESS_TOKEN) {
@@ -1167,7 +1168,25 @@ const handleDriverPosition = (data: any) => {
       calculateEstimate(pickupCoords, dropoffCoords, extraStopCoords);
     }
   }, [pickupCoords, dropoffCoords, extraStopCoords, serviceType, vehicleType, calculateEstimate]);
+// 💡 MANTÉM A TELA DO PASSAGEIRO SEMPRE ACESA DURANTE A CORRIDA
+useEffect(() => {
+  // Estados em que a tela NÃO deve apagar: procurando, aceita, motorista no local e em andamento
+  const activeRideStates = ['searching', 'accepted', 'arrived', 'in_progress'];
+  const isRideActive = activeRideStates.includes(rideStatus);
 
+  if (isRideActive) {
+    activateKeepAwakeAsync('passenger_ride_tag').catch((err) => {
+      console.warn('⚠️ Não foi possível manter a tela acesa:', err);
+    });
+  } else {
+    deactivateKeepAwake('passenger_ride_tag').catch(() => {});
+  }
+
+  // Desativa ao desmontar a tela
+  return () => {
+    deactivateKeepAwake('passenger_ride_tag').catch(() => {});
+  };
+}, [rideStatus]);
   async function handleInitialRequestRide() {
   const needsDropoff = serviceType !== 'aluguel';
   if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
