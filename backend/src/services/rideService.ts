@@ -910,59 +910,7 @@ export async function cancelRideLogic(
 
   return dbResult;
 }
-// -----------------------------------------------------------------------------
-// HELPER PARA NOTIFICAÇÃO PUSH E SOCKET DE MENSAGENS DO CHAT
-// -----------------------------------------------------------------------------
-export async function notifyNewChatMessage(data: {
-  rideId: string;
-  senderId: string;
-  senderType: 'PASSENGER' | 'DRIVER';
-  senderName: string;
-  message: string;
-}) {
-  try {
-    const { rideId, senderId, senderType, senderName, message } = data;
 
-    const ride = await prisma.ride.findUnique({
-      where: { id: rideId },
-      include: {
-        passenger: { select: { id: true, fullName: true, deviceToken: true } },
-        driver: { select: { id: true, fullName: true, deviceToken: true } }
-      }
-    });
-
-    if (!ride) return;
-
-    const isPassenger = senderType === 'PASSENGER';
-    const targetRoom = isPassenger ? `driver_${ride.driverId}` : `passenger_${ride.passengerId}`;
-    const targetToken = isPassenger ? ride.driver?.deviceToken : ride.passenger?.deviceToken;
-
-    const chatPayload = {
-      rideId,
-      senderId,
-      senderType,
-      senderName,
-      message,
-      createdAt: new Date().toISOString()
-    };
-
-    // 📡 1. Dispara o evento via Socket.io em tempo real (para exibir banner no App)
-    safeSocketEmit(targetRoom, 'chat:new_message', chatPayload);
-
-    // 🔔 2. Dispara a Notificação Push (para quando o app estiver fechado/segundo plano)
-    if (targetToken) {
-      sendPushNotification(
-        targetToken,
-        `💬 ${senderName}`,
-        message,
-        { type: 'CHAT_MESSAGE', rideId, senderId },
-        PUSH_CHANNELS.RIDE_UPDATE
-      ).catch(err => console.warn('⚠️ [PUSH CHAT ERR]:', err?.message || err));
-    }
-  } catch (err) {
-    console.error('💥 [CHAT NOTIFY ERROR]:', err);
-  }
-}
 // -----------------------------------------------------------------------------
 // 7. AVALIAÇÃO DA CORRIDA E ATUALIZAÇÃO DE MÉDIAS
 // -----------------------------------------------------------------------------
