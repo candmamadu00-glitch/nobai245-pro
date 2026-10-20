@@ -967,14 +967,14 @@ io.on('connection', (socket) => {
         }
       });
 
-      // 🚗 FILTRAGEM DE ELEGIBILIDADE PARA CORRIDA ATIVA + FILA
-      const matchingDrivers = candidateDrivers.filter(driver => {
+      // 🚗 FILTRAGEM DE ELEGIBILIDADE PARA CORRIDA ATIVA + FILA (CORRIGIDO)
+      const matchingDrivers = candidateDrivers.filter((driver: any) => {
         if (driver.isAvailable || !driver.currentRideId) return true;
-        return driver.ridesAsDriver.length <= 1;
+        const activeRidesCount = Array.isArray(driver.ridesAsDriver) ? driver.ridesAsDriver.length : 0;
+        return activeRidesCount <= 1;
       });
 
       console.log('🚗 Motoristas elegíveis encontrados no Banco:', matchingDrivers.map(d => d.id));
-
       if (matchingDrivers.length === 0) {
         socket.emit('ride:no_drivers_found');
         socket.emit('error', { message: `Motoristas na categoria ${normalizedVehicleType} estão offline ou com fila cheia.` });
@@ -1334,7 +1334,6 @@ io.on('connection', (socket) => {
         socket.to(rideId).emit('chat:receive_message', messagePayload);
         io.to('admin_dashboard').emit('admin:chat_monitor', { rideId, message: messagePayload });
 
-        // Envia notificação push para a outra parte da corrida
         const ride = await prisma.ride.findUnique({
           where: { id: rideId },
           include: {
@@ -1361,8 +1360,8 @@ io.on('connection', (socket) => {
       }
     }
   });
-});
- // --- CANCELAMENTO DE CORRIDA ---
+
+  // --- CANCELAMENTO DE CORRIDA ---
   handleSocketEvent(socket, 'ride:cancel', async (data) => {
     if (isSocketRateLimited(socket, 'ride:cancel', 2000, 2)) return;
     const { rideId, userId, userType, reason } = data || {};
@@ -1413,7 +1412,7 @@ io.on('connection', (socket) => {
     }
   });
 
- // --- AVALIAÇÃO DE CORRIDA ---
+  // --- AVALIAÇÃO DE CORRIDA ---
   handleSocketEvent(socket, 'ride:rate', async (data) => {
     if (isSocketRateLimited(socket, 'ride:rate', 3000, 2)) return;
     const { rideId, receiverId, stars, tags, comment, reviewerType } = data || {};
@@ -1446,7 +1445,7 @@ io.on('connection', (socket) => {
       socket.emit('error', { message: error?.message || 'Falha ao processar a avaliação.' });
     }
   });
-}); // <--- APENAS UM FECHAMENTO PARA O io.on('connection')
+}); // <--- ÚNICO E CORRETO FECHAMENTO PARA O io.on('connection')
 
 // -----------------------------------------------------------------------------
 // 7. ENCERRAMENTO GRACIOSO DO SERVIDOR (SHUTDOWN)
