@@ -622,13 +622,7 @@ export function Home() {
       return;
     }
   };
-  const handleMapboxSearch = async (text: string) => {
-    setSearchQuery(text);
-    if (!text || text.trim().length < 2) {
-      setSearchResults([]);
-      return;
-    }
-
+  
     console.log(`\n==================================================`);
     console.log(`🔍 [BUSCA INICIADA] Termo: "${text}"`);
     console.log(`==================================================`);
