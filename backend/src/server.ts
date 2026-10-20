@@ -514,7 +514,7 @@ export const safeRedis = {
 };
 
 // -----------------------------------------------------------------------------
-// 5. SERVIDOR WEBSOCKET (SOCKET.IO)
+// SERVIDOR WEBSOCKET (SOCKET.IO)
 // -----------------------------------------------------------------------------
 const io = new Server(server, {
   cors: { origin: allowedOrigins, methods: ['GET', 'POST'] },
@@ -523,118 +523,143 @@ const io = new Server(server, {
   pingInterval: 10000,
 });
 
-// Vincula o Redis e o Adapter do Socket.IO para rodar em Cluster no DigitalOcean
-Promise.all([
-  redisClient.connect(),
-  pubClient.connect(),
-  subClient.connect()
-]).then(() => {
-  io.adapter(createAdapter(pubClient, subClient));
-  console.log('📦 [REDIS] Conectado e operacional!');
-  console.log('🔄 [SOCKET.IO] Redis Adapter ativo (Cluster Mode Ready 🚀)');
-}).catch(err => {
-  console.error('🚨 [REDIS] Falha ao conectar ao servidor Redis:', err);
-});
-
 export const getIo = () => {
   if (!io) throw new Error("Socket.io não foi inicializado!");
   return io;
 };
-// -----------------------------------------------------------------------------
-// 💬 NOTIFICAÇÃO DE CHAT / BATE-PAPO
-// -----------------------------------------------------------------------------
-handleSocketEvent(socket, 'chat:send_message', async (data) => {
-  const { rideId, message, recipientId, recipientType } = data;
-  console.log(`💬 [CHAT LOG] Mensagem recebida na corrida ${rideId}: "${message}" para ${recipientType} (${recipientId})`);
 
-  // Emite via Socket em tempo real
-  io.to(rideId).emit('chat:new_message', data);
-
-  // Busca o token do destinatário para enviar PUSH (caso esteja com o app em 2º plano)
-  try {
-    let targetDeviceToken: string | null = null;
-    let senderName = 'Contato';
-
-    if (recipientType === 'PASSENGER') {
-      const passenger = await prisma.passenger.findUnique({ where: { id: recipientId }, select: { deviceToken: true } });
-      targetDeviceToken = passenger?.deviceToken || null;
-      senderName = socket.data.user?.name || 'Seu Motorista';
-    } else {
-      const driver = await prisma.driver.findUnique({ where: { id: recipientId }, select: { deviceToken: true } });
-      targetDeviceToken = driver?.deviceToken || null;
-      senderName = socket.data.user?.name || 'Seu Passageiro';
+// Helpers de evento do Socket
+function handleSocketEvent(socket: Socket, eventName: string, handler: (data?: any) => Promise<void> | void) {
+  socket.on(eventName, async (data?: any) => {
+    try {
+      await handler(data);
+    } catch (error: any) {
+      console.error(`❌ [SOCKET ERROR] [Event: ${eventName}] [User: ${socket.data.user?.id}]:`, error);
+      socket.emit('error', { message: error?.message || 'Erro ao processar requisição em tempo real.' });
     }
+  });
+}
 
-    if (targetDeviceToken) {
-      console.log(`🔔 [CHAT PUSH LOG] Enviando Push de Chat para ${recipientType} (${targetDeviceToken})`);
-      sendPushNotification(
-        targetDeviceToken,
-        `💬 Mensagem de ${senderName}`,
-        message,
-        { type: 'CHAT_MESSAGE', rideId },
-        PUSH_CHANNELS.CHAT
-      ).catch(err => console.error('❌ Erro ao enviar Push de Chat:', err));
-    } else {
-      console.warn(`⚠️ [CHAT PUSH LOG] Destinatário ${recipientId} não possui deviceToken registrado.`);
-    }
-  } catch (err) {
-    console.error('❌ [CHAT PUSH LOG] Erro ao buscar token para chat:', err);
+function isUuid(str?: string): boolean {
+  if (!str || typeof str !== 'string') return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str);
+}
+
+// Eventos do Socket
+io.on('connection', (socket: Socket) => {
+  const userId = socket.data.user?.id;
+  console.log(`[+] Cliente conectado: ${socket.id} (ID: ${userId})`);
+  
+  setupTicketSocketHandlers(io, socket);
+
+  if (userId) {
+    socket.join(userId);
+    socket.join(`user_${userId}`);
+    socket.join(`passenger_${userId}`);
+    socket.join(`passenger:${userId}`);
   }
-});
 
-// -----------------------------------------------------------------------------
-// 🚗 MOTORISTA CHEGOU / PRÓXIMO DO LOCAL DE EMBARQUE
-// -----------------------------------------------------------------------------
-handleSocketEvent(socket, 'driver:arrived', async (data) => {
-  const { rideId } = data;
-  console.log(`📍 [DRIVER ARRIVED LOG] Motorista avisou que chegou na corrida ${rideId}`);
-
-  const ride = await prisma.ride.findUnique({
-    where: { id: rideId },
-    include: { passenger: true, driver: true }
+  socket.on('join_room', (roomName: string) => {
+    if (roomName) {
+      socket.join(roomName);
+      console.log(`📡 [SOCKET ROOM] Cliente ${socket.id} entrou na sala: ${roomName}`);
+    }
   });
 
-  if (ride) {
-    io.to(`passenger_${ride.passengerId}`).emit('ride:driver_arrived', { rideId });
-
-    if (ride.passenger?.deviceToken) {
-      console.log(`🔔 [ARRIVED PUSH LOG] Disparando Push "Motorista Chegou" para ${ride.passengerId}`);
-      sendPushNotification(
-        ride.passenger.deviceToken,
-        '📍 Seu Motorista Chegou!',
-        `${ride.driver?.fullName || 'O motorista'} já está no ponto de embarque aguardando por você.`,
-        { type: 'DRIVER_ARRIVED', rideId },
-        PUSH_CHANNELS.RIDE_UPDATE
-      ).catch(err => console.error('❌ Erro no push de chegada:', err));
+  handleSocketEvent(socket, 'passenger:rejoin_ride', async (data) => {
+    const { rideId } = data || {};
+    if (isUuid(rideId)) {
+      socket.join(rideId);
+      console.log(`📡 [PASSENGER REJOINED] User ${socket.data.user?.id} entrou na sala ${rideId}`);
     }
-  }
-});
+  });
 
-// -----------------------------------------------------------------------------
-// ❌ CANCELAMENTO DE CORRIDA (PELO MOTORISTA OU PASSAGEIRO)
-// -----------------------------------------------------------------------------
-handleSocketEvent(socket, 'ride:cancel', async (data) => {
-  const { rideId, reason, cancelledBy, targetUserId } = data;
-  console.log(`⚠️ [CANCEL LOG] Corrida ${rideId} cancelada por ${cancelledBy}. Motivo: ${reason}`);
+  // 💬 CHAT
+  handleSocketEvent(socket, 'chat:send_message', async (data) => {
+    const { rideId, message, recipientId, recipientType } = data;
+    console.log(`💬 [CHAT LOG] Mensagem recebida na corrida ${rideId}: "${message}" para ${recipientType} (${recipientId})`);
 
-  // Executa lógica no banco
-  await cancelRideLogic(rideId, socket.data.user.id, cancelledBy, reason);
+    io.to(rideId).emit('chat:new_message', data);
 
-  // Busca token do outro usuário atingido
-  const targetToken = cancelledBy === 'DRIVER' 
-    ? (await prisma.passenger.findUnique({ where: { id: targetUserId }, select: { deviceToken: true } }))?.deviceToken
-    : (await prisma.driver.findUnique({ where: { id: targetUserId }, select: { deviceToken: true } }))?.deviceToken;
+    try {
+      let targetDeviceToken: string | null = null;
+      let senderName = 'Contato';
 
-  if (targetToken) {
-    console.log(`🔔 [CANCEL PUSH LOG] Disparando Push de cancelamento para ${targetUserId}`);
-    sendPushNotification(
-      targetToken,
-      '❌ Corrida Cancelada',
-      `A corrida foi cancelada pelo ${cancelledBy === 'DRIVER' ? 'motorista' : 'passageiro'}. Motivo: ${reason || 'Não informado'}`,
-      { type: 'RIDE_CANCELLED', rideId },
-      PUSH_CHANNELS.RIDE_UPDATE
-    ).catch(err => console.error('❌ Erro no push de cancelamento:', err));
-  }
+      if (recipientType === 'PASSENGER') {
+        const passenger = await prisma.passenger.findUnique({ where: { id: recipientId }, select: { deviceToken: true } });
+        targetDeviceToken = passenger?.deviceToken || null;
+        senderName = socket.data.user?.name || 'Seu Motorista';
+      } else {
+        const driver = await prisma.driver.findUnique({ where: { id: recipientId }, select: { deviceToken: true } });
+        targetDeviceToken = driver?.deviceToken || null;
+        senderName = socket.data.user?.name || 'Seu Passageiro';
+      }
+
+      if (targetDeviceToken) {
+        console.log(`🔔 [CHAT PUSH LOG] Enviando Push de Chat para ${recipientType} (${targetDeviceToken})`);
+        sendPushNotification(
+          targetDeviceToken,
+          `💬 Mensagem de ${senderName}`,
+          message,
+          { type: 'CHAT_MESSAGE', rideId },
+          PUSH_CHANNELS.CHAT
+        ).catch(err => console.error('❌ Erro ao enviar Push de Chat:', err));
+      } else {
+        console.warn(`⚠️ [CHAT PUSH LOG] Destinatário ${recipientId} não possui deviceToken registrado.`);
+      }
+    } catch (err) {
+      console.error('❌ [CHAT PUSH LOG] Erro ao buscar token para chat:', err);
+    }
+  });
+
+  // 🚗 MOTORISTA CHEGOU
+  handleSocketEvent(socket, 'driver:arrived', async (data) => {
+    const { rideId } = data;
+    console.log(`📍 [DRIVER ARRIVED LOG] Motorista avisou que chegou na corrida ${rideId}`);
+
+    const ride = await prisma.ride.findUnique({
+      where: { id: rideId },
+      include: { passenger: true, driver: true }
+    });
+
+    if (ride) {
+      io.to(`passenger_${ride.passengerId}`).emit('ride:driver_arrived', { rideId });
+
+      if (ride.passenger?.deviceToken) {
+        console.log(`🔔 [ARRIVED PUSH LOG] Disparando Push "Motorista Chegou" para ${ride.passengerId}`);
+        sendPushNotification(
+          ride.passenger.deviceToken,
+          '📍 Seu Motorista Chegou!',
+          `${ride.driver?.fullName || 'O motorista'} já está no ponto de embarque aguardando por você.`,
+          { type: 'DRIVER_ARRIVED', rideId },
+          PUSH_CHANNELS.RIDE_UPDATE
+        ).catch(err => console.error('❌ Erro no push de chegada:', err));
+      }
+    }
+  });
+
+  // ❌ CANCELAMENTO DE CORRIDA
+  handleSocketEvent(socket, 'ride:cancel', async (data) => {
+    const { rideId, reason, cancelledBy, targetUserId } = data;
+    console.log(`⚠️ [CANCEL LOG] Corrida ${rideId} cancelada por ${cancelledBy}. Motivo: ${reason}`);
+
+    await cancelRideLogic(rideId, socket.data.user.id, cancelledBy, reason);
+
+    const targetToken = cancelledBy === 'DRIVER' 
+      ? (await prisma.passenger.findUnique({ where: { id: targetUserId }, select: { deviceToken: true } }))?.deviceToken
+      : (await prisma.driver.findUnique({ where: { id: targetUserId }, select: { deviceToken: true } }))?.deviceToken;
+
+    if (targetToken) {
+      console.log(`🔔 [CANCEL PUSH LOG] Disparando Push de cancelamento para ${targetUserId}`);
+      sendPushNotification(
+        targetToken,
+        '❌ Corrida Cancelada',
+        `A corrida foi cancelada pelo ${cancelledBy === 'DRIVER' ? 'motorista' : 'passageiro'}. Motivo: ${reason || 'Não informado'}`,
+        { type: 'RIDE_CANCELLED', rideId },
+        PUSH_CHANNELS.RIDE_UPDATE
+      ).catch(err => console.error('❌ Erro no push de cancelamento:', err));
+    }
+  });
 });
 // Notificações Push (Expo Push API)
 async function sendPushNotification(messages: Array<{ to: string; title: string; body: string; data?: any }>) {
