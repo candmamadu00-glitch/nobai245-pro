@@ -661,7 +661,7 @@ export async function notifyDriverNearbyIfClose(rideId: string, distanceMeters: 
 }
 
 // -----------------------------------------------------------------------------
-// 5. FINALIZAÇÃO DA CORRIDA E LIQUIDAÇÃO (COM SUPORTE A FILA E MANUTENÇÃO ONLINE)
+// 5. FINALIZAÇÃO DA CORRIDA E LIQUIDAÇÃO
 // -----------------------------------------------------------------------------
 export async function finalizeRideAndCharge(rideId: string, finalLat: number, finalLng: number) {
   if (!isValidCoordinate(finalLat, finalLng)) throw new Error('INVALID_COORDINATES: Coordenadas finais de desembarque inválidas.');
@@ -712,7 +712,7 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
     });
 
     const nextCurrentRideId = queuedRideToPromote ? queuedRideToPromote.id : null;
-    const isDriverAvailable = !queuedRideToPromote; // Disponível para novas corridas se NÃO houver fila
+    const isDriverAvailable = !queuedRideToPromote;
 
     if (isCash) {
       const currentDriverBalance = Number(ride.driver?.walletBalance || 0);
@@ -724,7 +724,6 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
           walletBalance: newDriverBalance,
           currentRideId: nextCurrentRideId, 
           isAvailable: isDriverAvailable 
-          // 💡 NOTA: O campo `isOnline` NÃO é alterado aqui, mantendo o motorista ONLINE!
         } 
       });
 
@@ -764,7 +763,6 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
         data: { 
           currentRideId: nextCurrentRideId, 
           isAvailable: isDriverAvailable 
-          // 💡 NOTA: O campo `isOnline` NÃO é alterado aqui, mantendo o motorista ONLINE!
         } 
       });
 
@@ -794,34 +792,14 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
     });
   });
 
-  // 🔄 NOTIFICA O MOTORISTA SE ELE TIVER UMA PRÓXIMA CORRIDA PROMOVIDA DA FILA
-  if (queuedRideToPromote) {
-    safeSocketEmit(`driver_${ride.driverId}`, 'ride:queued_now_active', {
-      rideId: queuedRideToPromote.id,
-      status: 'ACCEPTED'
-    });
-  }
+  console.log(`🏁 [RIDE LOG - COMPLETED] Corrida ID: ${rideId} finalizada com sucesso. Valor: ${calculatedFare} XOF`);
 
-  return {
-    success: true,
-    rideId: ride.id,
-    fareXOF: calculatedFare,
-    distanceKm,
-    transactionId: payoutTransactionId || commissionTransactionId,
-    hasQueuedRide: !!queuedRideToPromote,
-    nextRideId: queuedRideToPromote ? queuedRideToPromote.id : null
-  };
-}
-console.log(`🏁 [RIDE LOG - COMPLETED] Corrida ID: ${rideId} finalizada com sucesso. Valor: ${calculatedFare} XOF`);
-
-  // 📡 1. Notificar Passageiro que a viagem foi concluída
   safeSocketEmit(`passenger_${ride.passengerId}`, 'ride:completed', {
     rideId: ride.id,
     status: 'COMPLETED',
     priceXof: calculatedFare
   });
 
-  // 🔔 2. Push Notification de Viagem Concluída
   if (ride.passenger?.deviceToken) {
     console.log(`🔔 [LOG COMPLETE PUSH] Enviando Push "Viagem Concluída" para o passageiro ${ride.passengerId}`);
     sendPushNotification(
@@ -833,23 +811,20 @@ console.log(`🏁 [RIDE LOG - COMPLETED] Corrida ID: ${rideId} finalizada com su
     ).catch(err => console.error('❌ Erro no Push de finalização:', err));
   }
 
-  // 🔄 3. NOTIFICAR PRÓXIMO PASSAGEIRO SE HOUVER CORRIDA NA FILA (BACK-TO-BACK)
+  // 🔄 NOTIFICAR MOTORISTA E PRÓXIMO PASSAGEIRO SE HOUVER CORRIDA EM FILA
   if (queuedRideToPromote) {
     console.log(`🔄 [RIDE LOG - QUEUE] Motorista possui próxima corrida agendada na fila ID: ${queuedRideToPromote.id}`);
 
-    // Emite para o motorista que a nova corrida agora é a ativa
     safeSocketEmit(`driver_${ride.driverId}`, 'ride:queued_now_active', {
       rideId: queuedRideToPromote.id,
       status: 'ACCEPTED'
     });
 
-    // Emite para o passageiro da fila que o motorista já está a caminho
     safeSocketEmit(`passenger_${queuedRideToPromote.passengerId}`, 'ride:driver_en_route', {
       rideId: queuedRideToPromote.id,
       status: 'ACCEPTED'
     });
 
-    // Notificação Push para o novo passageiro
     const queuedPassenger = await prisma.passenger.findUnique({
       where: { id: queuedRideToPromote.passengerId },
       select: { deviceToken: true }
@@ -866,7 +841,6 @@ console.log(`🏁 [RIDE LOG - COMPLETED] Corrida ID: ${rideId} finalizada com su
     }
   }
 
-  // Se a corrida foi em dinheiro, encerra aqui o repasse
   if (isCash) {
     return { 
       success: true, 
@@ -879,6 +853,7 @@ console.log(`🏁 [RIDE LOG - COMPLETED] Corrida ID: ${rideId} finalizada com su
       nextRideId: queuedRideToPromote?.id || null 
     };
   }
+
 
   // 4. PROCESSAMENTO DE REPASSE AUTOMÁTICO PARA PAGAMENTOS DIGITAIS (MOBILE MONEY)
   const provider = (ride.paymentMethod || PaymentMethod.ORANGE_MONEY).toString().toUpperCase();
@@ -954,7 +929,7 @@ console.log(`🏁 [RIDE LOG - COMPLETED] Corrida ID: ${rideId} finalizada com su
     hasQueuedRide: !!queuedRideToPromote, 
     nextRideId: queuedRideToPromote?.id || null 
   };
-
+}
 
 // -----------------------------------------------------------------------------
 // 6. CANCELAMENTO E REEMBOLSO VIA OUTBOX & CAUÇÃO
