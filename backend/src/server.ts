@@ -17,6 +17,7 @@ import webhookRoutes from './routes/webhookRoutes';
 import rideRoutes from './routes/rideRoutes';
 import { createAdapter } from '@socket.io/redis-adapter';
 import { setupTicketSocketHandlers } from './sockets/ticketSocket';
+import { sendPushNotification, PUSH_CHANNELS } from './services/pushNotifications';
 import { 
   calculateDistance, 
   calculateRidePrice, 
@@ -540,19 +541,6 @@ export const getIo = () => {
   if (!io) throw new Error("Socket.io não foi inicializado!");
   return io;
 };
-// Notificações Push (Expo Push API)
-async function sendPushNotification(messages: Array<{ to: string; title: string; body: string; data?: any }>) {
-  if (!messages.length) return;
-  try {
-    await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
-      headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-      body: JSON.stringify(messages)
-    });
-  } catch (err: any) {
-    console.error('⚠️ [PUSH] Falha ao disparar notificação:', err?.message || err);
-  }
-}
 
 const disconnectTimers = new Map<string, NodeJS.Timeout>();
 
