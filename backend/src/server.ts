@@ -1377,17 +1377,17 @@ io.on('connection', (socket) => {
       const previousStatus = rideToCancel?.status;
       const cleanReason = typeof reason === 'string' ? reason.trim().slice(0, 250) : undefined;
       const normalizedUserType = userType === 'DRIVER' ? 'DRIVER' : 'PASSENGER';
-      
+
       const result = await cancelRideLogic(rideId, userId, normalizedUserType, cleanReason);
 
-      await safeRedis.del(`active_ride:${rideId}`);      
+      await safeRedis.del(`active_ride:${rideId}`);
       if (rideToCancel?.driverId) {
         await safeRedis.del(`driver_active_ride:${rideToCancel.driverId}`);
       }
 
       io.to(rideId).emit('ride:cancelled', {
-        rideId, 
-        cancelledBy: normalizedUserType, 
+        rideId,
+        cancelledBy: normalizedUserType,
         reason: cleanReason,
         appliedPenalty: Boolean(result?.appliedPenalty),
         penaltyAmount: Number(result?.penaltyAmount || 0)
@@ -1396,16 +1396,16 @@ io.on('connection', (socket) => {
       if (previousStatus === 'SEARCHING') {
         io.to('available_drivers').emit('ride:cancelled_by_passenger', { rideId });
       }
-      
-      io.to('admin_dashboard').emit('admin:ride_update', { 
-        rideId, status: 'CANCELLED', cancelledBy: normalizedUserType, reason: cleanReason 
+
+      io.to('admin_dashboard').emit('admin:ride_update', {
+        rideId, status: 'CANCELLED', cancelledBy: normalizedUserType, reason: cleanReason
       });
-      
+
       const socketsInRoom = await io.in(rideId).fetchSockets();
       for (const s of socketsInRoom) {
         s.leave(rideId);
         if (rideToCancel?.driverId && s.data?.user?.id === rideToCancel.driverId) {
-          s.join('available_drivers'); 
+          s.join('available_drivers');
         }
       }
     } catch (err: any) {
@@ -1417,7 +1417,7 @@ io.on('connection', (socket) => {
   handleSocketEvent(socket, 'ride:rate', async (data) => {
     if (isSocketRateLimited(socket, 'ride:rate', 3000, 2)) return;
     const { rideId, receiverId, stars, tags, comment, reviewerType } = data || {};
-    
+
     const numericStars = Number(stars);
     if (!isUuid(rideId) || !receiverId || isNaN(numericStars) || numericStars < 1 || numericStars > 5) {
       socket.emit('error', { message: 'Dados de avaliação inválidos. A nota deve ser entre 1 e 5.' });
@@ -1431,12 +1431,12 @@ io.on('connection', (socket) => {
       const safeTags = Array.isArray(tags) ? tags.map(t => String(t).slice(0, 50)) : [];
 
       const newRating = await submitRatingLogic({
-        rideId, 
-        reviewerId: socket.data.user.id, 
+        rideId,
+        reviewerId: socket.data.user.id,
         reviewerType: finalReviewerType,
-        receiverId, 
-        stars: numericStars, 
-        tags: safeTags, 
+        receiverId,
+        stars: numericStars,
+        tags: safeTags,
         comment: cleanComment
       });
 
@@ -1453,8 +1453,7 @@ io.on('connection', (socket) => {
 // -----------------------------------------------------------------------------
 const shutdown = async () => {
   console.log('\n🛑 [SISTEMA BAI245] Iniciando shutdown seguro...');
-  
-  // Timer limite para forçar o encerramento se houver conexões pendentes
+
   const forceExitTimeout = setTimeout(() => {
     console.error('⚠️ [SHUTDOWN] Forçando encerramento do processo após timeout de 10s.');
     process.exit(1);
@@ -1472,7 +1471,7 @@ const shutdown = async () => {
       await prisma.$disconnect();
       console.log('🗄️ [PRISMA] Pool do Banco de Dados liberado.');
       console.log('✅ Sistema desligado.');
-      
+
       clearTimeout(forceExitTimeout);
       process.exit(0);
     } catch (err) {
@@ -1499,7 +1498,7 @@ process.on('unhandledRejection', (reason) => {
 // -----------------------------------------------------------------------------
 const PORT = process.env.PORT || 3333;
 
-export { app, server }; 
+export { app, server };
 
 if (process.env.NODE_ENV !== 'test') {
   server.listen(Number(PORT), '0.0.0.0', () => {
@@ -1509,5 +1508,5 @@ if (process.env.NODE_ENV !== 'test') {
     console.log(`📡 Infraestrutura Sockets rodando em 0.0.0.0:${PORT}`);
     console.log(`🔐 Modo Criptografia e Escrow Ativos`);
     console.log('======================================================\n');
-  }); 
+  });
 }
