@@ -97,13 +97,10 @@ export async function notifyDriversNewRide(rideId: string) {
           }
         });
 
-        // Se já tiver uma corrida na fila, não recebe novos pedidos
         if (existingQueuedRide) continue;
       }
 
-      // 3. Determinar ponto de referência para cálculo dos 5 km:
-      // - Se LIVRE: usa localização atual do GPS
-      // - Se EM VIAGEM: usa o DESTINO da corrida em andamento
+      // 3. Ponto de referência para cálculo dos 5 km
       let refLat: number | null = null;
       let refLng: number | null = null;
 
@@ -121,7 +118,7 @@ export async function notifyDriversNewRide(rideId: string) {
       if (distKm <= 5.0) {
         qualifiedDrivers.push({
           ...driver,
-          isQueuedOffer: !driver.isAvailable // Flag informando que será uma corrida em fila
+          isQueuedOffer: !driver.isAvailable
         });
       }
     }
@@ -268,8 +265,9 @@ export async function calculateRidePrice(distanceKm: number, durationMin: number
 
   return { totalPrice: Math.round(totalPrice), commissionRate };
 }
+
 // -----------------------------------------------------------------------------
-// 3. CRIAÇÃO DE CORRIDA E RETENÇÃO EM CAUÇÃO / DINHEIRO (COM AUTO-CURA)
+// 1. CRIAÇÃO DE CORRIDA E RETENÇÃO EM CAUÇÃO / DINHEIRO (COM AUTO-CURA)
 // -----------------------------------------------------------------------------
 export async function createRideAndInitiateEscrow(passengerId: string, data: {
   originLat: number; originLng: number; destinationLat: number; destinationLng: number;
@@ -308,7 +306,7 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
 
     const isFinished = !activeRide || ['CANCELLED', 'COMPLETED'].includes(activeRide.status);
     const isStaleSearching = activeRide && ['SEARCHING', 'AWAITING_PAYMENT'].includes(activeRide.status) && 
-      (Date.now() - new Date(activeRide.createdAt).getTime() > 3 * 60 * 1000); // 3 minutos sem motorista = expirada
+      (Date.now() - new Date(activeRide.createdAt).getTime() > 3 * 60 * 1000);
 
     if (isFinished || isStaleSearching) {
       if (isStaleSearching && activeRide) {
@@ -317,13 +315,12 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
           data: { status: RideStatus.CANCELLED, cancellationReason: 'TIMEOUT_EXPIRED' }
         }).catch(() => null);
       }
-      // Limpa o ponteiro preso automaticamente no banco
+
       await prisma.passenger.update({
         where: { id: passengerId },
         data: { currentRideId: null }
       });
     } else {
-      // Corrida realmente ativa (ACCEPTED, ARRIVED, IN_PROGRESS ou SEARCHING recente)
       throw new Error('ACTIVE_RIDE_EXISTS: Passageiro já possui corrida ativa em andamento.');
     }
   }
@@ -331,7 +328,6 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
   const rawMethod = data.paymentMethod || passenger.paymentProvider || 'CASH';
   const chosenMethod = String(rawMethod).toUpperCase().trim();
   const isCash = chosenMethod === 'CASH' || chosenMethod === 'DINHEIRO';
-  const IS_MOCK_MODE = process.env.ENABLE_MOCK_PAYMENTS === 'true';
 
   if (!isCash) {
     const paymentPhone = passenger.paymentAccountNumber || passenger.phone || (IS_MOCK_MODE ? '245955000000' : null);
@@ -373,7 +369,6 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
       }
     });
 
-    // Atualiza o ponteiro da corrida ativa do passageiro
     await tx.passenger.update({
       where: { id: passengerId },
       data: { currentRideId: newRide.id }
@@ -432,8 +427,9 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     throw new Error('Não foi possível realizar a cobrança via Mobile Money. Verifique o saldo do seu PIN/Carteira.');
   }
 }
+
 // -----------------------------------------------------------------------------
-// LÓGICA DE ACEITE (ACEITA EM FILA SE O MOTORISTA JÁ ESTIVER EM VIAGEM)
+// 2. LÓGICA DE ACEITE (ACEITA EM FILA SE O MOTORISTA JÁ ESTIVER EM VIAGEM)
 // -----------------------------------------------------------------------------
 export async function acceptRideLogic(rideId: string, driverId: string) {
   const driver = await prisma.driver.findUnique({ where: { id: driverId } });
@@ -453,7 +449,6 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     }
   }
 
-  // Verificar se o motorista já tem uma corrida na fila
   if (driver.currentRideId) {
     const existingQueue = await prisma.ride.findFirst({
       where: {
@@ -469,7 +464,6 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
   }
 
   const result = await prisma.$transaction(async (tx) => {
-    // Se não estiver em nenhuma corrida, define como corrida principal.
     if (!driver.currentRideId) {
       await tx.driver.update({
         where: { id: driverId },
@@ -505,7 +499,8 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     return res;
   });
 
-  // Notificar Passageiro
+  console.log(`🚗 [RIDE LOG - ACCEPT] Motorista "${result.driver?.fullName}" aceitou a corrida ID: ${result.id}`);
+
   safeSocketEmit(`passenger_${result.passengerId}`, 'ride:accepted', {
     rideId: result.id,
     status: 'ACCEPTED',
@@ -520,13 +515,16 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
   });
 
   if (result.passenger?.deviceToken) {
+    console.log(`🔔 [LOG ACCEPT PUSH] Enviando Push de aceite para o passageiro ${result.passengerId}`);
     sendPushNotification(
       result.passenger.deviceToken,
       '✅ Corrida Aceita!',
       `O motorista ${result.driver?.fullName || 'parceiro'} aceitou sua corrida!`,
       { type: 'RIDE_ACCEPTED', rideId: result.id },
       PUSH_CHANNELS.RIDE_UPDATE
-    ).catch(() => null);
+    ).catch(err => console.error('❌ Erro no Push de Aceite:', err));
+  } else {
+    console.warn(`⚠️ [LOG ACCEPT PUSH] Passageiro ${result.passengerId} não possui deviceToken cadastrado.`);
   }
 
   return {
@@ -538,6 +536,9 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
 
 export const acceptRide = acceptRideLogic;
 
+// -----------------------------------------------------------------------------
+// 3. MOTORISTA CHEGOU NO LOCAL DE EMBARQUE
+// -----------------------------------------------------------------------------
 export async function driverArrivedLogic(rideId: string, driverId: string) {
   const ride = await prisma.ride.findUnique({ where: { id: rideId } });
   if (!ride || ride.driverId !== driverId) throw new Error('UNAUTHORIZED: Motorista não associado a esta viagem.');
@@ -553,15 +554,16 @@ export async function driverArrivedLogic(rideId: string, driverId: string) {
     }
   });
 
-  // 📡 1. Notificação de Tempo Real no App (Socket.io)
+  console.log(`📍 [RIDE LOG - ARRIVED] Motorista chegou ao local de embarque da corrida ID: ${rideId}`);
+
   safeSocketEmit(`passenger_${updated.passengerId}`, 'ride:arrived', {
     rideId: updated.id,
     status: 'ARRIVED',
     startOtp: updated.startOtp
   });
 
-  // 🔔 2. Notificação Push
   if (updated.passenger?.deviceToken) {
+    console.log(`🔔 [LOG ARRIVED PUSH] Enviando Push "Motorista Chegou" para o passageiro ${updated.passengerId}`);
     sendPushNotification(
       updated.passenger.deviceToken,
       '📍 Motorista Chegou!',
@@ -569,6 +571,8 @@ export async function driverArrivedLogic(rideId: string, driverId: string) {
       { type: 'DRIVER_ARRIVED', rideId: updated.id, startOtp: updated.startOtp },
       PUSH_CHANNELS.RIDE_UPDATE
     ).catch(err => console.error('⚠️ Falha ao enviar push de chegada ao passageiro:', err));
+  } else {
+    console.warn(`⚠️ [LOG ARRIVED PUSH] Passageiro ${updated.passengerId} não possui deviceToken.`);
   }
 
   return {
@@ -577,6 +581,9 @@ export async function driverArrivedLogic(rideId: string, driverId: string) {
   };
 }
 
+// -----------------------------------------------------------------------------
+// 4. VIAGEM INICIADA
+// -----------------------------------------------------------------------------
 export async function startRideLogic(rideId: string, driverId: string, otpInput: string) {
   const ride = await prisma.ride.findUnique({ 
     where: { id: rideId },
@@ -593,17 +600,19 @@ export async function startRideLogic(rideId: string, driverId: string, otpInput:
     data: { status: RideStatus.IN_PROGRESS, startedAt: new Date(), version: { increment: 1 } }
   });
 
-  // 📡 Socket + Push de Início de Viagem
+  console.log(`🚖 [RIDE LOG - STARTED] Viagem iniciada na corrida ID: ${rideId}`);
+
   safeSocketEmit(`passenger_${ride.passengerId}`, 'ride:started', { rideId: ride.id, status: 'IN_PROGRESS' });
 
   if (ride.passenger?.deviceToken) {
+    console.log(`🔔 [LOG START PUSH] Enviando Push "Viagem Iniciada" para o passageiro ${ride.passengerId}`);
     sendPushNotification(
       ride.passenger.deviceToken,
       '🚕 Viagem Iniciada!',
       'Sua viagem com o Nô Bai 245 começou. Tenha uma excelente viagem!',
       { type: 'RIDE_STARTED', rideId: ride.id },
       PUSH_CHANNELS.RIDE_UPDATE
-    ).catch(() => null);
+    ).catch(err => console.error('❌ Erro no Push de início:', err));
   }
 
   return updatedRide;
@@ -621,16 +630,19 @@ export async function notifyDriverNearbyIfClose(rideId: string, distanceMeters: 
   });
   if (!ride || ride.status !== 'ACCEPTED') return;
 
+  console.log(`📍 [RIDE LOG - NEARBY] Motorista está a ${distanceMeters}m do passageiro na corrida ID: ${rideId}`);
+
   safeSocketEmit(`passenger_${ride.passengerId}`, 'ride:driver_nearby', { rideId: ride.id });
 
   if (ride.passenger?.deviceToken) {
+    console.log(`🔔 [LOG NEARBY PUSH] Enviando Push "Motorista Próximo" para o passageiro ${ride.passengerId}`);
     sendPushNotification(
       ride.passenger.deviceToken,
       '📍 Motorista Chegando!',
       'Seu motorista está a menos de 300 metros do local de embarque.',
       { type: 'DRIVER_NEARBY', rideId: ride.id },
       PUSH_CHANNELS.RIDE_UPDATE
-    ).catch(() => null);
+    ).catch(err => console.error('❌ Erro no Push de proximidade:', err));
   }
 }
 
@@ -750,8 +762,8 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
     });
   });
 
-  // 📡 Socket + Push de Conclusão da Viagem
-  // 📡 Socket + Push de Conclusão da Viagem
+  console.log(`🏁 [RIDE LOG - COMPLETED] Corrida ID: ${rideId} finalizada com sucesso. Valor: ${calculatedFare} XOF`);
+
   safeSocketEmit(`passenger_${ride.passengerId}`, 'ride:completed', {
     rideId: ride.id,
     status: 'COMPLETED',
@@ -759,13 +771,14 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
   });
 
   if (ride.passenger?.deviceToken) {
+    console.log(`🔔 [LOG COMPLETE PUSH] Enviando Push "Viagem Concluída" para o passageiro ${ride.passengerId}`);
     sendPushNotification(
       ride.passenger.deviceToken,
       '🏁 Viagem Concluída!',
       `Você chegou ao seu destino. Valor total: ${calculatedFare} XOF. Avalie seu motorista!`,
       { type: 'RIDE_COMPLETED', rideId: ride.id, priceXof: calculatedFare },
       PUSH_CHANNELS.RIDE_UPDATE
-    ).catch(() => null);
+    ).catch(err => console.error('❌ Erro no Push de finalização:', err));
   }
 
   // 🔄 VERIFICAR SE EXISTE CORRIDA NA FILA (BACK-TO-BACK)
@@ -781,13 +794,13 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
   });
 
   if (queuedRide) {
-    // 📡 Notifica o Motorista que a corrida da fila agora é a viagem principal ativa
+    console.log(`🔄 [RIDE LOG - QUEUE] Motorista possui próxima corrida agendada na fila ID: ${queuedRide.id}`);
+
     safeSocketEmit(`driver_${ride.driverId}`, 'ride:queued_now_active', {
       rideId: queuedRide.id,
       status: 'ACCEPTED'
     });
 
-    // 📡 Notifica o próximo Passageiro que o motorista concluiu a viagem anterior e está a caminho
     safeSocketEmit(`passenger_${queuedRide.passengerId}`, 'ride:driver_en_route', {
       rideId: queuedRide.id,
       status: 'ACCEPTED'
@@ -1001,6 +1014,8 @@ export async function cancelRideLogic(
     return { appliedPenalty: penaltyAmount > 0, penaltyAmount };
   });
 
+  console.log(`⚠️ [RIDE LOG - CANCEL] Corrida ID: ${rideId} cancelada por ${userType}. Motivo: ${cleanReason}`);
+
   // 📡 1. Notificar Passageiro e Motorista via Socket
   safeSocketEmit(`passenger_${ride.passengerId}`, 'ride:cancelled', {
     rideId: ride.id,
@@ -1018,13 +1033,26 @@ export async function cancelRideLogic(
 
   // 🔔 2. Notificação Push de Cancelamento (Se cancelado pelo motorista)
   if (userType === 'DRIVER' && ride.passenger?.deviceToken) {
+    console.log(`🔔 [LOG CANCEL PUSH] Disparando Push de cancelamento para Passageiro ${ride.passengerId}`);
     sendPushNotification(
       ride.passenger.deviceToken,
       '⚠️ Corrida Cancelada pelo Motorista',
       `O motorista precisou cancelar a corrida. Motivo: ${cleanReason}`,
       { type: 'RIDE_CANCELLED', rideId: ride.id },
       PUSH_CHANNELS.RIDE_UPDATE
-    ).catch(() => null);
+    ).catch(err => console.error('❌ Erro no push de cancelamento:', err));
+  }
+
+  // 🔔 3. Notificação Push de Cancelamento (Se cancelado pelo passageiro)
+  if (userType === 'PASSENGER' && ride.driver?.deviceToken) {
+    console.log(`🔔 [LOG CANCEL PUSH] Disparando Push de cancelamento para Motorista ${ride.driverId}`);
+    sendPushNotification(
+      ride.driver.deviceToken,
+      '⚠️ Corrida Cancelada pelo Passageiro',
+      `O passageiro cancelou a corrida. Motivo: ${cleanReason}`,
+      { type: 'RIDE_CANCELLED', rideId: ride.id },
+      PUSH_CHANNELS.RIDE_UPDATE
+    ).catch(err => console.error('❌ Erro no push de cancelamento:', err));
   }
 
   return dbResult;
@@ -1057,6 +1085,8 @@ export async function notifyNewChatMessage(data: {
     const targetRoom = isPassenger ? `driver_${ride.driverId}` : `passenger_${ride.passengerId}`;
     const targetToken = isPassenger ? ride.driver?.deviceToken : ride.passenger?.deviceToken;
 
+    console.log(`💬 [CHAT LOG] Nova mensagem na corrida ${rideId} de ${senderName} (${senderType}): "${message}"`);
+
     const chatPayload = {
       rideId,
       senderId,
@@ -1069,13 +1099,16 @@ export async function notifyNewChatMessage(data: {
     safeSocketEmit(targetRoom, 'chat:new_message', chatPayload);
 
     if (targetToken) {
+      console.log(`🔔 [LOG CHAT PUSH] Enviando Push de Chat para token: ${targetToken}`);
       sendPushNotification(
         targetToken,
         `💬 ${senderName}`,
         message,
         { type: 'CHAT_MESSAGE', rideId, senderId },
-        PUSH_CHANNELS.RIDE_UPDATE
+        PUSH_CHANNELS.CHAT
       ).catch(err => console.warn('⚠️ [PUSH CHAT ERR]:', err?.message || err));
+    } else {
+      console.warn(`⚠️ [LOG CHAT PUSH] Destinatário da corrida ${rideId} não possui deviceToken registrado.`);
     }
   } catch (err) {
     console.error('💥 [CHAT NOTIFY ERROR]:', err);
