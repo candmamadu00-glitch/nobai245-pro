@@ -954,7 +954,7 @@ console.log(`🏁 [RIDE LOG - COMPLETED] Corrida ID: ${rideId} finalizada com su
     hasQueuedRide: !!queuedRideToPromote, 
     nextRideId: queuedRideToPromote?.id || null 
   };
-}
+
 
 // -----------------------------------------------------------------------------
 // 6. CANCELAMENTO E REEMBOLSO VIA OUTBOX & CAUÇÃO
