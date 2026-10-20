@@ -11,7 +11,7 @@ export const socket: Socket = io(API_URL, {
   reconnectionAttempts: Infinity,
   reconnectionDelay: 1000,
   reconnectionDelayMax: 5000,
-  transports: ['websocket', 'polling'],
+  transports: ['websocket'], // 🚀 OBRIGATÓRIO: Apenas 'websocket' (remove 'polling' que causa o loop no React Native)
 });
 
 let passengerQueue: Array<{ event: string; data: any }> = [];
@@ -49,6 +49,7 @@ socket.io.on('reconnect_attempt', async () => {
 });
 
 socket.on('connect', async () => {
+  console.log('🟢 [SOCKET PASSAGEIRO] Conectado com sucesso:', socket.id);
   await processPassengerQueue();
   try {
     const storedUser = await AsyncStorage.getItem('@bai245:user');
@@ -71,7 +72,8 @@ socket.on('connect_error', async (err) => {
 });
 
 export const connectPassengerSocket = async () => {
-  if (socket.connected) return;
+  // 🛡️ TRAVA: Se já estiver conectado ou tentando conectar, NÃO chama socket.connect() novamente
+  if (socket.connected || socket.active) return;
   try {
     const token = await SecureStorage.getItem('@bai245:accessToken'); 
     if (token) {

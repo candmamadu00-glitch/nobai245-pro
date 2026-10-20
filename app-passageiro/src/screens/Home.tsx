@@ -987,13 +987,18 @@ useEffect(() => {
     isManualPickupRef.current = false;
   }, []);
 
+  // -----------------------------------------------------------------------------
+  // 🔄 INICIALIZAÇÃO DA TELA, CONEXÃO SOCKET E LISTENERS DE CORRIDA
+  // -----------------------------------------------------------------------------
   useEffect(() => {
     async function initAppAndPermissions() {
+      // 1. Obtém GPS do passageiro
       await getCurrentLocationWithFallback();
       
-      // 🛡️ Tenta restaurar do servidor primeiro (API HTTP)
+      // 2. Busca corrida ativa direto no servidor via API REST
       await syncActiveRideWithServer();
 
+      // 3. Tenta carregar estado do cache local
       try {
         const savedState = await AsyncStorage.getItem(STORAGE_RIDE_KEY);
         if (savedState && isMountedRef.current) {
@@ -1007,7 +1012,10 @@ useEffect(() => {
     }
 
     initAppAndPermissions();
+
+    // 🟢 Conecta o Socket de forma segura
     connectPassengerSocket();
+
     const handleConnect = () => {
       if (isMountedRef.current) setIsConnected(true);
       socket.emit('passenger:request_state');
@@ -1057,7 +1065,7 @@ useEffect(() => {
               name: data.ride.driverName || 'Motorista',
               photoUrl: formatPhotoUrl(data.ride.driverPhoto), 
               profilePicture: formatPhotoUrl(data.ride.driverPhoto),
-              carModel: data.ride.carModel || data.ride.vehicleModel || t('standard_vehicle', 'Veículo Padrão'),
+              carModel: data.ride.carModel || data.ride.vehicleModel || 'Veículo Padrão',
               carColor: data.ride.carColor || data.ride.vehicleColor || data.ride.color || 'BRANCO', 
               vehicleType: data.ride.vehicleType || data.ride.vehicle_type || 'PARTICULAR',
               licensePlate: data.ride.licensePlate || data.ride.plate,
@@ -1071,7 +1079,6 @@ useEffect(() => {
         console.error('Erro ao processar estado recuperado:', err);
       }
     };
-
     const handleRideAccepted = (data: any) => {
       if (!isMountedRef.current || !data) return;
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
@@ -1178,6 +1185,7 @@ const handleDriverPosition = (data: any) => {
     });
   }
 };
+    // Registrar Ouvintes
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on('passenger:state_recovered', handleStateRecovered);
@@ -1192,6 +1200,7 @@ const handleDriverPosition = (data: any) => {
     socket.on('ride:price_calculated', handlePriceCalculated);
     socket.on('ride:inaccessible_location', handleInaccessibleLocationAlert);
 
+    // Limpeza ao Desmontar a Tela
     return () => {
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
@@ -1208,8 +1217,7 @@ const handleDriverPosition = (data: any) => {
       socket.off('ride:inaccessible_location', handleInaccessibleLocationAlert);
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     };
-  }, [getCurrentLocationWithFallback, handleInaccessibleLocationAlert, resetRideState, t]);
-
+  }, []);
   useEffect(() => {
     let origin = pickupCoords;
     let destination = dropoffCoords;
