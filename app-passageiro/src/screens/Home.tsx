@@ -621,7 +621,7 @@ export function Home() {
       setSearchResults([]);
       return;
     }
-  };
+  
   
     console.log(`\n==================================================`);
     console.log(`🔍 [BUSCA INICIADA] Termo: "${text}"`);
