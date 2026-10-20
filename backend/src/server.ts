@@ -1413,7 +1413,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // --- AVALIAÇÃO DE CORRIDA ---
+ // --- AVALIAÇÃO DE CORRIDA ---
   handleSocketEvent(socket, 'ride:rate', async (data) => {
     if (isSocketRateLimited(socket, 'ride:rate', 3000, 2)) return;
     const { rideId, receiverId, stars, tags, comment, reviewerType } = data || {};
@@ -1446,7 +1446,7 @@ io.on('connection', (socket) => {
       socket.emit('error', { message: error?.message || 'Falha ao processar a avaliação.' });
     }
   });
-});
+}); // <--- APENAS UM FECHAMENTO PARA O io.on('connection')
 
 // -----------------------------------------------------------------------------
 // 7. ENCERRAMENTO GRACIOSO DO SERVIDOR (SHUTDOWN)
