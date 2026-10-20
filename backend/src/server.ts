@@ -514,7 +514,7 @@ export const safeRedis = {
 };
 
 // -----------------------------------------------------------------------------
-// SERVIDOR WEBSOCKET (SOCKET.IO)
+// 5. SERVIDOR WEBSOCKET (SOCKET.IO)
 // -----------------------------------------------------------------------------
 const io = new Server(server, {
   cors: { origin: allowedOrigins, methods: ['GET', 'POST'] },
@@ -523,144 +523,23 @@ const io = new Server(server, {
   pingInterval: 10000,
 });
 
+// Vincula o Redis e o Adapter do Socket.IO para rodar em Cluster no DigitalOcean
+Promise.all([
+  redisClient.connect(),
+  pubClient.connect(),
+  subClient.connect()
+]).then(() => {
+  io.adapter(createAdapter(pubClient, subClient));
+  console.log('📦 [REDIS] Conectado e operacional!');
+  console.log('🔄 [SOCKET.IO] Redis Adapter ativo (Cluster Mode Ready 🚀)');
+}).catch(err => {
+  console.error('🚨 [REDIS] Falha ao conectar ao servidor Redis:', err);
+});
+
 export const getIo = () => {
   if (!io) throw new Error("Socket.io não foi inicializado!");
   return io;
 };
-
-// Helpers de evento do Socket
-function handleSocketEvent(socket: Socket, eventName: string, handler: (data?: any) => Promise<void> | void) {
-  socket.on(eventName, async (data?: any) => {
-    try {
-      await handler(data);
-    } catch (error: any) {
-      console.error(`❌ [SOCKET ERROR] [Event: ${eventName}] [User: ${socket.data.user?.id}]:`, error);
-      socket.emit('error', { message: error?.message || 'Erro ao processar requisição em tempo real.' });
-    }
-  });
-}
-
-function isUuid(str?: string): boolean {
-  if (!str || typeof str !== 'string') return false;
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str);
-}
-
-// Eventos do Socket
-io.on('connection', (socket: Socket) => {
-  const userId = socket.data.user?.id;
-  console.log(`[+] Cliente conectado: ${socket.id} (ID: ${userId})`);
-  
-  setupTicketSocketHandlers(io, socket);
-
-  if (userId) {
-    socket.join(userId);
-    socket.join(`user_${userId}`);
-    socket.join(`passenger_${userId}`);
-    socket.join(`passenger:${userId}`);
-  }
-
-  socket.on('join_room', (roomName: string) => {
-    if (roomName) {
-      socket.join(roomName);
-      console.log(`📡 [SOCKET ROOM] Cliente ${socket.id} entrou na sala: ${roomName}`);
-    }
-  });
-
-  handleSocketEvent(socket, 'passenger:rejoin_ride', async (data) => {
-    const { rideId } = data || {};
-    if (isUuid(rideId)) {
-      socket.join(rideId);
-      console.log(`📡 [PASSENGER REJOINED] User ${socket.data.user?.id} entrou na sala ${rideId}`);
-    }
-  });
-
-  // 💬 CHAT
-  handleSocketEvent(socket, 'chat:send_message', async (data) => {
-    const { rideId, message, recipientId, recipientType } = data;
-    console.log(`💬 [CHAT LOG] Mensagem recebida na corrida ${rideId}: "${message}" para ${recipientType} (${recipientId})`);
-
-    io.to(rideId).emit('chat:new_message', data);
-
-    try {
-      let targetDeviceToken: string | null = null;
-      let senderName = 'Contato';
-
-      if (recipientType === 'PASSENGER') {
-        const passenger = await prisma.passenger.findUnique({ where: { id: recipientId }, select: { deviceToken: true } });
-        targetDeviceToken = passenger?.deviceToken || null;
-        senderName = socket.data.user?.name || 'Seu Motorista';
-      } else {
-        const driver = await prisma.driver.findUnique({ where: { id: recipientId }, select: { deviceToken: true } });
-        targetDeviceToken = driver?.deviceToken || null;
-        senderName = socket.data.user?.name || 'Seu Passageiro';
-      }
-
-      if (targetDeviceToken) {
-        console.log(`🔔 [CHAT PUSH LOG] Enviando Push de Chat para ${recipientType} (${targetDeviceToken})`);
-        sendPushNotification(
-          targetDeviceToken,
-          `💬 Mensagem de ${senderName}`,
-          message,
-          { type: 'CHAT_MESSAGE', rideId },
-          PUSH_CHANNELS.CHAT
-        ).catch(err => console.error('❌ Erro ao enviar Push de Chat:', err));
-      } else {
-        console.warn(`⚠️ [CHAT PUSH LOG] Destinatário ${recipientId} não possui deviceToken registrado.`);
-      }
-    } catch (err) {
-      console.error('❌ [CHAT PUSH LOG] Erro ao buscar token para chat:', err);
-    }
-  });
-
-  // 🚗 MOTORISTA CHEGOU
-  handleSocketEvent(socket, 'driver:arrived', async (data) => {
-    const { rideId } = data;
-    console.log(`📍 [DRIVER ARRIVED LOG] Motorista avisou que chegou na corrida ${rideId}`);
-
-    const ride = await prisma.ride.findUnique({
-      where: { id: rideId },
-      include: { passenger: true, driver: true }
-    });
-
-    if (ride) {
-      io.to(`passenger_${ride.passengerId}`).emit('ride:driver_arrived', { rideId });
-
-      if (ride.passenger?.deviceToken) {
-        console.log(`🔔 [ARRIVED PUSH LOG] Disparando Push "Motorista Chegou" para ${ride.passengerId}`);
-        sendPushNotification(
-          ride.passenger.deviceToken,
-          '📍 Seu Motorista Chegou!',
-          `${ride.driver?.fullName || 'O motorista'} já está no ponto de embarque aguardando por você.`,
-          { type: 'DRIVER_ARRIVED', rideId },
-          PUSH_CHANNELS.RIDE_UPDATE
-        ).catch(err => console.error('❌ Erro no push de chegada:', err));
-      }
-    }
-  });
-
-  // ❌ CANCELAMENTO DE CORRIDA
-  handleSocketEvent(socket, 'ride:cancel', async (data) => {
-    const { rideId, reason, cancelledBy, targetUserId } = data;
-    console.log(`⚠️ [CANCEL LOG] Corrida ${rideId} cancelada por ${cancelledBy}. Motivo: ${reason}`);
-
-    await cancelRideLogic(rideId, socket.data.user.id, cancelledBy, reason);
-
-    const targetToken = cancelledBy === 'DRIVER' 
-      ? (await prisma.passenger.findUnique({ where: { id: targetUserId }, select: { deviceToken: true } }))?.deviceToken
-      : (await prisma.driver.findUnique({ where: { id: targetUserId }, select: { deviceToken: true } }))?.deviceToken;
-
-    if (targetToken) {
-      console.log(`🔔 [CANCEL PUSH LOG] Disparando Push de cancelamento para ${targetUserId}`);
-      sendPushNotification(
-        targetToken,
-        '❌ Corrida Cancelada',
-        `A corrida foi cancelada pelo ${cancelledBy === 'DRIVER' ? 'motorista' : 'passageiro'}. Motivo: ${reason || 'Não informado'}`,
-        { type: 'RIDE_CANCELLED', rideId },
-        PUSH_CHANNELS.RIDE_UPDATE
-      ).catch(err => console.error('❌ Erro no push de cancelamento:', err));
-    }
-  });
-});
 // Notificações Push (Expo Push API)
 async function sendPushNotification(messages: Array<{ to: string; title: string; body: string; data?: any }>) {
   if (!messages.length) return;
@@ -939,164 +818,166 @@ handleSocketEvent(socket, 'sos:triggered', async (data) => {
     }
   });
 
-  // server.ts (Localização do evento WebSocket)
+  // --- PASSAGEIRO SOLICITA CORRIDA ---
+  handleSocketEvent(socket, 'passenger:request_ride', async (rideData) => {
+    console.log(`🔴 [LOG 2 - BACKEND] RECEBEU A SOLICITAÇÃO! Socket ID: ${socket.id}`, rideData);
 
-handleSocketEvent(socket, 'passenger:request_ride', async (rideData) => {
-  console.log(`🔴 [LOG 2 - BACKEND] RECEBEU A SOLICITAÇÃO! Socket ID: ${socket.id}`, rideData);
+    if (isSocketRateLimited(socket, 'passenger:request_ride', 5000, 2)) {
+      console.warn('⚠️ Requisição bloqueada por Rate Limit.');
+      return;
+    }
 
-  if (isSocketRateLimited(socket, 'passenger:request_ride', 5000, 2)) {
-    console.warn('⚠️ Requisição bloqueada por Rate Limit.');
-    return;
-  }
+    const passengerId = socket.data.user?.id;
+    if (!passengerId || !isPassenger(socket)) {
+      console.error(`❌ [LOG 2 - ERRO BACKEND] Não autorizado: Socket sem perfil de Passageiro válido. User:`, socket.data.user);
+      socket.emit('error', { message: 'Ação não autorizada. Faça login novamente como passageiro.' });
+      return;
+    }
 
-  const passengerId = socket.data.user?.id;
-  if (!passengerId || !isPassenger(socket)) {
-    console.error(`❌ [LOG 2 - ERRO BACKEND] Não autorizado: Socket sem perfil de Passageiro válido.`);
-    socket.emit('error', { message: 'Ação não autorizada. Faça login novamente como passageiro.' });
-    return;
-  }
+    const pLat = Number(rideData?.pickupLat);
+    const pLng = Number(rideData?.pickupLng);
+    const dLat = Number(rideData?.destinationLat);
+    const dLng = Number(rideData?.destinationLng);
 
-  const pLat = Number(rideData?.pickupLat);
-  const pLng = Number(rideData?.pickupLng);
-  const dLat = Number(rideData?.destinationLat);
-  const dLng = Number(rideData?.destinationLng);
+    if (!isValidCoordinate(pLat, pLng) || !isValidCoordinate(dLat, dLng)) {
+      console.error('❌ Coordenadas inválidas recebidas:', { pLat, pLng, dLat, dLng });
+      socket.emit('error', { message: 'Coordenadas de origem ou destino inválidas.' });
+      return;
+    }
 
-  if (!isValidCoordinate(pLat, pLng) || !isValidCoordinate(dLat, dLng)) {
-    socket.emit('error', { message: 'Coordenadas de origem ou destino inválidas.' });
-    return;
-  }
+    const estimatedPrice = rideData?.estimatedPrice ?? rideData?.priceXof;
 
-  const estimatedPrice = rideData?.estimatedPrice ?? rideData?.priceXof;
+    let rawStops = Array.isArray(rideData?.stops) ? rideData.stops : [];
+    if (rawStops.length === 0 && rideData?.extraStopLat && rideData?.extraStopLng) {
+      rawStops = [{
+        address: rideData.extraStopAddress || '',
+        lat: Number(rideData.extraStopLat),
+        lng: Number(rideData.extraStopLng),
+        status: 'PENDING'
+      }];
+    }
 
-  let rawStops = Array.isArray(rideData?.stops) ? rideData.stops : [];
-  if (rawStops.length === 0 && rideData?.extraStopLat && rideData?.extraStopLng) {
-    rawStops = [{
-      address: rideData.extraStopAddress || '',
-      lat: Number(rideData.extraStopLat),
-      lng: Number(rideData.extraStopLng),
-      status: 'PENDING'
-    }];
-  }
+    let normalizedVehicleType = String(rideData.vehicleType || 'PARTICULAR').toUpperCase();
+    if (normalizedVehicleType === 'MOTO_CAR') normalizedVehicleType = 'MOTO_CARRO';
 
-  let normalizedVehicleType = String(rideData.vehicleType || 'PARTICULAR').toUpperCase();
-  if (normalizedVehicleType === 'MOTO_CAR') normalizedVehicleType = 'MOTO_CARRO';
+    socket.emit('ride:payment_processing', { message: 'Iniciando retenção de fundos (Escrow)...' });
 
-  socket.emit('ride:payment_processing', { message: 'Iniciando retenção de fundos (Escrow)...' });
-
-  let createdRideId: string | null = null;
-
-  try {
-    // Chamada para a regra de negócio em rideService.ts
-    const { pendingVerification, ride } = await createRideAndInitiateEscrow(passengerId, {
-      originLat: pLat,
-      originLng: pLng,
-      destinationLat: dLat,
-      destinationLng: dLng,
-      originAddress: rideData.originAddress,
-      destinationAddress: rideData.destinationAddress,
-      requestedVehicleType: normalizedVehicleType,
-      serviceType: rideData.serviceType || 'RIDE',
-      paymentMethod: rideData.paymentMethod,
-      estimatedPrice: estimatedPrice ? Number(estimatedPrice) : undefined,
-      stops: rawStops
-    });
-    
-    createdRideId = ride.id;
-    const isTestMode = process.env.NODE_ENV !== 'production' || process.env.TEST_MODE === 'true';
-
-    if (pendingVerification && !isTestMode) {
-      socket.emit('ride:payment_pending', { 
-        message: 'Aguardando operadora (+245) confirmar o saldo...' 
+    try {
+      const { pendingVerification, ride } = await createRideAndInitiateEscrow(passengerId, {
+        originLat: pLat,
+        originLng: pLng,
+        destinationLat: dLat,
+        destinationLng: dLng,
+        originAddress: rideData.originAddress,
+        destinationAddress: rideData.destinationAddress,
+        requestedVehicleType: normalizedVehicleType,
+        serviceType: rideData.serviceType || 'RIDE',
+        paymentMethod: rideData.paymentMethod,
+        estimatedPrice: estimatedPrice ? Number(estimatedPrice) : undefined,
+        stops: rawStops
       });
-      return;
-    }
+      
+      const isTestMode = process.env.NODE_ENV !== 'production' || process.env.TEST_MODE === 'true';
 
-    const rideId = ride.id;
-    socket.join(rideId);
-
-    await safeRedis.set(`active_ride:${rideId}`, JSON.stringify({
-      rideId, passengerId, pickupLat: pLat, pickupLng: pLng,
-      fareXOF: ride.priceXof, status: 'PENDING',
-    }));
-
-    const nearbyDriverIds: string[] = (await safeRedis.geoSearch(
-      'drivers_locations', 
-      { longitude: pLng, latitude: pLat }, 
-      { radius: 50, unit: 'km' }
-    )) as string[];
-
-    if (!nearbyDriverIds || nearbyDriverIds.length === 0) {
-      socket.emit('ride:no_drivers_found');
-      socket.emit('error', { message: `Nenhum motorista disponível próximo de si.` });
-      await cancelRideLogic(rideId, passengerId, 'PASSENGER', 'Sem motoristas no raio');
-      return;
-    }
-
-    const matchingDrivers = await prisma.driver.findMany({
-      where: { 
-        id: { in: nearbyDriverIds }, 
-        vehicleType: normalizedVehicleType as any,
-        isOnline: true, 
-        isAvailable: true, 
-        status: 'APPROVED'
-      },
-      select: { id: true, deviceToken: true }
-    });
-
-    if (matchingDrivers.length === 0) {
-      socket.emit('ride:no_drivers_found');
-      socket.emit('error', { message: `Motoristas na categoria ${normalizedVehicleType} estão offline ou ocupados.` });
-      await cancelRideLogic(rideId, passengerId, 'PASSENGER', 'Categoria ocupada');
-      return;
-    }
-
-    const passengerInfo = await prisma.passenger.findUnique({
-      where: { id: passengerId },
-      select: { fullName: true, phone: true, profilePicture: true, ratingAverage: true }
-    });
-
-    const requestPayload = {
-      rideId, 
-      passengerId: ride.passengerId,
-      passengerName: passengerInfo?.fullName || 'Passageiro',
-      passengerPhone: passengerInfo?.phone || null,
-      passengerPhoto: passengerInfo?.profilePicture || null,
-      passengerRating: Number(passengerInfo?.ratingAverage || 5.0),
-      pickupLat: ride.originLat, 
-      pickupLng: ride.originLng, 
-      originAddress: rideData.originAddress, 
-      destinationLat: ride.destinationLat,
-      destinationLng: ride.destinationLng, 
-      destinationAddress: rideData.destinationAddress,
-      stops: ride.stops || rawStops,
-      referencePoint: rideData.referencePoint || null,
-      fareXOF: ride.priceXof, 
-      vehicleType: normalizedVehicleType,
-      serviceType: ride.serviceType, 
-      paymentMethod: ride.paymentMethod || 'ORANGE_MONEY'
-    };
-
-    matchingDrivers.forEach(d => io.to(d.id).emit('ride:new_request', requestPayload));
-
-    for (const d of matchingDrivers) {
-      if (d.deviceToken) {
-        sendPushNotification([{
-          to: d.deviceToken,
-          title: `🚕 Nova Corrida (Valor: ${ride.priceXof} XOF)`,
-          body: `Passageiro: ${passengerInfo?.fullName || 'Passageiro'} está próximo de você!`,
-          data: { rideId }
-        }]).catch(() => null);
+      if (pendingVerification && !isTestMode) {
+        socket.emit('ride:payment_pending', { 
+          message: 'Aguardando operadora (+245) confirmar o saldo...' 
+        });
+        return;
       }
+
+      const rideId = ride.id;
+      socket.join(rideId);
+
+      await safeRedis.set(`active_ride:${rideId}`, JSON.stringify({
+        rideId, passengerId, pickupLat: pLat, pickupLng: pLng,
+        fareXOF: ride.priceXof, status: 'PENDING',
+      }));
+
+      const nearbyDriverIds: string[] = (await safeRedis.geoSearch(
+        'drivers_locations', 
+        { longitude: pLng, latitude: pLat }, 
+        { radius: 50, unit: 'km' }
+      )) as string[];
+
+      console.log('📍 Driver IDs encontrados no Redis:', nearbyDriverIds);
+
+      if (!nearbyDriverIds || nearbyDriverIds.length === 0) {
+        console.log('⚠️ Nenhum motorista no Redis drivers_locations dentro de 50km');
+        socket.emit('ride:no_drivers_found');
+        socket.emit('error', { message: `Nenhum motorista disponível próximo de si.` });
+        await cancelRideLogic(rideId, passengerId, 'PASSENGER', 'Sem motoristas no raio');
+        return;
+      }
+
+      const matchingDrivers = await prisma.driver.findMany({
+        where: { 
+          id: { in: nearbyDriverIds }, 
+          vehicleType: normalizedVehicleType as any,
+          isOnline: true, 
+          isAvailable: true, 
+          status: 'APPROVED'
+        },
+        select: { id: true, deviceToken: true }
+      });
+
+      console.log('🚗 Motoristas elegíveis encontrados no Banco:', matchingDrivers.map(d => d.id));
+
+      if (matchingDrivers.length === 0) {
+        socket.emit('ride:no_drivers_found');
+        socket.emit('error', { message: `Motoristas na categoria ${normalizedVehicleType} estão offline ou ocupados.` });
+        await cancelRideLogic(rideId, passengerId, 'PASSENGER', 'Categoria ocupada');
+        return;
+      }
+
+      const passengerInfo = await prisma.passenger.findUnique({
+        where: { id: passengerId },
+        select: { fullName: true, phone: true, profilePicture: true, ratingAverage: true }
+      });
+
+      const requestPayload = {
+        rideId, 
+        passengerId: ride.passengerId,
+        passengerName: passengerInfo?.fullName || 'Passageiro',
+        passengerPhone: passengerInfo?.phone || null,
+        passengerPhoto: passengerInfo?.profilePicture || null,
+        passengerRating: Number(passengerInfo?.ratingAverage || 5.0),
+        pickupLat: ride.originLat, 
+        pickupLng: ride.originLng, 
+        originAddress: rideData.originAddress, 
+        destinationLat: ride.destinationLat,
+        destinationLng: ride.destinationLng, 
+        destinationAddress: rideData.destinationAddress,
+        stops: ride.stops || rawStops,
+        referencePoint: rideData.referencePoint || null,
+        fareXOF: ride.priceXof, 
+        vehicleType: normalizedVehicleType,
+        serviceType: ride.serviceType, 
+        paymentMethod: ride.paymentMethod || 'ORANGE_MONEY'
+      };
+
+      matchingDrivers.forEach(d => io.to(d.id).emit('ride:new_request', requestPayload));
+
+      console.log(`✅ Evento ride:new_request enviado para ${matchingDrivers.length} motorista(s).`);
+
+      for (const d of matchingDrivers) {
+        if (d.deviceToken) {
+          sendPushNotification(
+            d.deviceToken,
+            `🚕 Nova Corrida (Valor: ${ride.priceXof} XOF)`,
+            `Passageiro: ${passengerInfo?.fullName || 'Passageiro'} está próximo de você!`,
+            { type: 'NEW_RIDE_REQUEST', rideId },
+            PUSH_CHANNELS.NEW_RIDE_ALARM
+          ).catch(() => null);
+        }
+      }
+    } catch (err: any) {
+      console.error('❌ Erro na solicitação da corrida:', err);
+      socket.emit('error', { message: 'Erro ao processar sua corrida e carteira digital.' });
     }
-  } catch (err: any) {
-    console.error('❌ Erro na solicitação da corrida:', err);
-    if (createdRideId) {
-      await cancelRideLogic(createdRideId, passengerId, 'PASSENGER', 'Erro interno na infraestrutura').catch(() => null);
-    }
-    socket.emit('error', { message: err.message || 'Erro ao processar sua corrida e carteira digital.' });
-  }
-});
- // --- MOTORISTA ACEITA CORRIDA (SOCKET + PUSH) ---
+  });
+
+  // --- MOTORISTA ACEITA CORRIDA (SOCKET + PUSH) ---
   handleSocketEvent(socket, 'driver:accept_ride', async (data) => {
     if (isSocketRateLimited(socket, 'driver:accept_ride', 2000, 1)) return;
     if (!isDriver(socket)) {
@@ -1163,12 +1044,13 @@ handleSocketEvent(socket, 'passenger:request_ride', async (rideData) => {
 
       // 4. 🔔 Push Notification para o Passageiro
       if (updatedRide.passenger?.deviceToken) {
-        sendPushNotification([{
-          to: updatedRide.passenger.deviceToken,
-          title: '🚗 Motorista a Caminho!',
-          body: `${updatedRide.driver?.fullName || 'Seu motorista'} aceitou a corrida!`,
-          data: { type: 'RIDE_ACCEPTED', rideId }
-        }]).catch(err => console.warn('⚠️ Falha ao enviar Push para passageiro:', err));
+        sendPushNotification(
+          updatedRide.passenger.deviceToken,
+          '🚗 Motorista a Caminho!',
+          `${updatedRide.driver?.fullName || 'Seu motorista'} aceitou a corrida!`,
+          { type: 'RIDE_ACCEPTED', rideId },
+          PUSH_CHANNELS.RIDE_UPDATE
+        ).catch(err => console.warn('⚠️ Falha ao enviar Push para passageiro:', err));
       }
 
       // 5. Atualização do Dashboard Admin
@@ -1266,12 +1148,13 @@ handleSocketEvent(socket, 'passenger:request_ride', async (rideData) => {
     io.to(rideId).emit('ride:driver_arrived', { rideId });
 
     if (ride?.passenger?.deviceToken) {
-      sendPushNotification([{
-        to: ride.passenger.deviceToken,
-        title: '📍 Motorista Chegou!',
-        body: 'Seu motorista está no local aguardando você.',
-        data: { rideId }
-      }]).catch(() => null);
+      sendPushNotification(
+        ride.passenger.deviceToken,
+        '📍 Motorista Chegou!',
+        'Seu motorista está no local aguardando você.',
+        { type: 'DRIVER_ARRIVED', rideId },
+        PUSH_CHANNELS.RIDE_UPDATE
+      ).catch(() => null);
     }
   });
 
@@ -1299,12 +1182,13 @@ handleSocketEvent(socket, 'passenger:request_ride', async (rideData) => {
 
       // 🔔 Push Notification para o Passageiro
       if (updatedRide?.passenger?.deviceToken) {
-        sendPushNotification([{
-          to: updatedRide.passenger.deviceToken,
-          title: '🚕 Viagem Iniciada!',
-          body: 'Tenha uma excelente viagem com o Nô Bai 245!',
-          data: { type: 'RIDE_STARTED', rideId }
-        }]).catch(() => null);
+        sendPushNotification(
+          updatedRide.passenger.deviceToken,
+          '🚕 Viagem Iniciada!',
+          'Tenha uma excelente viagem com o Nô Bai 245!',
+          { type: 'RIDE_STARTED', rideId },
+          PUSH_CHANNELS.RIDE_UPDATE
+        ).catch(() => null);
       }
     } catch (err: any) {
       socket.emit('error', { message: err.message || 'Falha ao validar OTP.' });
@@ -1341,18 +1225,20 @@ handleSocketEvent(socket, 'passenger:request_ride', async (rideData) => {
       });
 
       if (ride?.passenger?.deviceToken) {
-        sendPushNotification([{
-          to: ride.passenger.deviceToken,
-          title: '🏁 Viagem Concluída!',
-          body: `Você chegou ao seu destino. Total: ${result.fareXOF} XOF.`,
-          data: { type: 'RIDE_COMPLETED', rideId }
-        }]).catch(() => null);
+        sendPushNotification(
+          ride.passenger.deviceToken,
+          '🏁 Viagem Concluída!',
+          `Você chegou ao seu destino. Total: ${result.fareXOF} XOF.`,
+          { type: 'RIDE_COMPLETED', rideId },
+          PUSH_CHANNELS.RIDE_UPDATE
+        ).catch(() => null);
       }
     } catch (err: any) {
       console.error(`🚨 Erro financeiro ao finalizar corrida ${rideId}:`, err);
       socket.emit('error', { message: err.message || 'Erro ao cobrar passagem no Mobile Money.' });
     }
   }); 
+
   // --- CHAT DA CORRIDA ---
   handleSocketEvent(socket, 'chat:send_message', async (data) => {
     if (isSocketRateLimited(socket, 'chat:send_message', 2000, 5)) return;
@@ -1381,6 +1267,29 @@ handleSocketEvent(socket, 'passenger:request_ride', async (rideData) => {
 
         socket.to(rideId).emit('chat:receive_message', messagePayload);
         io.to('admin_dashboard').emit('admin:chat_monitor', { rideId, message: messagePayload });
+
+        // Envia notificação push para a outra parte da corrida
+        const ride = await prisma.ride.findUnique({
+          where: { id: rideId },
+          include: {
+            passenger: { select: { id: true, deviceToken: true } },
+            driver: { select: { id: true, deviceToken: true } }
+          }
+        });
+
+        const targetToken = senderTypeDb === 'PASSENGER' 
+          ? ride?.driver?.deviceToken 
+          : ride?.passenger?.deviceToken;
+
+        if (targetToken) {
+          sendPushNotification(
+            targetToken,
+            `💬 Mensagem do ${senderRole === 'driver' ? 'Motorista' : 'Passageiro'}`,
+            sanitizedText,
+            { type: 'CHAT_MESSAGE', rideId },
+            PUSH_CHANNELS.CHAT
+          ).catch(() => null);
+        }
       } catch (err) { 
         console.warn('Falha no chat:', err); 
       }
@@ -1462,8 +1371,6 @@ handleSocketEvent(socket, 'passenger:request_ride', async (rideData) => {
       socket.emit('error', { message: 'Falha ao processar a avaliação.' });
     }
   });
-});
-
 // -----------------------------------------------------------------------------
 // 7. ENCERRAMENTO GRACIOSO DO SERVIDOR (SHUTDOWN)
 // -----------------------------------------------------------------------------
