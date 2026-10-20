@@ -268,6 +268,153 @@ export async function calculateRidePrice(distanceKm: number, durationMin: number
 
   return { totalPrice: Math.round(totalPrice), commissionRate };
 }
+// -----------------------------------------------------------------------------
+// 3. CRIAÇÃO DE CORRIDA E RETENÇÃO EM CAUÇÃO / DINHEIRO
+// -----------------------------------------------------------------------------
+export async function createRideAndInitiateEscrow(passengerId: string, data: {
+  originLat: number; originLng: number; destinationLat: number; destinationLng: number;
+  requestedVehicleType: VehicleType | string; serviceType: ServiceType | string;
+  originAddress?: string; destinationAddress?: string; referencePoint?: string;
+  stops?: Array<{ address: string; lat: number; lng: number; status: string }>;
+  paymentMethod?: PaymentMethod | string;
+  idempotencyKey?: string;
+  estimatedPrice?: number;
+}) {
+  const { 
+    originLat, originLng, destinationLat, destinationLng, 
+    requestedVehicleType, serviceType, originAddress, destinationAddress, referencePoint, stops = [],
+    estimatedPrice 
+  } = data;
+
+  if (!isValidCoordinate(originLat, originLng) || !isValidCoordinate(destinationLat, destinationLng)) {
+    throw new Error('BAD_REQUEST: Coordenadas geográficas de origem ou destino inválidas.');
+  }
+
+  const passenger = await prisma.passenger.findUnique({ where: { id: passengerId } });
+  if (!passenger || passenger.status !== 'ACTIVE') {
+    throw new Error('UNAUTHORIZED: Conta de passageiro inexistente, inativa ou suspensa.');
+  }
+
+  const rawMethod = data.paymentMethod || passenger.paymentProvider || 'CASH';
+  const chosenMethod = String(rawMethod).toUpperCase().trim();
+  const isCash = chosenMethod === 'CASH' || chosenMethod === 'DINHEIRO';
+  const IS_MOCK_MODE = process.env.ENABLE_MOCK_PAYMENTS === 'true';
+
+  console.log('🔍 [DEBUG RIDE PAYMENT]', {
+    received_paymentMethod: data.paymentMethod,
+    passenger_paymentProvider: passenger.paymentProvider,
+    rawMethod,
+    chosenMethod,
+    isCash,
+    IS_MOCK_MODE
+  });
+
+  if (!isCash) {
+    const paymentPhone = passenger.paymentAccountNumber || passenger.phone || (IS_MOCK_MODE ? '245955000000' : null);
+    if (!paymentPhone || (!IS_MOCK_MODE && !isValidBissauPhone(paymentPhone))) {
+      throw new Error('PAYMENT_REQUIRED: Conta Mobile Money não configurada ou número inválido (+245).');
+    }
+  }
+
+  const routeWaypoints = stops.map(s => ({ lat: s.lat, lng: s.lng }));
+  const { distanceKm, durationMin } = await getRouteDistanceAndDuration(
+    originLat, originLng, destinationLat, destinationLng, routeWaypoints
+  );
+  
+  const { totalPrice: calculatedPrice } = await calculateRidePrice(
+    distanceKm, durationMin, requestedVehicleType as VehicleType, serviceType as ServiceType
+  );
+  
+  const priceXof = (estimatedPrice && estimatedPrice > 0) 
+    ? Math.round(estimatedPrice) 
+    : calculatedPrice;
+  
+  const initialStatus = (isCash || IS_MOCK_MODE) ? RideStatus.SEARCHING : RideStatus.AWAITING_PAYMENT;
+  const initialTxStatus = isCash 
+    ? TransactionStatus.PENDING 
+    : (IS_MOCK_MODE ? TransactionStatus.HELD_IN_ESCROW : TransactionStatus.PENDING);
+  
+  const startOtp = Math.floor(1000 + Math.random() * 9000).toString();
+
+  const { ride, transaction } = await prisma.$transaction(async (tx) => {
+    const newRide = await tx.ride.create({
+      data: {
+        passengerId, serviceType: (serviceType || 'RIDE') as ServiceType,
+        requestedVehicleType: (requestedVehicleType || 'PARTICULAR') as VehicleType,
+        paymentMethod: chosenMethod as PaymentMethod, originAddress: originAddress || '',
+        originLat, originLng, destinationAddress: destinationAddress || '',
+        destinationLat, destinationLng, referencePoint: referencePoint || null,
+        stops: stops.length > 0 ? stops : undefined,
+        priceXof, status: initialStatus, startOtp
+      }
+    });
+
+    const lockPassenger = await tx.passenger.updateMany({
+      where: { id: passengerId, currentRideId: null, status: 'ACTIVE' },
+      data: { currentRideId: newRide.id }
+    });
+
+    if (lockPassenger.count === 0) {
+      throw new Error('ACTIVE_RIDE_EXISTS: Passageiro já possui corrida ativa em andamento.');
+    }
+
+    const newTx = await tx.transaction.create({
+      data: {
+        passengerId, rideId: newRide.id, type: TransactionType.RIDE_PAYMENT,
+        status: initialTxStatus, amount: priceXof,
+        reference: `PAY-${newRide.id.slice(0, 8)}-${Date.now()}`, paymentMethod: chosenMethod as PaymentMethod,
+        idempotencyKey: data.idempotencyKey
+      }
+    });
+
+    return { ride: newRide, transaction: newTx };
+  });
+
+  if (isCash || IS_MOCK_MODE) {
+    console.log(`💵 [RIDE SUCCESS] Corrida em Dinheiro (${chosenMethod}). Ignorando Mobile Money.`);
+    notifyDriversNewRide(ride.id).catch(err => console.error('Erro ao notificar motoristas:', err));
+    return { success: true, pendingVerification: false, ride };
+  }
+
+  const paymentPhone = passenger.paymentAccountNumber || passenger.phone!;
+
+  try {
+    const chargeResult = await chargePassengerMobileMoney({
+      phone: paymentPhone,
+      amount: priceXof,
+      provider: chosenMethod as PaymentMethod,
+      rideId: ride.id,
+      transactionId: transaction.id
+    });
+
+    if (!chargeResult.success) {
+      throw new Error(chargeResult.details || 'Falha de comunicação com a operadora Mobile Money.');
+    }
+
+    notifyDriversNewRide(ride.id).catch(err => console.error('Erro ao notificar motoristas:', err));
+
+    return { 
+      success: true, 
+      pendingVerification: true, 
+      ride, 
+      providerRef: chargeResult.providerRef, 
+      paymentUrl: chargeResult.paymentUrl 
+    };
+  } catch (error: any) {
+    if (ride?.id && transaction?.id) {
+      try {
+        await prisma.$transaction([
+          prisma.ride.update({ where: { id: ride.id }, data: { status: RideStatus.CANCELLED, cancellationReason: 'Gateway de pagamento indisponível' } }),
+          prisma.transaction.update({ where: { id: transaction.id }, data: { status: TransactionStatus.FAILED, failureReason: error.message } }),
+          prisma.passenger.update({ where: { id: passengerId }, data: { currentRideId: null } })
+        ]);
+      } catch (rollbackErr) {
+        console.error('❌ Falha ao desfazer estado de corrida após erro de pagamento:', rollbackErr);
+      }
+    }
+    throw new Error('Não foi possível realizar a cobrança via Mobile Money. Verifique o saldo do seu PIN/Carteira.');
+  }
+}
 
 // -----------------------------------------------------------------------------
 // LÓGICA DE ACEITE (ACEITA EM FILA SE O MOTORISTA JÁ ESTIVER EM VIAGEM)
