@@ -265,6 +265,17 @@ export async function calculateRidePrice(distanceKm: number, durationMin: number
 
   return { totalPrice: Math.round(totalPrice), commissionRate };
 }
+// -----------------------------------------------------------------------------
+// TRAVA GEOGRÁFICA DE OPERAÇÃO (GUINÉ-BISSAU)
+// -----------------------------------------------------------------------------
+export function isWithinGuineaBissau(lat: number, lng: number): boolean {
+  const MIN_LAT = 10.8;
+  const MAX_LAT = 12.8;
+  const MIN_LNG = -16.8;
+  const MAX_LNG = -13.6;
+
+  return lat >= MIN_LAT && lat <= MAX_LAT && lng >= MIN_LNG && lng <= MAX_LNG;
+}
 
 // -----------------------------------------------------------------------------
 // 1. CRIAÇÃO DE CORRIDA E RETENÇÃO EM CAUÇÃO / DINHEIRO (COM AUTO-CURA)
@@ -287,7 +298,10 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
   if (!isValidCoordinate(originLat, originLng) || !isValidCoordinate(destinationLat, destinationLng)) {
     throw new Error('BAD_REQUEST: Coordenadas geográficas de origem ou destino inválidas.');
   }
-
+// 🛡️ TRAVA DE TERRITÓRIO
+if (!isWithinGuineaBissau(originLat, originLng)) {
+  throw new Error('OUT_OF_SERVICE_AREA: O serviço Nô Bai 245 está disponível apenas no território da Guiné-Bissau.');
+}
   const passenger = await prisma.passenger.findUnique({ 
     where: { id: passengerId },
     select: { id: true, status: true, currentRideId: true, paymentProvider: true, paymentAccountNumber: true, phone: true }

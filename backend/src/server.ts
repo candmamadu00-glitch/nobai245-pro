@@ -828,10 +828,19 @@ handleSocketEvent(socket, 'sos:triggered', async (data) => {
     const dLng = Number(rideData?.destinationLng);
 
     if (!isValidCoordinate(pLat, pLng) || !isValidCoordinate(dLat, dLng)) {
-      console.error('❌ Coordenadas inválidas recebidas:', { pLat, pLng, dLat, dLng });
-      socket.emit('error', { message: 'Coordenadas de origem ou destino inválidas.' });
-      return;
-    }
+  console.error('❌ Coordenadas inválidas recebidas:', { pLat, pLng, dLat, dLng });
+  socket.emit('error', { message: 'Coordenadas de origem ou destino inválidas.' });
+  return;
+}
+
+// 🛡️ TRAVA GEOGRÁFICA
+if (!isWithinGuineaBissau(pLat, pLng)) {
+  console.warn(`⚠️ [OUT OF BOUNDS] Solicitação recusada fora da Guiné-Bissau (Lat: ${pLat}, Lng: ${pLng})`);
+  socket.emit('error', { 
+    message: '📍 Fora da área de cobertura. O Nô Bai 245 opera exclusivamente na Guiné-Bissau.' 
+  });
+  return;
+}
 
     const estimatedPrice = rideData?.estimatedPrice ?? rideData?.priceXof;
 

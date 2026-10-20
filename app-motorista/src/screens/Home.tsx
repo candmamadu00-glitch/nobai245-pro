@@ -655,10 +655,29 @@ useEffect(() => {
     restoreLocalState();
   }, []);
 
-  const fetchMapboxRoute = async (startLng: number, startLat: number, endLng: number, endLat: number) => {
+  const fetchMapboxRoute = async (
+  startLng: number, 
+  startLat: number, 
+  endLng: number, 
+  endLat: number,
+  waypoints: Array<any> = []
+) => {
   try {
-    // Adicionados: steps=true, voice_instructions=true, language=pt
-    const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${startLng},${startLat};${endLng},${endLat}?geometries=geojson&steps=true&voice_instructions=true&banner_instructions=true&language=pt&access_token=${MAPBOX_TOKEN}`;
+    // 📍 Formata as paradas intermediárias (Waypoints) para a URL do Mapbox
+    let waypointsPath = '';
+    if (waypoints && waypoints.length > 0) {
+      waypointsPath = waypoints
+        .map(w => {
+          const lat = w.lat ?? w.latitude;
+          const lng = w.lng ?? w.longitude;
+          return (lat && lng) ? `${lng},${lat};` : '';
+        })
+        .join('');
+    }
+
+    // URL completa: Origem -> Parada 1 -> Parada 2 -> Destino Final
+    const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${startLng},${startLat};${waypointsPath}${endLng},${endLat}?geometries=geojson&steps=true&voice_instructions=true&banner_instructions=true&language=pt&access_token=${MAPBOX_TOKEN}`;
+    
     const response = await fetch(url);
     if (!response.ok) throw new Error('Falha requisição rota');
     const data = await response.json();
@@ -671,13 +690,13 @@ useEffect(() => {
 
       // Extrai os passos/curvas da rota
       if (route.legs && route.legs[0]?.steps) {
-        const steps = route.legs[0].steps;
+        const steps = route.legs.flatMap((leg: any) => leg.steps || []);
         setRouteSteps(steps);
         setCurrentStepIndex(0);
 
         // Falar a primeira instrução assim que a rota é calculada
         if (steps.length > 0 && steps[0]?.maneuver?.instruction) {
-          const firstInstruction = steps[0].maneuver.instruction;
+          const firstInstruction = translateToKriol(steps[0].maneuver.instruction);
           speakInstruction(firstInstruction);
         }
       }
@@ -764,14 +783,38 @@ const translateToKriol = (text: string): string => {
     .replace(/Você chegou ao seu destino/gi, 'Bu tchega ja na bu distinu')
     .replace(/Você está se aproximando do seu destino/gi, 'Bu sta kuazi pa tchega na bu distinu lembranta passageiro de pega se objetos na veiculo tchabe telemovel');
 };
-  useEffect(() => {
-    if (!location?.coords || !incomingRide) return;
-    if (rideState === 'accepted') fetchMapboxRoute(location.coords.longitude, location.coords.latitude, incomingRide.pickupLng, incomingRide.pickupLat);
-    else if (rideState === 'in_progress' && incomingRide.destinationLat && incomingRide.destinationLng) fetchMapboxRoute(location.coords.longitude, location.coords.latitude, incomingRide.destinationLng, incomingRide.destinationLat);
-    else if (rideState === 'idle' || rideState === 'arrived') setRouteCoordinates(null);
-    persistActiveRideState(incomingRide, rideState, activeRideId);
-  }, [rideState, activeRideId]);
+  // ✅ AGORA (Envia as paradas pendentes para o Mapbox traçar a rota completa):
+useEffect(() => {
+  if (!location?.coords || !incomingRide) return;
 
+  if (rideState === 'accepted') {
+    // 1. Rota do motorista até o passageiro (Embarque)
+    fetchMapboxRoute(
+      location.coords.longitude, 
+      location.coords.latitude, 
+      incomingRide.pickupLng, 
+      incomingRide.pickupLat
+    );
+  } else if (rideState === 'in_progress' && incomingRide.destinationLat && incomingRide.destinationLng) {
+    // 2. Filtra paradas pendentes
+    const pendingStops = Array.isArray(incomingRide.stops) 
+      ? incomingRide.stops.filter((s: any) => s.status !== 'COMPLETED' && (s.lat || s.latitude))
+      : [];
+
+    // 3. Traça rota: Motorista -> Parada 1 -> Parada 2 -> Destino Final
+    fetchMapboxRoute(
+      location.coords.longitude, 
+      location.coords.latitude, 
+      incomingRide.destinationLng, 
+      incomingRide.destinationLat,
+      pendingStops
+    );
+  } else if (rideState === 'idle' || rideState === 'arrived') {
+    setRouteCoordinates(null);
+  }
+
+  persistActiveRideState(incomingRide, rideState, activeRideId);
+}, [rideState, activeRideId, location?.coords?.latitude, location?.coords?.longitude, incomingRide]);
   // 📡 ESCUTA DE SOCKETS COM SUPORTE A CORRIDAS EM FILA (BACK-TO-BACK)
   useEffect(() => {
     const handleConnect = async () => {
@@ -1057,51 +1100,73 @@ const translateToKriol = (text: string): string => {
   };
 
   async function startTracking() {
-    if (driver?.status !== 'APPROVED') return Alert.alert('Conta em Análise', 'Aguarde aprovação de documentos.');
+  if (driver?.status !== 'APPROVED') {
+    return Alert.alert('Conta em Análise', 'Aguarde aprovação de documentos.');
+  }
+
+  const foreground = await Location.requestForegroundPermissionsAsync();
+  if (foreground.status !== 'granted') {
+    return Alert.alert('Permissão Necessária', 'Permita o acesso à localização para ficar online.');
+  }
+
+  try {
+    // 1. Força a leitura IMEDIATA e precisa do GPS
+    const currentLoc = await Location.getCurrentPositionAsync({ 
+      accuracy: Location.Accuracy.High 
+    });
+
+    const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
+    if (isMocked) {
+      if (isMountedRef.current) setIsOnline(false);
+      return Alert.alert(
+        'GPS Simulado Detectado',
+        'Desative o aplicativo de GPS Falso no seu dispositivo para conseguir ficar online e receber corridas.'
+      );
+    }
+
+    setIsOnline(true);
     
-    const foreground = await Location.requestForegroundPermissionsAsync();
-    if (foreground.status !== 'granted') return Alert.alert('Permissão Necessária', 'Permita o acesso à localização para ficar online.');
+    // 2. Garante a conexão ativa do Socket
+    const activeSocket = await connectDriverSocket();
 
-    try {
-      const currentLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-
-      const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
-      if (isMocked) {
-        if (isMountedRef.current) setIsOnline(false);
-        return Alert.alert(
-          'GPS Simulado Detectado',
-          'Desative o aplicativo de GPS Falso no seu dispositivo para conseguir ficar online e receber corridas.'
-        );
-      }
-
-      setIsOnline(true);
-      await connectDriverSocket();
-
-      if (isMountedRef.current) {
-        setLocation(currentLoc);
-        if (cameraRef.current) {
-          cameraRef.current.setCamera({ 
-            centerCoordinate: [currentLoc.coords.longitude, currentLoc.coords.latitude], 
-            zoomLevel: 16 
-          });
-        }
-      }
-
-      if (socket && socket.connected) {
-        socket.emit('driver:online', { 
-          driverId: driver?.id, 
-          lat: currentLoc.coords.latitude, 
-          lng: currentLoc.coords.longitude 
+    if (isMountedRef.current) {
+      setLocation(currentLoc);
+      if (cameraRef.current) {
+        cameraRef.current.setCamera({ 
+          centerCoordinate: [currentLoc.coords.longitude, currentLoc.coords.latitude], 
+          zoomLevel: 16 
         });
       }
-
-      await startTrackingForState(rideState);
-
-    } catch (e) {
-      Alert.alert('Erro de Localização', 'Verifique o GPS do seu dispositivo.');
-      if (isMountedRef.current) setIsOnline(false);
     }
+
+    // 3. Disparo DUPLO e IMEDIATO (Notifica status ONLINE + Posiciona no Redis e no Mapa)
+    const socketToUse = activeSocket || socket;
+    if (socketToUse) {
+      const payload = {
+        driverId: driver?.id,
+        latitude: currentLoc.coords.latitude,
+        longitude: currentLoc.coords.longitude,
+        lat: currentLoc.coords.latitude,
+        lng: currentLoc.coords.longitude,
+        heading: currentLoc.coords.heading || 0,
+        speed: currentLoc.coords.speed || 0,
+      };
+
+      // Define motorista como ONLINE
+      socketToUse.emit('driver:online', payload);
+      
+      // Injeta a posição IMEDIATAMENTE no Redis GEO para o ícone aparecer no mapa sem delay
+      socketToUse.emit('driver:location_update', payload);
+    }
+
+    await startTrackingForState(rideState);
+
+  } catch (e) {
+    console.error('❌ Erro ao iniciar rastreamento:', e);
+    Alert.alert('Erro de Localização', 'Verifique se o GPS do seu dispositivo está ativado.');
+    if (isMountedRef.current) setIsOnline(false);
   }
+}
 
   function stopTracking() {
     if (driver?.id && socket && socket.connected) {
