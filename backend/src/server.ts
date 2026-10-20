@@ -9,7 +9,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { createClient } from 'redis';
 import { prisma } from './config/prisma';
-import { getRouteDistanceAndDuration } from './services/rideService';
+import { getRouteDistanceAndDuration, isWithinGuineaBissau } from './services/rideService';
 import { passengerRoutes } from './routes/passengerRoutes'; 
 import { driverRoutes } from './routes/driverRoutes'; 
 import { adminRoutes } from './routes/adminRoutes';
@@ -841,7 +841,9 @@ if (!isWithinGuineaBissau(pLat, pLng)) {
   });
   return;
 }
-
+function isWithinGuineaBissau(lat: number, lng: number): boolean {
+  return lat >= 10.8 && lat <= 12.8 && lng >= -16.8 && lng <= -13.6;
+}
     const estimatedPrice = rideData?.estimatedPrice ?? rideData?.priceXof;
 
     let rawStops = Array.isArray(rideData?.stops) ? rideData.stops : [];
