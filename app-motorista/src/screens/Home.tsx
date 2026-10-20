@@ -910,7 +910,9 @@ useEffect(() => {
         setRideState('completed');
         setShowReceiptModal(true);
         setShowNavSheet(false);
-        stopBackgroundLocation();
+        
+        // ✅ Mantém o motorista ONLINE e rastreável após concluir a corrida!
+        
         persistActiveRideState(null, 'idle', null);
         fetchTodayEarnings();
       }
@@ -949,9 +951,11 @@ useEffect(() => {
       socket.off('ride:finished', handleRideFinished);
       socket.off('ride:queued_now_active', handleQueuedNowActive);
       socket.off('ride:cancelled', handleRideCancelled);
-      stopTracking();
+      
+      // ✅ REMOVIDO: stopTracking() daqui!
+      // O motorista permanece ONLINE no Socket e no Redis até clicar no botão "Ficar Offline".
     };
-  }, [driver?.id, resetDriverState, snapToState, rideState]);
+  }, [driver?.id, resetDriverState, snapToState]); // 👈 Removido `rideState` das dependências!
 
   // 💡 2. FUNÇÃO DE RESTAURAÇÃO DE CORRIDA ATIVA VIA API SERVIDOR
   const syncActiveRideWithServer = useCallback(async () => {
@@ -1012,7 +1016,6 @@ useEffect(() => {
       subscription.remove();
     };
   }, [syncActiveRideWithServer]);
-
   // 💡 4. CORREÇÃO CRÍTICA DO TIMER DE 15 SEGUNDOS (SÓ RODA SE ESTIVER EM IDLE)
   useEffect(() => {
     let timer: NodeJS.Timeout;
