@@ -1371,6 +1371,8 @@ handleSocketEvent(socket, 'sos:triggered', async (data) => {
       socket.emit('error', { message: 'Falha ao processar a avaliação.' });
     }
   });
+});
+
 // -----------------------------------------------------------------------------
 // 7. ENCERRAMENTO GRACIOSO DO SERVIDOR (SHUTDOWN)
 // -----------------------------------------------------------------------------
