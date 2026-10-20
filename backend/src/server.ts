@@ -39,6 +39,19 @@ declare global {
 }
 
 // -----------------------------------------------------------------------------
+// HELPER AUXILIAR DE SANITIZAÇÃO DE TEXTO (PREVENÇÃO DE XSS)
+// -----------------------------------------------------------------------------
+function sanitizeHtmlText(str?: string | null): string {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// -----------------------------------------------------------------------------
 // 1. VALIDAÇÃO DE AMBIENTE CRÍTICO (BLINDAGEM FINANCEIRA)
 // -----------------------------------------------------------------------------
 const REQUIRED_ENVS = [
@@ -87,7 +100,9 @@ app.use(express.json({
     req.rawBody = buf;
   }
 }));
+
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
 // 🛡️ Rate Limiting Global
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, 
@@ -124,32 +139,42 @@ app.get('/health', (_req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
+
 app.get('/api/passengers/drivers/nearby', async (req: Request, res: Response) => {
   try {
     const lat = Number(req.query.lat);
     const lng = Number(req.query.lng);
 
-    if (isNaN(lat) || isNaN(lng)) {
-      return res.status(400).json({ error: 'Coordenadas inválidas' });
+    if (!isValidCoordinate(lat, lng)) {
+      return res.status(400).json({ error: 'Coordenadas geográficas inválidas' });
     }
 
-    // Busca motoristas no raio de 5 km via Redis GEOSEARCH
-    const nearbyDriverIds = await redisClient.geoSearch(
+    // Busca motoristas no raio de 5 km via Redis GEOSEARCH protegido
+    const nearbyDriverIds = await safeRedis.geoSearch(
       'drivers:locations',
       { longitude: lng, latitude: lat },
       { radius: 5, unit: 'km' }
     );
 
+    if (!nearbyDriverIds || nearbyDriverIds.length === 0) {
+      return res.json({ drivers: [] });
+    }
+
     // Mapeia coordenadas atuais dos motoristas
     const drivers = await Promise.all(
       nearbyDriverIds.map(async (driverId) => {
-        const pos = await redisClient.geoPos('drivers:locations', driverId);
-        if (pos && pos[0]) {
-          return {
-            id: driverId,
-            lng: pos[0].longitude,
-            lat: pos[0].latitude,
-          };
+        if (!redisClient.isOpen) return null;
+        try {
+          const pos = await redisClient.geoPos('drivers:locations', driverId);
+          if (pos && pos[0]) {
+            return {
+              id: driverId,
+              lng: pos[0].longitude,
+              lat: pos[0].latitude,
+            };
+          }
+        } catch (e) {
+          console.warn(`⚠️ [REDIS GEOPOS ERR] Driver: ${driverId}`, e);
         }
         return null;
       })
@@ -161,12 +186,17 @@ app.get('/api/passengers/drivers/nearby', async (req: Request, res: Response) =>
     return res.status(500).json({ error: 'Erro interno ao buscar motoristas' });
   }
 });
+
 // =============================================================================
 // 🌐 API JSON DE DADOS EM TEMPO REAL DO RASTREAMENTO
 // =============================================================================
 app.get('/track/:rideId/data', async (req: Request, res: Response) => {
   try {
     const rideId = String(req.params.rideId);
+    if (!rideId || rideId.length < 5) {
+      return res.status(400).json({ error: 'Identificador de corrida inválido' });
+    }
+
     const ride: any = await prisma.ride.findUnique({
       where: { id: rideId },
       include: { driver: true }
@@ -174,25 +204,26 @@ app.get('/track/:rideId/data', async (req: Request, res: Response) => {
 
     if (!ride) return res.status(404).json({ error: 'Corrida não encontrada' });
 
-    const driverLat = ride.driverLat || ride.driver?.currentLat || ride.originLat || 11.8633;
-    const driverLng = ride.driverLng || ride.driver?.currentLng || ride.originLng || -15.5833;
+    const driverLat = Number(ride.driverLat || ride.driver?.currentLat || ride.originLat || 11.8633);
+    const driverLng = Number(ride.driverLng || ride.driver?.currentLng || ride.originLng || -15.5833);
 
     return res.json({
       status: ride.status || 'IN_PROGRESS',
       driverLat,
       driverLng,
-      originLat: ride.originLat,
-      originLng: ride.originLng,
-      destinationLat: ride.destinationLat,
-      destinationLng: ride.destinationLng,
+      originLat: Number(ride.originLat),
+      originLng: Number(ride.originLng),
+      destinationLat: Number(ride.destinationLat),
+      destinationLng: Number(ride.destinationLng),
     });
   } catch (error) {
+    console.error('❌ Erro na API de dados de rastreamento:', error);
     return res.status(500).json({ error: 'Erro ao buscar dados do rastreamento' });
   }
 });
 
 // =============================================================================
-// 🌐 ROTA PÚBLICA DE RASTREAMENTO WEB DA VIAGEM (CORRIGIDA E PROFISSIONAL)
+// 🌐 ROTA PÚBLICA DE RASTREAMENTO WEB DA VIAGEM
 // =============================================================================
 app.get('/track/:rideId', async (req: Request, res: Response) => {
   try {
@@ -249,10 +280,11 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
     const destLat = Number(ride.destinationLat || driverLat);
     const destLng = Number(ride.destinationLng || driverLng);
 
-    const driverName = ride.driver?.fullName || ride.driver?.name || 'Motorista';
-    const carModel = ride.driver?.carModel || ride.driver?.vehicleModel || 'Veículo';
-    const carColor = ride.driver?.carColor || ride.driver?.vehicleColor || 'BRANCO';
-    const licensePlate = ride.driver?.licensePlate || ride.driver?.vehiclePlate || 'N/A';
+    const driverName = sanitizeHtmlText(ride.driver?.fullName || ride.driver?.name || 'Motorista');
+    const carModel = sanitizeHtmlText(ride.driver?.carModel || ride.driver?.vehicleModel || 'Veículo');
+    const carColor = sanitizeHtmlText(ride.driver?.carColor || ride.driver?.vehicleColor || 'BRANCO');
+    const licensePlate = sanitizeHtmlText(ride.driver?.licensePlate || ride.driver?.vehiclePlate || 'N/A');
+    const destinationAddress = sanitizeHtmlText(ride.destinationAddress || 'Endereço de destino');
 
     res.send(`
       <!DOCTYPE html>
@@ -283,7 +315,6 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
           .detail-item { font-size: 13px; color: #CBD5E1; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
           .detail-item strong { color: #FFF; }
           
-          /* 🏎️ ÍCONE DE VEÍCULO 3D TOP-VIEW COM SUPORTE A ROTAÇÃO SUAVE */
           .car-icon-wrapper { 
             width: 42px; 
             height: 42px; 
@@ -301,7 +332,7 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
         <div class="info-card">
           <div class="header">
             <div class="title">🚕 Nô Bai 245</div>
-            <div id="statusBadge" class="badge ${ride.status === 'CANCELLED' ? 'cancelled' : (ride.status === 'COMPLETED' ? 'completed' : '')}">${ride.status || 'EM ANDAMENTO'}</div>
+            <div id="statusBadge" class="badge ${ride.status === 'CANCELLED' ? 'cancelled' : (ride.status === 'COMPLETED' ? 'completed' : '')}">${sanitizeHtmlText(ride.status) || 'EM ANDAMENTO'}</div>
           </div>
 
           <div class="metrics-grid">
@@ -317,7 +348,7 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
 
           <div class="detail-item"><strong>👤 Motorista:</strong> ${driverName}</div>
           <div class="detail-item"><strong>🚘 Veículo:</strong> ${carModel} (${carColor}) — Placa: <strong>${licensePlate}</strong></div>
-          <div class="detail-item"><strong>📍 Destino:</strong> ${ride.destinationAddress || 'Endereço de destino'}</div>
+          <div class="detail-item"><strong>📍 Destino:</strong> ${destinationAddress}</div>
         </div>
 
         <script>
@@ -335,7 +366,6 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
             zoom: 15
           });
 
-          // SVG do Veículo Top-View com Design Profissional (Amarelo/Ouro Dourado)
           const carContainer = document.createElement('div');
           carContainer.className = 'car-icon-wrapper';
           carContainer.innerHTML = \`
@@ -346,7 +376,6 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
           
           const driverMarker = new mapboxgl.Marker({ element: carContainer, anchor: 'center' }).setLngLat(lastPos).addTo(map);
 
-          // Marcadores de Origem e Destino
           const originEl = document.createElement('div');
           originEl.style.fontSize = '22px';
           originEl.innerHTML = '🟢';
@@ -468,6 +497,7 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
     res.status(500).send('Erro interno ao carregar página de rastreamento.');
   }
 });
+
 // -----------------------------------------------------------------------------
 // 4. CLIENTES REDIS (SAFE REDIS + PUBSUB PARA CLUSTER DIGITALOCEAN)
 // -----------------------------------------------------------------------------
@@ -559,7 +589,7 @@ io.use((socket, next) => {
   }
 });
 
-// Helper de Rate Limit no Socket por Evento
+// Helper de Rate Limit no Socket por Evento (CORRIGIDO)
 function isSocketRateLimited(socket: Socket, eventName: string, windowMs = 1000, maxCalls = 5): boolean {
   if (!socket.data.lastEvents) socket.data.lastEvents = new Map<string, number[]>();
   
@@ -568,7 +598,8 @@ function isSocketRateLimited(socket: Socket, eventName: string, windowMs = 1000,
   const history: number[] = socket.data.lastEvents.get(key) || [];
   const validHistory = history.filter((timestamp: number) => now - timestamp < windowMs);
 
-  if (validHistory.length >= maxCalls) return false;
+  // 💡 CORRIGIDO: Retorna TRUE se atingiu/excedeu o limite de chamadas
+  if (validHistory.length >= maxCalls) return true;
 
   validHistory.push(now);
   socket.data.lastEvents.set(key, validHistory);
@@ -637,7 +668,7 @@ io.on('connection', (socket) => {
 
   // 📌 HANDLER 'join_room': Permite ao app entrar nas salas dinâmicas de corrida
   socket.on('join_room', (roomName: string) => {
-    if (roomName) {
+    if (roomName && typeof roomName === 'string') {
       socket.join(roomName);
       console.log(`📡 [SOCKET ROOM] Cliente ${socket.id} entrou na sala: ${roomName}`);
     }
@@ -665,7 +696,7 @@ io.on('connection', (socket) => {
       const driverId = user.id;
       
       if (disconnectTimers.has(driverId)) {
-        clearTimeout(disconnectTimers.get(driverId));
+        clearTimeout(disconnectTimers.get(driverId)!);
       }
       
       const timer = setTimeout(async () => {
@@ -696,32 +727,33 @@ io.on('connection', (socket) => {
     await prisma.driver.update({
       where: { id: driverId },
       data: { isOnline: false, isAvailable: false }
-    });
+    }).catch(() => null);
   });
 
   // 🛠️ Ajuste no handler sos:triggered
-handleSocketEvent(socket, 'sos:triggered', async (data) => {
-  if (isSocketRateLimited(socket, 'sos:triggered', 5000, 2)) return;
-  
-  const { rideId, latitude, longitude, timestamp } = data || {};
-  const userId = socket.data.user?.id;
+  handleSocketEvent(socket, 'sos:triggered', async (data) => {
+    if (isSocketRateLimited(socket, 'sos:triggered', 5000, 2)) return;
+    
+    const { rideId, latitude, longitude, timestamp } = data || {};
+    const userId = socket.data.user?.id;
 
-  // Valida o rideId apenas se ele for enviado
-  if (rideId && !isUuid(rideId)) {
-    socket.emit('error', { message: 'ID de corrida inválido fornecido para o alerta SOS.' });
-    return;
-  }
+    // Valida o rideId apenas se ele for enviado
+    if (rideId && !isUuid(rideId)) {
+      socket.emit('error', { message: 'ID de corrida inválido fornecido para o alerta SOS.' });
+      return;
+    }
 
-  console.warn(`🚨 [SOS ALERTA] Usuário: ${userId} | Corrida: ${rideId || 'Sem corrida ativa'} | Coords: ${latitude}, ${longitude}`);
+    console.warn(`🚨 [SOS ALERTA] Usuário: ${userId} | Corrida: ${rideId || 'Sem corrida ativa'} | Coords: ${latitude}, ${longitude}`);
 
-  io.to('admin_dashboard').emit('admin:sos_alert', {
-    userId,
-    rideId: rideId || null,
-    latitude,
-    longitude,
-    timestamp: timestamp || new Date().toISOString()
+    io.to('admin_dashboard').emit('admin:sos_alert', {
+      userId,
+      rideId: rideId || null,
+      latitude: Number(latitude),
+      longitude: Number(longitude),
+      timestamp: timestamp || new Date().toISOString()
+    });
   });
-});
+
   handleSocketEvent(socket, 'driver:alert_inaccessible_location', (data) => {
     const { rideId, passengerId } = data || {};
     if (!rideId) return;
@@ -747,6 +779,12 @@ handleSocketEvent(socket, 'sos:triggered', async (data) => {
     socket.join(driverId);
     socket.join(`driver_${driverId}`);
     socket.join('available_drivers');
+
+    // Cancela timer de desconexão pendente se houver
+    if (disconnectTimers.has(driverId)) {
+      clearTimeout(disconnectTimers.get(driverId)!);
+      disconnectTimers.delete(driverId);
+    }
 
     const updatedDriver = await prisma.driver.update({
       where: { id: driverId },
@@ -792,13 +830,13 @@ handleSocketEvent(socket, 'sos:triggered', async (data) => {
         passengerPhone: pendingRide.passenger?.phone || null,
         passengerPhoto: pendingRide.passenger?.profilePicture || null,
         passengerRating: Number(pendingRide.passenger?.ratingAverage || 5.0),
-        pickupLat: pendingRide.originLat,
-        pickupLng: pendingRide.originLng,
+        pickupLat: Number(pendingRide.originLat),
+        pickupLng: Number(pendingRide.originLng),
         originAddress: pendingRide.originAddress,
-        destinationLat: pendingRide.destinationLat,
-        destinationLng: pendingRide.destinationLng,
+        destinationLat: Number(pendingRide.destinationLat),
+        destinationLng: Number(pendingRide.destinationLng),
         destinationAddress: pendingRide.destinationAddress,
-        fareXOF: pendingRide.priceXof,
+        fareXOF: Number(pendingRide.priceXof),
         vehicleType: pendingRide.requestedVehicleType,
         serviceType: pendingRide.serviceType,
         paymentMethod: pendingRide.paymentMethod || 'ORANGE_MONEY'
@@ -828,22 +866,20 @@ handleSocketEvent(socket, 'sos:triggered', async (data) => {
     const dLng = Number(rideData?.destinationLng);
 
     if (!isValidCoordinate(pLat, pLng) || !isValidCoordinate(dLat, dLng)) {
-  console.error('❌ Coordenadas inválidas recebidas:', { pLat, pLng, dLat, dLng });
-  socket.emit('error', { message: 'Coordenadas de origem ou destino inválidas.' });
-  return;
-}
+      console.error('❌ Coordenadas inválidas recebidas:', { pLat, pLng, dLat, dLng });
+      socket.emit('error', { message: 'Coordenadas de origem ou destino inválidas.' });
+      return;
+    }
 
-// 🛡️ TRAVA GEOGRÁFICA
-if (!isWithinGuineaBissau(pLat, pLng)) {
-  console.warn(`⚠️ [OUT OF BOUNDS] Solicitação recusada fora da Guiné-Bissau (Lat: ${pLat}, Lng: ${pLng})`);
-  socket.emit('error', { 
-    message: '📍 Fora da área de cobertura. O Nô Bai 245 opera exclusivamente na Guiné-Bissau.' 
-  });
-  return;
-}
-function isWithinGuineaBissau(lat: number, lng: number): boolean {
-  return lat >= 10.8 && lat <= 12.8 && lng >= -16.8 && lng <= -13.6;
-}
+    // 🛡️ TRAVA GEOGRÁFICA (GUINÉ-BISSAU)
+    if (!isWithinGuineaBissau(pLat, pLng)) {
+      console.warn(`⚠️ [OUT OF BOUNDS] Solicitação recusada fora da Guiné-Bissau (Lat: ${pLat}, Lng: ${pLng})`);
+      socket.emit('error', { 
+        message: '📍 Fora da área de cobertura. O Nô Bai 245 opera exclusivamente na Guiné-Bissau.' 
+      });
+      return;
+    }
+
     const estimatedPrice = rideData?.estimatedPrice ?? rideData?.priceXof;
 
     let rawStops = Array.isArray(rideData?.stops) ? rideData.stops : [];
@@ -890,7 +926,7 @@ function isWithinGuineaBissau(lat: number, lng: number): boolean {
 
       await safeRedis.set(`active_ride:${rideId}`, JSON.stringify({
         rideId, passengerId, pickupLat: pLat, pickupLng: pLng,
-        fareXOF: ride.priceXof, status: 'PENDING',
+        fareXOF: Number(ride.priceXof), status: 'PENDING',
       }));
 
       const nearbyDriverIds: string[] = (await safeRedis.geoSearch(
@@ -909,22 +945,39 @@ function isWithinGuineaBissau(lat: number, lng: number): boolean {
         return;
       }
 
-      const matchingDrivers = await prisma.driver.findMany({
+      // 🔄 BUSCA PERMISSIVA: Busca motoristas ONLINE (Livres OU em Viagem para Fila)
+      const candidateDrivers = await prisma.driver.findMany({
         where: { 
           id: { in: nearbyDriverIds }, 
           vehicleType: normalizedVehicleType as any,
           isOnline: true, 
-          isAvailable: true, 
           status: 'APPROVED'
         },
-        select: { id: true, deviceToken: true }
+        select: { 
+          id: true, 
+          deviceToken: true,
+          isAvailable: true,
+          currentRideId: true,
+          ridesAsDriver: {
+            where: {
+              status: { in: ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] }
+            },
+            select: { id: true }
+          }
+        }
+      });
+
+      // 🚗 FILTRAGEM DE ELEGIBILIDADE PARA CORRIDA ATIVA + FILA
+      const matchingDrivers = candidateDrivers.filter(driver => {
+        if (driver.isAvailable || !driver.currentRideId) return true;
+        return driver.ridesAsDriver.length <= 1;
       });
 
       console.log('🚗 Motoristas elegíveis encontrados no Banco:', matchingDrivers.map(d => d.id));
 
       if (matchingDrivers.length === 0) {
         socket.emit('ride:no_drivers_found');
-        socket.emit('error', { message: `Motoristas na categoria ${normalizedVehicleType} estão offline ou ocupados.` });
+        socket.emit('error', { message: `Motoristas na categoria ${normalizedVehicleType} estão offline ou com fila cheia.` });
         await cancelRideLogic(rideId, passengerId, 'PASSENGER', 'Categoria ocupada');
         return;
       }
@@ -941,35 +994,49 @@ function isWithinGuineaBissau(lat: number, lng: number): boolean {
         passengerPhone: passengerInfo?.phone || null,
         passengerPhoto: passengerInfo?.profilePicture || null,
         passengerRating: Number(passengerInfo?.ratingAverage || 5.0),
-        pickupLat: ride.originLat, 
-        pickupLng: ride.originLng, 
+        pickupLat: Number(ride.originLat), 
+        pickupLng: Number(ride.originLng), 
         originAddress: rideData.originAddress, 
-        destinationLat: ride.destinationLat,
-        destinationLng: ride.destinationLng, 
+        destinationLat: Number(ride.destinationLat),
+        destinationLng: Number(ride.destinationLng), 
         destinationAddress: rideData.destinationAddress,
         stops: ride.stops || rawStops,
         referencePoint: rideData.referencePoint || null,
-        fareXOF: ride.priceXof, 
+        fareXOF: Number(ride.priceXof), 
         vehicleType: normalizedVehicleType,
         serviceType: ride.serviceType, 
         paymentMethod: ride.paymentMethod || 'ORANGE_MONEY'
       };
 
-      matchingDrivers.forEach(d => io.to(d.id).emit('ride:new_request', requestPayload));
-
-      console.log(`✅ Evento ride:new_request enviado para ${matchingDrivers.length} motorista(s).`);
-
       for (const d of matchingDrivers) {
+        const isQueuedOffer = !d.isAvailable || !!d.currentRideId;
+
+        io.to(d.id).emit('ride:new_request', {
+          ...requestPayload,
+          isQueuedOffer
+        });
+        io.to(`driver_${d.id}`).emit('ride:new_request', {
+          ...requestPayload,
+          isQueuedOffer
+        });
+
         if (d.deviceToken) {
+          const pushTitle = isQueuedOffer 
+            ? `🚗 Próxima Corrida em Fila (Valor: ${ride.priceXof} XOF)` 
+            : `🚕 Nova Corrida (Valor: ${ride.priceXof} XOF)`;
+
           sendPushNotification(
             d.deviceToken,
-            `🚕 Nova Corrida (Valor: ${ride.priceXof} XOF)`,
-            `Passageiro: ${passengerInfo?.fullName || 'Passageiro'} está próximo de você!`,
-            { type: 'NEW_RIDE_REQUEST', rideId },
+            pushTitle,
+            `Passageiro: ${passengerInfo?.fullName || 'Passageiro'} está próximo do seu destino/rota!`,
+            { type: 'NEW_RIDE_REQUEST', rideId, isQueuedOffer },
             PUSH_CHANNELS.NEW_RIDE_ALARM
           ).catch(() => null);
         }
       }
+
+      console.log(`✅ Evento ride:new_request enviado para ${matchingDrivers.length} motorista(s).`);
+
     } catch (err: any) {
       console.error('❌ Erro na solicitação da corrida:', err);
       socket.emit('error', { message: 'Erro ao processar sua corrida e carteira digital.' });
@@ -1011,8 +1078,8 @@ function isWithinGuineaBissau(lat: number, lng: number): boolean {
       const publicDriverPayload = {
         rideId, 
         driverId, 
-        driverLat, 
-        driverLng,
+        driverLat: Number(driverLat || 0), 
+        driverLng: Number(driverLng || 0),
         driverName: updatedRide.driver?.fullName,
         driverPhoto: updatedRide.driver?.profilePicture,
         carModel: updatedRide.driver?.vehicleBrand,
@@ -1032,7 +1099,7 @@ function isWithinGuineaBissau(lat: number, lng: number): boolean {
         passengerPhoto: updatedRide.passenger?.profilePicture,
         originAddress: updatedRide.originAddress,
         destinationAddress: updatedRide.destinationAddress,
-        priceXof: updatedRide.priceXof,
+        priceXof: Number(updatedRide.priceXof),
       });
 
       // 3. Socket para o passageiro com o OTP
@@ -1107,12 +1174,12 @@ function isWithinGuineaBissau(lat: number, lng: number): boolean {
 
       prisma.driver.update({
         where: { id: driverId },
-        data: { lastLat: latitude, lastLng: longitude, lastLocationUpdate: new Date() }
+        data: { lastLat: Number(latitude), lastLng: Number(longitude), lastLocationUpdate: new Date() }
       }).catch(() => null);
 
       if (rideId && isUuid(rideId) && safeSpeed !== null && !isNaN(safeSpeed)) {
         prisma.rideLocationHistory.create({
-          data: { rideId, lat: latitude, lng: longitude, speed: safeSpeed }
+          data: { rideId, lat: Number(latitude), lng: Number(longitude), speed: safeSpeed }
         }).catch(() => null);
       }
     }
@@ -1174,7 +1241,7 @@ function isWithinGuineaBissau(lat: number, lng: number): boolean {
     }
 
     try {
-      const updatedRide = await startRideLogic(rideId, driverId, otp);
+      const updatedRide = await startRideLogic(rideId, driverId, String(otp));
       
       io.to(rideId).emit('ride:started', { rideId, status: 'IN_PROGRESS', startedAt: updatedRide?.startedAt });
       io.to('admin_dashboard').emit('admin:ride_update', { rideId, status: 'IN_PROGRESS', driverId });
@@ -1294,10 +1361,10 @@ function isWithinGuineaBissau(lat: number, lng: number): boolean {
       }
     }
   });
-
-  // --- CANCELAMENTO DE CORRIDA ---
+});
+ // --- CANCELAMENTO DE CORRIDA ---
   handleSocketEvent(socket, 'ride:cancel', async (data) => {
-    if (isSocketRateLimited(socket, 'ride:cancel')) return;
+    if (isSocketRateLimited(socket, 'ride:cancel', 2000, 2)) return;
     const { rideId, userId, userType, reason } = data || {};
 
     if (!isUuid(rideId) || !isAuthorizedUser(socket, userId)) {
@@ -1308,18 +1375,22 @@ function isWithinGuineaBissau(lat: number, lng: number): boolean {
     try {
       const rideToCancel = await prisma.ride.findUnique({ where: { id: rideId } });
       const previousStatus = rideToCancel?.status;
+      const cleanReason = typeof reason === 'string' ? reason.trim().slice(0, 250) : undefined;
+      const normalizedUserType = userType === 'DRIVER' ? 'DRIVER' : 'PASSENGER';
       
-      const result = await cancelRideLogic(rideId, userId, userType as 'PASSENGER'|'DRIVER', reason);
+      const result = await cancelRideLogic(rideId, userId, normalizedUserType, cleanReason);
 
       await safeRedis.del(`active_ride:${rideId}`);      
-      if (rideToCancel?.driverId) await safeRedis.del(`driver_active_ride:${rideToCancel.driverId}`);
+      if (rideToCancel?.driverId) {
+        await safeRedis.del(`driver_active_ride:${rideToCancel.driverId}`);
+      }
 
       io.to(rideId).emit('ride:cancelled', {
         rideId, 
-        cancelledBy: userType, 
-        reason,
-        appliedPenalty: result?.appliedPenalty || false,
-        penaltyAmount: result?.penaltyAmount || 0
+        cancelledBy: normalizedUserType, 
+        reason: cleanReason,
+        appliedPenalty: Boolean(result?.appliedPenalty),
+        penaltyAmount: Number(result?.penaltyAmount || 0)
       });
 
       if (previousStatus === 'SEARCHING') {
@@ -1327,16 +1398,16 @@ function isWithinGuineaBissau(lat: number, lng: number): boolean {
       }
       
       io.to('admin_dashboard').emit('admin:ride_update', { 
-        rideId, status: 'CANCELLED', cancelledBy: userType, reason 
+        rideId, status: 'CANCELLED', cancelledBy: normalizedUserType, reason: cleanReason 
       });
       
       const socketsInRoom = await io.in(rideId).fetchSockets();
-      socketsInRoom.forEach(s => {
+      for (const s of socketsInRoom) {
         s.leave(rideId);
-        if (rideToCancel?.driverId && s.data.user?.id === rideToCancel.driverId) {
+        if (rideToCancel?.driverId && s.data?.user?.id === rideToCancel.driverId) {
           s.join('available_drivers'); 
         }
-      });
+      }
     } catch (err: any) {
       socket.emit('error', { message: err.message || 'Erro ao cancelar corrida.' });
     }
@@ -1344,30 +1415,35 @@ function isWithinGuineaBissau(lat: number, lng: number): boolean {
 
   // --- AVALIAÇÃO DE CORRIDA ---
   handleSocketEvent(socket, 'ride:rate', async (data) => {
-    if (isSocketRateLimited(socket, 'ride:rate')) return;
+    if (isSocketRateLimited(socket, 'ride:rate', 3000, 2)) return;
     const { rideId, receiverId, stars, tags, comment, reviewerType } = data || {};
     
-    if (!isUuid(rideId) || !receiverId || !stars) {
-      socket.emit('error', { message: 'Dados de avaliação inválidos.' });
+    const numericStars = Number(stars);
+    if (!isUuid(rideId) || !receiverId || isNaN(numericStars) || numericStars < 1 || numericStars > 5) {
+      socket.emit('error', { message: 'Dados de avaliação inválidos. A nota deve ser entre 1 e 5.' });
       return;
     }
 
     try {
-      const finalReviewerType = reviewerType || (socket.data.user.role === 'DRIVER' ? 'DRIVER' : 'PASSENGER');
+      const userRole = socket.data.user?.role || socket.data.user?.userType;
+      const finalReviewerType = reviewerType === 'DRIVER' || userRole === 'DRIVER' ? 'DRIVER' : 'PASSENGER';
+      const cleanComment = typeof comment === 'string' ? comment.trim().slice(0, 500) : undefined;
+      const safeTags = Array.isArray(tags) ? tags.map(t => String(t).slice(0, 50)) : [];
+
       const newRating = await submitRatingLogic({
         rideId, 
         reviewerId: socket.data.user.id, 
         reviewerType: finalReviewerType,
         receiverId, 
-        stars: Number(stars), 
-        tags: tags || [], 
-        comment
+        stars: numericStars, 
+        tags: safeTags, 
+        comment: cleanComment
       });
 
       socket.emit('ride:rated_success', { message: 'Avaliação registrada!' });
       io.to('admin_dashboard').emit('admin:new_rating', newRating);
-    } catch (error) {
-      socket.emit('error', { message: 'Falha ao processar a avaliação.' });
+    } catch (error: any) {
+      socket.emit('error', { message: error?.message || 'Falha ao processar a avaliação.' });
     }
   });
 });
@@ -1378,18 +1454,30 @@ function isWithinGuineaBissau(lat: number, lng: number): boolean {
 const shutdown = async () => {
   console.log('\n🛑 [SISTEMA BAI245] Iniciando shutdown seguro...');
   
+  // Timer limite para forçar o encerramento se houver conexões pendentes
+  const forceExitTimeout = setTimeout(() => {
+    console.error('⚠️ [SHUTDOWN] Forçando encerramento do processo após timeout de 10s.');
+    process.exit(1);
+  }, 10000);
+
   server.close(async () => {
     try {
       if (redisClient.isOpen) {
         await redisClient.quit();
-        console.log('📦 [REDIS] Conexão encerrada com segurança.');
+        console.log('📦 [REDIS MAIN] Conexão encerrada com segurança.');
       }
+      if (pubClient.isOpen) await pubClient.quit();
+      if (subClient.isOpen) await subClient.quit();
+
       await prisma.$disconnect();
       console.log('🗄️ [PRISMA] Pool do Banco de Dados liberado.');
       console.log('✅ Sistema desligado.');
+      
+      clearTimeout(forceExitTimeout);
       process.exit(0);
     } catch (err) {
       console.error('❌ Erro severo durante shutdown:', err);
+      clearTimeout(forceExitTimeout);
       process.exit(1);
     }
   });

@@ -39,14 +39,19 @@ if (Platform.OS === 'android') {
     importance: Notifications.AndroidImportance.MAX,
     vibrationPattern: [0, 1000, 500, 1000],
     lightColor: '#059669',
-    // 💡 REMOVIDA A CHAVE 'sound' para o Android usar o som nativo do sistema
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC, // 🔓 Exibe banner na tela de bloqueio
+    bypassDnd: true, // 🔔 Atravessa o modo "Não Perturbe" se estiver ativo
+    audioAttributes: {
+      usage: Notifications.AndroidAudioUsage.ALARM,
+      contentType: Notifications.AndroidAudioContentType.SONIFICATION,
+    },
   });
 
   Notifications.setNotificationChannelAsync('chat-messages', {
     name: 'Mensagens do Chat',
     importance: Notifications.AndroidImportance.HIGH,
     vibrationPattern: [0, 250, 250, 250],
-    // 💡 REMOVIDA A CHAVE 'sound'
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
   });
 }
 if (!__DEV__) {

@@ -19,7 +19,7 @@ export const FALLBACK_TARIFFS: Record<string, { baseFare: number; perKm: number;
   TOCA_TOCA: { baseFare: 500, perKm: 200, perMin: 30, commissionRate: 15 },
 };
 
-function safeSocketEmit(room: string, event: string, payload: any) {
+function safeSocketEmit(room: string, event: string, payload: any): void {
   try {
     const io = getIo();
     if (io) {
@@ -33,7 +33,7 @@ function safeSocketEmit(room: string, event: string, payload: any) {
 // -----------------------------------------------------------------------------
 // HELPER PARA NOTIFICAÇÃO PUSH E SOCKET (CORRIDAS NORMAIS + EM FILA/BACK-TO-BACK)
 // -----------------------------------------------------------------------------
-export async function notifyDriversNewRide(rideId: string) {
+export async function notifyDriversNewRide(rideId: string): Promise<void> {
   console.log(`\n🚨 [RIDE DISPATCH] Buscando motoristas para notificar sobre a corrida ${rideId}...`);
   try {
     const ride = await prisma.ride.findUnique({ 
@@ -105,8 +105,8 @@ export async function notifyDriversNewRide(rideId: string) {
       let refLng: number | null = null;
 
       if (driver.isAvailable || !driver.currentRideId) {
-        refLat = driver.lastLat !== null ? Number(driver.lastLat) : null;
-        refLng = driver.lastLng !== null ? Number(driver.lastLng) : null;
+        refLat = driver.lastLat !== null && driver.lastLat !== undefined ? Number(driver.lastLat) : null;
+        refLng = driver.lastLng !== null && driver.lastLng !== undefined ? Number(driver.lastLng) : null;
       } else if (driver.currentRide?.destinationLat && driver.currentRide?.destinationLng) {
         refLat = Number(driver.currentRide.destinationLat);
         refLng = Number(driver.currentRide.destinationLng);
@@ -114,11 +114,11 @@ export async function notifyDriversNewRide(rideId: string) {
 
       // 💡 FALLBACK: Se a corrida atual não tiver destino definido, usa o GPS atual do motorista
       if (refLat === null || refLng === null) {
-        refLat = driver.lastLat !== null ? Number(driver.lastLat) : null;
-        refLng = driver.lastLng !== null ? Number(driver.lastLng) : null;
+        refLat = driver.lastLat !== null && driver.lastLat !== undefined ? Number(driver.lastLat) : null;
+        refLng = driver.lastLng !== null && driver.lastLng !== undefined ? Number(driver.lastLng) : null;
       }
 
-      if (refLat === null || refLng === null) continue;
+      if (refLat === null || refLng === null || isNaN(refLat) || isNaN(refLng)) continue;
 
       const distKm = calculateDistance(pLat, pLng, refLat, refLng);
       if (distKm <= 5.0) {
@@ -135,14 +135,14 @@ export async function notifyDriversNewRide(rideId: string) {
       rideId: ride.id,
       passengerName: ride.passenger?.fullName || 'Passageiro',
       passengerPhoto: ride.passenger?.profilePicture,
-      passengerRating: ride.passenger?.ratingAverage || 5.0,
+      passengerRating: Number(ride.passenger?.ratingAverage || 5.0),
       originAddress: ride.originAddress,
       originLat: Number(ride.originLat),
       originLng: Number(ride.originLng),
       destinationAddress: ride.destinationAddress,
       destinationLat: Number(ride.destinationLat),
       destinationLng: Number(ride.destinationLng),
-      priceXof: ride.priceXof,
+      priceXof: Number(ride.priceXof),
       serviceType: ride.serviceType,
       paymentMethod: ride.paymentMethod,
       stops: ride.stops || [],
@@ -217,7 +217,7 @@ export async function getRouteDistanceAndDuration(
     for (let i = 0; i < points.length - 1; i++) {
       totalDist += calculateDistance(points[i].lat, points[i].lng, points[i+1].lat, points[i+1].lng);
     }
-    return { distanceKm: totalDist, durationMin: Math.max(1, Math.ceil((totalDist / 30) * 60)) };
+    return { distanceKm: Number(totalDist.toFixed(2)), durationMin: Math.max(1, Math.ceil((totalDist / 30) * 60)) };
   }
 
   try {
@@ -229,20 +229,24 @@ export async function getRouteDistanceAndDuration(
     const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${lat1},${lon1}&destination=${lat2},${lon2}${waypointsStr}&key=${GOOGLE_MAPS_API_KEY}`;
     const response = await axios.get(url, { timeout: 4000 });
     
-    if (response.data?.status === 'OK' && response.data.routes.length > 0) {
+    if (response.data?.status === 'OK' && Array.isArray(response.data.routes) && response.data.routes.length > 0) {
       const route = response.data.routes[0];
       let totalDistanceMeters = 0;
       let totalDurationSeconds = 0;
       
-      route.legs.forEach((leg: any) => {
-        totalDistanceMeters += leg.distance.value;
-        totalDurationSeconds += leg.duration.value;
-      });
+      if (Array.isArray(route.legs)) {
+        route.legs.forEach((leg: any) => {
+          totalDistanceMeters += Number(leg?.distance?.value || 0);
+          totalDurationSeconds += Number(leg?.duration?.value || 0);
+        });
+      }
 
-      return {
-        distanceKm: Math.max(0.1, Number((totalDistanceMeters / 1000).toFixed(2))),
-        durationMin: Math.max(1, Math.ceil(totalDurationSeconds / 60))
-      };
+      if (totalDistanceMeters > 0) {
+        return {
+          distanceKm: Math.max(0.1, Number((totalDistanceMeters / 1000).toFixed(2))),
+          durationMin: Math.max(1, Math.ceil(totalDurationSeconds / 60))
+        };
+      }
     }
   } catch (error) {
     console.warn('⚠️ [MAPS] API externa indisponível. Utilizando Haversine de contingência.');
@@ -530,7 +534,7 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     driver: {
       name: result.driver?.fullName,
       phone: maskPhoneNumber(result.driver?.phone),
-      rating: result.driver?.ratingAverage,
+      rating: Number(result.driver?.ratingAverage || 5.0),
       vehicleBrand: result.driver?.vehicleBrand,
       vehicleColor: result.driver?.vehicleColor,
       vehiclePlate: result.driver?.vehiclePlate
@@ -556,7 +560,6 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
 }
 
 export const acceptRide = acceptRideLogic;
-
 // -----------------------------------------------------------------------------
 // 3. MOTORISTA CHEGOU NO LOCAL DE EMBARQUE
 // -----------------------------------------------------------------------------
@@ -609,7 +612,10 @@ export async function startRideLogic(rideId: string, driverId: string, otpInput:
   });
   if (!ride || ride.driverId !== driverId) throw new Error('UNAUTHORIZED: Operação não autorizada.');
 
-  if (ride.startOtp && ride.startOtp !== otpInput.trim()) {
+  const cleanOtpInput = (otpInput || '').toString().trim();
+  const cleanStartOtp = (ride.startOtp || '').toString().trim();
+
+  if (cleanStartOtp && cleanStartOtp !== cleanOtpInput) {
     throw new Error('INVALID_OTP: Código OTP informado está incorreto.');
   }
 
@@ -853,7 +859,6 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
       nextRideId: queuedRideToPromote?.id || null 
     };
   }
-
 
   // 4. PROCESSAMENTO DE REPASSE AUTOMÁTICO PARA PAGAMENTOS DIGITAIS (MOBILE MONEY)
   const provider = (ride.paymentMethod || PaymentMethod.ORANGE_MONEY).toString().toUpperCase();
@@ -1207,8 +1212,8 @@ export async function submitRatingLogic(data: {
       await tx.driver.update({
         where: { id: receiverId },
         data: {
-          ratingAverage: agg._avg.stars || 5.0,
-          totalRatings: agg._count.stars || 0
+          ratingAverage: Number(agg._avg.stars || 5.0),
+          totalRatings: Number(agg._count.stars || 0)
         }
       });
     } else if (reviewerType === 'DRIVER') {
@@ -1221,8 +1226,8 @@ export async function submitRatingLogic(data: {
       await tx.passenger.update({
         where: { id: receiverId },
         data: {
-          ratingAverage: agg._avg.stars || 5.0,
-          totalRatings: agg._count.stars || 0
+          ratingAverage: Number(agg._avg.stars || 5.0),
+          totalRatings: Number(agg._count.stars || 0)
         }
       });
     }
