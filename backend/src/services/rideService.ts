@@ -269,7 +269,7 @@ export async function calculateRidePrice(distanceKm: number, durationMin: number
   return { totalPrice: Math.round(totalPrice), commissionRate };
 }
 // -----------------------------------------------------------------------------
-// 3. CRIAÇÃO DE CORRIDA E RETENÇÃO EM CAUÇÃO / DINHEIRO
+// 3. CRIAÇÃO DE CORRIDA E RETENÇÃO EM CAUÇÃO / DINHEIRO (COM AUTO-CURA)
 // -----------------------------------------------------------------------------
 export async function createRideAndInitiateEscrow(passengerId: string, data: {
   originLat: number; originLng: number; destinationLat: number; destinationLng: number;
@@ -290,24 +290,48 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     throw new Error('BAD_REQUEST: Coordenadas geográficas de origem ou destino inválidas.');
   }
 
-  const passenger = await prisma.passenger.findUnique({ where: { id: passengerId } });
+  const passenger = await prisma.passenger.findUnique({ 
+    where: { id: passengerId },
+    select: { id: true, status: true, currentRideId: true, paymentProvider: true, paymentAccountNumber: true, phone: true }
+  });
+
   if (!passenger || passenger.status !== 'ACTIVE') {
     throw new Error('UNAUTHORIZED: Conta de passageiro inexistente, inativa ou suspensa.');
+  }
+
+  // 🛡️ AUTO-CURA (SELF-HEALING): Verifica e limpa corridas antigas/órfãs
+  if (passenger.currentRideId) {
+    const activeRide = await prisma.ride.findUnique({
+      where: { id: passenger.currentRideId },
+      select: { id: true, status: true, createdAt: true }
+    });
+
+    const isFinished = !activeRide || ['CANCELLED', 'COMPLETED'].includes(activeRide.status);
+    const isStaleSearching = activeRide && ['SEARCHING', 'AWAITING_PAYMENT'].includes(activeRide.status) && 
+      (Date.now() - new Date(activeRide.createdAt).getTime() > 3 * 60 * 1000); // 3 minutos sem motorista = expirada
+
+    if (isFinished || isStaleSearching) {
+      if (isStaleSearching && activeRide) {
+        await prisma.ride.update({
+          where: { id: activeRide.id },
+          data: { status: RideStatus.CANCELLED, cancellationReason: 'TIMEOUT_EXPIRED' }
+        }).catch(() => null);
+      }
+      // Limpa o ponteiro preso automaticamente no banco
+      await prisma.passenger.update({
+        where: { id: passengerId },
+        data: { currentRideId: null }
+      });
+    } else {
+      // Corrida realmente ativa (ACCEPTED, ARRIVED, IN_PROGRESS ou SEARCHING recente)
+      throw new Error('ACTIVE_RIDE_EXISTS: Passageiro já possui corrida ativa em andamento.');
+    }
   }
 
   const rawMethod = data.paymentMethod || passenger.paymentProvider || 'CASH';
   const chosenMethod = String(rawMethod).toUpperCase().trim();
   const isCash = chosenMethod === 'CASH' || chosenMethod === 'DINHEIRO';
   const IS_MOCK_MODE = process.env.ENABLE_MOCK_PAYMENTS === 'true';
-
-  console.log('🔍 [DEBUG RIDE PAYMENT]', {
-    received_paymentMethod: data.paymentMethod,
-    passenger_paymentProvider: passenger.paymentProvider,
-    rawMethod,
-    chosenMethod,
-    isCash,
-    IS_MOCK_MODE
-  });
 
   if (!isCash) {
     const paymentPhone = passenger.paymentAccountNumber || passenger.phone || (IS_MOCK_MODE ? '245955000000' : null);
@@ -349,14 +373,11 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
       }
     });
 
-    const lockPassenger = await tx.passenger.updateMany({
-      where: { id: passengerId, currentRideId: null, status: 'ACTIVE' },
+    // Atualiza o ponteiro da corrida ativa do passageiro
+    await tx.passenger.update({
+      where: { id: passengerId },
       data: { currentRideId: newRide.id }
     });
-
-    if (lockPassenger.count === 0) {
-      throw new Error('ACTIVE_RIDE_EXISTS: Passageiro já possui corrida ativa em andamento.');
-    }
 
     const newTx = await tx.transaction.create({
       data: {
@@ -371,8 +392,6 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
   });
 
   if (isCash || IS_MOCK_MODE) {
-    console.log(`💵 [RIDE SUCCESS] Corrida em Dinheiro (${chosenMethod}). Ignorando Mobile Money.`);
-    notifyDriversNewRide(ride.id).catch(err => console.error('Erro ao notificar motoristas:', err));
     return { success: true, pendingVerification: false, ride };
   }
 
@@ -390,8 +409,6 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     if (!chargeResult.success) {
       throw new Error(chargeResult.details || 'Falha de comunicação com a operadora Mobile Money.');
     }
-
-    notifyDriversNewRide(ride.id).catch(err => console.error('Erro ao notificar motoristas:', err));
 
     return { 
       success: true, 
@@ -415,7 +432,6 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     throw new Error('Não foi possível realizar a cobrança via Mobile Money. Verifique o saldo do seu PIN/Carteira.');
   }
 }
-
 // -----------------------------------------------------------------------------
 // LÓGICA DE ACEITE (ACEITA EM FILA SE O MOTORISTA JÁ ESTIVER EM VIAGEM)
 // -----------------------------------------------------------------------------
