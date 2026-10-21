@@ -707,7 +707,7 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
     if (updatedRide.count === 0) throw new Error('CONCURRENCY_ERROR: Ocorreu um conflito ao tentar finalizar a corrida.');
 
     await tx.passenger.update({ where: { id: ride.passengerId }, data: { currentRideId: null } });
-
+  
     // 🔄 VERIFICA SE O MOTORISTA TEM UMA CORRIDA NA FILA DE ESPERA (BACK-TO-BACK)
     queuedRideToPromote = await tx.ride.findFirst({
       where: {
@@ -796,8 +796,16 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
       update: { balance: { increment: platformFee }, totalCollected: { increment: calculatedFare }, version: { increment: 1 } },
       create: { id: 'bai245-main-wallet', balance: platformFee, totalCollected: calculatedFare }
     });
-  });
+  }); // <-- FIM DA TRANSAÇÃO DO PRISMA
 
+  // 🟢 ADICIONE AQUI:
+  if (queuedRideToPromote) {
+    await safeRedis.set(`driver_active_ride:${ride.driverId}`, queuedRideToPromote.id);
+  } else {
+    await safeRedis.del(`driver_active_ride:${ride.driverId}`);
+  }
+
+  console.log(`🏁 [RIDE LOG - COMPLETED] Corrida ID: ${rideId} finalizada com sucesso. Valor: ${calculatedFare} XOF`);
   console.log(`🏁 [RIDE LOG - COMPLETED] Corrida ID: ${rideId} finalizada com sucesso. Valor: ${calculatedFare} XOF`);
 
   safeSocketEmit(`passenger_${ride.passengerId}`, 'ride:completed', {

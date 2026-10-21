@@ -946,34 +946,33 @@ io.on('connection', (socket) => {
       }
 
       // 🔄 BUSCA PERMISSIVA: Busca motoristas ONLINE (Livres OU em Viagem para Fila)
-      const candidateDrivers = await prisma.driver.findMany({
-        where: { 
-          id: { in: nearbyDriverIds }, 
-          vehicleType: normalizedVehicleType as any,
-          isOnline: true, 
-          status: 'APPROVED'
-        },
-        select: { 
-          id: true, 
-          deviceToken: true,
-          isAvailable: true,
-          currentRideId: true,
-          ridesAsDriver: {
-            where: {
-              status: { in: ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] }
-            },
-            select: { id: true }
-          }
-        }
-      });
+const candidateDrivers = await prisma.driver.findMany({
+  where: { 
+    id: { in: nearbyDriverIds }, 
+    vehicleType: normalizedVehicleType as any,
+    isOnline: true, 
+    status: 'APPROVED'
+  },
+  select: { 
+    id: true, 
+    deviceToken: true,
+    isAvailable: true,
+    currentRideId: true,
+    rides: { // 🟢 CORRIGIDO: de ridesAsDriver para rides
+      where: {
+        status: { in: ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] }
+      },
+      select: { id: true }
+    }
+  }
+});
 
-      // 🚗 FILTRAGEM DE ELEGIBILIDADE PARA CORRIDA ATIVA + FILA (CORRIGIDO)
-      const matchingDrivers = candidateDrivers.filter((driver: any) => {
-        if (driver.isAvailable || !driver.currentRideId) return true;
-        const activeRidesCount = Array.isArray(driver.ridesAsDriver) ? driver.ridesAsDriver.length : 0;
-        return activeRidesCount <= 1;
-      });
-
+// 🚗 FILTRAGEM DE ELEGIBILIDADE PARA CORRIDA ATIVA + FILA
+const matchingDrivers = candidateDrivers.filter((driver: any) => {
+  if (driver.isAvailable || !driver.currentRideId) return true;
+  const activeRidesCount = Array.isArray(driver.rides) ? driver.rides.length : 0; // 🟢 CORRIGIDO
+  return activeRidesCount <= 1;
+});
       console.log('🚗 Motoristas elegíveis encontrados no Banco:', matchingDrivers.map(d => d.id));
       if (matchingDrivers.length === 0) {
         socket.emit('ride:no_drivers_found');

@@ -48,6 +48,13 @@ type ServiceType = 'viagem' | 'entrega' | 'aluguel';
 type PaymentMethod = 'ORANGE_MONEY' | 'MTN_MOMO' | 'CASH';
 type RegionType = 'BISSAU' | 'PRABIS' | 'QUINHAMEL' | 'SURU' | 'BAFATA' | 'GABU';
 
+export interface RideStop {
+  address: string;
+  latitude: number;
+  longitude: number;
+  status?: string;
+}
+
 interface FavoritePlace {
   address: string;
   latitude: number;
@@ -390,13 +397,14 @@ export function Home() {
     })
   ).current;
 
+  // 🟢 CÁLCULO DE ESTIMATIVA AJUSTADO PARA MÚLTIPLAS PARADAS
   const calculateEstimate = useCallback((pickup: any, dropoff: any, extra?: any) => {
     if (
       typeof pickup?.latitude !== 'number' || typeof pickup?.longitude !== 'number' ||
       typeof dropoff?.latitude !== 'number' || typeof dropoff?.longitude !== 'number'
     ) return;
 
-    let totalDist = getHaversineDistance(pickup, extra || dropoff);
+    let totalDist = getHaversineDistance(pickup, (extra && typeof extra.latitude === 'number') ? extra : dropoff);
     if (extra && typeof extra.latitude === 'number' && typeof extra.longitude === 'number') {
       totalDist += getHaversineDistance(extra, dropoff);
     }
@@ -479,6 +487,7 @@ export function Home() {
     }
   };
 
+  // 🟢 SINCRONIZAÇÃO COMPLETA DE CORRIDA ATIVA (INCLUINDO SUPORTE A PARADAS)
   const syncActiveRideWithServer = useCallback(async () => {
     try {
       if (!api || typeof api.get !== 'function') return;
@@ -525,6 +534,22 @@ export function Home() {
             if (ride.originAddress) setPickupAddress(ride.originAddress);
           }
 
+          // 🟢 RECUPERAÇÃO DAS PARADAS INTERMEDIÁRIAS
+          if (Array.isArray(ride.stops) && ride.stops.length > 0) {
+            const firstStop = ride.stops[0];
+            const stopLat = Number(firstStop.lat || firstStop.latitude);
+            const stopLng = Number(firstStop.lng || firstStop.longitude);
+            if (!isNaN(stopLat) && !isNaN(stopLng)) {
+              setExtraStopCoords({ latitude: stopLat, longitude: stopLng });
+              setExtraStopAddress(firstStop.address || 'Parada Intermediária');
+              setShowExtraStop(true);
+            }
+          } else if (ride.extraStopLat && ride.extraStopLng) {
+            setExtraStopCoords({ latitude: Number(ride.extraStopLat), longitude: Number(ride.extraStopLng) });
+            if (ride.extraStopAddress) setExtraStopAddress(ride.extraStopAddress);
+            setShowExtraStop(true);
+          }
+
           if (ride.destinationLat && ride.destinationLng) {
             setDropoffCoords({ latitude: Number(ride.destinationLat), longitude: Number(ride.destinationLng) });
             if (ride.destinationAddress) setDropoffAddress(ride.destinationAddress);
@@ -566,10 +591,11 @@ export function Home() {
     }
   }, []);
 
+  // 🟢 BUSCA DE ROTA NO MAPBOX COM WAYPOINTS DE PARADAS
   const fetchMapboxRoute = useCallback(async (
     origin: { latitude: number; longitude: number }, 
     destination: { latitude: number; longitude: number }, 
-    extra?: { latitude: number; longitude: number } | null
+    extraStops?: Array<{ latitude: number; longitude: number }> | { latitude: number; longitude: number } | null
   ) => {
     if (!MAPBOX_ACCESS_TOKEN) return;
 
@@ -579,15 +605,25 @@ export function Home() {
     }
 
     try {
-      let coordinatesString = `${origin.longitude},${origin.latitude}`;
-      if (extra && !isNaN(extra.latitude) && !isNaN(extra.longitude)) {
-        coordinatesString += `;${extra.longitude},${extra.latitude}`;
-      }
-      coordinatesString += `;${destination.longitude},${destination.latitude}`;
+      // Montagem da lista de pontos da rota
+      const waypoints: string[] = [`${origin.longitude},${origin.latitude}`];
 
+      if (Array.isArray(extraStops)) {
+        extraStops.forEach(s => {
+          if (s && !isNaN(s.latitude) && !isNaN(s.longitude)) {
+            waypoints.push(`${s.longitude},${s.latitude}`);
+          }
+        });
+      } else if (extraStops && !isNaN(extraStops.latitude) && !isNaN(extraStops.longitude)) {
+        waypoints.push(`${extraStops.longitude},${extraStops.latitude}`);
+      }
+
+      waypoints.push(`${destination.longitude},${destination.latitude}`);
+
+      const coordinatesString = waypoints.join(';');
       const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${coordinatesString}?geometries=geojson&overview=full&access_token=${MAPBOX_ACCESS_TOKEN}`;
-      const res = await fetch(url);
       
+      const res = await fetch(url);
       if (!res.ok) return;
 
       const data = await res.json();
@@ -944,6 +980,29 @@ export function Home() {
             if (ride.originAddress) setPickupAddress(ride.originAddress);
           }
 
+          // 🟢 RESTAURANTE DE PARADAS INTERMEDIÁRIAS NA SINCRONIZAÇÃO
+          let stopsToPass: Array<{ latitude: number; longitude: number }> = [];
+          if (Array.isArray(ride.stops) && ride.stops.length > 0) {
+            const firstStop = ride.stops[0];
+            const stopLat = Number(firstStop.lat || firstStop.latitude);
+            const stopLng = Number(firstStop.lng || firstStop.longitude);
+            if (!isNaN(stopLat) && !isNaN(stopLng)) {
+              setExtraStopCoords({ latitude: stopLat, longitude: stopLng });
+              setExtraStopAddress(firstStop.address || 'Parada Intermediária');
+              setShowExtraStop(true);
+              stopsToPass.push({ latitude: stopLat, longitude: stopLng });
+            }
+          } else if (ride.extraStopLat && ride.extraStopLng) {
+            const lat = Number(ride.extraStopLat);
+            const lng = Number(ride.extraStopLng);
+            if (!isNaN(lat) && !isNaN(lng)) {
+              setExtraStopCoords({ latitude: lat, longitude: lng });
+              if (ride.extraStopAddress) setExtraStopAddress(ride.extraStopAddress);
+              setShowExtraStop(true);
+              stopsToPass.push({ latitude: lat, longitude: lng });
+            }
+          }
+
           if (ride.destinationLat && ride.destinationLng) {
             setDropoffCoords({ latitude: Number(ride.destinationLat), longitude: Number(ride.destinationLng) });
             if (ride.destinationAddress) setDropoffAddress(ride.destinationAddress);
@@ -954,7 +1013,7 @@ export function Home() {
           fetchMapboxRoute(
             { latitude: Number(ride.originLat), longitude: Number(ride.originLng) },
             { latitude: Number(ride.destinationLat), longitude: Number(ride.destinationLng) },
-            ride.stops?.[0] ? { latitude: Number(ride.stops[0].lat), longitude: Number(ride.stops[0].lng) } : null
+            stopsToPass.length > 0 ? stopsToPass : null
           );
         }
       }
@@ -1070,6 +1129,7 @@ export function Home() {
       if (isMountedRef.current) setIsConnected(false);
     };
 
+    // 🟢 RECURSÃO DE ESTADO RECUPERADO COM PARADAS
     const handleStateRecovered = async (data: any) => {
       if (!isMountedRef.current || !data) return;
       try {
@@ -1093,6 +1153,26 @@ export function Home() {
             const lng = Number(data.ride.originLng);
             if (!isNaN(lat) && !isNaN(lng)) setPickupCoords({ latitude: lat, longitude: lng });
             if (data.ride.originAddress) setPickupAddress(data.ride.originAddress);
+          }
+
+          // 🟢 RECUPERAÇÃO DAS PARADAS INTERMEDIÁRIAS NO SOCKET STATE
+          if (Array.isArray(data.ride.stops) && data.ride.stops.length > 0) {
+            const firstStop = data.ride.stops[0];
+            const stopLat = Number(firstStop.lat || firstStop.latitude);
+            const stopLng = Number(firstStop.lng || firstStop.longitude);
+            if (!isNaN(stopLat) && !isNaN(stopLng)) {
+              setExtraStopCoords({ latitude: stopLat, longitude: stopLng });
+              setExtraStopAddress(firstStop.address || 'Parada Intermediária');
+              setShowExtraStop(true);
+            }
+          } else if (data.ride.extraStopLat && data.ride.extraStopLng) {
+            const lat = Number(data.ride.extraStopLat);
+            const lng = Number(data.ride.extraStopLng);
+            if (!isNaN(lat) && !isNaN(lng)) {
+              setExtraStopCoords({ latitude: lat, longitude: lng });
+              if (data.ride.extraStopAddress) setExtraStopAddress(data.ride.extraStopAddress);
+              setShowExtraStop(true);
+            }
           }
 
           if (typeof data.ride.destinationLat === 'number' && typeof data.ride.destinationLng === 'number') {
@@ -1206,773 +1286,835 @@ export function Home() {
     };
 
     const handleNoDriversFound = () => {
-      if (!isMountedRef.current) return;
-      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-      Alert.alert(t('search_ended_title', 'Busca Encerrada'), t('no_drivers_found_msg', 'Não encontramos motoristas disponíveis na sua região. Tente novamente.'));
-      resetRideState();
-    };
+    if (!isMountedRef.current) return;
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    Alert.alert(t('search_ended_title', 'Busca Encerrada'), t('no_drivers_found_msg', 'Não encontramos motoristas disponíveis na sua região. Tente novamente.'));
+    resetRideState();
+  };
 
-    const handlePriceCalculated = (data: any) => {
-      if (!isMountedRef.current || !data) return;
-      if (typeof data.price === 'number') setEstimatedPrice(data.price);
-      if (typeof data.distance === 'number') setEstimatedDistance(data.distance);
-    };
+  const handlePriceCalculated = (data: any) => {
+    if (!isMountedRef.current || !data) return;
+    if (typeof data.price === 'number') setEstimatedPrice(data.price);
+    if (typeof data.distance === 'number') setEstimatedDistance(data.distance);
+  };
 
-    const handleDriverPosition = (data: any) => {
-      if (!isMountedRef.current || !data) return;
-      const lat = Number(data.latitude ?? data.lat);
-      const lng = Number(data.longitude ?? data.lng);
+  const handleDriverPosition = (data: any) => {
+    if (!isMountedRef.current || !data) return;
+    const lat = Number(data.latitude ?? data.lat);
+    const lng = Number(data.longitude ?? data.lng);
 
-      if (!isNaN(lat) && !isNaN(lng)) {
-        setDriverLocation({
-          latitude: lat,
-          longitude: lng,
-          heading: typeof data.heading === 'number' ? data.heading : 0,
-        });
-      }
-    };
-
-    socket.on('connect', handleConnect);
-    socket.on('disconnect', handleDisconnect);
-    socket.on('passenger:state_recovered', handleStateRecovered);
-    socket.on('driver:position', handleDriverPosition);
-    socket.on('ride:accepted', handleRideAccepted);
-    socket.on('ride:driver_arrived', handleDriverArrived);
-    socket.on('ride:started', handleRideStarted);
-    socket.on('ride:finished', handleRideFinished);
-    socket.on('ride:cancelled', handleRideCancelled);
-    socket.on('chat:receive_message', handleReceiveMessage);
-    socket.on('ride:no_drivers_found', handleNoDriversFound);
-    socket.on('ride:price_calculated', handlePriceCalculated);
-    socket.on('ride:inaccessible_location', handleInaccessibleLocationAlert);
-
-    return () => {
-      socket.off('connect', handleConnect);
-      socket.off('disconnect', handleDisconnect);
-      socket.off('passenger:state_recovered', handleStateRecovered);
-      socket.off('driver:position', handleDriverPosition);
-      socket.off('ride:accepted', handleRideAccepted);
-      socket.off('ride:driver_arrived', handleDriverArrived);
-      socket.off('ride:started', handleRideStarted);
-      socket.off('ride:finished', handleRideFinished);
-      socket.off('ride:cancelled', handleRideCancelled);
-      socket.off('chat:receive_message', handleReceiveMessage);
-      socket.off('ride:no_drivers_found', handleNoDriversFound);
-      socket.off('ride:price_calculated', handlePriceCalculated);
-      socket.off('ride:inaccessible_location', handleInaccessibleLocationAlert);
-      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    };
-  }, [getCurrentLocationWithFallback, handleInaccessibleLocationAlert, resetRideState, syncPassengerActiveRide, t]);
-
-  useEffect(() => {
-    let origin = pickupCoords;
-    let destination = dropoffCoords;
-    let extra = extraStopCoords;
-
-    if (rideStatus === 'accepted' && driverLocation) {
-      origin = driverLocation;
-      destination = pickupCoords;
-      extra = null;
-    } else if (rideStatus === 'in_progress' && driverLocation) {
-      origin = driverLocation;
-      destination = dropoffCoords;
-      extra = extraStopCoords;
-    }
-
-    if (origin && destination) {
-      let fitPoints = [origin, destination];
-      if (extra) fitPoints.push(extra);
-      
-      fitMapBounds(fitPoints);
-      fetchMapboxRoute(origin, destination, extra);
-    }
-  }, [pickupCoords, dropoffCoords, extraStopCoords, driverLocation, rideStatus, fitMapBounds, fetchMapboxRoute]);
-
-  useEffect(() => {
-    if (route.params?.openChat) {
-      setIsChatVisible(true);
-      navigation.setParams({ openChat: undefined });
-    }
-  }, [route.params?.openChat, navigation]);
-
-  useEffect(() => {
-    if (pickupCoords && dropoffCoords) {
-      setEstimatedPrice(null); 
-      calculateEstimate(pickupCoords, dropoffCoords, extraStopCoords);
-    }
-  }, [pickupCoords, dropoffCoords, extraStopCoords, serviceType, vehicleType, calculateEstimate]);
-
-  useEffect(() => {
-    const activeRideStates = ['searching', 'accepted', 'arrived', 'in_progress'];
-    const isRideActive = activeRideStates.includes(rideStatus);
-
-    if (isRideActive) {
-      activateKeepAwakeAsync('passenger_ride_tag').catch((err) => {
-        console.warn('⚠️ Não foi possível manter a tela acesa:', err);
+    if (!isNaN(lat) && !isNaN(lng)) {
+      setDriverLocation({
+        latitude: lat,
+        longitude: lng,
+        heading: typeof data.heading === 'number' ? data.heading : 0,
       });
-    } else {
-      deactivateKeepAwake('passenger_ride_tag').catch(() => {});
     }
+  };
 
-    return () => {
-      deactivateKeepAwake('passenger_ride_tag').catch(() => {});
-    };
-  }, [rideStatus]);
+  socket.on('connect', handleConnect);
+  socket.on('disconnect', handleDisconnect);
+  socket.on('passenger:state_recovered', handleStateRecovered);
+  socket.on('driver:position', handleDriverPosition);
+  socket.on('ride:accepted', handleRideAccepted);
+  socket.on('ride:driver_arrived', handleDriverArrived);
+  socket.on('ride:started', handleRideStarted);
+  socket.on('ride:finished', handleRideFinished);
+  socket.on('ride:cancelled', handleRideCancelled);
+  socket.on('chat:receive_message', handleReceiveMessage);
+  socket.on('ride:no_drivers_found', handleNoDriversFound);
+  socket.on('ride:price_calculated', handlePriceCalculated);
+  socket.on('ride:inaccessible_location', handleInaccessibleLocationAlert);
 
-  async function handleInitialRequestRide() {
-    const needsDropoff = serviceType !== 'aluguel';
-    if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
-      Alert.alert(
-        t('warning_title', 'Aviso ⚠️'), 
-        t('select_origin_destination_msg', 'Selecione a origem e o destino antes de solicitar.')
-      );
-      return;
-    }
+  return () => {
+    socket.off('connect', handleConnect);
+    socket.off('disconnect', handleDisconnect);
+    socket.off('passenger:state_recovered', handleStateRecovered);
+    socket.off('driver:position', handleDriverPosition);
+    socket.off('ride:accepted', handleRideAccepted);
+    socket.off('ride:driver_arrived', handleDriverArrived);
+    socket.off('ride:started', handleRideStarted);
+    socket.off('ride:finished', handleRideFinished);
+    socket.off('ride:cancelled', handleRideCancelled);
+    socket.off('chat:receive_message', handleReceiveMessage);
+    socket.off('ride:no_drivers_found', handleNoDriversFound);
+    socket.off('ride:price_calculated', handlePriceCalculated);
+    socket.off('ride:inaccessible_location', handleInaccessibleLocationAlert);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+  };
+}, [getCurrentLocationWithFallback, handleInaccessibleLocationAlert, resetRideState, syncPassengerActiveRide, t]);
 
-    try {
-      const currentLoc = await Location.getCurrentPositionAsync({ 
-        accuracy: Location.Accuracy.Balanced 
-      });
-      const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
+useEffect(() => {
+  let origin = pickupCoords;
+  let destination = dropoffCoords;
+  let extra = extraStopCoords;
 
-      if (isMocked) {
-        Alert.alert(
-          "🚨 Localização Simulada Detectada",
-          "Por motivos de segurança, não é possível solicitar corridas utilizando aplicativos de GPS falso. Desative a simulação de localização para continuar.",
-          [{ text: "Entendido" }]
-        );
-        return;
-      }
-    } catch (e) {}
-
-    if (paymentMethod === 'CASH') {
-      executeRideRequest();
-      return;
-    }
-
-    if (!paymentPhone && user?.phone) {
-      setPaymentPhone(user.phone);
-    }
-    setIsPaymentModalVisible(true);
+  if (rideStatus === 'accepted' && driverLocation) {
+    origin = driverLocation;
+    destination = pickupCoords;
+    extra = null;
+  } else if (rideStatus === 'in_progress' && driverLocation) {
+    origin = driverLocation;
+    destination = dropoffCoords;
+    extra = extraStopCoords;
   }
 
-  async function confirmPaymentAndRide() {
-    if (!user?.id) {
-      Alert.alert(t('error_title', 'Erro'), t('missing_user_data', 'Dados de usuário não encontrados.'));
-      return;
-    }
+  if (origin && destination) {
+    let fitPoints = [origin, destination];
+    if (extra) fitPoints.push(extra);
+    
+    fitMapBounds(fitPoints);
+    fetchMapboxRoute(origin, destination, extra);
+  }
+}, [pickupCoords, dropoffCoords, extraStopCoords, driverLocation, rideStatus, fitMapBounds, fetchMapboxRoute]);
 
-    let cleanPhone = paymentPhone.replace(/[^\d]/g, '');
-    if (cleanPhone.startsWith('245') && cleanPhone.length === 12) {
-      cleanPhone = cleanPhone.substring(3);
-    }
-    
-    const isGwPhoneValid = /^9[567]\d{7}$/.test(cleanPhone);
-    
-    if (!cleanPhone || !isGwPhoneValid) {
+useEffect(() => {
+  if (route.params?.openChat) {
+    setIsChatVisible(true);
+    navigation.setParams({ openChat: undefined });
+  }
+}, [route.params?.openChat, navigation]);
+
+useEffect(() => {
+  if (pickupCoords && dropoffCoords) {
+    setEstimatedPrice(null); 
+    calculateEstimate(pickupCoords, dropoffCoords, extraStopCoords);
+  }
+}, [pickupCoords, dropoffCoords, extraStopCoords, serviceType, vehicleType, calculateEstimate]);
+
+useEffect(() => {
+  const activeRideStates = ['searching', 'accepted', 'arrived', 'in_progress'];
+  const isRideActive = activeRideStates.includes(rideStatus);
+
+  if (isRideActive) {
+    activateKeepAwakeAsync('passenger_ride_tag').catch((err) => {
+      console.warn('⚠️ Não foi possível manter a tela acesa:', err);
+    });
+  } else {
+    deactivateKeepAwake('passenger_ride_tag').catch(() => {});
+  }
+
+  return () => {
+    deactivateKeepAwake('passenger_ride_tag').catch(() => {});
+  };
+}, [rideStatus]);
+
+async function handleInitialRequestRide() {
+  const needsDropoff = serviceType !== 'aluguel';
+  if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
+    Alert.alert(
+      t('warning_title', 'Aviso ⚠️'), 
+      t('select_origin_destination_msg', 'Selecione a origem e o destino antes de solicitar.')
+    );
+    return;
+  }
+
+  try {
+    const currentLoc = await Location.getCurrentPositionAsync({ 
+      accuracy: Location.Accuracy.Balanced 
+    });
+    const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
+
+    if (isMocked) {
       Alert.alert(
-        t('error_title', 'Erro de Formato'), 
-        t('invalid_phone_msg', 'Por favor, informe um número válido de 9 dígitos da conta Orange Money ou MTN (ex: 95XXXXXXX, 96XXXXXXX ou 97XXXXXXX).')
+        "🚨 Localização Simulada Detectada",
+        "Por motivos de segurança, não é possível solicitar corridas utilizando aplicativos de GPS falso. Desative a simulação de localização para continuar.",
+        [{ text: "Entendido" }]
       );
       return;
     }
+  } catch (e) {}
 
-    setIsProcessingPayment(true);
+  if (paymentMethod === 'CASH') {
+    executeRideRequest();
+    return;
+  }
 
-    try {
-      const abortController = new AbortController();
-      const timeoutId = setTimeout(() => abortController.abort(), 30000);
+  if (!paymentPhone && user?.phone) {
+    setPaymentPhone(user.phone);
+  }
+  setIsPaymentModalVisible(true);
+}
 
-      const paymentResponse = await initiateMobileMoneyPayment({
-        phone: cleanPhone,
-        amount: estimatedPrice || 1000,
-        provider: paymentMethod as 'ORANGE_MONEY' | 'MTN_MOMO',
-        passengerId: user.id,
-      }, { signal: abortController.signal });
+async function confirmPaymentAndRide() {
+  if (!user?.id) {
+    Alert.alert(t('error_title', 'Erro'), t('missing_user_data', 'Dados de usuário não encontrados.'));
+    return;
+  }
 
-      clearTimeout(timeoutId);
+  let cleanPhone = paymentPhone.replace(/[^\d]/g, '');
+  if (cleanPhone.startsWith('245') && cleanPhone.length === 12) {
+    cleanPhone = cleanPhone.substring(3);
+  }
+  
+  const isGwPhoneValid = /^9[567]\d{7}$/.test(cleanPhone);
+  
+  if (!cleanPhone || !isGwPhoneValid) {
+    Alert.alert(
+      t('error_title', 'Erro de Formato'), 
+      t('invalid_phone_msg', 'Por favor, informe um número válido de 9 dígitos da conta Orange Money ou MTN (ex: 95XXXXXXX, 96XXXXXXX ou 97XXXXXXX).')
+    );
+    return;
+  }
 
-      if (paymentResponse?.success) {
-        if (isMountedRef.current) {
-          setIsProcessingPayment(false);
-          setIsPaymentModalVisible(false);
-        }
+  setIsProcessingPayment(true);
 
-        Alert.alert(
-          'Solicitação Enviada 📲',
-          'Confirme a transação inserindo o seu PIN no prompt USSD que apareceu na tela do seu celular.',
-          [
-            { text: 'OK, já confirmei', onPress: () => executeRideRequest() }
-          ]
-        );
-      } else {
-        throw new Error(paymentResponse?.message || 'Falha ao processar pagamento.');
-      }
-    } catch (error: unknown) {
+  try {
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), 30000);
+
+    const paymentResponse = await initiateMobileMoneyPayment({
+      phone: cleanPhone,
+      amount: estimatedPrice || 1000,
+      provider: paymentMethod as 'ORANGE_MONEY' | 'MTN_MOMO',
+      passengerId: user.id,
+    }, { signal: abortController.signal });
+
+    clearTimeout(timeoutId);
+
+    if (paymentResponse?.success) {
       if (isMountedRef.current) {
         setIsProcessingPayment(false);
+        setIsPaymentModalVisible(false);
       }
-      const err = error as { name?: string; response?: { data?: { message?: string } } };
-      const isTimeout = err.name === 'AbortError';
+
       Alert.alert(
-        t('error_title', 'Aviso no Pagamento'), 
-        isTimeout 
-          ? 'A operadora está demorando para responder. Tente novamente ou use dinheiro.' 
-          : err?.response?.data?.message || 'Não foi possível autorizar o débito. Verifique o saldo ou o número e tente novamente.'
+        'Solicitação Enviada 📲',
+        'Confirme a transação inserindo o seu PIN no prompt USSD que apareceu na tela do seu celular.',
+        [
+          { text: 'OK, já confirmei', onPress: () => executeRideRequest() }
+        ]
       );
+    } else {
+      throw new Error(paymentResponse?.message || 'Falha ao processar pagamento.');
     }
+  } catch (error: unknown) {
+    if (isMountedRef.current) {
+      setIsProcessingPayment(false);
+    }
+    const err = error as { name?: string; response?: { data?: { message?: string } } };
+    const isTimeout = err.name === 'AbortError';
+    Alert.alert(
+      t('error_title', 'Aviso no Pagamento'), 
+      isTimeout 
+        ? 'A operadora está demorando para responder. Tente novamente ou use dinheiro.' 
+        : err?.response?.data?.message || 'Não foi possível autorizar o débito. Verifique o saldo ou o número e tente novamente.'
+    );
+  }
+}
+
+function executeRideRequest() {
+  if (!user?.id || !pickupCoords) {
+    Alert.alert(t('warning_title', 'Aviso ⚠️'), t('missing_data_msg', 'Dados insuficientes para iniciar a corrida. Verifique sua localização.'));
+    return;
   }
 
-  function executeRideRequest() {
-    if (!user?.id || !pickupCoords) {
-      Alert.alert(t('warning_title', 'Aviso ⚠️'), t('missing_data_msg', 'Dados insuficientes para iniciar a corrida. Verifique sua localização.'));
-      return;
-    }
+  try {
+    if (!socket.connected) connectPassengerSocket();
 
-    try {
-      if (!socket.connected) connectPassengerSocket();
+    setRideStatus('searching');
+    
+    const mappedServiceType = serviceType === 'viagem' ? 'RIDE' : serviceType === 'entrega' ? 'DELIVERY' : 'RENTAL';
+    const mappedVehicleType = vehicleType === 'particular' ? 'PARTICULAR' : vehicleType === 'moto-carro' ? 'MOTO_CARRO' : vehicleType.toUpperCase();
+    const regionLabel = RENTAL_PRICES[selectedRegion]?.label || selectedRegion;
 
-      setRideStatus('searching');
-      
-      const mappedServiceType = serviceType === 'viagem' ? 'RIDE' : serviceType === 'entrega' ? 'DELIVERY' : 'RENTAL';
-      const mappedVehicleType = vehicleType === 'particular' ? 'PARTICULAR' : vehicleType === 'moto-carro' ? 'MOTO_CARRO' : vehicleType.toUpperCase();
-      const regionLabel = RENTAL_PRICES[selectedRegion]?.label || selectedRegion;
+    emitRequestRide({
+      passengerId: user.id,
+      passengerName: (user as any)?.name || user.fullName,
+      passengerRating: Number((user as any)?.rating || user.ratingAverage || 5.0),
+      pickupLat: pickupCoords.latitude,
+      pickupLng: pickupCoords.longitude,
+      originAddress: pickupAddress,
+      destinationLat: dropoffCoords?.latitude || pickupCoords.latitude,
+      destinationLng: dropoffCoords?.longitude || pickupCoords.longitude,
+      destinationAddress: serviceType === 'aluguel' ? `Aluguel Toca-Toca (${regionLabel})` : dropoffAddress,
+      referencePoint: referencePoint.trim(),
+      serviceType: mappedServiceType,
+      vehicleType: mappedVehicleType,
+      paymentMethod: paymentMethod,
+      estimatedPrice: estimatedPrice,
+      priceXof: estimatedPrice,
+      guestName: isForAnotherPerson ? guestName : undefined,
+      guestPhone: isForAnotherPerson ? guestPhone : undefined,
 
-      emitRequestRide({
-        passengerId: user.id,
-        passengerName: (user as any)?.name || user.fullName,
-        passengerRating: Number((user as any)?.rating || user.ratingAverage || 5.0),
-        pickupLat: pickupCoords.latitude,
-        pickupLng: pickupCoords.longitude,
-        originAddress: pickupAddress,
-        destinationLat: dropoffCoords?.latitude || pickupCoords.latitude,
-        destinationLng: dropoffCoords?.longitude || pickupCoords.longitude,
-        destinationAddress: serviceType === 'aluguel' ? `Aluguel Toca-Toca (${regionLabel})` : dropoffAddress,
-        referencePoint: referencePoint.trim(),
-        serviceType: mappedServiceType,
-        vehicleType: mappedVehicleType,
-        paymentMethod: paymentMethod,
-        estimatedPrice: estimatedPrice,
-        priceXof: estimatedPrice,
-        guestName: isForAnotherPerson ? guestName : undefined,
-        guestPhone: isForAnotherPerson ? guestPhone : undefined,
-        stops: (extraStopCoords?.latitude && extraStopCoords?.longitude) ? [
-          {
-            address: extraStopAddress || '',
-            lat: extraStopCoords.latitude,
-            lng: extraStopCoords.longitude,
-            status: 'PENDING'
-          }
-        ] : [],
-        extraStopLat: extraStopCoords?.latitude,
-        extraStopLng: extraStopCoords?.longitude,
-        extraStopAddress: extraStopAddress || undefined,
-      });
-
-      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-      searchTimeoutRef.current = setTimeout(() => {
-        if (isMountedRef.current) {
-          Alert.alert(
-            t('no_response_title', 'Sem resposta'), 
-            t('no_driver_accepted_msg', 'Nenhum motorista aceitou no momento. Tente novamente.')
-          );
-          resetRideState();
+      // 🟢 GARANTE TODOS OS FORMATOS DE CHAVE PARA O MOTORISTA LER SEM FALHAS
+      stops: (extraStopCoords?.latitude && extraStopCoords?.longitude) ? [
+        {
+          address: extraStopAddress || 'Parada Intermediária',
+          lat: extraStopCoords.latitude,
+          lng: extraStopCoords.longitude,
+          latitude: extraStopCoords.latitude,
+          longitude: extraStopCoords.longitude,
+          status: 'PENDING'
         }
-      }, 60000);
+      ] : [],
 
-    } catch (error) {
-      Alert.alert(
-        t('error_title', 'Erro'), 
-        t('server_error_msg', 'Ocorreu um problema ao comunicar com os servidores.')
-      );
-    }
-  }
-
-  function checkPenaltyApplicable() {
-    if (!acceptedAt) return false;
-    return (new Date().getTime() - acceptedAt.getTime()) > 2 * 60 * 1000;
-  }
-
-  const handleCloseCancelModal = useCallback(() => setShowCancelModal(false), []);
-
-  const handleConfirmCancel = useCallback((reason: string) => {
-    setShowCancelModal(false);
+      extraStopLat: extraStopCoords?.latitude,
+      extraStopLng: extraStopCoords?.longitude,
+      extraStopAddress: extraStopAddress || undefined,
+    });
 
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-
-    if (!activeRideId || !user?.id) {
-      resetRideState();
-      return;
-    }
-    
-    cancelRideByPassenger(activeRideId, user.id, reason);
-    
-    persistRideState(null, 'idle');
-    setActiveRideId(null);
-    setRideStatus('idle');
-    setBookingStep('ADDRESS');
-    setDriverInfo(null);
-    setDriverLocation(null);
-    setStartOtp('');
-    
-    if (activeRideIdRef.current) activeRideIdRef.current = null;
-    resetRideState();
-  }, [activeRideId, user?.id, resetRideState]);
-
-  const onMapRegionDidChange = useCallback(async (feature: any) => {
-    setIsMapMoving(false);
-    if (rideStatus !== 'idle' || bookingStep !== 'ADDRESS') return;
-
-    if (isManualPickupRef.current) return;
-
-    const coords = feature?.geometry?.coordinates;
-    if (!coords || !Array.isArray(coords) || coords.length < 2) return;
-
-    const [lng, lat] = coords;
-    if (typeof lng !== 'number' || typeof lat !== 'number' || isNaN(lng) || isNaN(lat)) return;
-
-    setPickupCoords({ latitude: lat, longitude: lng });
-
-    const localName = findNearestLocalBairro(lat, lng);
-    if (localName) {
-      setPickupAddress(localName);
-      return;
-    }
-
-    if (MAPBOX_ACCESS_TOKEN) {
-      try {
-        const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`;
-        const res = await fetch(url);
-
-        if (!res.ok) return;
-
-        const data = await res.json();
-        
-        if (data?.features?.length > 0) {
-          const placeName = data.features[0].place_name || '';
-          const parts = placeName.split(',')
-            .map((p: string) => p.trim())
-            .filter((p: string) => p && !p.toLowerCase().includes('guiné'));
-          const cleanAddress = parts.length > 0 ? parts.slice(0, 2).join(', ') : 'Bissau, Centro';
-          setPickupAddress(cleanAddress);
-        }
-      } catch (err) {
-        console.warn('Geocodificação Mapbox falhou no arraste:', err);
-        setPickupAddress('Bissau, Centro');
+    searchTimeoutRef.current = setTimeout(() => {
+      if (isMountedRef.current) {
+        Alert.alert(
+          t('no_response_title', 'Sem resposta'), 
+          t('no_driver_accepted_msg', 'Nenhum motorista aceitou no momento. Tente novamente.')
+        );
+        resetRideState();
       }
-    }
-  }, [rideStatus, bookingStep]);
+    }, 60000);
 
-  const handleSubmitRating = useCallback((stars: number, tags: string[], comment: string) => {
-    if (activeRideId && driverInfo && user?.id) {
-      rateDriver({ 
-        rideId: activeRideId, 
-        reviewerId: user.id, 
-        reviewerType: 'PASSENGER', 
-        receiverId: driverInfo.id, 
-        stars, 
-        tags,
-        comment 
-      });
-    }
-    setShowRatingModal(false);
-    resetRideState();
-  }, [activeRideId, driverInfo, user?.id, resetRideState]);
-
-  const handleResetToMyGps = () => {
-    isManualPickupRef.current = false;
-    getCurrentLocationWithFallback();
-  };
-
-  const handleCallDriver = () => {
-    setIsChatVisible(true);
+  } catch (error) {
     Alert.alert(
-      t('contact_protected_title', 'Contato Protegido 🔒'),
-      t('contact_protected_msg', 'Por motivos de segurança e privacidade, a comunicação deve ser feita exclusivamente pelo Chat do aplicativo.')
+      t('error_title', 'Erro'), 
+      t('server_error_msg', 'Ocorreu um problema ao comunicar com os servidores.')
     );
-  };
+  }
+}
+function checkPenaltyApplicable() {
+  if (!acceptedAt) return false;
+  return (new Date().getTime() - acceptedAt.getTime()) > 2 * 60 * 1000;
+}
 
-  const handleShareTrip = async () => {
+const handleCloseCancelModal = useCallback(() => setShowCancelModal(false), []);
+
+const handleConfirmCancel = useCallback((reason: string) => {
+  setShowCancelModal(false);
+
+  if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+
+  if (!activeRideId || !user?.id) {
+    resetRideState();
+    return;
+  }
+  
+  cancelRideByPassenger(activeRideId, user.id, reason);
+  
+  persistRideState(null, 'idle');
+  setActiveRideId(null);
+  setRideStatus('idle');
+  setBookingStep('ADDRESS');
+  setDriverInfo(null);
+  setDriverLocation(null);
+  setStartOtp('');
+  
+  if (activeRideIdRef.current) activeRideIdRef.current = null;
+  resetRideState();
+}, [activeRideId, user?.id, resetRideState]);
+
+const onMapRegionDidChange = useCallback(async (feature: any) => {
+  setIsMapMoving(false);
+  if (rideStatus !== 'idle' || bookingStep !== 'ADDRESS') return;
+
+  if (isManualPickupRef.current) return;
+
+  const coords = feature?.geometry?.coordinates;
+  if (!coords || !Array.isArray(coords) || coords.length < 2) return;
+
+  const [lng, lat] = coords;
+  if (typeof lng !== 'number' || typeof lat !== 'number' || isNaN(lng) || isNaN(lat)) return;
+
+  setPickupCoords({ latitude: lat, longitude: lng });
+
+  const localName = findNearestLocalBairro(lat, lng);
+  if (localName) {
+    setPickupAddress(localName);
+    return;
+  }
+
+  if (MAPBOX_ACCESS_TOKEN) {
     try {
-      if (!driverInfo || !dropoffAddress || !activeRideId) {
-        Alert.alert(t('warning_title', 'Aviso ⚠️'), t('wait_trip_data', 'Aguarde os dados da corrida carregarem para compartilhar.'));
-        return;
+      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`;
+      const res = await fetch(url);
+
+      if (!res.ok) return;
+
+      const data = await res.json();
+      
+      if (data?.features?.length > 0) {
+        const placeName = data.features[0].place_name || '';
+        const parts = placeName.split(',')
+          .map((p: string) => p.trim())
+          .filter((p: string) => p && !p.toLowerCase().includes('guiné'));
+        const cleanAddress = parts.length > 0 ? parts.slice(0, 2).join(', ') : 'Bissau, Centro';
+        setPickupAddress(cleanAddress);
       }
-
-      const apiDomain = process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com';
-      const trackingUrl = `${apiDomain}/track/${activeRideId}`;
-
-      const mensagem = `🚕 Acompanhe minha viagem no Nobai245!\n\n` +
-        `👤 Motorista: ${driverInfo.name}\n` +
-        `🚘 Veículo: ${driverInfo.carModel || 'Veículo'} (${driverInfo.carColor || 'Cor N/A'}) - Placa: ${driverInfo.licensePlate || 'N/A'}\n` +
-        `📍 Destino: ${dropoffAddress}\n` +
-        `${driverEta ? `⏳ Previsão de chegada: ${driverEta} minutos\n` : ''}` +
-        `🌐 Acompanhe em tempo real pelo navegador: ${trackingUrl}`;
-
-      await Share.share({ message: mensagem, title: 'Detalhes da minha corrida' });
-    } catch (error) {
-      Alert.alert(t('error_title', 'Erro'), t('share_error_msg', 'Não foi possível abrir o menu de compartilhamento.'));
+    } catch (err) {
+      console.warn('Geocodificação Mapbox falhou no arraste:', err);
+      setPickupAddress('Bissau, Centro');
     }
-  };
-
-  function sendMessage() {
-    if (!inputText.trim() || !activeRideId) return;
-    const uniqueId = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-    const passengerName = (user as any)?.name || user?.fullName || t('passenger', 'Passageiro');
-
-    setMessages(prev => [...prev, { id: uniqueId, sender: 'passenger', text: inputText.trim() }]);
-    sendChatMessage(activeRideId, passengerName, inputText.trim());
-    setInputText('');
   }
+}, [rideStatus, bookingStep]);
 
-  function openSearchModal(type: 'pickup' | 'dropoff' | 'extraStop') {
-    setSearchType(type);
-    setSearchQuery('');
-    setSearchResults([]);
-    setIsSearchModalVisible(true);
+const handleSubmitRating = useCallback((stars: number, tags: string[], comment: string) => {
+  if (activeRideId && driverInfo && user?.id) {
+    rateDriver({ 
+      rideId: activeRideId, 
+      reviewerId: user.id, 
+      reviewerType: 'PASSENGER', 
+      receiverId: driverInfo.id, 
+      stars, 
+      tags,
+      comment 
+    });
   }
+  setShowRatingModal(false);
+  resetRideState();
+}, [activeRideId, driverInfo, user?.id, resetRideState]);
 
-  const handleSelectSearchResult = (address: string, coords: { latitude: number; longitude: number }) => {
-    if (searchType === 'pickup') {
-      isManualPickupRef.current = true;
-      setPickupAddress(address);
-      setPickupCoords(coords);
-    } else if (searchType === 'dropoff') {
-      setDropoffAddress(address);
-      setDropoffCoords(coords);
-      setBookingStep('SERVICE_AND_PRICE');
-    } else if (searchType === 'extraStop') {
-      setExtraStopAddress(address);
-      setExtraStopCoords(coords);
+const handleResetToMyGps = () => {
+  isManualPickupRef.current = false;
+  getCurrentLocationWithFallback();
+};
+
+const handleCallDriver = () => {
+  setIsChatVisible(true);
+  Alert.alert(
+    t('contact_protected_title', 'Contato Protegido 🔒'),
+    t('contact_protected_msg', 'Por motivos de segurança e privacidade, a comunicação deve ser feita exclusivamente pelo Chat do aplicativo.')
+  );
+};
+
+const handleShareTrip = async () => {
+  try {
+    if (!driverInfo || !dropoffAddress || !activeRideId) {
+      Alert.alert(t('warning_title', 'Aviso ⚠️'), t('wait_trip_data', 'Aguarde os dados da corrida carregarem para compartilhar.'));
+      return;
     }
 
-    setIsSearchModalVisible(false);
-  };
+    const apiDomain = process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com';
+    const trackingUrl = `${apiDomain}/track/${activeRideId}`;
 
-  const handleSosPress = () => {
-    Alert.alert(
-      t('emergency_sos', 'SOS / Emergência 🚨'),
-      t('choose_emergency_service', 'Selecione o serviço de emergência que deseja contactar:'),
-      [
-        { 
-          text: '🚨 Central de Segurança (112)', 
-          onPress: () => Linking.openURL('tel:112').catch(() => {}) 
-        },
-        { 
-          text: '🚒 Bombeiros (1313)', 
-          onPress: () => Linking.openURL('tel:1313').catch(() => {}) 
-        },
-        { 
-          text: '🚑 Saúde / Ambulância (1919)', 
-          onPress: () => Linking.openURL('tel:1919').catch(() => {}) 
-        },
-        { 
-          text: t('back_btn', 'Cancelar'), 
-          style: 'cancel' 
-        },
-      ],
-      { cancelable: true }
-    );
-  };
+    const mensagem = `🚕 Acompanhe minha viagem no Nobai245!\n\n` +
+      `👤 Motorista: ${driverInfo.name}\n` +
+      `🚘 Veículo: ${driverInfo.carModel || 'Veículo'} (${driverInfo.carColor || 'Cor N/A'}) - Placa: ${driverInfo.licensePlate || 'N/A'}\n` +
+      `📍 Destino: ${dropoffAddress}\n` +
+      `${driverEta ? `⏳ Previsão de chegada: ${driverEta} minutos\n` : ''}` +
+      `🌐 Acompanhe em tempo real pelo navegador: ${trackingUrl}`;
 
-  if (!passengerLocation || (locationError && !passengerLocation)) {
-    return (
-      <View style={[styles.loadingContainer, { paddingTop: Math.max(insets?.top || 0, 40), paddingBottom: Math.max(insets?.bottom || 0, 20) }]}>
-        <StatusBar barStyle="light-content" backgroundColor="#0F172A" translucent />
-        <MaterialCommunityIcons name="map-marker-radius" size={54} color="#EAB308" />
-        <Text style={styles.loadingText}>{locationError || t('getting_location', 'Obtendo localização exata...')}</Text>
-        {locationError && (
-          <TouchableOpacity 
-            style={styles.retryLocationBtn} 
-            onPress={getCurrentLocationWithFallback}
-            activeOpacity={0.8}
-          >
-            <Text style={{ color: '#0F172A', fontWeight: 'bold' }}>{t('try_again', 'Tentar Novamente')}</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    );
+    await Share.share({ message: mensagem, title: 'Detalhes da minha corrida' });
+  } catch (error) {
+    Alert.alert(t('error_title', 'Erro'), t('share_error_msg', 'Não foi possível abrir o menu de compartilhamento.'));
+  }
+};
+
+function sendMessage() {
+  if (!inputText.trim() || !activeRideId) return;
+  const uniqueId = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  const passengerName = (user as any)?.name || user?.fullName || t('passenger', 'Passageiro');
+
+  setMessages(prev => [...prev, { id: uniqueId, sender: 'passenger', text: inputText.trim() }]);
+  sendChatMessage(activeRideId, passengerName, inputText.trim());
+  setInputText('');
+}
+
+function openSearchModal(type: 'pickup' | 'dropoff' | 'extraStop') {
+  setSearchType(type);
+  setSearchQuery('');
+  setSearchResults([]);
+  setIsSearchModalVisible(true);
+}
+
+const handleSelectSearchResult = (address: string, coords: { latitude: number; longitude: number }) => {
+  if (searchType === 'pickup') {
+    isManualPickupRef.current = true;
+    setPickupAddress(address);
+    setPickupCoords(coords);
+  } else if (searchType === 'dropoff') {
+    setDropoffAddress(address);
+    setDropoffCoords(coords);
+    setBookingStep('SERVICE_AND_PRICE');
+  } else if (searchType === 'extraStop') {
+    setExtraStopAddress(address);
+    setExtraStopCoords(coords);
   }
 
-  const activeOtpPin = String(startOtp || driverInfo?.startOtp || '');
-  const topHeaderInset = Math.max((insets?.top || 0) + 12, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 12 : 20);
+  setIsSearchModalVisible(false);
+};
 
+const handleSosPress = () => {
+  Alert.alert(
+    t('emergency_sos', 'SOS / Emergência 🚨'),
+    t('choose_emergency_service', 'Selecione o serviço de emergência que deseja contactar:'),
+    [
+      { 
+        text: '🚨 Central de Segurança (112)', 
+        onPress: () => Linking.openURL('tel:112').catch(() => {}) 
+      },
+      { 
+        text: '🚒 Bombeiros (1313)', 
+        onPress: () => Linking.openURL('tel:1313').catch(() => {}) 
+      },
+      { 
+        text: '🚑 Saúde / Ambulância (1919)', 
+        onPress: () => Linking.openURL('tel:1919').catch(() => {}) 
+      },
+      { 
+        text: t('back_btn', 'Cancelar'), 
+        style: 'cancel' 
+      },
+    ],
+    { cancelable: true }
+  );
+};
+
+if (!passengerLocation || (locationError && !passengerLocation)) {
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+    <View style={[styles.loadingContainer, { paddingTop: Math.max(insets?.top || 0, 40), paddingBottom: Math.max(insets?.bottom || 0, 20) }]}>
+      <StatusBar barStyle="light-content" backgroundColor="#0F172A" translucent />
+      <MaterialCommunityIcons name="map-marker-radius" size={54} color="#EAB308" />
+      <Text style={styles.loadingText}>{locationError || t('getting_location', 'Obtendo localização exata...')}</Text>
+      {locationError && (
+        <TouchableOpacity 
+          style={styles.retryLocationBtn} 
+          onPress={getCurrentLocationWithFallback}
+          activeOpacity={0.8}
+        >
+          <Text style={{ color: '#0F172A', fontWeight: 'bold' }}>{t('try_again', 'Tentar Novamente')}</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
 
-      {/* 1. HEADER FLUTUANTE */}
-      <View style={[styles.floatingHeader, { top: topHeaderInset }]}>
-        <View style={styles.headerContent}>
-          <TouchableOpacity 
-            style={styles.headerUserInfo} 
-            activeOpacity={0.8}
-            onPress={() => navigation.navigate('Profile')}
-          >
-            <View style={styles.avatarPlaceholder}>
-              {user?.profilePicture ? (
-                <Image 
-                  source={{ uri: formatPhotoUrl(user.profilePicture) }} 
-                  style={{ width: '100%', height: '100%', borderRadius: 50 }} 
-                />
+const activeOtpPin = String(startOtp || driverInfo?.startOtp || '');
+const topHeaderInset = Math.max((insets?.top || 0) + 12, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 12 : 20);
+
+return (
+  <View style={styles.container}>
+    <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+
+    {/* 1. HEADER FLUTUANTE */}
+    <View style={[styles.floatingHeader, { top: topHeaderInset }]}>
+      <View style={styles.headerContent}>
+        <TouchableOpacity 
+          style={styles.headerUserInfo} 
+          activeOpacity={0.8}
+          onPress={() => navigation.navigate('Profile')}
+        >
+          <View style={styles.avatarPlaceholder}>
+            {user?.profilePicture ? (
+              <Image 
+                source={{ uri: formatPhotoUrl(user.profilePicture) }} 
+                style={{ width: '100%', height: '100%', borderRadius: 50 }} 
+              />
+            ) : (
+              <Ionicons name="person" size={18} color="#0F172A" />
+            )}
+          </View>
+          <Text style={styles.greetingText}>
+            {t('greeting', 'Olá')}, {user?.fullName ? user.fullName.split(' ')[0] : t('passenger', 'Passageiro')}
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={styles.langHeaderBtn} 
+          onPress={() => setLangModalVisible(true)}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.langHeaderBtnText}>{i18n.language?.toUpperCase() || 'PT'}</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.menuIcon} activeOpacity={0.7} onPress={() => setIsMenuVisible(true)}>
+          <Ionicons name="menu" size={22} color="#EAB308" />
+        </TouchableOpacity>
+      </View>
+    </View>
+
+    {/* 2. MAPA DE NAVEGAÇÃO MAPBOX */}
+    <Mapbox.MapView
+      style={StyleSheet.absoluteFill}
+      styleURL={Mapbox.StyleURL.Street}
+      logoEnabled={false}
+      attributionEnabled={false}
+      onCameraChanged={(e) => {
+        if (e.gestures.isGestureActive) {
+          setIsMapMoving(true);
+          isManualPickupRef.current = false;
+        }
+      }}
+      onMapIdle={onMapRegionDidChange}
+    >
+      <Mapbox.Camera
+        ref={cameraRef}
+        zoomLevel={14}
+        centerCoordinate={[
+          passengerLocation?.coords?.longitude || BISSAU_CENTER.longitude,
+          passengerLocation?.coords?.latitude || BISSAU_CENTER.latitude,
+        ]}
+        animationMode="flyTo"
+        animationDuration={1000}
+      />
+
+      {/* ROTA MAPBOX (A API deve retornar as coordinates passando por origem, parada e destino) */}
+      {routeGeometry?.type === 'Feature' && routeGeometry?.geometry?.coordinates && (
+        <Mapbox.ShapeSource id="routeSource" shape={routeGeometry}>
+          <Mapbox.LineLayer
+            id="routeLine"
+            style={{
+              lineColor: '#EAB308',
+              lineWidth: 5,
+              lineCap: 'round',
+              lineJoin: 'round',
+            }}
+          />
+        </Mapbox.ShapeSource>
+      )}
+
+      {/* 🚗 MARCADORES DOS MOTORISTAS ONLINE PRÓXIMOS (LIVRES) */}
+      {nearbyDrivers && nearbyDrivers.map((driver: any) => (
+        <Mapbox.PointAnnotation
+          key={`online-driver-${driver.id}`}
+          id={`online-driver-${driver.id}`}
+          coordinate={[Number(driver.lng), Number(driver.lat)]}
+          anchor={{ x: 0.5, y: 0.5 }}
+        >
+          <View style={styles.driverMarkerWrapper}>
+            <View style={{ transform: [{ rotate: `${driver.heading || 0}deg` }] }}>
+              <Image
+                source={getVehicle3DIconAsset(driver.vehicleType || 'TAXI', driver.carColor || 'AMARELO')}
+                style={styles.driverMarkerImage}
+                fadeDuration={0}
+                resizeMode="contain"
+              />
+            </View>
+          </View>
+        </Mapbox.PointAnnotation>
+      ))}
+
+      {/* 📍 PONTO DE EMBARQUE */}
+      {(pickupCoords?.latitude != null && pickupCoords?.longitude != null && !isNaN(Number(pickupCoords.longitude)) && !isNaN(Number(pickupCoords.latitude))) && (
+        <Mapbox.PointAnnotation 
+          id="pickupPoint" 
+          coordinate={[
+            Number(pickupCoords.longitude), 
+            Number(pickupCoords.latitude)
+          ]}
+        >
+          <View style={styles.pickupMarker}>
+            <Ionicons name="pin" size={22} color="#EAB308" />
+          </View>
+        </Mapbox.PointAnnotation>
+      )}
+
+      {/* 🔵 PARADA EXTRA (INTERMEDIÁRIA) */}
+      {extraStopCoords?.latitude != null && extraStopCoords?.longitude != null && !isNaN(Number(extraStopCoords.longitude)) && !isNaN(Number(extraStopCoords.latitude)) && (
+        <Mapbox.PointAnnotation
+          id="extraStopMarker"
+          coordinate={[Number(extraStopCoords.longitude), Number(extraStopCoords.latitude)]}
+        >
+          <View style={[styles.carMarker, { backgroundColor: '#3B82F6', borderColor: '#FFF', borderWidth: 2 }]}>
+            <Ionicons name="location" size={16} color="#FFF" />
+          </View>
+        </Mapbox.PointAnnotation>
+      )}
+
+      {/* 🚩 DESTINO FINAL */}
+      {dropoffCoords?.latitude != null && dropoffCoords?.longitude != null && !isNaN(Number(dropoffCoords.longitude)) && !isNaN(Number(dropoffCoords.latitude)) && (
+        <Mapbox.PointAnnotation
+          id="dropoffMarker"
+          coordinate={[Number(dropoffCoords.longitude), Number(dropoffCoords.latitude)]}
+        >
+          <View style={[styles.carMarker, { backgroundColor: '#0F172A' }]}>
+            <Ionicons name="flag" size={16} color="#FFF" />
+          </View>
+        </Mapbox.PointAnnotation>
+      )}
+
+      {/* 🏎️ MOTORISTA EM MOVIMENTO VISTO PELO PASSAGEIRO */}
+      {driverLocation?.latitude != null && driverLocation?.longitude != null && !isNaN(Number(driverLocation.longitude)) && !isNaN(Number(driverLocation.latitude)) && (
+        <Mapbox.PointAnnotation
+          id="driverMarker"
+          coordinate={[Number(driverLocation.longitude), Number(driverLocation.latitude)]}
+          anchor={{ x: 0.5, y: 0.5 }}
+        >
+          <View style={{ backgroundColor: 'transparent', width: 44, height: 44, justifyContent: 'center', alignItems: 'center' }}>
+            <View style={{ backgroundColor: 'transparent', transform: [{ rotate: `${driverLocation.heading || 0}deg` }] }}>
+              <Image
+                source={getVehicle3DIconAsset(
+                  driverInfo?.vehicleType || vehicleType,
+                  driverInfo?.carColor
+                )}
+                style={{ width: 40, height: 40, backgroundColor: 'transparent' }}
+                fadeDuration={0}
+                resizeMode="contain"
+              />
+            </View>
+          </View>
+        </Mapbox.PointAnnotation>
+      )}
+    </Mapbox.MapView>
+
+    {/* 📡 ONDAS DE RADAR DE BUSCA */}
+    {isSearchingRide && (
+      <SearchingRadarPulse statusText="Procurando motorista Nô Bai próximo..." />
+    )}
+
+    {/* PINO CENTRAL FLUTUANTE */}
+    {rideStatus === 'idle' && bookingStep === 'ADDRESS' && (
+      <View style={styles.centerPinContainer} pointerEvents="none">
+        <Animated.View style={[styles.centerPin, isMapMoving && { transform: [{ translateY: -10 }] }]}>
+          <Ionicons name="location" size={36} color="#EAB308" />
+        </Animated.View>
+        <View style={styles.pinShadow} />
+      </View>
+    )}
+
+    {/* BOTÃO RECENTRALIZAR */}
+    <TouchableOpacity 
+      style={[styles.recenterButton, { bottom: Math.max((insets?.bottom || 0) + 260, 270) }]} 
+      activeOpacity={0.85}
+      onPress={() => {
+        if (passengerLocation?.coords && cameraRef.current) {
+          cameraRef.current.setCamera({
+            centerCoordinate: [passengerLocation.coords.longitude, passengerLocation.coords.latitude],
+            zoomLevel: 15,
+            animationDuration: 800,
+          });
+        }
+      }}
+    >
+      <Ionicons name="locate" size={22} color="#EAB308" />
+    </TouchableOpacity>
+
+    {/* ATALHOS FAVORITOS */}
+    {rideStatus === 'idle' && bookingStep === 'ADDRESS' && (
+      <View style={[styles.favoritesContainer, { top: topHeaderInset + 68 }]}>
+        <TouchableOpacity style={styles.favoriteButton} activeOpacity={0.8} onPress={() => handleFavoritePress('home')}>
+          <View style={styles.favoriteIconBg}>
+            <Ionicons name="home" size={14} color="#0F172A" />
+          </View>
+          <Text style={styles.favoriteText} numberOfLines={1}>
+            {homeLocation ? homeLocation.address : t('save_home', 'Salvar Casa')}
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.favoriteButton} activeOpacity={0.8} onPress={() => handleFavoritePress('work')}>
+          <View style={styles.favoriteIconBg}>
+            <Ionicons name="briefcase" size={14} color="#0F172A" />
+          </View>
+          <Text style={styles.favoriteText} numberOfLines={1}>
+            {workLocation ? workLocation.address : t('save_work', 'Salvar Trabalho')}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    )}
+
+    {/* BADGE DE SEGURANÇA NOTURNO */}
+    {isNightTimeForPin() && Boolean(activeOtpPin) && ['accepted', 'arrived'].includes(rideStatus) && (
+      <View style={[styles.pinSecurityBadge, { top: topHeaderInset + 68 }]}>
+        <Ionicons name="shield-checkmark" size={20} color="#EAB308" />
+        <View style={styles.pinSecurityTextContainer}>
+          <Text style={styles.pinSecurityTitle}>{t('boarding_pin_title', 'PIN DE EMBARQUE')}</Text>
+          <Text style={styles.pinSecuritySub}>{t('tell_pin_to_driver_msg', 'Fale este código ao motorista para iniciar a corrida')}</Text>
+        </View>
+        <View style={styles.pinCodeBox}>
+          <Text style={styles.pinCodeText}>{activeOtpPin}</Text>
+        </View>
+      </View>
+    )}
+      {/* 3. PAINEL SLIDING BOTTOM SHEET */}
+    <KeyboardAvoidingView 
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
+      style={styles.bottomSheetWrapper} 
+      pointerEvents="box-none"
+    >
+      <Animated.View style={[styles.bottomSheet, { transform: [{ translateY }], paddingBottom: Math.max((insets?.bottom || 0) + 12, 20) }]}>
+        
+        <View style={styles.dragHandlerArea} {...panResponder.panHandlers}>
+          <View style={styles.dragIndicator} />
+        </View>
+
+        <ScrollView 
+          nestedScrollEnabled 
+          showsVerticalScrollIndicator={false} 
+          keyboardShouldPersistTaps="handled" 
+          contentContainerStyle={{ flexGrow: 1, paddingBottom: 16 }}
+        >
+          {/* CONFIGURAÇÃO DE ROTA */}
+          {rideStatus === 'idle' && bookingStep === 'ADDRESS' && (
+            <View style={{ width: '100%', paddingTop: 4 }}>
+              <Text style={styles.sheetTitle}>{t('where_to', 'Para onde vamos?')}</Text>
+              
+              <TouchableOpacity style={styles.mainSearchInput} activeOpacity={0.8} onPress={() => openSearchModal('pickup')}>
+                <Ionicons name="location" size={20} color="#EAB308" style={{ marginRight: 12 }} />
+                <Text style={styles.mainSearchText} numberOfLines={1} ellipsizeMode="tail">
+                  {pickupAddress || t('pickup_location', 'Local de partida')}
+                </Text>
+              </TouchableOpacity>
+
+              {showExtraStop && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+                  <TouchableOpacity style={[styles.mainSearchInput, { flex: 1, borderColor: '#3B82F6', marginBottom: 0 }]} activeOpacity={0.8} onPress={() => openSearchModal('extraStop')}>
+                    <Ionicons name="location-sharp" size={18} color="#3B82F6" style={{ marginRight: 12 }} />
+                    <Text style={styles.mainSearchText} numberOfLines={1} ellipsizeMode="tail">
+                      {extraStopAddress || 'Adicionar Parada Intermediária...'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={{ padding: 10, marginLeft: 6, backgroundColor: 'rgba(239,68,68,0.15)', borderRadius: 12 }} 
+                    onPress={() => { setShowExtraStop(false); setExtraStopAddress(''); setExtraStopCoords(null); }}
+                  >
+                    <Ionicons name="trash-outline" size={20} color="#EF4444" />
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              <TouchableOpacity style={styles.mainSearchInput} activeOpacity={0.8} onPress={() => openSearchModal('dropoff')}>
+                <Ionicons name="flag" size={20} color="#EF4444" style={{ marginRight: 12 }} />
+                <Text style={styles.mainSearchText} numberOfLines={1} ellipsizeMode="tail">
+                  {dropoffAddress || t('enter_destination_placeholder', 'Digite seu destino...')}
+                </Text>
+              </TouchableOpacity>
+
+              {!showExtraStop && (
+                <TouchableOpacity 
+                  style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 6, paddingHorizontal: 4 }} 
+                  onPress={() => { setShowExtraStop(true); openSearchModal('extraStop'); }}
+                >
+                  <Ionicons name="add-circle-outline" size={20} color="#3B82F6" style={{ marginRight: 6 }} />
+                  <Text style={{ color: '#3B82F6', fontWeight: '600', fontSize: 13 }}>+ Adicionar Parada Intermediária</Text>
+                </TouchableOpacity>
+              )}
+
+              {dropoffCoords ? (
+                <TouchableOpacity style={styles.requestButton} activeOpacity={0.85} onPress={() => setBookingStep('SERVICE_AND_PRICE')}>
+                  <Text style={styles.requestButtonText}>{t('next_btn', 'Avançar')}</Text>
+                </TouchableOpacity>
               ) : (
-                <Ionicons name="person" size={18} color="#0F172A" />
+                <TouchableOpacity style={[styles.requestButton, { backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155' }]} activeOpacity={0.8} onPress={() => openSearchModal('dropoff')}>
+                  <Text style={[styles.requestButtonText, { color: '#EAB308' }]}>{t('where_do_you_want_to_go', 'Aonde você quer ir?')}</Text>
+                </TouchableOpacity>
               )}
             </View>
-            <Text style={styles.greetingText}>
-              {t('greeting', 'Olá')}, {user?.fullName ? user.fullName.split(' ')[0] : t('passenger', 'Passageiro')}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.langHeaderBtn} 
-            onPress={() => setLangModalVisible(true)}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.langHeaderBtnText}>{i18n.language?.toUpperCase() || 'PT'}</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.menuIcon} activeOpacity={0.7} onPress={() => setIsMenuVisible(true)}>
-            <Ionicons name="menu" size={22} color="#EAB308" />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* 2. MAPA DE NAVEGAÇÃO MAPBOX */}
-      <Mapbox.MapView
-        style={StyleSheet.absoluteFill}
-        styleURL={Mapbox.StyleURL.Street}
-        logoEnabled={false}
-        attributionEnabled={false}
-        onCameraChanged={(e) => {
-          if (e.gestures.isGestureActive) {
-            setIsMapMoving(true);
-            isManualPickupRef.current = false;
-          }
-        }}
-        onMapIdle={onMapRegionDidChange}
-      >
-        <Mapbox.Camera
-          ref={cameraRef}
-          zoomLevel={14}
-          centerCoordinate={[
-            passengerLocation?.coords?.longitude || BISSAU_CENTER.longitude,
-            passengerLocation?.coords?.latitude || BISSAU_CENTER.latitude,
-          ]}
-          animationMode="flyTo"
-          animationDuration={1000}
-        />
-
-        {/* ROTA MAPBOX */}
-        {routeGeometry?.type === 'Feature' && routeGeometry?.geometry?.coordinates && (
-          <Mapbox.ShapeSource id="routeSource" shape={routeGeometry}>
-            <Mapbox.LineLayer
-              id="routeLine"
-              style={{
-                lineColor: '#EAB308',
-                lineWidth: 5,
-                lineCap: 'round',
-                lineJoin: 'round',
-              }}
-            />
-          </Mapbox.ShapeSource>
-        )}
-
-        {/* 🚗 MARCADORES DOS MOTORISTAS ONLINE PRÓXIMOS (LIVRES) */}
-        {nearbyDrivers && nearbyDrivers.map((driver: any) => (
-          <Mapbox.PointAnnotation
-            key={`online-driver-${driver.id}`}
-            id={`online-driver-${driver.id}`}
-            coordinate={[Number(driver.lng), Number(driver.lat)]}
-            anchor={{ x: 0.5, y: 0.5 }}
-          >
-            <View style={styles.driverMarkerWrapper}>
-              <View style={{ transform: [{ rotate: `${driver.heading || 0}deg` }] }}>
-                <Image
-                  source={getVehicle3DIconAsset(driver.vehicleType || 'TAXI', driver.carColor || 'AMARELO')}
-                  style={styles.driverMarkerImage}
-                  fadeDuration={0}
-                  resizeMode="contain"
-                />
-              </View>
-            </View>
-          </Mapbox.PointAnnotation>
-        ))}
-
-        {/* 📍 PONTO DE EMBARQUE */}
-        {(pickupCoords?.latitude != null && pickupCoords?.longitude != null && !isNaN(Number(pickupCoords.longitude)) && !isNaN(Number(pickupCoords.latitude))) && (
-          <Mapbox.PointAnnotation 
-            id="pickupPoint" 
-            coordinate={[
-              Number(pickupCoords.longitude), 
-              Number(pickupCoords.latitude)
-            ]}
-          >
-            <View style={styles.pickupMarker}>
-              <Ionicons name="pin" size={22} color="#EAB308" />
-            </View>
-          </Mapbox.PointAnnotation>
-        )}
-
-        {/* 🔵 PARADA EXTRA */}
-        {extraStopCoords?.latitude != null && extraStopCoords?.longitude != null && !isNaN(Number(extraStopCoords.longitude)) && !isNaN(Number(extraStopCoords.latitude)) && (
-          <Mapbox.PointAnnotation
-            id="extraStopMarker"
-            coordinate={[Number(extraStopCoords.longitude), Number(extraStopCoords.latitude)]}
-          >
-            <View style={[styles.carMarker, { backgroundColor: '#3B82F6', borderColor: '#FFF' }]}>
-              <Ionicons name="location" size={16} color="#FFF" />
-            </View>
-          </Mapbox.PointAnnotation>
-        )}
-
-        {/* 🚩 DESTINO FINAL */}
-        {dropoffCoords?.latitude != null && dropoffCoords?.longitude != null && !isNaN(Number(dropoffCoords.longitude)) && !isNaN(Number(dropoffCoords.latitude)) && (
-          <Mapbox.PointAnnotation
-            id="dropoffMarker"
-            coordinate={[Number(dropoffCoords.longitude), Number(dropoffCoords.latitude)]}
-          >
-            <View style={[styles.carMarker, { backgroundColor: '#0F172A' }]}>
-              <Ionicons name="flag" size={16} color="#FFF" />
-            </View>
-          </Mapbox.PointAnnotation>
-        )}
-
-        {/* 🏎️ MOTORISTA EM MOVIMENTO VISTO PELO PASSAGEIRO */}
-        {driverLocation?.latitude != null && driverLocation?.longitude != null && !isNaN(Number(driverLocation.longitude)) && !isNaN(Number(driverLocation.latitude)) && (
-          <Mapbox.PointAnnotation
-            id="driverMarker"
-            coordinate={[Number(driverLocation.longitude), Number(driverLocation.latitude)]}
-            anchor={{ x: 0.5, y: 0.5 }}
-          >
-            <View style={{ backgroundColor: 'transparent', width: 44, height: 44, justifyContent: 'center', alignItems: 'center' }}>
-              <View style={{ backgroundColor: 'transparent', transform: [{ rotate: `${driverLocation.heading || 0}deg` }] }}>
-                <Image
-                  source={getVehicle3DIconAsset(
-                    driverInfo?.vehicleType || vehicleType,
-                    driverInfo?.carColor
-                  )}
-                  style={{ width: 40, height: 40, backgroundColor: 'transparent' }}
-                  fadeDuration={0}
-                  resizeMode="contain"
-                />
-              </View>
-            </View>
-          </Mapbox.PointAnnotation>
-        )}
-      </Mapbox.MapView>
-      {/* 📡 ONDAS DE RADAR DE BUSCA */}
-      {isSearchingRide && (
-        <SearchingRadarPulse statusText="Procurando motorista Nô Bai próximo..." />
-      )}
-
-      {/* PINO CENTRAL FLUTUANTE */}
-      {rideStatus === 'idle' && bookingStep === 'ADDRESS' && (
-        <View style={styles.centerPinContainer} pointerEvents="none">
-          <Animated.View style={[styles.centerPin, isMapMoving && { transform: [{ translateY: -10 }] }]}>
-            <Ionicons name="location" size={36} color="#EAB308" />
-          </Animated.View>
-          <View style={styles.pinShadow} />
-        </View>
-      )}
-
-      {/* BOTÃO RECENTRALIZAR */}
-      <TouchableOpacity 
-        style={[styles.recenterButton, { bottom: Math.max((insets?.bottom || 0) + 260, 270) }]} 
-        activeOpacity={0.85}
-        onPress={() => {
-          if (passengerLocation?.coords && cameraRef.current) {
-            cameraRef.current.setCamera({
-              centerCoordinate: [passengerLocation.coords.longitude, passengerLocation.coords.latitude],
-              zoomLevel: 15,
-              animationDuration: 800,
-            });
-          }
-        }}
-      >
-        <Ionicons name="locate" size={22} color="#EAB308" />
-      </TouchableOpacity>
-
-      {/* ATALHOS FAVORITOS */}
-      {rideStatus === 'idle' && bookingStep === 'ADDRESS' && (
-        <View style={[styles.favoritesContainer, { top: topHeaderInset + 68 }]}>
-          <TouchableOpacity style={styles.favoriteButton} activeOpacity={0.8} onPress={() => handleFavoritePress('home')}>
-            <View style={styles.favoriteIconBg}>
-              <Ionicons name="home" size={14} color="#0F172A" />
-            </View>
-            <Text style={styles.favoriteText} numberOfLines={1}>
-              {homeLocation ? homeLocation.address : t('save_home', 'Salvar Casa')}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.favoriteButton} activeOpacity={0.8} onPress={() => handleFavoritePress('work')}>
-            <View style={styles.favoriteIconBg}>
-              <Ionicons name="briefcase" size={14} color="#0F172A" />
-            </View>
-            <Text style={styles.favoriteText} numberOfLines={1}>
-              {workLocation ? workLocation.address : t('save_work', 'Salvar Trabalho')}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* BADGE DE SEGURANÇA NOTURNO */}
-      {isNightTimeForPin() && Boolean(activeOtpPin) && ['accepted', 'arrived'].includes(rideStatus) && (
-        <View style={[styles.pinSecurityBadge, { top: topHeaderInset + 68 }]}>
-          <Ionicons name="shield-checkmark" size={20} color="#EAB308" />
-          <View style={styles.pinSecurityTextContainer}>
-            <Text style={styles.pinSecurityTitle}>{t('boarding_pin_title', 'PIN DE EMBARQUE')}</Text>
-            <Text style={styles.pinSecuritySub}>{t('tell_pin_to_driver_msg', 'Fale este código ao motorista para iniciar a corrida')}</Text>
-          </View>
-          <View style={styles.pinCodeBox}>
-            <Text style={styles.pinCodeText}>{activeOtpPin}</Text>
-          </View>
-        </View>
-      )}
-
-      {/* 3. PAINEL SLIDING BOTTOM SHEET */}
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
-        style={styles.bottomSheetWrapper} 
-        pointerEvents="box-none"
-      >
-        <Animated.View style={[styles.bottomSheet, { transform: [{ translateY }], paddingBottom: Math.max((insets?.bottom || 0) + 12, 20) }]}>
-          
-          <View style={styles.dragHandlerArea} {...panResponder.panHandlers}>
-            <View style={styles.dragIndicator} />
-          </View>
-
-          <ScrollView 
-            nestedScrollEnabled 
-            showsVerticalScrollIndicator={false} 
-            keyboardShouldPersistTaps="handled" 
-            contentContainerStyle={{ flexGrow: 1, paddingBottom: 16 }}
-          >
-            {rideStatus === 'idle' && bookingStep === 'ADDRESS' && (
-              <View style={{ width: '100%', paddingTop: 4 }}>
-                <Text style={styles.sheetTitle}>{t('where_to', 'Para onde vamos?')}</Text>
-                
-                <TouchableOpacity style={styles.mainSearchInput} activeOpacity={0.8} onPress={() => openSearchModal('dropoff')}>
-                  <Ionicons name="search" size={20} color="#EAB308" style={{ marginRight: 12 }} />
-                  <Text style={styles.mainSearchText} numberOfLines={1} ellipsizeMode="tail">
-                    {dropoffAddress || t('enter_destination_placeholder', 'Digite seu destino...')}
-                  </Text>
-                </TouchableOpacity>
-
-                {dropoffCoords ? (
-                  <TouchableOpacity style={styles.requestButton} activeOpacity={0.85} onPress={() => setBookingStep('SERVICE_AND_PRICE')}>
-                    <Text style={styles.requestButtonText}>{t('next_btn', 'Avançar')}</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <TouchableOpacity style={[styles.requestButton, { backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155' }]} activeOpacity={0.8} onPress={() => openSearchModal('dropoff')}>
-                    <Text style={[styles.requestButtonText, { color: '#EAB308' }]}>{t('where_do_you_want_to_go', 'Aonde você quer ir?')}</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            )}
+          )}
 
             {rideStatus === 'idle' && bookingStep === 'SERVICE_AND_PRICE' && (
               <View style={{ width: '100%' }}>
+                {/* RESUMO DO ITINERÁRIO (MÚLTIPLAS PARADAS) */}
+                <View style={{ backgroundColor: '#1E293B', padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: '#334155' }}>
+                  <Text style={{ color: '#94A3B8', fontSize: 11, fontWeight: 'bold', marginBottom: 6 }}>RESUMO DO PERCURSO</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                    <Ionicons name="ellipse" size={10} color="#EAB308" style={{ marginRight: 8 }} />
+                    <Text style={{ color: '#F8FAFC', fontSize: 13, flex: 1 }} numberOfLines={1}>{pickupAddress}</Text>
+                  </View>
+
+                  {extraStopCoords && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 4 }}>
+                      <Ionicons name="location-sharp" size={12} color="#3B82F6" style={{ marginRight: 6 }} />
+                      <Text style={{ color: '#60A5FA', fontSize: 13, flex: 1, fontWeight: '600' }} numberOfLines={1}>
+                        Parada: {extraStopAddress}
+                      </Text>
+                    </View>
+                  )}
+
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                    <Ionicons name="flag" size={12} color="#EF4444" style={{ marginRight: 6 }} />
+                    <Text style={{ color: '#F8FAFC', fontSize: 13, flex: 1 }} numberOfLines={1}>{dropoffAddress}</Text>
+                  </View>
+                </View>
+
                 <Text style={styles.sectionLabel}>{t('service_type', 'Tipo de Serviço')}</Text>
                 <View style={styles.serviceTypesContainer}>
                   <TouchableOpacity 
@@ -2074,7 +2216,7 @@ export function Home() {
                 <Text style={styles.sectionLabel}>{t('payment_method', 'Forma de Pagamento')}</Text>
                 
                 <View style={styles.paymentOptionsContainer}>
-                  {/* 1. OPÇÃO: ORANGE MONEY */}
+                  {/* 1. ORANGE MONEY */}
                   <TouchableOpacity 
                     style={[
                       styles.paymentBtn, 
@@ -2110,7 +2252,7 @@ export function Home() {
                     />
                   </TouchableOpacity>
 
-                  {/* 2. OPÇÃO: DINHEIRO (CASH) */}
+                  {/* 2. DINHEIRO (CASH) */}
                   <TouchableOpacity 
                     style={[
                       styles.paymentBtn, 
@@ -2144,7 +2286,6 @@ export function Home() {
                       color={paymentMethod === 'CASH' ? "#10B981" : "#64748B"} 
                     />
                   </TouchableOpacity>
-
                 </View>
 
                 {/* BOTÕES DE AÇÃO */}
@@ -2158,9 +2299,7 @@ export function Home() {
 
                   <TouchableOpacity 
                     style={[styles.requestButton, { flex: 1, marginLeft: 10 }]} 
-                    onPress={() => {
-                      handleInitialRequestRide();
-                    }}
+                    onPress={handleInitialRequestRide}
                   >
                     <Text style={styles.requestButtonText}>{t('request_now_btn', 'Pedir Agora')}</Text>
                   </TouchableOpacity>
@@ -2353,44 +2492,6 @@ export function Home() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* MODAL DE CONVIDADO / TERCEIROS */}
-      <Modal visible={isGuestModalVisible} transparent animationType="slide" onRequestClose={() => setIsGuestModalVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
-          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-            <View style={styles.modalOverlayInner}>
-              <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
-                <View style={[styles.locationModalCard, { paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
-                  <Text style={styles.locationModalTitle}>Para quem é a corrida?</Text>
-                  <TextInput
-                    style={[styles.referenceInput, { width: '100%', marginBottom: 12 }]}
-                    placeholder="Nome do passageiro"
-                    placeholderTextColor="#94A3B8"
-                    value={guestName}
-                    onChangeText={setGuestName}
-                  />
-                  <TextInput
-                    style={[styles.referenceInput, { width: '100%', marginBottom: 20 }]}
-                    placeholder="Telefone (Opcional)"
-                    placeholderTextColor="#94A3B8"
-                    keyboardType="phone-pad"
-                    value={guestPhone}
-                    onChangeText={setGuestPhone}
-                  />
-                  <View style={styles.actionRow}>
-                    <TouchableOpacity style={styles.cancelButtonOutline} onPress={() => { setIsForAnotherPerson(false); setIsGuestModalVisible(false); }}>
-                      <Text style={styles.cancelButtonOutlineText}>Cancelar</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[styles.requestButton, { flex: 1, marginLeft: 10 }]} onPress={() => { setIsForAnotherPerson(true); setIsGuestModalVisible(false); }}>
-                      <Text style={styles.requestButtonText}>Confirmar</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </TouchableWithoutFeedback>
-            </View>
-          </TouchableWithoutFeedback>
-        </KeyboardAvoidingView>
-      </Modal>
-
       {/* MODAL DE PAGAMENTO MOBILE MONEY */}
       <Modal 
         visible={isPaymentModalVisible} 
@@ -2407,7 +2508,6 @@ export function Home() {
               <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
                 <View style={[styles.paymentModalCard, { paddingBottom: Math.max((insets?.bottom || 0) + 20, 24) }]}>
                   
-                  {/* CABEÇALHO DO OPERADOR */}
                   <View style={[
                     styles.operatorHeader, 
                     { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#004F9F' }
@@ -2425,7 +2525,6 @@ export function Home() {
                     <TouchableOpacity 
                       onPress={() => !isProcessingPayment && setIsPaymentModalVisible(false)}
                       disabled={isProcessingPayment}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     >
                       <Ionicons name="close-circle" size={26} color="rgba(255,255,255,0.8)" />
                     </TouchableOpacity>
@@ -2462,54 +2561,43 @@ export function Home() {
                         placeholder={t('phone_number_placeholder', 'Ex: 955000000')}
                         placeholderTextColor="#94A3B8"
                       />
-                      {paymentPhone.length > 0 && !isProcessingPayment && (
-                        <TouchableOpacity 
-                          onPress={() => setPaymentPhone('')}
-                          style={{ padding: 8 }}
-                        >
-                          <Ionicons name="backspace-outline" size={20} color="#94A3B8" />
-                        </TouchableOpacity>
-                      )}
                     </View>
-                 
 
-              {/* BOTOES DE AÇÃO DO MODAL DE PAGAMENTO */}
-              <View style={styles.modalActionsRow}>
-                <TouchableOpacity 
-                  style={styles.cancelModalBtn} 
-                  disabled={isProcessingPayment} 
-                  onPress={() => setIsPaymentModalVisible(false)} 
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.cancelModalBtnText}>{t('back_btn', 'Cancelar')}</Text>
-                </TouchableOpacity>
+                    <View style={styles.modalActionsRow}>
+                      <TouchableOpacity 
+                        style={styles.cancelModalBtn} 
+                        disabled={isProcessingPayment} 
+                        onPress={() => setIsPaymentModalVisible(false)} 
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.cancelModalBtnText}>{t('back_btn', 'Cancelar')}</Text>
+                      </TouchableOpacity>
 
-                <TouchableOpacity 
-                  style={[
-                    styles.confirmModalBtn, 
-                    { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#004F9F' },
-                    isProcessingPayment && { opacity: 0.7 }
-                  ]}
-                  disabled={isProcessingPayment}
-                  onPress={confirmPaymentAndRide}
-                  activeOpacity={0.85}
-                >
-                  {isProcessingPayment ? (
-                    <ActivityIndicator color="#FFFFFF" size="small" />
-                  ) : (
-                    <Text style={styles.confirmModalBtnText}>{t('confirm_payment_btn', 'Confirmar e Pagar')}</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </ScrollView>
-          </View>
-        </TouchableWithoutFeedback>
-      </View>
-    </TouchableWithoutFeedback>
-  </KeyboardAvoidingView>
-</Modal>
-
-      {/* MENU LATERAL */}
+                      <TouchableOpacity 
+                        style={[
+                          styles.confirmModalBtn, 
+                          { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#004F9F' },
+                          isProcessingPayment && { opacity: 0.7 }
+                        ]}
+                        disabled={isProcessingPayment}
+                        onPress={confirmPaymentAndRide}
+                        activeOpacity={0.85}
+                      >
+                        {isProcessingPayment ? (
+                          <ActivityIndicator color="#FFFFFF" size="small" />
+                        ) : (
+                          <Text style={styles.confirmModalBtnText}>{t('confirm_payment_btn', 'Confirmar e Pagar')}</Text>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  </ScrollView>
+                </View>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
+      </Modal>
+{/* MENU LATERAL */}
       <Modal visible={isMenuVisible} animationType="fade" transparent onRequestClose={() => setIsMenuVisible(false)}>
         <TouchableOpacity style={styles.menuOverlay} activeOpacity={1} onPress={() => setIsMenuVisible(false)}>
           <View style={[styles.menuDrawer, { paddingTop: Math.max((insets?.top || 0) + 16, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 20), paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
@@ -2662,7 +2750,7 @@ export function Home() {
             behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
             style={{ flex: 1 }}
           >
-            {/* CABEÇALHO */}
+{/* CABEÇALHO */}
             <View style={styles.searchHeader}>
               <TouchableOpacity 
                 onPress={() => setIsSearchModalVisible(false)} 
@@ -2671,7 +2759,7 @@ export function Home() {
               >
                 <Ionicons name="arrow-back" size={24} color="#F8FAFC" />
               </TouchableOpacity>
-              
+
               <TouchableOpacity 
                 style={styles.passengerSelector} 
                 onPress={() => setIsGuestModalVisible(true)} 
@@ -2686,124 +2774,134 @@ export function Home() {
               <View style={{ width: 40 }} />
             </View>
 
-            {/* CORPO DO FORMULÁRIO DE BUSCA */}
-            <View style={styles.modalBody}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15, paddingHorizontal: 4 }}>
-                
-                {/* LINHA INDICADORA DE PONTOS NO MAPA */}
-                <View style={{ alignItems: 'center', marginRight: 12 }}>
-                  <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#EAB308' }} />
-                  <View style={{ width: 2, height: showExtraStop ? 42 : 32, backgroundColor: '#334155', marginVertical: 4 }} />
-                  {showExtraStop && (
-                    <>
-                      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#3B82F6' }} />
-                      <View style={{ width: 2, height: 42, backgroundColor: '#334155', marginVertical: 4 }} />
-                    </>
-                  )}
-                  <View style={{ width: 10, height: 10, backgroundColor: '#10B981', borderRadius: 2 }} />
-                </View>
+            {/* ENVOLVA O CORPO COM KEYBOARD AVOIDING VIEW */}
+            <KeyboardAvoidingView 
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              style={{ flex: 1 }}
+            >
+              <ScrollView 
+                contentContainerStyle={{ flexGrow: 1 }} 
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                {/* CORPO DO FORMULÁRIO DE BUSCA */}
+                <View style={styles.modalBody}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15, paddingHorizontal: 4 }}>
 
-                {/* INPUTS DE ENDEREÇO */}
-                <View style={{ flex: 1 }}>
-                  
-                  {/* 1. LOCAL DE PARTIDA */}
-                  <View style={[
-                    styles.mapboxSearchInputWrapper, 
-                    searchType === 'pickup' ? { borderColor: '#EAB308', borderWidth: 1 } : { marginBottom: 10, borderWidth: 1, borderColor: '#334155' }
-                  ]}>
-                    <TextInput
-                      style={styles.mapboxSearchInput}
-                      placeholder={t('pickup_location', 'Local de Partida')}
-                      placeholderTextColor="#64748B"
-                      value={searchType === 'pickup' ? searchQuery : pickupAddress}
-                      autoCorrect={false}
-                      autoCapitalize="sentences"
-                      onFocus={() => { setSearchType('pickup'); setSearchQuery(pickupAddress); }}
-                      onChangeText={(text) => {
-                        setSearchQuery(text);
-                        handleMapboxSearch(text);
-                      }}
-                    />
-                    {isSearchingMapbox && searchType === 'pickup' ? (
-                      <ActivityIndicator size="small" color="#EAB308" style={{ marginRight: 6 }} />
-                    ) : (searchType === 'pickup' ? searchQuery : pickupAddress) ? (
-                      <TouchableOpacity onPress={() => { setSearchQuery(''); setPickupAddress(''); }}>
-                        <Ionicons name="close-circle" size={18} color="#64748B" />
-                      </TouchableOpacity>
-                    ) : null}
-                  </View>
-
-                  {/* 2. PARADA EXTRA (OPCIONAL) */}
-                  {showExtraStop && (
-                    <View style={[
-                      styles.mapboxSearchInputWrapper, 
-                      searchType === 'extraStop' ? { borderColor: '#3B82F6', borderWidth: 1 } : { marginBottom: 10, borderWidth: 1, borderColor: '#334155' }
-                    ]}>
-                      <TextInput
-                        style={styles.mapboxSearchInput}
-                        placeholder="Adicionar parada..."
-                        placeholderTextColor="#64748B"
-                        value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
-                        autoCorrect={false}
-                        autoCapitalize="sentences"
-                        onFocus={() => { setSearchType('extraStop'); setSearchQuery(extraStopAddress); }}
-                        onChangeText={(text) => {
-                          setSearchQuery(text);
-                          handleMapboxSearch(text);
-                        }}
-                      />
-                      <TouchableOpacity 
-                        onPress={() => { setShowExtraStop(false); setExtraStopAddress(''); setExtraStopCoords(null); }}
-                        style={{ padding: 4 }}
-                      >
-                        <Ionicons name="close-circle" size={20} color="#EF4444" />
-                      </TouchableOpacity>
+                    {/* LINHA INDICADORA DE PONTOS NO MAPA */}
+                    <View style={{ alignItems: 'center', marginRight: 12 }}>
+                      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#EAB308' }} />
+                      <View style={{ width: 2, height: showExtraStop ? 42 : 32, backgroundColor: '#334155', marginVertical: 4 }} />
+                      {showExtraStop && (
+                        <>
+                          <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#3B82F6' }} />
+                          <View style={{ width: 2, height: 42, backgroundColor: '#334155', marginVertical: 4 }} />
+                        </>
+                      )}
+                      <View style={{ width: 10, height: 10, backgroundColor: '#10B981', borderRadius: 2 }} />
                     </View>
-                  )}
 
-                  {/* 3. DESTINO */}
-                  <View style={[
-                    styles.mapboxSearchInputWrapper, 
-                    searchType === 'dropoff' ? { borderColor: '#10B981', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
-                  ]}>
-                    <TextInput
-                      style={styles.mapboxSearchInput}
-                      placeholder={t('where_to', 'Para onde vamos?')}
-                      placeholderTextColor="#64748B"
-                      value={searchType === 'dropoff' ? searchQuery : dropoffAddress}
-                      autoCorrect={false}
-                      autoCapitalize="sentences"
-                      onFocus={() => { setSearchType('dropoff'); setSearchQuery(dropoffAddress); }}
-                      onChangeText={(text) => {
-                        setSearchQuery(text);
-                        handleMapboxSearch(text);
-                      }}
-                      autoFocus
-                    />
-                    {isSearchingMapbox && searchType === 'dropoff' ? (
-                      <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 6 }} />
-                    ) : (searchType === 'dropoff' ? searchQuery : dropoffAddress) ? (
-                      <TouchableOpacity onPress={() => { setSearchQuery(''); setDropoffAddress(''); }}>
-                        <Ionicons name="close-circle" size={18} color="#64748B" />
-                      </TouchableOpacity>
-                    ) : null}
+                    {/* INPUTS DE ENDEREÇO */}
+                    <View style={{ flex: 1 }}>
+
+                      {/* 1. LOCAL DE PARTIDA */}
+                      <View style={[
+                        styles.mapboxSearchInputWrapper, 
+                        searchType === 'pickup' ? { borderColor: '#EAB308', borderWidth: 1 } : { marginBottom: 10, borderWidth: 1, borderColor: '#334155' }
+                      ]}>
+                        <TextInput
+                          style={styles.mapboxSearchInput}
+                          placeholder={t('pickup_location', 'Local de Partida')}
+                          placeholderTextColor="#64748B"
+                          value={searchType === 'pickup' ? searchQuery : pickupAddress}
+                          autoCorrect={false}
+                          autoCapitalize="sentences"
+                          onFocus={() => { setSearchType('pickup'); setSearchQuery(pickupAddress); }}
+                          onChangeText={(text) => {
+                            setSearchQuery(text);
+                            handleMapboxSearch(text);
+                          }}
+                        />
+                        {isSearchingMapbox && searchType === 'pickup' ? (
+                          <ActivityIndicator size="small" color="#EAB308" style={{ marginRight: 6 }} />
+                        ) : (searchType === 'pickup' ? searchQuery : pickupAddress) ? (
+                          <TouchableOpacity onPress={() => { setSearchQuery(''); setPickupAddress(''); }}>
+                            <Ionicons name="close-circle" size={18} color="#64748B" />
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+
+                      {/* 2. PARADA EXTRA (OPCIONAL) */}
+                      {showExtraStop && (
+                        <View style={[
+                          styles.mapboxSearchInputWrapper, 
+                          searchType === 'extraStop' ? { borderColor: '#3B82F6', borderWidth: 1 } : { marginBottom: 10, borderWidth: 1, borderColor: '#334155' }
+                        ]}>
+                          <TextInput
+                            style={styles.mapboxSearchInput}
+                            placeholder="Adicionar parada..."
+                            placeholderTextColor="#64748B"
+                            value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
+                            autoCorrect={false}
+                            autoCapitalize="sentences"
+                            onFocus={() => { setSearchType('extraStop'); setSearchQuery(extraStopAddress); }}
+                            onChangeText={(text) => {
+                              setSearchQuery(text);
+                              handleMapboxSearch(text);
+                            }}
+                          />
+                          <TouchableOpacity 
+                            onPress={() => { setShowExtraStop(false); setExtraStopAddress(''); setExtraStopCoords(null); }}
+                            style={{ padding: 4 }}
+                          >
+                            <Ionicons name="close-circle" size={20} color="#EF4444" />
+                          </TouchableOpacity>
+                        </View>
+                      )}
+
+                      {/* 3. DESTINO */}
+                      <View style={[
+                        styles.mapboxSearchInputWrapper, 
+                        searchType === 'dropoff' ? { borderColor: '#10B981', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
+                      ]}>
+                        <TextInput
+                          style={styles.mapboxSearchInput}
+                          placeholder={t('where_to', 'Para onde vamos?')}
+                          placeholderTextColor="#64748B"
+                          value={searchType === 'dropoff' ? searchQuery : dropoffAddress}
+                          autoCorrect={false}
+                          autoCapitalize="sentences"
+                          onFocus={() => { setSearchType('dropoff'); setSearchQuery(dropoffAddress); }}
+                          onChangeText={(text) => {
+                            setSearchQuery(text);
+                            handleMapboxSearch(text);
+                          }}
+                          autoFocus
+                        />
+                        {isSearchingMapbox && searchType === 'dropoff' ? (
+                          <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 6 }} />
+                        ) : (searchType === 'dropoff' ? searchQuery : dropoffAddress) ? (
+                          <TouchableOpacity onPress={() => { setSearchQuery(''); setDropoffAddress(''); }}>
+                            <Ionicons name="close-circle" size={18} color="#64748B" />
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+
+                      {/* BOTÃO ADICIONAR PARADA */}
+                      {!showExtraStop && (
+                        <TouchableOpacity 
+                          style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center' }} 
+                          onPress={() => { setShowExtraStop(true); setSearchType('extraStop'); setSearchQuery(''); }}
+                        >
+                          <Ionicons name="add-circle-outline" size={18} color="#3B82F6" />
+                          <Text style={{ color: '#3B82F6', fontWeight: '700', marginLeft: 6, fontSize: 13 }}>
+                            Adicionar parada
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
                   </View>
-
-                  {/* BOTAO ADICIONAR PARADA */}
-                  {!showExtraStop && (
-                    <TouchableOpacity 
-                      style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center' }} 
-                      onPress={() => { setShowExtraStop(true); setSearchType('extraStop'); setSearchQuery(''); }}
-                    >
-                      <Ionicons name="add-circle-outline" size={18} color="#3B82F6" />
-                      <Text style={{ color: '#3B82F6', fontWeight: '700', marginLeft: 6, fontSize: 13 }}>
-                        Adicionar parada
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
-
+                  
               {/* LISTA DE RESULTADOS DA BUSCA */}
               <FlatList
                 data={searchResults}
