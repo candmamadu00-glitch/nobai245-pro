@@ -743,6 +743,19 @@ function translateToKriol(text: string): string {
     .replace(/Você está se aproximando do seu destino/gi, 'Bu sta kuazi pa tchega na bu distinu lembranta passageiro de pega se objetos na veiculo tchabe telemovel');
 }
 
+const speakInstruction = (text: string) => {
+  if (!text || lastSpokenInstructionRef.current === text) return;
+  
+  lastSpokenInstructionRef.current = text;
+  
+  Speech.stop();
+  Speech.speak(text, {
+    language: 'pt-BR',
+    pitch: 1.0,
+    rate: 0.95,
+  });
+};
+
 // 🗺️ BUSCA ROTA COMPLETA NO MAPBOX (ORIGEM -> PARADAS INTERMEDIÁRIAS -> DESTINO)
 const fetchMapboxRoute = async (
   startLng: number, 
@@ -785,7 +798,7 @@ const fetchMapboxRoute = async (
         setCurrentStepIndex(0);
 
         if (steps.length > 0 && steps[0]?.maneuver?.instruction) {
-          const firstInstruction = translateToKriolSafe(steps[0].maneuver.instruction);
+          const firstInstruction = translateToKriol(steps[0].maneuver.instruction);
           speakInstruction(firstInstruction);
         }
       }
@@ -810,19 +823,6 @@ const fetchMapboxRoute = async (
       setDriverEta(Math.max(1, Math.ceil((distKm / 30) * 60)));
     }
   }
-};
-
-const speakInstruction = (text: string) => {
-  if (!text || lastSpokenInstructionRef.current === text) return;
-  
-  lastSpokenInstructionRef.current = text;
-  
-  Speech.stop();
-  Speech.speak(text, {
-    language: 'pt-BR',
-    pitch: 1.0,
-    rate: 0.95,
-  });
 };
 
 // 🧭 Monitora a posição GPS do motorista e compara com a próxima curva da rota
@@ -869,12 +869,15 @@ useEffect(() => {
       incomingRide.pickupLat
     );
   } else if (rideState === 'in_progress' && incomingRide.destinationLat && incomingRide.destinationLng) {
-    // 2. Filtra paradas pendentes e ativas
-    const pendingStops = Array.isArray(incomingRide.stops) 
-      ? incomingRide.stops.filter((s: any) => s.status !== 'COMPLETED' && (s.lat || s.latitude))
-      : [];
+    // 2. Filtra paradas pendentes suportando tanto o array quanto extraStopLat/extraStopLng
+    let pendingStops: any[] = [];
+    if (Array.isArray(incomingRide.stops) && incomingRide.stops.length > 0) {
+      pendingStops = incomingRide.stops.filter((s: any) => s.status !== 'COMPLETED' && (s.lat || s.latitude));
+    } else if (incomingRide.extraStopLat && incomingRide.extraStopLng) {
+      pendingStops = [{ lat: incomingRide.extraStopLat, lng: incomingRide.extraStopLng }];
+    }
 
-    // 3. Traça a rota contínua: GPS Motorista -> Parada 1 -> Parada 2 -> Destino Final
+    // 3. Traça a rota contínua: GPS Motorista -> Parada(s) -> Destino Final
     fetchMapboxRoute(
       location.coords.longitude, 
       location.coords.latitude, 
@@ -1966,10 +1969,46 @@ return (
       </Animated.View>
     </KeyboardAvoidingView>
 
+    {/* MODAL PREFERÊNCIAS DE CHAMADA */}
     <Modal visible={showFilterModal} transparent animationType="slide">
-      {/* ... (mantido igual) ... */}
+      <View style={styles.filterModalOverlay}>
+        <View style={[
+          styles.filterModalCard,
+          { paddingBottom: Math.max((insets?.bottom || 0) + 24, Platform.OS === 'android' ? 36 : 20) }
+        ]}>
+          <Text style={styles.filterModalTitle}>Preferências de Chamada</Text>
+          <Text style={styles.filterModalSub}>Selecione os serviços que você deseja receber:</Text>
+          
+          <View style={styles.filterRow}>
+            <View style={styles.filterLabelContainer}>
+              <Ionicons name="car-sport" size={18} color="#EAB308" />
+              <Text style={styles.filterLabelText}>Corridas de Passageiro</Text>
+            </View>
+            <Switch value={serviceFilters.RIDE} onValueChange={(val) => setServiceFilters(prev => ({ ...prev, RIDE: val }))} trackColor={{ false: '#334155', true: '#EAB308' }} />
+          </View>
+          <View style={styles.filterRow}>
+            <View style={styles.filterLabelContainer}>
+              <Ionicons name="cube" size={18} color="#3B82F6" />
+              <Text style={styles.filterLabelText}>Entregas de Encomenda</Text>
+            </View>
+            <Switch value={serviceFilters.DELIVERY} onValueChange={(val) => setServiceFilters(prev => ({ ...prev, DELIVERY: val }))} trackColor={{ false: '#334155', true: '#3B82F6' }} />
+          </View>
+          <View style={styles.filterRow}>
+            <View style={styles.filterLabelContainer}>
+              <Ionicons name="time" size={18} color="#7C3AED" />
+              <Text style={styles.filterLabelText}>Aluguel</Text>
+            </View>
+            <Switch value={serviceFilters.RENTAL} onValueChange={(val) => setServiceFilters(prev => ({ ...prev, RENTAL: val }))} trackColor={{ false: '#334155', true: '#7C3AED' }} />
+          </View>
+
+          <TouchableOpacity style={styles.closeFilterBtn} onPress={() => setShowFilterModal(false)} activeOpacity={0.85}>
+            <Text style={styles.closeFilterText}>Salvar Preferências</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
     </Modal>
 
+    {/* NAVEGAÇÃO PASSOS A PASSO */}
     <TurnByTurnSheet 
       visible={showNavSheet} 
       onClose={() => setShowNavSheet(false)} 
@@ -1978,7 +2017,7 @@ return (
       onConfirmStop={() => setCurrentStopIndex(prev => prev + 1)} 
     />
 
-    {/* MODAL DE NOVA SOLICITAÇÃO DE CORRIDA */}
+    {/* MODAL DE NOVA SOLICITAÇÃO */}
     <Modal visible={rideState === 'idle' && !!incomingRide} transparent animationType="fade">
       <View style={styles.newRequestOverlay}>
         <View style={styles.newRequestCard}>
@@ -1994,20 +2033,26 @@ return (
             </View>
           </View>
 
-          {/* BADGE DESTACANDO QUE HÁ PARADAS MULTIPLAS */}
-          {incomingRide?.stops && incomingRide.stops.length > 0 && (
-            <View style={{ backgroundColor: '#DBEAFE', padding: 6, borderRadius: 6, marginVertical: 8, alignItems: 'center' }}>
-              <Text style={{ color: '#1D4ED8', fontWeight: 'bold', fontSize: 12 }}>Atenção: Esta corrida possui parada(s) extra(s)</Text>
-            </View>
-          )}
-
           <View style={styles.progressBarContainer}>
             <View style={[styles.progressBarFill, { width: `${Math.max(0, (timeLeft / 15) * 100)}%` }]} />
           </View>
           <Text style={styles.timerText}>Tempo restante: {timeLeft}s</Text>
 
           <View style={styles.modalPassengerRow}>
-            {/* ... */}
+            <View style={styles.passengerPhotoContainerSm}>
+              {incomingRide?.passengerPhoto ? (
+                <Image source={{ uri: formatImageUrl(incomingRide.passengerPhoto) }} style={{ width: '100%', height: '100%', borderRadius: 16 }} />
+              ) : (
+                <Ionicons name="person" size={16} color="#94A3B8" />
+              )}
+            </View>
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={styles.modalPassengerName}>{displayPassengerName}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                <Ionicons name="star" size={12} color="#EAB308" />
+                <Text style={styles.modalPassengerRating}>{incomingRide?.passengerRating?.toFixed(1) || '5.0'}</Text>
+              </View>
+            </View>
           </View>
 
           <View style={styles.routeTimelineContainer}>
@@ -2022,13 +2067,13 @@ return (
               </View>
             </View>
 
-            {/* PARADAS INTERMEDIÁRIAS BEM DESTACADAS NO PAINEL */}
+            {/* PARADAS INTERMEDIÁRIAS (EXIBIDAS ANTES DE ACEITAR) */}
             {incomingRide?.stops && incomingRide.stops.length > 0 && incomingRide.stops.map((stop: any, idx: number) => (
-              <View key={`modal-stop-${idx}`} style={[styles.timelineRow, { backgroundColor: '#F0F9FF', padding: 6, borderRadius: 6 }]}>
-                <Ionicons name="navigate-circle" size={18} color="#3B82F6" />
+              <View key={`modal-stop-${idx}`} style={styles.timelineRow}>
+                <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
                 <View style={styles.timelineTextContainer}>
-                  <Text style={[styles.timelineLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>PARADA {idx + 1}:</Text>
-                  <Text style={[styles.timelineAddress, { color: '#1E3A8A' }]} numberOfLines={2}>{stop.address || stop.name || 'Parada intermediária'}</Text>
+                  <Text style={[styles.timelineLabel, { color: '#3B82F6' }]}>PARADA {idx + 1}:</Text>
+                  <Text style={styles.timelineAddress} numberOfLines={2}>{stop.address || stop.name || 'Parada intermediária'}</Text>
                 </View>
               </View>
             ))}

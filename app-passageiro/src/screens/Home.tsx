@@ -2750,7 +2750,7 @@ return (
             behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
             style={{ flex: 1 }}
           >
-{/* CABEÇALHO */}
+            {/* CABEÇALHO */}
             <View style={styles.searchHeader}>
               <TouchableOpacity 
                 onPress={() => setIsSearchModalVisible(false)} 
@@ -2759,7 +2759,7 @@ return (
               >
                 <Ionicons name="arrow-back" size={24} color="#F8FAFC" />
               </TouchableOpacity>
-
+              
               <TouchableOpacity 
                 style={styles.passengerSelector} 
                 onPress={() => setIsGuestModalVisible(true)} 
@@ -2774,134 +2774,124 @@ return (
               <View style={{ width: 40 }} />
             </View>
 
-            {/* ENVOLVA O CORPO COM KEYBOARD AVOIDING VIEW */}
-            <KeyboardAvoidingView 
-              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-              style={{ flex: 1 }}
-            >
-              <ScrollView 
-                contentContainerStyle={{ flexGrow: 1 }} 
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-              >
-                {/* CORPO DO FORMULÁRIO DE BUSCA */}
-                <View style={styles.modalBody}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15, paddingHorizontal: 4 }}>
+            {/* CORPO DO FORMULÁRIO DE BUSCA */}
+            <View style={styles.modalBody}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15, paddingHorizontal: 4 }}>
+                
+                {/* LINHA INDICADORA DE PONTOS NO MAPA */}
+                <View style={{ alignItems: 'center', marginRight: 12 }}>
+                  <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#EAB308' }} />
+                  <View style={{ width: 2, height: showExtraStop ? 42 : 32, backgroundColor: '#334155', marginVertical: 4 }} />
+                  {showExtraStop && (
+                    <>
+                      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#3B82F6' }} />
+                      <View style={{ width: 2, height: 42, backgroundColor: '#334155', marginVertical: 4 }} />
+                    </>
+                  )}
+                  <View style={{ width: 10, height: 10, backgroundColor: '#10B981', borderRadius: 2 }} />
+                </View>
 
-                    {/* LINHA INDICADORA DE PONTOS NO MAPA */}
-                    <View style={{ alignItems: 'center', marginRight: 12 }}>
-                      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#EAB308' }} />
-                      <View style={{ width: 2, height: showExtraStop ? 42 : 32, backgroundColor: '#334155', marginVertical: 4 }} />
-                      {showExtraStop && (
-                        <>
-                          <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#3B82F6' }} />
-                          <View style={{ width: 2, height: 42, backgroundColor: '#334155', marginVertical: 4 }} />
-                        </>
-                      )}
-                      <View style={{ width: 10, height: 10, backgroundColor: '#10B981', borderRadius: 2 }} />
-                    </View>
-
-                    {/* INPUTS DE ENDEREÇO */}
-                    <View style={{ flex: 1 }}>
-
-                      {/* 1. LOCAL DE PARTIDA */}
-                      <View style={[
-                        styles.mapboxSearchInputWrapper, 
-                        searchType === 'pickup' ? { borderColor: '#EAB308', borderWidth: 1 } : { marginBottom: 10, borderWidth: 1, borderColor: '#334155' }
-                      ]}>
-                        <TextInput
-                          style={styles.mapboxSearchInput}
-                          placeholder={t('pickup_location', 'Local de Partida')}
-                          placeholderTextColor="#64748B"
-                          value={searchType === 'pickup' ? searchQuery : pickupAddress}
-                          autoCorrect={false}
-                          autoCapitalize="sentences"
-                          onFocus={() => { setSearchType('pickup'); setSearchQuery(pickupAddress); }}
-                          onChangeText={(text) => {
-                            setSearchQuery(text);
-                            handleMapboxSearch(text);
-                          }}
-                        />
-                        {isSearchingMapbox && searchType === 'pickup' ? (
-                          <ActivityIndicator size="small" color="#EAB308" style={{ marginRight: 6 }} />
-                        ) : (searchType === 'pickup' ? searchQuery : pickupAddress) ? (
-                          <TouchableOpacity onPress={() => { setSearchQuery(''); setPickupAddress(''); }}>
-                            <Ionicons name="close-circle" size={18} color="#64748B" />
-                          </TouchableOpacity>
-                        ) : null}
-                      </View>
-
-                      {/* 2. PARADA EXTRA (OPCIONAL) */}
-                      {showExtraStop && (
-                        <View style={[
-                          styles.mapboxSearchInputWrapper, 
-                          searchType === 'extraStop' ? { borderColor: '#3B82F6', borderWidth: 1 } : { marginBottom: 10, borderWidth: 1, borderColor: '#334155' }
-                        ]}>
-                          <TextInput
-                            style={styles.mapboxSearchInput}
-                            placeholder="Adicionar parada..."
-                            placeholderTextColor="#64748B"
-                            value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
-                            autoCorrect={false}
-                            autoCapitalize="sentences"
-                            onFocus={() => { setSearchType('extraStop'); setSearchQuery(extraStopAddress); }}
-                            onChangeText={(text) => {
-                              setSearchQuery(text);
-                              handleMapboxSearch(text);
-                            }}
-                          />
-                          <TouchableOpacity 
-                            onPress={() => { setShowExtraStop(false); setExtraStopAddress(''); setExtraStopCoords(null); }}
-                            style={{ padding: 4 }}
-                          >
-                            <Ionicons name="close-circle" size={20} color="#EF4444" />
-                          </TouchableOpacity>
-                        </View>
-                      )}
-
-                      {/* 3. DESTINO */}
-                      <View style={[
-                        styles.mapboxSearchInputWrapper, 
-                        searchType === 'dropoff' ? { borderColor: '#10B981', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
-                      ]}>
-                        <TextInput
-                          style={styles.mapboxSearchInput}
-                          placeholder={t('where_to', 'Para onde vamos?')}
-                          placeholderTextColor="#64748B"
-                          value={searchType === 'dropoff' ? searchQuery : dropoffAddress}
-                          autoCorrect={false}
-                          autoCapitalize="sentences"
-                          onFocus={() => { setSearchType('dropoff'); setSearchQuery(dropoffAddress); }}
-                          onChangeText={(text) => {
-                            setSearchQuery(text);
-                            handleMapboxSearch(text);
-                          }}
-                          autoFocus
-                        />
-                        {isSearchingMapbox && searchType === 'dropoff' ? (
-                          <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 6 }} />
-                        ) : (searchType === 'dropoff' ? searchQuery : dropoffAddress) ? (
-                          <TouchableOpacity onPress={() => { setSearchQuery(''); setDropoffAddress(''); }}>
-                            <Ionicons name="close-circle" size={18} color="#64748B" />
-                          </TouchableOpacity>
-                        ) : null}
-                      </View>
-
-                      {/* BOTÃO ADICIONAR PARADA */}
-                      {!showExtraStop && (
-                        <TouchableOpacity 
-                          style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center' }} 
-                          onPress={() => { setShowExtraStop(true); setSearchType('extraStop'); setSearchQuery(''); }}
-                        >
-                          <Ionicons name="add-circle-outline" size={18} color="#3B82F6" />
-                          <Text style={{ color: '#3B82F6', fontWeight: '700', marginLeft: 6, fontSize: 13 }}>
-                            Adicionar parada
-                          </Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  </View>
+                {/* INPUTS DE ENDEREÇO */}
+                <View style={{ flex: 1 }}>
                   
+                  {/* 1. LOCAL DE PARTIDA */}
+                  <View style={[
+                    styles.mapboxSearchInputWrapper, 
+                    searchType === 'pickup' ? { borderColor: '#EAB308', borderWidth: 1 } : { marginBottom: 10, borderWidth: 1, borderColor: '#334155' }
+                  ]}>
+                    <TextInput
+                      style={styles.mapboxSearchInput}
+                      placeholder={t('pickup_location', 'Local de Partida')}
+                      placeholderTextColor="#64748B"
+                      value={searchType === 'pickup' ? searchQuery : pickupAddress}
+                      autoCorrect={false}
+                      autoCapitalize="sentences"
+                      onFocus={() => { setSearchType('pickup'); setSearchQuery(pickupAddress); }}
+                      onChangeText={(text) => {
+                        setSearchQuery(text);
+                        handleMapboxSearch(text);
+                      }}
+                    />
+                    {isSearchingMapbox && searchType === 'pickup' ? (
+                      <ActivityIndicator size="small" color="#EAB308" style={{ marginRight: 6 }} />
+                    ) : (searchType === 'pickup' ? searchQuery : pickupAddress) ? (
+                      <TouchableOpacity onPress={() => { setSearchQuery(''); setPickupAddress(''); }}>
+                        <Ionicons name="close-circle" size={18} color="#64748B" />
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+
+                  {/* 2. PARADA EXTRA (OPCIONAL) */}
+                  {showExtraStop && (
+                    <View style={[
+                      styles.mapboxSearchInputWrapper, 
+                      searchType === 'extraStop' ? { borderColor: '#3B82F6', borderWidth: 1 } : { marginBottom: 10, borderWidth: 1, borderColor: '#334155' }
+                    ]}>
+                      <TextInput
+                        style={styles.mapboxSearchInput}
+                        placeholder="Adicionar parada..."
+                        placeholderTextColor="#64748B"
+                        value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
+                        autoCorrect={false}
+                        autoCapitalize="sentences"
+                        onFocus={() => { setSearchType('extraStop'); setSearchQuery(extraStopAddress); }}
+                        onChangeText={(text) => {
+                          setSearchQuery(text);
+                          handleMapboxSearch(text);
+                        }}
+                      />
+                      <TouchableOpacity 
+                        onPress={() => { setShowExtraStop(false); setExtraStopAddress(''); setExtraStopCoords(null); }}
+                        style={{ padding: 4 }}
+                      >
+                        <Ionicons name="close-circle" size={20} color="#EF4444" />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {/* 3. DESTINO */}
+                  <View style={[
+                    styles.mapboxSearchInputWrapper, 
+                    searchType === 'dropoff' ? { borderColor: '#10B981', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
+                  ]}>
+                    <TextInput
+                      style={styles.mapboxSearchInput}
+                      placeholder={t('where_to', 'Para onde vamos?')}
+                      placeholderTextColor="#64748B"
+                      value={searchType === 'dropoff' ? searchQuery : dropoffAddress}
+                      autoCorrect={false}
+                      autoCapitalize="sentences"
+                      onFocus={() => { setSearchType('dropoff'); setSearchQuery(dropoffAddress); }}
+                      onChangeText={(text) => {
+                        setSearchQuery(text);
+                        handleMapboxSearch(text);
+                      }}
+                      autoFocus
+                    />
+                    {isSearchingMapbox && searchType === 'dropoff' ? (
+                      <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 6 }} />
+                    ) : (searchType === 'dropoff' ? searchQuery : dropoffAddress) ? (
+                      <TouchableOpacity onPress={() => { setSearchQuery(''); setDropoffAddress(''); }}>
+                        <Ionicons name="close-circle" size={18} color="#64748B" />
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+
+                  {/* BOTÃO ADICIONAR PARADA */}
+                  {!showExtraStop && (
+                    <TouchableOpacity 
+                      style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center' }} 
+                      onPress={() => { setShowExtraStop(true); setSearchType('extraStop'); setSearchQuery(''); }}
+                    >
+                      <Ionicons name="add-circle-outline" size={18} color="#3B82F6" />
+                      <Text style={{ color: '#3B82F6', fontWeight: '700', marginLeft: 6, fontSize: 13 }}>
+                        Adicionar parada
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+
               {/* LISTA DE RESULTADOS DA BUSCA */}
               <FlatList
                 data={searchResults}
