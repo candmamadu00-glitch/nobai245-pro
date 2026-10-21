@@ -647,84 +647,6 @@ export function Home() {
     restoreLocalState();
   }, []);
 
-  const fetchMapboxRoute = async (
-    startLng: number, 
-    startLat: number, 
-    endLng: number, 
-    endLat: number,
-    waypoints: Array<any> = []
-  ) => {
-    try {
-      const validWaypoints = (waypoints || [])
-        .map(w => {
-          const lat = Number(w?.lat ?? w?.latitude);
-          const lng = Number(w?.lng ?? w?.longitude);
-          return (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) ? `${lng},${lat}` : null;
-        })
-        .filter((wp): wp is string => wp !== null);
-
-      const waypointsString = validWaypoints.length > 0 ? `${validWaypoints.join(';')};` : '';
-
-      const token = MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '';
-      const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${startLng},${startLat};${waypointsString}${endLng},${endLat}?geometries=geojson&steps=true&voice_instructions=true&banner_instructions=true&language=pt&access_token=${token}`;
-      
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`Falha requisição rota Mapbox: ${response.status}`);
-      const data = await response.json();
-
-      if (data.routes && data.routes.length > 0 && isMountedRef.current) {
-        const route = data.routes[0];
-        
-        setRouteCoordinates(route.geometry.coordinates);
-        
-        const eta = Math.ceil(route.duration / 60);
-        setDriverEta(eta);
-
-        if (route.legs && route.legs.length > 0) {
-          const steps = route.legs.flatMap((leg: any) => leg.steps || []);
-          setRouteSteps(steps);
-          setCurrentStepIndex(0);
-
-          if (steps.length > 0 && steps[0]?.maneuver?.instruction) {
-            const firstInstruction = translateToKriolSafe(steps[0].maneuver.instruction);
-            speakInstruction(firstInstruction);
-          }
-        }
-
-        if ((activeRideId || incomingRide?.rideId) && driver?.id && location?.coords && socket?.connected) {
-          socket.emit('driver:location_update', {
-            rideId: activeRideId || incomingRide?.rideId,
-            driverId: driver.id,
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
-            speed: location.coords.speed || 0,
-            heading: location.coords.heading || 0,
-            durationMinutes: eta
-          });
-        }
-      }
-    } catch (err) {
-      console.warn('⚠️ Erro ao buscar rota no Mapbox, aplicando rota direta fallback:', err);
-      if (isMountedRef.current) {
-        setRouteCoordinates([[startLng, startLat], [endLng, endLat]]);
-        const distKm = calculateDirectDistance(startLat, startLng, endLat, endLng);
-        setDriverEta(Math.max(1, Math.ceil((distKm / 30) * 60)));
-      }
-    }
-  };
-
-  const speakInstruction = (text: string) => {
-    if (!text || lastSpokenInstructionRef.current === text) return;
-    
-    lastSpokenInstructionRef.current = text;
-    
-    Speech.stop();
-    Speech.speak(text, {
-      language: 'pt-BR',
-      pitch: 1.0,
-      rate: 0.95,
-    });
-  };
 
 // 🌐 Função de tradução de instruções do Mapbox para Crioulo da Guiné-Bissau
 function translateToKriol(text: string): string {
@@ -743,18 +665,6 @@ function translateToKriol(text: string): string {
     .replace(/Você está se aproximando do seu destino/gi, 'Bu sta kuazi pa tchega na bu distinu lembranta passageiro de pega se objetos na veiculo tchabe telemovel');
 }
 
-const speakInstruction = (text: string) => {
-  if (!text || lastSpokenInstructionRef.current === text) return;
-  
-  lastSpokenInstructionRef.current = text;
-  
-  Speech.stop();
-  Speech.speak(text, {
-    language: 'pt-BR',
-    pitch: 1.0,
-    rate: 0.95,
-  });
-};
 
 // 🗺️ BUSCA ROTA COMPLETA NO MAPBOX (ORIGEM -> PARADAS INTERMEDIÁRIAS -> DESTINO)
 const fetchMapboxRoute = async (
