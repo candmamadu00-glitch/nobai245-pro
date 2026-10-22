@@ -1,3 +1,5 @@
+// 🟢 ADICIONE ESTA LINHA NO TOPO DO ARQUIVO:
+import { safeRedis } from '../server';
 import { Request, Response } from 'express';
 import { getIo } from '../server';
 import { prisma } from '../config/prisma';
@@ -13,7 +15,6 @@ import {
   calculateDistance
 } from '../services/rideRulesService';
 import { sendPushNotification, PUSH_CHANNELS } from '../services/pushNotifications';
-import { safeRedis } from '../config/redis';
 // -----------------------------------------------------------------------------
 // HELPERS DE VALIDAÇÃO E SANITIZAÇÃO
 // -----------------------------------------------------------------------------
