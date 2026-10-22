@@ -1250,7 +1250,7 @@ handleSocketEvent(socket, 'driver:finish_ride', async (data) => {
     return;
   }
 
-  const { rideId, dropoffLat, dropoffLng, finishOtp } = data || {}; // 🟢 Captura o finishOtp
+  const { rideId, dropoffLat, dropoffLng, finishOtp } = data || {};
   const driverId = socket.data.user.id;
 
   if (!isUuid(rideId) || !isValidCoordinate(Number(dropoffLat), Number(dropoffLng))) {
@@ -1259,14 +1259,12 @@ handleSocketEvent(socket, 'driver:finish_ride', async (data) => {
   }
 
   try {
-    // 🟢 Passa o finishOtp recebido do cliente para a função de liquidação
     const result = await finalizeRideAndCharge(
       rideId, 
       Number(dropoffLat), 
       Number(dropoffLng), 
       finishOtp
     );
-
     // 🟢 1. LIMPEZA DE CHAVES NO REDIS
     await safeRedis.del(`active_ride:${rideId}`);
     await safeRedis.del(`driver_active_ride:${driverId}`);

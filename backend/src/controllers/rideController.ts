@@ -379,6 +379,13 @@ export const driverArrived = async (req: Request, res: Response): Promise<void> 
     }
 
     const updatedRide = await driverArrivedLogic(String(rideId), driverId);
+    
+    // 🟢 ADICIONE ESTA TRAVA
+    if (!updatedRide) {
+      res.status(400).json({ success: false, error: 'Corrida não encontrada.' });
+      return;
+    }
+
     const sanitizedRide = sanitizeRide(updatedRide);
 
     try {
@@ -415,6 +422,13 @@ export const startRide = async (req: Request, res: Response): Promise<void> => {
     }
 
     const updatedRide = await startRideLogic(String(rideId), driverId, String(otp));
+
+    // 🟢 ADICIONE ESTA TRAVA
+    if (!updatedRide) {
+      res.status(400).json({ success: false, error: 'Corrida não encontrada ou OTP inválido.' });
+      return;
+    }
+
     const sanitizedRide = sanitizeRide(updatedRide);
 
     try {
@@ -433,7 +447,6 @@ export const startRide = async (req: Request, res: Response): Promise<void> => {
     res.status(400).json({ success: false, error: error?.message || 'Falha ao iniciar a corrida.' });
   }
 };
-
 export const finishRide = async (req: Request, res: Response): Promise<void> => {
   try {
     const driverId = (req as any).user?.id;

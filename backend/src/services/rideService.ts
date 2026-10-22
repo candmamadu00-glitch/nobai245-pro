@@ -652,14 +652,11 @@ export async function notifyDriverNearbyIfClose(rideId: string, distanceMeters: 
 // -----------------------------------------------------------------------------
 // 5. FINALIZAÇÃO DA CORRIDA E LIQUIDAÇÃO
 // -----------------------------------------------------------------------------
-// -----------------------------------------------------------------------------
-// 5. FINALIZAÇÃO DA CORRIDA E LIQUIDAÇÃO
-// -----------------------------------------------------------------------------
 export async function finalizeRideAndCharge(
   rideId: string, 
   finalLat: number, 
   finalLng: number,
-  finishOtpInput?: string // 🟢 Novo parâmetro opcional para o PIN de entrega
+  finishOtpInput?: string // 🟢 4º Parâmetro
 ) {
   if (!isValidCoordinate(finalLat, finalLng)) throw new Error('INVALID_COORDINATES: Coordenadas finais de desembarque inválidas.');
 
@@ -670,16 +667,16 @@ export async function finalizeRideAndCharge(
   if (!ride || !ride.driver || !ride.passenger) throw new Error('NOT_FOUND: Dados completos da corrida não localizados.');
   if (['COMPLETED', 'CANCELLED'].includes(ride.status)) throw new Error('RIDE_FINISHED: A corrida já foi finalizada anteriormente.');
 
-  // 🟢 VALIDAÇÃO DO PIN DE ENTREGA (DELIVERY / FINISH OTP)
-  if (ride.serviceType === ServiceType.DELIVERY || ride.finishOtp) {
+  // 🟢 VALIDAÇÃO SEGURA DO PIN DE ENTREGA
+  const rideFinishOtp = (ride as any).finishOtp;
+  if (ride.serviceType === ServiceType.DELIVERY || rideFinishOtp) {
     const cleanInput = (finishOtpInput || '').toString().trim();
-    const cleanDbOtp = (ride.finishOtp || '').toString().trim();
+    const cleanDbOtp = (rideFinishOtp || '').toString().trim();
 
     if (cleanDbOtp && cleanDbOtp !== cleanInput) {
       throw new Error('INVALID_OTP: O código PIN de confirmação de entrega informado está incorreto.');
     }
   }
-
   const calculatedFare = Math.round(Number(ride.priceXof || 0));
   const { distanceKm } = await getRouteDistanceAndDuration(Number(ride.originLat), Number(ride.originLng), finalLat, finalLng);
   
