@@ -1259,12 +1259,19 @@ handleSocketEvent(socket, 'driver:finish_ride', async (data) => {
   }
 
   try {
-    const result = await finalizeRideAndCharge(
+    // 🟢 Tipagem explícita dos 4 parâmetros para evitar incompatibilidade no tsc
+    const result = await (finalizeRideAndCharge as (
+      rideId: string, 
+      finalLat: number, 
+      finalLng: number, 
+      finishOtpInput?: string
+    ) => Promise<any>)(
       rideId, 
       Number(dropoffLat), 
       Number(dropoffLng), 
-      finishOtp
+      finishOtp ? String(finishOtp) : undefined
     );
+
     // 🟢 1. LIMPEZA DE CHAVES NO REDIS
     await safeRedis.del(`active_ride:${rideId}`);
     await safeRedis.del(`driver_active_ride:${driverId}`);
