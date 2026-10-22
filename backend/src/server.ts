@@ -1242,7 +1242,7 @@ io.on('connection', (socket) => {
     }
   });
   
-  // --- FINALIZAR CORRIDA E COBRANÇA ---
+ // --- FINALIZAR CORRIDA E COBRANÇA ---
 handleSocketEvent(socket, 'driver:finish_ride', async (data) => {
   if (isSocketRateLimited(socket, 'driver:finish_ride')) return;
   if (!isDriver(socket)) {
@@ -1259,7 +1259,6 @@ handleSocketEvent(socket, 'driver:finish_ride', async (data) => {
   }
 
   try {
-    // 🟢 Tipagem explícita dos 4 parâmetros para evitar incompatibilidade no tsc
     const result = await (finalizeRideAndCharge as (
       rideId: string, 
       finalLat: number, 
@@ -1272,11 +1271,22 @@ handleSocketEvent(socket, 'driver:finish_ride', async (data) => {
       finishOtp ? String(finishOtp) : undefined
     );
 
-    // 🟢 1. LIMPEZA DE CHAVES NO REDIS
+    // 🟢 1. LIMPEZA TOTAL DE CHAVES NO REDIS
     await safeRedis.del(`active_ride:${rideId}`);
     await safeRedis.del(`driver_active_ride:${driverId}`);
 
-    // 🟢 2. COLOCA O MOTORISTA DE VOLTA NA SALA DE DISPONÍVEIS
+    // 🟢 2. REINSERE O MOTORISTA NO REDIS GEO COM AS COORDENADAS DE DESEMBARQUE
+    const dropLatNum = Number(dropoffLat);
+    const dropLngNum = Number(dropoffLng);
+    if (isValidCoordinate(dropLatNum, dropLngNum)) {
+      await safeRedis.geoAdd('drivers:locations', {
+        longitude: dropLngNum,
+        latitude: dropLatNum,
+        member: driverId
+      });
+    }
+
+    // 🟢 3. RECOLOCA O SOCKET DO MOTORISTA NA SALA DE DISPONÍVEIS
     socket.join('available_drivers');
     socket.join(`driver_${driverId}`);
     socket.leave(rideId);

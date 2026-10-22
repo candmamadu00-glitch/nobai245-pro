@@ -480,6 +480,18 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
 
     const result = await finalizeRideAndCharge(currentRide.id, Number(finalLat), Number(finalLng));
 
+    // 🟢 LIMPEZA REDIS & RECUPERAÇÃO DE DISPONIBILIDADE
+    await safeRedis.del(`active_ride:${currentRide.id}`).catch(() => null);
+    await safeRedis.del(`driver_active_ride:${driverId}`).catch(() => null);
+
+    if (isValidCoordinate(Number(finalLat), Number(finalLng))) {
+      await safeRedis.geoAdd('drivers:locations', {
+        longitude: Number(finalLng),
+        latitude: Number(finalLat),
+        member: driverId
+      }).catch(() => null);
+    }
+
     try {
       const io = getIo();
       if (io) {
@@ -487,6 +499,13 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
         io.to(currentRide.id).emit('ride:finished', finishedPayload);
         io.to(currentRide.id).emit('ride:completed', finishedPayload);
         io.to('admin_dashboard').emit('admin:ride_update', { rideId: currentRide.id, status: 'FINISHED' });
+
+        // 🟢 Reinsere os sockets do motorista na sala de disponíveis
+        const driverSockets = await io.in(driverId).fetchSockets();
+        for (const s of driverSockets) {
+          s.join('available_drivers');
+          s.leave(currentRide.id);
+        }
       }
 
       if (currentRide.passenger?.deviceToken) {

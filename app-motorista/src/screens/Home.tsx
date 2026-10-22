@@ -915,9 +915,11 @@ useEffect(() => {
       if (!isCurrentlyInRide) {
         setActiveRideId(data.rideId);
         setRideState('accepted');
-        snapToState(true);
         if (incomingRideRef.current) persistActiveRideState(incomingRideRef.current, 'accepted', data.rideId);
+        setIncomingRide(null); // 🟢 CORREÇÃO: Fecha o modal quando o evento do servidor chegar!
+        snapToState(true);
       } else {
+        setIncomingRide(null); // 🟢 Fecha o modal para corridas de fila
         Alert.alert('Fila Confirmada 🔄', 'Nova corrida adicionada à sua fila com sucesso! Conclua a viagem atual para iniciar o novo embarque.');
       }
     } else {
@@ -947,14 +949,27 @@ useEffect(() => {
       setShowReceiptModal(false);
       fetchTodayEarnings();
     } else {
-      setRideState('completed');
+      // 🟢 CORREÇÃO: Reseta o estado local e notifica o socket da nova disponibilidade
+      setActiveRideId(null);
+      setIncomingRide(null);
+      setRideState('idle'); 
       setShowReceiptModal(true);
       setShowNavSheet(false);
       persistActiveRideState(null, 'idle', null);
       fetchTodayEarnings();
+
+      // 🟢 Dispara atualização imediata de localização para o backend registrar o motorista como livre
+      if (driver?.id && location?.coords && socket?.connected) {
+        socket.emit('driver:location_update', {
+          driverId: driver.id,
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+          speed: 0,
+          heading: location.coords.heading || 0,
+        });
+      }
     }
   };
-
   const handleQueuedNowActive = (data: { rideId: string; status: string }) => {
     if (!isMountedRef.current) return;
     setActiveRideId(data.rideId);
@@ -1288,6 +1303,7 @@ function acceptRide(rideId: string, driverId: string, currentLat: number, curren
   }, (err: any, response: any) => {
     if (!isMountedRef.current) return;
     setIsLoading(false);
+
     if (err) return Alert.alert('Sinal Fraco 📡', 'Não foi possível confirmar a corrida a tempo. Tente novamente.');
     
     if (response?.error) {
@@ -1300,15 +1316,15 @@ function acceptRide(rideId: string, driverId: string, currentLat: number, curren
     if (!isCurrentlyInRide) {
       setActiveRideId(rideId);
       setRideState('accepted');
-      snapToState(true);
       if (incomingRide) persistActiveRideState(incomingRide, 'accepted', rideId);
+      setIncomingRide(null); // 🟢 CORREÇÃO: Limpa a oferta e FECHA O MODAL imediatamente!
+      snapToState(true);
     } else {
-      setIncomingRide(null);
+      setIncomingRide(null); // 🟢 Garante que a oferta de fila também se feche
       Alert.alert('Corrida Agendada 🔄', 'A corrida foi aceita e colocada na sua fila.');
     }
   });
 }
-
 async function handleArrived() {
   if (!activeRideId) return;
   setIsLoading(true);
