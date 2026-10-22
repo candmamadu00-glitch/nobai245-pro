@@ -904,30 +904,44 @@ useEffect(() => {
   };
 
   const handleRideAccepted = async (data: any) => {
-    Vibration.cancel();
-    if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
-    if (!isMountedRef.current) return;
-    setIsLoading(false);
+  Vibration.cancel();
+  if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
+  if (!isMountedRef.current) return;
+  setIsLoading(false);
 
-    if (data.driverId === driver?.id) {
-      const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(rideState);
-      
-      if (!isCurrentlyInRide) {
-        setActiveRideId(data.rideId);
-        setRideState('accepted');
-        if (incomingRideRef.current) persistActiveRideState(incomingRideRef.current, 'accepted', data.rideId);
-        setIncomingRide(null); // 🟢 CORREÇÃO: Fecha o modal quando o evento do servidor chegar!
-        snapToState(true);
-      } else {
-        setIncomingRide(null); // 🟢 Fecha o modal para corridas de fila
-        Alert.alert('Fila Confirmada 🔄', 'Nova corrida adicionada à sua fila com sucesso! Conclua a viagem atual para iniciar o novo embarque.');
+  if (data.driverId === driver?.id) {
+    const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(rideState);
+    
+    if (!isCurrentlyInRide) {
+      setActiveRideId(data.rideId);
+      setRideState('accepted');
+
+      // 🟢 ATUALIZA O INCOMING RIDE COM OS DADOS DO SERVIDOR EM VEZ DE ZERAR (NULL)
+      setIncomingRide((prev: any) => ({
+        ...prev,
+        ...data,
+        passengerName: data.passengerName || prev?.passengerName || 'Passageiro',
+        passengerPhone: data.passengerPhone || prev?.passengerPhone,
+        passengerPhoto: data.passengerPhoto || prev?.passengerPhoto,
+        originAddress: data.originAddress || prev?.originAddress,
+        destinationAddress: data.destinationAddress || prev?.destinationAddress,
+        priceXof: Number(data.priceXof || prev?.priceXof || 0),
+      }));
+
+      if (incomingRideRef.current) {
+        persistActiveRideState(incomingRideRef.current, 'accepted', data.rideId);
       }
+      
+      snapToState(true); // Expandir o painel flutuante
     } else {
-      setIncomingRide(null);
-      Alert.alert('Corrida Indisponível', 'Outro motorista aceitou esta corrida.');
+      setIncomingRide(null); // Fecha o modal apenas se for uma corrida em fila
+      Alert.alert('Fila Confirmada 🔄', 'Nova corrida adicionada à sua fila com sucesso! Conclua a viagem atual para iniciar o novo embarque.');
     }
-  };
-
+  } else {
+    setIncomingRide(null);
+    Alert.alert('Corrida Indisponível', 'Outro motorista aceitou esta corrida.');
+  }
+};
   const handleRideStarted = () => {
     if (!isMountedRef.current) return;
     setIsLoading(false);
