@@ -360,7 +360,7 @@ model Ride {
 
   referencePoint String?
   startOtp       String? @db.VarChar(4)
-
+  finishOtp      String? @db.VarChar(4)
   shareToken String? @unique @db.VarChar(100)
 
   priceXof       Decimal  @db.Decimal(10, 2)

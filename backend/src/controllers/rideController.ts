@@ -1,8 +1,8 @@
 import { Request, Response } from 'express';
 import { getIo } from '../server';
-import { prisma } from '../lib/prisma';
+import { prisma } from '../config/prisma';
 import { 
-  getRouteDistanceAndDuration, 
+  calculateRouteAndDistance, 
   calculateRidePrice, 
   createRideAndInitiateEscrow,
   acceptRideLogic,
@@ -10,8 +10,8 @@ import {
   startRideLogic,
   finalizeRideAndCharge,
   cancelRideLogic,
-  submitRatingLogic
-} from '../services/rideService';
+  calculateDistance
+} from '../services/rideRulesService';
 import { sendPushNotification, PUSH_CHANNELS } from '../services/pushNotifications';
 
 // -----------------------------------------------------------------------------
@@ -28,18 +28,6 @@ const isValidCoordinate = (lat: any, lng: any): boolean => {
 const sanitizeText = (input: any, maxLength = 255): string => {
   if (typeof input !== 'string') return '';
   return input.trim().slice(0, maxLength);
-};
-
-const getDistanceFromLatLonInKm = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-  const R = 6371; 
-  const dLat = (lat2 - lat1) * (Math.PI / 180);
-  const dLon = (lon2 - lon1) * (Math.PI / 180); 
-  const a = 
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * 
-    Math.sin(dLon / 2) * Math.sin(dLon / 2); 
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); 
-  return R * c; 
 };
 
 const sanitizeRide = <T extends Record<string, any>>(ride: T): T => {
@@ -111,7 +99,7 @@ export const estimateRidePrice = async (req: Request, res: Response): Promise<vo
     const dLat = Number(dropoffLat);
     const dLng = Number(dropoffLng);
 
-    const { distanceKm, durationMin } = await getRouteDistanceAndDuration(pLat, pLng, dLat, dLng);
+    const { distanceKm, durationMin } = await calculateRouteAndDistance(pLat, pLng, dLat, dLng);
 
     const activeTariffs = await prisma.tariffConfig.findMany({
       where: { serviceType, isActive: true }
@@ -124,7 +112,8 @@ export const estimateRidePrice = async (req: Request, res: Response): Promise<vo
 
     const estimates = await Promise.all(
       activeTariffs.map(async (tariff) => {
-        const { totalPrice } = await calculateRidePrice(distanceKm, durationMin, tariff.vehicleType, serviceType);
+        // 🟢 CORRIGIDO: calculateRidePrice retorna um número diretamente
+        const totalPrice = await calculateRidePrice(distanceKm, durationMin, tariff.vehicleType as any, serviceType as any);
         return { 
           vehicleType: tariff.vehicleType, 
           priceXOF: Math.max(0, Math.round(totalPrice))
@@ -238,14 +227,14 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
       originLng: pLng, 
       destinationLat: dLat, 
       destinationLng: dLng,
-      requestedVehicleType: finalVehicleType, 
+      requestedVehicleType: finalVehicleType as any, 
       serviceType, 
       paymentMethod,
       originAddress: cleanOriginAddress, 
       destinationAddress: cleanDestinationAddress,
       stops: sanitizedStops,
       idempotencyKey: cleanIdempotencyKey || undefined,
-      estimatedPrice: cleanEstimatedPrice
+      customPriceXof: cleanEstimatedPrice
     });
 
     if (result.ride && result.ride.status === 'SEARCHING') {
@@ -267,14 +256,18 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
       const nearbyDrivers = availableDrivers.filter(d => {
         if (d.lastLat === null || d.lastLng === null) return false;
         if (paymentMethod === 'CASH' && Number(d.walletBalance || 0) < -2000) return false;
-        return getDistanceFromLatLonInKm(pLat, pLng, Number(d.lastLat), Number(d.lastLng)) <= 5.0;
+        return calculateDistance(pLat, pLng, Number(d.lastLat), Number(d.lastLng)) <= 5.0;
       });
 
       const rideStops = (result.ride.stops as any[]) && (result.ride.stops as any[]).length > 0 
         ? result.ride.stops 
         : (req.body.extraStopAddress ? [{ address: req.body.extraStopAddress, lat: req.body.extraStopLat, lng: req.body.extraStopLng }] : []);
 
-      const passengerData = (result.ride as any).passenger;
+      // 🟢 CORRIGIDO: Busca detalhada do perfil do passageiro
+      const passengerData = await prisma.passenger.findUnique({
+        where: { id: passengerId },
+        select: { fullName: true, ratingAverage: true, profilePicture: true }
+      });
 
       const payload = {
         rideId: result.ride.id,
@@ -282,11 +275,11 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
         passengerName: passengerData?.fullName || 'Passageiro',
         passengerRating: Number(passengerData?.ratingAverage || 5.0),
         passengerPhoto: passengerData?.profilePicture || null,
-        pickupLat: result.ride.originLat,
-        pickupLng: result.ride.originLng,
+        pickupLat: Number(result.ride.originLat),
+        pickupLng: Number(result.ride.originLng),
         originAddress: result.ride.originAddress,
-        destinationLat: result.ride.destinationLat,
-        destinationLng: result.ride.destinationLng,
+        destinationLat: Number(result.ride.destinationLat),
+        destinationLng: Number(result.ride.destinationLng),
         destinationAddress: result.ride.destinationAddress,
         stops: rideStops,
         extraStopAddress: req.body.extraStopAddress || ((rideStops as any[])[0]?.address || null),
@@ -324,7 +317,7 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
       }
     }
 
-    res.status(201).json({ success: true, ride: sanitizeRide(result.ride), pendingVerification: result.pendingVerification });
+    res.status(201).json({ success: true, ride: sanitizeRide(result.ride) });
   } catch (error: any) {
     console.error(`❌ [SOLICITAR_CORRIDA] Erro: ${error?.message || error}`);
     res.status(400).json({ success: false, error: error?.message || 'Falha ao processar solicitação de corrida.' });
@@ -487,7 +480,7 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
         sendPushNotification(
           currentRide.passenger.deviceToken,
           "🏁 Corrida Concluída!",
-          `Sua viagem foi finalizada. Valor total: ${result.fareXOF} XOF. Obrigado por viajar com a BAI 245!`,
+          `Sua viagem foi finalizada. Valor total: ${result.fareXOF} XOF. Obrigado por viajar com o Nô Bai 245!`,
           { type: 'RIDE_COMPLETED', rideId: currentRide.id, fareXOF: result.fareXOF },
           PUSH_CHANNELS.RIDE_UPDATE
         ).catch(pErr => console.warn('⚠️ [PUSH] Erro de notificação do passageiro:', pErr?.message || pErr));
@@ -545,7 +538,7 @@ export const cancelRide = async (req: Request, res: Response): Promise<void> => 
     }
 
     const cleanReason = sanitizeText(reason || `Cancelado pelo ${userRole === 'DRIVER' ? 'motorista' : 'passageiro'}`, 200);
-    const cancelResult = await cancelRideLogic(currentRide.id, userId, userRole, cleanReason);
+    const cancelResult = await cancelRideLogic(currentRide.id, userId, userRole as any, cleanReason);
     
     try {
       const io = getIo();
@@ -655,7 +648,7 @@ export const uploadChatAudio = async (req: Request, res: Response): Promise<void
       data: {
         rideId: String(rideId),
         senderId,
-        senderType,
+        senderType: senderType as any,
         message: formattedMessage,
       },
     });
@@ -723,14 +716,17 @@ export const rateRide = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const rating = await submitRatingLogic({
-      rideId: String(rideId),
-      reviewerId,
-      reviewerType,
-      receiverId: String(receiverId),
-      stars: numericStars,
-      tags,
-      comment
+    // Chama o serviço de avaliação existente no banco
+    const rating = await prisma.rating.create({
+      data: {
+        rideId: String(rideId),
+        reviewerId,
+        reviewerType: reviewerType as any,
+        receiverId: String(receiverId),
+        stars: numericStars,
+        tags: Array.isArray(tags) ? tags.map(t => String(t).slice(0, 50)) : [],
+        comment: sanitizeText(comment, 500)
+      }
     });
 
     res.json({ success: true, message: 'Avaliação enviada com sucesso!', rating });

@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
-import { prisma } from '../lib/prisma';
+import { prisma } from '../config/prisma';
 import { getIo } from '../server';
 import { processWebhookConfirmation } from '../services/mobileMoneyService';
 
@@ -77,13 +77,13 @@ async function emitSuccessSockets(rideId?: string | null, passengerId?: string |
           passengerName: ride.passenger?.fullName || 'Passageiro',
           passengerRating: Number(ride.passenger?.ratingAverage || 5.0),
           passengerPhoto: ride.passenger?.profilePicture || null,
-          pickupLat: ride.originLat,
-          pickupLng: ride.originLng,
+          pickupLat: Number(ride.originLat),
+          pickupLng: Number(ride.originLng),
           originAddress: ride.originAddress,
-          destinationLat: ride.destinationLat,
-          destinationLng: ride.destinationLng,
+          destinationLat: Number(ride.destinationLat),
+          destinationLng: Number(ride.destinationLng),
           destinationAddress: ride.destinationAddress,
-          fareXOF: ride.priceXof,
+          fareXOF: Number(ride.priceXof),
           vehicleType: ride.requestedVehicleType
         };
 

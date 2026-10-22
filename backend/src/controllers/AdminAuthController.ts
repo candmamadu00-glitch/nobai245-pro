@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import { prisma } from '../lib/prisma';
+import { prisma } from '../config/prisma';
 import { DriverStatus, PassengerStatus, TransactionType } from '@prisma/client';
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -311,7 +311,7 @@ export class AdminAuthController {
       
       const drivers = await prisma.driver.findMany({
         where: {
-          deletedAt: null, // 🛡️ Oculta contas excluídas da lista do painel
+          deletedAt: null,
           ...(status ? { status: status as DriverStatus } : {})
         },
         orderBy: { createdAt: 'desc' },
@@ -434,7 +434,7 @@ export class AdminAuthController {
     try {
       const passengers = await prisma.passenger.findMany({
         where: {
-          deletedAt: null // 🛡️ Oculta contas excluídas da lista do painel
+          deletedAt: null
         },
         orderBy: { createdAt: 'desc' },
         select: {
@@ -849,4 +849,28 @@ export class AdminAuthController {
   }
 }
 
-export default new AdminAuthController();
+const adminAuthController = new AdminAuthController();
+
+export const deleteDriver = (req: Request, res: Response) => adminAuthController.deleteDriver(req, res);
+export const deletePassenger = (req: Request, res: Response) => adminAuthController.deletePassenger(req, res);
+export const listAccountDeletionRequests = (req: Request, res: Response) => adminAuthController.listAccountDeletionRequests(req, res);
+export const reviewAccountDeletionRequest = (req: Request, res: Response) => adminAuthController.reviewAccountDeletionRequest(req, res);
+export const register = (req: Request, res: Response) => adminAuthController.register(req, res);
+export const login = (req: Request, res: Response) => adminAuthController.login(req, res);
+export const listDrivers = (req: Request, res: Response) => adminAuthController.listDrivers(req, res);
+export const updateDriverPaymentInfo = (req: Request, res: Response) => adminAuthController.updateDriverPaymentInfo(req, res);
+export const approveDriver = (req: Request, res: Response) => adminAuthController.approveDriver(req, res);
+export const listPassengers = (req: Request, res: Response) => adminAuthController.listPassengers(req, res);
+export const togglePassengerStatus = (req: Request, res: Response) => adminAuthController.togglePassengerStatus(req, res);
+export const toggleDriverStatus = (req: Request, res: Response) => adminAuthController.toggleDriverStatus(req, res);
+export const getFinancialDashboard = (req: Request, res: Response) => adminAuthController.getFinancialDashboard(req, res);
+export const listAllRides = (req: Request, res: Response) => adminAuthController.listAllRides(req, res);
+export const manualRecharge = (req: Request, res: Response) => adminAuthController.manualRecharge(req, res);
+export const listDriverChangeRequests = (req: Request, res: Response) => adminAuthController.listDriverChangeRequests(req, res);
+export const listAdmins = (req: Request, res: Response) => adminAuthController.listAdmins(req, res);
+export const createAdmin = (req: Request, res: Response) => adminAuthController.createAdmin(req, res);
+export const toggleAdminStatus = (req: Request, res: Response) => adminAuthController.toggleAdminStatus(req, res);
+export const reviewDriverChangeRequest = (req: Request, res: Response) => adminAuthController.reviewDriverChangeRequest(req, res);
+export const getOnlineDrivers = (req: Request, res: Response) => adminAuthController.getOnlineDrivers(req, res);
+
+export default adminAuthController;

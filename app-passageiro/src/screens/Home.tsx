@@ -1119,11 +1119,18 @@ export function Home() {
     connectPassengerSocket();
 
     const handleConnect = () => {
-      if (isMountedRef.current) setIsConnected(true);
-      if (socket && socket.connected) {
-        socket.emit('passenger:request_state');
-      }
-    };
+  if (isMountedRef.current) setIsConnected(true);
+  
+  if (socket && socket.connected) {
+    socket.emit('passenger:request_state');
+    
+    // ✅ CORREÇÃO: Reingressar na sala da corrida se houver uma ativa
+    if (activeRideIdRef.current) {
+      socket.emit('passenger:rejoin_ride', { rideId: activeRideIdRef.current });
+      console.log(`📡 [RECONEXÃO] Passageiro reingressou na sala: ${activeRideIdRef.current}`);
+    }
+  }
+};
 
     const handleDisconnect = () => {
       if (isMountedRef.current) setIsConnected(false);

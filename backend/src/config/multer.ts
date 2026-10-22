@@ -14,7 +14,6 @@ const storage = multer.diskStorage({
     cb(null, uploadPath);
   },
   filename: (req, file, cb) => {
-    // Hash criptográfico para evitar qualquer colisão de nomes
     const fileHash = crypto.randomBytes(10).toString('hex');
     const fileName = `${fileHash}-${Date.now()}${path.extname(file.originalname)}`;
     cb(null, fileName);

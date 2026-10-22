@@ -8,7 +8,7 @@ import {
   TransactionStatus,
   Prisma,
 } from '@prisma/client';
-import { prisma } from '../lib/prisma';
+import { prisma } from '../config/prisma';
 
 const CANCELLATION_FEE_XOF = 500;
 const FREE_CANCELLATION_MINUTES = 2;
@@ -39,7 +39,7 @@ export function isValidCoordinate(lat: unknown, lng: unknown): boolean {
 
 export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   if (!isValidCoordinate(lat1, lon1) || !isValidCoordinate(lat2, lon2)) {
-    return 0.5; // Distância padrão mínima de segurança em KM
+    return 0.5; // Distância mínima de segurança em KM
   }
 
   const R = 6371;
@@ -64,13 +64,13 @@ export async function calculateRouteAndDistance(
   dLng: number
 ): Promise<{ distanceKm: number; durationMin: number }> {
   const distanceKm = calculateDistance(pLat, pLng, dLat, dLng);
-  // Estimativa base de velocidade na Guiné-Bissau (~25 km/h em zonas urbanas)
+  // Estimativa base de velocidade urbana na Guiné-Bissau (~25 km/h)
   const durationMin = Math.max(3, Math.ceil((distanceKm / 25) * 60));
   return { distanceKm, durationMin };
 }
 
 // -----------------------------------------------------------------------------
-// 2. CÁLCULO DE TARIFA BLINDADO
+// 2. CÁLCULO DE TARIFA BLINDADO POR ÍNDICE COMPOSTO
 // -----------------------------------------------------------------------------
 export async function calculateRidePrice(
   distanceKm: number,
@@ -81,18 +81,21 @@ export async function calculateRidePrice(
   const safeDist = Math.max(0, Number.isFinite(Number(distanceKm)) ? Number(distanceKm) : 0);
   const safeDur = Math.max(0, Number.isFinite(Number(durationMin)) ? Number(durationMin) : 0);
 
+  // Busca ultra-rápida utilizando a chave única composta
   const tariff = await prisma.tariffConfig
-    .findFirst({
-      where: { vehicleType, serviceType, isActive: true },
+    .findUnique({
+      where: {
+        vehicleType_serviceType: { vehicleType, serviceType },
+      },
     })
     .catch(() => null);
 
   const fallback = DEFAULT_TARIFFS[vehicleType] || DEFAULT_TARIFFS.PARTICULAR;
 
-  const baseFare = tariff ? Number(tariff.baseFare) : fallback.baseFare;
-  const perKmFare = tariff ? Number(tariff.perKmFare) : fallback.perKmFare;
-  const perMinuteFare = tariff ? Number(tariff.perMinuteFare) : fallback.perMinuteFare;
-  const minimumFare = tariff ? Number(tariff.minimumFare) : fallback.minimumFare;
+  const baseFare = tariff && tariff.isActive ? Number(tariff.baseFare) : fallback.baseFare;
+  const perKmFare = tariff && tariff.isActive ? Number(tariff.perKmFare) : fallback.perKmFare;
+  const perMinuteFare = tariff && tariff.isActive ? Number(tariff.perMinuteFare) : fallback.perMinuteFare;
+  const minimumFare = tariff && tariff.isActive ? Number(tariff.minimumFare) : fallback.minimumFare;
 
   let totalPrice = baseFare + safeDist * perKmFare + safeDur * perMinuteFare;
 
@@ -159,6 +162,7 @@ export async function createRideAndInitiateEscrow(
         paymentMethod: data.paymentMethod || PaymentMethod.ORANGE_MONEY,
         priceXof,
         distanceKm,
+        durationMin,
         status: 'SEARCHING',
         stops: data.stops ?? Prisma.JsonNull,
       },
@@ -172,7 +176,7 @@ export async function createRideAndInitiateEscrow(
         status: TransactionStatus.HELD_IN_ESCROW,
         paymentMethod: data.paymentMethod || PaymentMethod.ORANGE_MONEY,
         amount: priceXof,
-        reference: `ESCROW-${ride.id.slice(0, 8)}-${Date.now()}`,
+        reference: `ESCROW-${ride.id}`,
         idempotencyKey: data.idempotencyKey,
         description: `Bloqueio de caução em Escrow para corrida #${ride.id.slice(0, 8)}`,
       },
@@ -183,23 +187,22 @@ export async function createRideAndInitiateEscrow(
 }
 
 // -----------------------------------------------------------------------------
-// 4. ACEITE DE CORRIDA ATÔMICO
+// 4. ACEITE DE CORRIDA ATÔMICO (COM SUPORTE A FILA DE CORRIDAS)
 // -----------------------------------------------------------------------------
 export async function acceptRideLogic(rideId: string, driverId: string) {
   return await prisma.$transaction(async (tx) => {
-    // 1. Reserva o motorista atomicamente
-    const driverLock = await tx.driver.updateMany({
-      where: { id: driverId, isOnline: true, currentRideId: null, status: DriverStatus.APPROVED },
-      data: { currentRideId: rideId, isAvailable: false },
+    const driver = await tx.driver.findUnique({
+      where: { id: driverId },
+      select: { currentRideId: true, isOnline: true, status: true },
     });
 
-    if (driverLock.count === 0) {
+    if (!driver || !driver.isOnline || driver.status !== DriverStatus.APPROVED) {
       throw new Error('MOTORISTA_OCUPADO_OU_OFFLINE');
     }
 
     const startOtp = Math.floor(1000 + Math.random() * 9000).toString();
 
-    // 2. Atribui a corrida atomicamente garantindo que status ainda seja SEARCHING
+    // 1. Tenta atribuir a corrida atomicamente se ela ainda estiver SEARCHING
     const updatedRideCount = await tx.ride.updateMany({
       where: { id: rideId, status: 'SEARCHING' },
       data: {
@@ -212,6 +215,20 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
 
     if (updatedRideCount.count === 0) {
       throw new Error('CORRIDA_NAO_DISPONIVEL');
+    }
+
+    // 2. Se o motorista não tem corrida ativa, define esta como a corrida principal
+    // Se já tiver uma corrida ativa, mantém a principal e apenas fecha a disponibilidade (Fila cheia)
+    if (!driver.currentRideId) {
+      await tx.driver.update({
+        where: { id: driverId },
+        data: { currentRideId: rideId, isAvailable: false },
+      });
+    } else {
+      await tx.driver.update({
+        where: { id: driverId },
+        data: { isAvailable: false },
+      });
     }
 
     const ride = await tx.ride.findUnique({
@@ -280,7 +297,7 @@ export async function startRideLogic(rideId: string, driverId: string, otpInput:
 }
 
 // -----------------------------------------------------------------------------
-// 6. FINALIZAÇÃO E REPASSE VIA ESCROW
+// 6. FINALIZAÇÃO, CRÉDITO DIRETO E TRANSIÇÃO DE FILA
 // -----------------------------------------------------------------------------
 export async function finalizeRideAndCharge(rideId: string, finalLat: number, finalLng: number) {
   if (!isValidCoordinate(finalLat, finalLng)) {
@@ -296,11 +313,12 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
   if (['COMPLETED', 'CANCELLED'].includes(ride.status)) throw new Error('CORRIDA_JA_FINALIZADA');
 
   const tariff = await prisma.tariffConfig
-    .findFirst({
+    .findUnique({
       where: {
-        vehicleType: ride.requestedVehicleType,
-        serviceType: ride.serviceType,
-        isActive: true,
+        vehicleType_serviceType: {
+          vehicleType: ride.requestedVehicleType,
+          serviceType: ride.serviceType,
+        },
       },
     })
     .catch(() => null);
@@ -339,26 +357,36 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
     // 2. Libera o passageiro
     await tx.passenger.update({ where: { id: ride.passengerId }, data: { currentRideId: null } });
 
-    // 3. Libera a disponibilidade do motorista
-    await tx.driver.update({
-      where: { id: ride.driverId! },
-      data: { currentRideId: null, isAvailable: true },
+    // 3. Verifica se o motorista possui uma próxima corrida em fila
+    const queuedRide = await tx.ride.findFirst({
+      where: { driverId: ride.driverId!, status: 'ACCEPTED' },
+      orderBy: { createdAt: 'asc' },
     });
 
-    // 4. Converte a transação de Escrow (HELD_IN_ESCROW) em Liquidada (COMPLETED)
+    // 4. Se houver corrida em fila, vincula ao motorista; caso contrário, libera para novas buscas
+    await tx.driver.update({
+      where: { id: ride.driverId! },
+      data: {
+        currentRideId: queuedRide ? queuedRide.id : null,
+        isAvailable: queuedRide ? false : true,
+        walletBalance: { increment: driverEarnings }, // Creditado na hora na carteira do motorista
+      },
+    });
+
+    // 5. Converte a retenção de Escrow (HELD_IN_ESCROW) em Liquidada (COMPLETED)
     await tx.transaction.updateMany({
       where: { rideId: ride.id, status: TransactionStatus.HELD_IN_ESCROW },
       data: { status: TransactionStatus.COMPLETED },
     });
 
-    // 5. Registra o ganho da empresa na Wallet Geral
+    // 6. Registra o ganho da empresa na Wallet Geral
     await tx.companyWallet.upsert({
       where: { id: 'bai245-main-wallet' },
       update: { balance: { increment: platformFee }, totalCollected: { increment: calculatedFare } },
       create: { id: 'bai245-main-wallet', balance: platformFee, totalCollected: calculatedFare },
     });
 
-    // 6. Registra a comissão da empresa
+    // 7. Registra a comissão da empresa
     await tx.transaction.create({
       data: {
         rideId: ride.id,
@@ -368,20 +396,20 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
         status: TransactionStatus.COMPLETED,
         amount: platformFee,
         reference: `FEE-${ride.id.slice(0, 8)}-${Date.now()}`,
-        description: 'Taxa de serviço da plataforma BAI 245',
+        description: 'Taxa de serviço da plataforma Nô Bai 245',
       },
     });
 
-    // 7. Registra a pendência de Payout para o motorista
+    // 8. Registra o histórico de pagamento do motorista
     const payoutTx = await tx.transaction.create({
       data: {
         rideId: ride.id,
         driverId: ride.driverId,
         type: TransactionType.DRIVER_PAYOUT,
-        status: TransactionStatus.PENDING,
+        status: TransactionStatus.COMPLETED,
         amount: driverEarnings,
         reference: `EARN-${ride.id.slice(0, 8)}-${Date.now()}`,
-        description: 'Repasse de corrida para chave Mobile Money do motorista',
+        description: 'Repasse de corrida creditado na carteira digital do motorista',
       },
     });
 
@@ -419,7 +447,7 @@ export async function cancelRideLogic(
 
   let applyPenalty = false;
 
-  // Avalia direito à penalidade de cancelamento tardio pelo passageiro
+  // Avalia penalidade de cancelamento tardio
   if (
     userType === UserType.PASSENGER &&
     (ride.status === 'ARRIVED' || (ride.status === 'ACCEPTED' && ride.acceptedAt))
@@ -461,11 +489,20 @@ export async function cancelRideLogic(
       data: { currentRideId: null },
     });
 
-    // 3. Libera o motorista
+    // 3. Libera o motorista ou promove corrida em fila se houver
     if (ride.driverId) {
+      const queuedRide = await tx.ride.findFirst({
+        where: { driverId: ride.driverId, status: 'ACCEPTED', id: { not: rideId } },
+        orderBy: { createdAt: 'asc' },
+      });
+
       await tx.driver.update({
         where: { id: ride.driverId },
-        data: { currentRideId: null, isAvailable: true },
+        data: {
+          currentRideId: queuedRide ? queuedRide.id : null,
+          isAvailable: queuedRide ? false : true,
+          ...(driverCompensation > 0 ? { walletBalance: { increment: driverCompensation } } : {}),
+        },
       });
     }
 
@@ -475,13 +512,11 @@ export async function cancelRideLogic(
     });
 
     if (escrowTx) {
-      // Fecha a transação de Escrow original como REVERSED
       await tx.transaction.update({
         where: { id: escrowTx.id },
         data: { status: TransactionStatus.REVERSED },
       });
 
-      // A) Se houver reembolso ao passageiro
       if (refundToPassenger > 0) {
         await tx.transaction.create({
           data: {
@@ -490,14 +525,13 @@ export async function cancelRideLogic(
             type: TransactionType.REFUND,
             paymentMethod: ride.paymentMethod,
             amount: refundToPassenger,
-            status: TransactionStatus.PENDING,
+            status: TransactionStatus.COMPLETED,
             reference: `REFUND-${ride.id.slice(0, 8)}-${Date.now()}`,
             description: 'Estorno do Escrow de corrida cancelada',
           },
         });
       }
 
-      // B) Se houve penalidade e o motorista tem direito à compensação
       if (applyPenalty && ride.driverId && driverCompensation > 0) {
         await tx.transaction.create({
           data: {
@@ -505,14 +539,13 @@ export async function cancelRideLogic(
             rideId: ride.id,
             type: TransactionType.DRIVER_PAYOUT,
             amount: driverCompensation,
-            status: TransactionStatus.PENDING,
+            status: TransactionStatus.COMPLETED,
             reference: `PENALTY-COMP-${ride.id.slice(0, 8)}-${Date.now()}`,
             description: 'Compensação por cancelamento tardio do passageiro',
           },
         });
       }
 
-      // C) Se houver taxa para a plataforma
       if (platformFee > 0) {
         await tx.companyWallet.upsert({
           where: { id: 'bai245-main-wallet' },

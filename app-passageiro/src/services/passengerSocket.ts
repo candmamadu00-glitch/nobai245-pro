@@ -61,7 +61,29 @@ socket.on('connect', async () => {
     Sentry.captureException(err);
   }
 });
+socket.on('connect', async () => {
+  console.log('🟢 [SOCKET PASSAGEIRO] Conectado com sucesso:', socket.id);
+  await processPassengerQueue();
+  try {
+    const storedUser = await AsyncStorage.getItem('@bai245:user');
+    
+    // ✅ CORREÇÃO: Buscar ID da corrida em andamento
+    const activeRideId = await AsyncStorage.getItem('@bai245:activeRideId');
 
+    if (storedUser) {
+      const user = JSON.parse(storedUser);
+      if (user?.id) socket.emit('passenger:request_state');
+    }
+
+    // ✅ CORREÇÃO: Avisar o backend para colocar o passageiro de volta na sala
+    if (activeRideId) {
+      socket.emit('passenger:rejoin_ride', { rideId: activeRideId });
+      console.log(`📡 [RECONEXÃO] Passageiro reingressou na sala: ${activeRideId}`);
+    }
+  } catch (err) {
+    Sentry.captureException(err);
+  }
+});
 socket.on('connect_error', async (err) => {
   if (err.message.includes('Token inválido') || err.message.includes('Acesso negado')) {
     socket.disconnect();

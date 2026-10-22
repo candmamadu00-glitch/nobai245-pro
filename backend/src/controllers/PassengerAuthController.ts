@@ -3,7 +3,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import axios from 'axios';
-import { prisma } from '../lib/prisma';
+import { prisma } from '../config/prisma';
 import { formatPhoneNumber, isValidBissauPhone, chargePassengerMobileMoney } from '../services/mobileMoneyService';
 import { sendWelcomeEmail } from '../services/emailService';
 import { OAuth2Client } from 'google-auth-library';
@@ -115,12 +115,10 @@ export class PassengerAuthController {
 
       const passwordHash = await bcrypt.hash(String(password), 12);
 
-      // Gerar OTP de verificação inicial de cadastro
       const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
       const otpCodeHash = await bcrypt.hash(otpCode, 10);
       const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-      // Log visível no terminal do servidor para agilizar testes
       console.log(`\n🔑 =================================================`);
       console.log(`🔑 [NOVO CADASTRO PASSAGEIRO] Telefone: ${formattedPhone}`);
       console.log(`🔑 [CÓDIGO OTP GERADO]: ${otpCode}`);
@@ -142,7 +140,6 @@ export class PassengerAuthController {
         },
       });
 
-      // Dispara o SMS via Termii
       await sendTermiiSMS(formattedPhone, otpCode);
 
       if (passenger.email) {
@@ -237,7 +234,7 @@ export class PassengerAuthController {
     }
   }
 
-  // 3. SOLICITAR / REENVIAR CÓDIGO OTP (SOLICITAÇÃO DE SMS / ESQUECEU A SENHA)
+  // 3. SOLICITAR / REENVIAR CÓDIGO OTP
   async requestOTP(req: Request, res: Response): Promise<Response> {
     try {
       const { phone } = req.body;
@@ -282,7 +279,7 @@ export class PassengerAuthController {
     }
   }
 
-  // 4. VERIFICAR CÓDIGO OTP REAL
+  // 4. VERIFICAR CÓDIGO OTP
   async verifyOTP(req: Request, res: Response): Promise<Response> {
     try {
       const { phone, otp } = req.body;
@@ -382,7 +379,7 @@ export class PassengerAuthController {
     }
   }
 
-  // 7. ATUALIZAR PERFIL (SUPORTE A MULTIPLOS CAMPOS DE AVATAR)
+  // 7. ATUALIZAR PERFIL
   async updateProfile(req: Request, res: Response): Promise<Response> {
     try {
       const passengerId = (req as any).user?.id;
@@ -404,7 +401,6 @@ export class PassengerAuthController {
         dataToUpdate.email = cleanEmail;
       }
 
-      // 🛡️ Captura o arquivo via req.file ou req.files (aceita 'profilePicture', 'avatar', 'photo', 'file')
       const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
       const uploadedFile = req.file || files?.['profilePicture']?.[0] || files?.['avatar']?.[0] || files?.['photo']?.[0] || files?.['file']?.[0];
 
@@ -479,17 +475,13 @@ export class PassengerAuthController {
     try {
       console.log('📥 [REQ BODY RECEBIDO DO APP]:', JSON.stringify(req.body));
       
-      // Captura o ID do passageiro via Token JWT (middleware) ou via Body enviado pelo App
       const passengerId = (req as any).user?.id || (req as any).userId || (req as any).passenger?.id || req.body.passengerId;
       
-      console.log('👤 [PASSAGEIRO AUTENTICADO]:', passengerId);
-
       if (!passengerId) {
         console.error('❌ [AUTH ERRO]: ID do passageiro não encontrado na requisição.');
         return res.status(401).json({ success: false, error: 'Não autorizado. ID do passageiro ausente.' });
       }
 
-      // Suporta todas as variações de nomes de campos de valor/telefone/provedor
       const rawAmount = req.body.amount ?? req.body.estimatedPrice ?? req.body.price ?? req.body.totalAmount ?? req.body.total;
       const rawPhone = req.body.phone ?? req.body.paymentPhone ?? req.body.paymentAccountNumber;
       const rawProvider = req.body.provider ?? req.body.paymentMethod ?? req.body.paymentProvider;
@@ -515,14 +507,6 @@ export class PassengerAuthController {
       const phoneToUse = rawPhone || passenger.paymentAccountNumber || passenger.phone;
       const targetPhone = formatPhoneNumber(String(phoneToUse));
 
-      console.log('🍊 [PROCESSANDO COBRANÇA DIRETA]:', {
-        passengerId,
-        rideId: rideId || 'N/A',
-        amount: cleanAmount,
-        provider: selectedProvider,
-        phone: targetPhone
-      });
-
       if (!isValidBissauPhone(targetPhone)) {
         console.error('❌ [TELEFONE BISSAU INVÁLIDO]:', targetPhone);
         return res.status(400).json({ success: false, error: 'Número de telefone Mobile Money inválido para Guiné-Bissau (+245).' });
@@ -536,8 +520,6 @@ export class PassengerAuthController {
         rideId,
         isWalletRecharge: false
       });
-
-      console.log('📤 [RESPOSTA DA COBRANÇA DIRETA]:', chargeResult);
 
       if (!chargeResult.success) {
         return res.status(400).json({
@@ -561,7 +543,7 @@ export class PassengerAuthController {
       return res.status(500).json({ success: false, error: 'Erro interno ao processar cobrança no Mobile Money.' });
     }
   }
-  // Alias para manter compatibilidade com a rota antiga /wallet/recharge
+
   async rechargeWallet(req: Request, res: Response): Promise<Response> {
     return this.initiatePayment(req, res);
   }
@@ -718,42 +700,27 @@ export class PassengerAuthController {
     }
   }
 
-  // 15. LOGIN COM GOOGLE (COM LOGS DEPURATIVOS DETALHADOS)
+  // 15. LOGIN COM GOOGLE
   async googleSignIn(req: Request, res: Response): Promise<Response> {
-    console.log('\n======================================================');
-    console.log('🚀 [GOOGLE SIGNIN] Nova tentativa de login iniciada');
-    console.log('📥 [REQ BODY RECEBIDO]:', JSON.stringify({ ...req.body, idToken: req.body?.idToken ? `${req.body.idToken.substring(0, 30)}...` : 'AUSENTE' }));
-
     try {
       const { idToken, deviceToken } = req.body;
 
       if (!idToken || typeof idToken !== 'string') {
-        console.error('❌ [GOOGLE SIGNIN ERRO]: idToken ausente ou inválido no body da requisição.');
         return res.status(400).json({ success: false, error: 'Token do Google não fornecido.' });
       }
 
       const configuredClientId = process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_WEB_CLIENT_ID || process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
-      console.log('🔑 [GOOGLE SIGNIN] Client ID ativo no .env:', configuredClientId || '❌ NENHUM CONFIGURADO!');
-
       let payload: any = null;
 
-      // 1. Tentativa via google-auth-library
       try {
-        console.log('🔍 [GOOGLE SIGNIN] Validando idToken com google-auth-library...');
         const ticket = await googleClient.verifyIdToken({
           idToken,
           audience: configuredClientId ? [configuredClientId] : undefined,
         });
         payload = ticket.getPayload();
-        console.log('✅ [GOOGLE SIGNIN] Validação local efetuada! E-mail:', payload?.email);
       } catch (verifyErr: any) {
-        console.warn('⚠️ [GOOGLE SIGNIN] Falha na validação local (audience/library):', verifyErr?.message);
-        
-        // 2. Fallback via Endpoint HTTP oficial do Google
         try {
-          console.log('🌐 [GOOGLE SIGNIN] Executando fallback via API OAuth2 direta do Google...');
           const googleTokenRes = await axios.get(`https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`, { timeout: 8000 });
-          console.log('✅ [GOOGLE SIGNIN] Resposta do Fallback Google API:', googleTokenRes.data?.email ? `Sucesso (${googleTokenRes.data.email})` : 'Sem Email');
           if (googleTokenRes.data && googleTokenRes.data.email) {
             payload = {
               email: googleTokenRes.data.email,
@@ -767,7 +734,6 @@ export class PassengerAuthController {
       }
 
       if (!payload || !payload.email) {
-        console.error('❌ [GOOGLE SIGNIN ERRO FINAL]: Impossível obter e-mail válido do Google.');
         return res.status(400).json({ success: false, error: 'Token do Google inválido, expirado ou sem e-mail.' });
       }
 
@@ -775,11 +741,9 @@ export class PassengerAuthController {
       const name = payload.name || payload.given_name || email.split('@')[0];
       const picture = payload.picture || null;
 
-      console.log(`👤 [GOOGLE SIGNIN] Pesquisando passageiro no banco de dados para: ${email}`);
       const passenger = await prisma.passenger.findUnique({ where: { email } });
 
       if (!passenger) {
-        console.log('🆕 [GOOGLE SIGNIN] Passageiro não encontrado. Retornando isNewUser: true');
         return res.status(200).json({
           success: true,
           isNewUser: true,
@@ -788,10 +752,7 @@ export class PassengerAuthController {
         });
       }
 
-      console.log('✅ [GOOGLE SIGNIN] Passageiro cadastrado localizado. ID:', passenger.id);
-
       if (DISABLED_STATUSES.includes((passenger.status || '').toUpperCase())) {
-        console.warn('⛔ [GOOGLE SIGNIN] Conta com status suspenso/inativo.');
         return res.status(403).json({ success: false, error: 'Sua conta de passageiro está suspensa ou inativa.' });
       }
 
@@ -819,7 +780,6 @@ export class PassengerAuthController {
         },
       });
 
-      console.log('🎉 [GOOGLE SIGNIN] Login finalizado com sucesso!');
       return res.json({
         success: true,
         message: 'Login com Google realizado com sucesso!',
@@ -842,10 +802,9 @@ export class PassengerAuthController {
     } catch (error: any) {
       console.error('❌ [GOOGLE SIGNIN ERRO EXCEÇÃO]:', error?.response?.data || error?.stack || error?.message || error);
       return res.status(500).json({ success: false, error: `Erro ao validar Google: ${error?.message || 'Falha no servidor'}` });
-    } finally {
-      console.log('======================================================\n');
     }
   }
+
   // 16. CONCLUIR REGISTRO GOOGLE
   async completeGoogleRegistration(req: Request, res: Response): Promise<Response> {
     try {
@@ -1042,64 +1001,62 @@ export class PassengerAuthController {
     }
   }
 
-  // ==========================================
-  // 🗑️ 20. EXCLUIR / ANONIMIZAR CONTA DO PASSAGEIRO (VARCHAR 20 BLINDADO)
-  // ==========================================
+  // 20. EXCLUIR / ANONIMIZAR CONTA DO PASSAGEIRO
   async deleteAccount(req: Request, res: Response): Promise<Response> {
-  try {
-    const passengerId = (req as any).user?.id;
-    if (!passengerId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
+    try {
+      const passengerId = (req as any).user?.id;
+      if (!passengerId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
 
-    const activeRide = await prisma.ride.findFirst({
-      where: {
-        passengerId,
-        status: { in: ['PENDING', 'SEARCHING', 'AWAITING_PAYMENT', 'ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] }
+      const activeRide = await prisma.ride.findFirst({
+        where: {
+          passengerId,
+          status: { in: ['PENDING', 'SEARCHING', 'AWAITING_PAYMENT', 'ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] }
+        }
+      });
+
+      if (activeRide) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Você possui uma corrida ativa ou em andamento. Finalize ou cancele a corrida antes de encerrar a conta.' 
+        });
       }
-    });
 
-    if (activeRide) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Você possui uma corrida ativa ou em andamento. Finalize ou cancele a corrida antes de encerrar a conta.' 
-      });
-    }
-
-    const passenger = await prisma.passenger.findUnique({
-      where: { id: passengerId },
-      include: { rides: { take: 1 }, transactions: { take: 1 } }
-    });
-
-    if (!passenger) return res.status(404).json({ success: false, error: 'Passageiro não encontrado.' });
-
-    const hasHistory = passenger.rides.length > 0 || passenger.transactions.length > 0;
-
-    if (!hasHistory) {
-      await prisma.passenger.delete({ where: { id: passengerId } });
-    } else {
-      const stamp = Date.now().toString().slice(-8);
-      const rand = Math.floor(100 + Math.random() * 900);
-      await prisma.passenger.update({
+      const passenger = await prisma.passenger.findUnique({
         where: { id: passengerId },
-        data: {
-          fullName: 'Passageiro Anônimo',
-          phone: `p_${stamp}_${rand}`,
-          email: `del_${stamp}_${rand}@anon.com`,
-          documentNumber: null,
-          paymentAccountNumber: null,
-          status: 'SUSPENDED',
-          deletedAt: new Date(),
-          refreshTokenHash: null,
-          deviceToken: null,
-        },
+        include: { rides: { take: 1 }, transactions: { take: 1 } }
       });
-    }
 
-    return res.status(200).json({ success: true, message: 'Conta e dados sensíveis desativados com sucesso.' });
-  } catch (error: any) {
-    console.error('❌ [EXCLUIR PASSAGEIRO]:', error?.message || error);
-    return res.status(500).json({ success: false, error: 'Erro ao solicitar encerramento da conta.' });
+      if (!passenger) return res.status(404).json({ success: false, error: 'Passageiro não encontrado.' });
+
+      const hasHistory = passenger.rides.length > 0 || passenger.transactions.length > 0;
+
+      if (!hasHistory) {
+        await prisma.passenger.delete({ where: { id: passengerId } });
+      } else {
+        const stamp = Date.now().toString().slice(-8);
+        const rand = Math.floor(10 + Math.random() * 89);
+        await prisma.passenger.update({
+          where: { id: passengerId },
+          data: {
+            fullName: 'Passageiro Anônimo',
+            phone: `p_${stamp}_${rand}`, // 14 caracteres (cabe em VARCHAR(20))
+            email: `del_${stamp}_${rand}@anon.com`,
+            documentNumber: null,
+            paymentAccountNumber: null,
+            status: 'SUSPENDED',
+            deletedAt: new Date(),
+            refreshTokenHash: null,
+            deviceToken: null,
+          },
+        });
+      }
+
+      return res.status(200).json({ success: true, message: 'Conta e dados sensíveis desativados com sucesso.' });
+    } catch (error: any) {
+      console.error('❌ [EXCLUIR PASSAGEIRO]:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro ao solicitar encerramento da conta.' });
+    }
   }
-}
 }
 
 const passengerAuthController = new PassengerAuthController();

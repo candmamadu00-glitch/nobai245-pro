@@ -48,6 +48,15 @@ export const authMiddleware = (req: Request, res: Response, next: NextFunction):
   }
 
   const token = authHeader.split(' ')[1];
+  
+  if (IS_PRODUCTION && (!JWT_SECRET || JWT_SECRET === 'sua_chave_secreta_super_segura_com_mais_de_32_caracteres')) {
+    res.status(500).json({
+      error: 'SERVER_CONFIGURATION_ERROR',
+      message: 'Erro de configuração no servidor de autenticação.'
+    });
+    return;
+  }
+
   const activeSecret = JWT_SECRET || 'sua_chave_secreta_super_segura_com_mais_de_32_caracteres';
 
   try {
@@ -70,10 +79,8 @@ export const authMiddleware = (req: Request, res: Response, next: NextFunction):
       return;
     }
 
-    // Popula req.user para rotas genéricas (Passageiro / Motorista / API)
     req.user = decoded;
 
-    // Popula req.admin APENAS se o papel for realmente administrativo
     if (ADMIN_ROLES.includes(decoded.role)) {
       req.admin = {
         id: decoded.id,

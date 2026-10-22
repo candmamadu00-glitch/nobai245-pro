@@ -39,7 +39,7 @@ declare global {
 }
 
 // -----------------------------------------------------------------------------
-// HELPER AUXILIAR DE SANITIZAÇÃO DE TEXTO (PREVENÇÃO DE XSS)
+// HELPERS AUXILIARES DE SANITIZAÇÃO E VALIDAÇÃO GEOGRÁFICA
 // -----------------------------------------------------------------------------
 function sanitizeHtmlText(str?: string | null): string {
   if (!str) return '';
@@ -49,6 +49,11 @@ function sanitizeHtmlText(str?: string | null): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+// 🟢 CORREÇÃO CRÍTICA: Declaração da validação de coordenadas geográficas
+function isValidCoordinate(lat: number, lng: number): boolean {
+  return !isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
 }
 
 // -----------------------------------------------------------------------------
@@ -81,12 +86,12 @@ const server = http.createServer(app);
 // -----------------------------------------------------------------------------
 // 2. MIDDLEWARES HTTP E SEGURANÇA
 // -----------------------------------------------------------------------------
-app.set('trust proxy', 1); // Essencial se estiver atrás de Nginx, AWS ELB ou Vercel
+app.set('trust proxy', 1); // Essencial se estiver atrás de Nginx ou Load Balancer
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()) 
-  : '*'; // Em produção, force as origens do Admin Panel
+  : '*'; 
 
 app.use(cors({ 
   origin: allowedOrigins, 
@@ -160,7 +165,7 @@ app.get('/api/passengers/drivers/nearby', async (req: Request, res: Response) =>
       return res.json({ drivers: [] });
     }
 
-    // Mapeia coordenadas atuais dos motoristas
+    // Mapeia coordenadas atuais dos motoristas com proteção contra oscilação do Redis
     const drivers = await Promise.all(
       nearbyDriverIds.map(async (driverId) => {
         if (!redisClient.isOpen) return null;
@@ -204,8 +209,8 @@ app.get('/track/:rideId/data', async (req: Request, res: Response) => {
 
     if (!ride) return res.status(404).json({ error: 'Corrida não encontrada' });
 
-    const driverLat = Number(ride.driverLat || ride.driver?.currentLat || ride.originLat || 11.8633);
-    const driverLng = Number(ride.driverLng || ride.driver?.currentLng || ride.originLng || -15.5833);
+    const driverLat = Number(ride.driverLat || ride.driver?.lastLat || ride.originLat || 11.8633);
+    const driverLng = Number(ride.driverLng || ride.driver?.lastLng || ride.originLng || -15.5833);
 
     return res.json({
       status: ride.status || 'IN_PROGRESS',
@@ -273,18 +278,21 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
       "img-src 'self' blob: data: https://*.mapbox.com;"
     );
 
-    const driverLat = Number(ride.driverLat || ride.driver?.currentLat || ride.originLat || 11.8633);
-    const driverLng = Number(ride.driverLng || ride.driver?.currentLng || ride.originLng || -15.5833);
+    const driverLat = Number(ride.driverLat || ride.driver?.lastLat || ride.originLat || 11.8633);
+    const driverLng = Number(ride.driverLng || ride.driver?.lastLng || ride.originLng || -15.5833);
     const originLat = Number(ride.originLat || driverLat);
     const originLng = Number(ride.originLng || driverLng);
     const destLat = Number(ride.destinationLat || driverLat);
     const destLng = Number(ride.destinationLng || driverLng);
 
-    const driverName = sanitizeHtmlText(ride.driver?.fullName || ride.driver?.name || 'Motorista');
-    const carModel = sanitizeHtmlText(ride.driver?.carModel || ride.driver?.vehicleModel || 'Veículo');
-    const carColor = sanitizeHtmlText(ride.driver?.carColor || ride.driver?.vehicleColor || 'BRANCO');
-    const licensePlate = sanitizeHtmlText(ride.driver?.licensePlate || ride.driver?.vehiclePlate || 'N/A');
+    const driverName = sanitizeHtmlText(ride.driver?.fullName || 'Motorista Nô Bai');
+    const carModel = sanitizeHtmlText(ride.driver?.vehicleBrand || 'Veículo');
+    const carColor = sanitizeHtmlText(ride.driver?.vehicleColor || 'Amarelo');
+    const licensePlate = sanitizeHtmlText(ride.driver?.vehiclePlate || 'N/A');
     const destinationAddress = sanitizeHtmlText(ride.destinationAddress || 'Endereço de destino');
+
+    // 🟢 CORREÇÃO DE SEGURANÇA: Token dinâmico de ambiente
+    const mapboxToken = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || process.env.MAPBOX_ACCESS_TOKEN || '';
 
     res.send(`
       <!DOCTYPE html>
@@ -352,7 +360,7 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
         </div>
 
         <script>
-          const MAPBOX_TOKEN = 'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZGpkMnVtMDMzdDJ4c2U0NHd3dHBtZiJ9.mT0BfmoFsPTgWFzNnblCZg';
+          const MAPBOX_TOKEN = '${mapboxToken}';
           mapboxgl.accessToken = MAPBOX_TOKEN;
 
           const origin = [${originLng}, ${originLat}];
@@ -598,7 +606,6 @@ function isSocketRateLimited(socket: Socket, eventName: string, windowMs = 1000,
   const history: number[] = socket.data.lastEvents.get(key) || [];
   const validHistory = history.filter((timestamp: number) => now - timestamp < windowMs);
 
-  // 💡 CORRIGIDO: Retorna TRUE se atingiu/excedeu o limite de chamadas
   if (validHistory.length >= maxCalls) return true;
 
   validHistory.push(now);
@@ -611,8 +618,9 @@ function isSocketRateLimited(socket: Socket, eventName: string, windowMs = 1000,
   }
   return false;
 }
-
-// Helpers de validação
+// -----------------------------------------------------------------------------
+// HELPERS AUXILIARES DE VALIDAÇÃO E EVENTOS
+// -----------------------------------------------------------------------------
 function isAuthorizedUser(socket: Socket, payloadUserId?: string): boolean {
   return !!payloadUserId && socket.data.user?.id === payloadUserId;
 }
@@ -625,13 +633,6 @@ function isDriver(socket: Socket): boolean {
 function isPassenger(socket: Socket): boolean {
   const role = socket.data.user?.role || socket.data.user?.userType;
   return role === 'PASSENGER';
-}
-
-function isValidCoordinate(lat: number, lng: number): boolean {
-  return typeof lat === 'number' && typeof lng === 'number' &&
-         !isNaN(lat) && !isNaN(lng) &&
-         lat >= -90 && lat <= 90 &&
-         lng >= -180 && lng <= 180;
 }
 
 function isUuid(str?: string): boolean {
@@ -651,7 +652,7 @@ function handleSocketEvent(socket: Socket, eventName: string, handler: (data?: a
 }
 
 // -----------------------------------------------------------------------------
-// 6. EVENTOS SOCKET.IO
+// 6. EVENTOS WEBSOCKET (SOCKET.IO ENGINE)
 // -----------------------------------------------------------------------------
 io.on('connection', (socket) => {
   const userId = socket.data.user?.id;
@@ -663,7 +664,7 @@ io.on('connection', (socket) => {
     socket.join(userId);
     socket.join(`user_${userId}`);
     socket.join(`passenger_${userId}`);
-    socket.join(`passenger:${userId}`); // Suporte para ambas as notações de sala
+    socket.join(`passenger:${userId}`);
   }
 
   // 📌 HANDLER 'join_room': Permite ao app entrar nas salas dinâmicas de corrida
@@ -700,7 +701,8 @@ io.on('connection', (socket) => {
       }
       
       const timer = setTimeout(async () => {
-        await safeRedis.zRem('drivers_locations', driverId);
+        // 🟢 CORRIGIDO: Chave padronizada no Redis ('drivers:locations')
+        await safeRedis.zRem('drivers:locations', driverId);
         
         const hasActiveRide = await safeRedis.get(`driver_active_ride:${driverId}`);
         if (!hasActiveRide) {
@@ -721,7 +723,8 @@ io.on('connection', (socket) => {
     const driverId = socket.data.user.id;
     socket.leave('available_drivers');
 
-    await safeRedis.zRem('drivers_locations', driverId);
+    // 🟢 CORRIGIDO: Chave padronizada no Redis ('drivers:locations')
+    await safeRedis.zRem('drivers:locations', driverId);
     await safeRedis.del(`driver_active_ride:${driverId}`);
 
     await prisma.driver.update({
@@ -730,14 +733,13 @@ io.on('connection', (socket) => {
     }).catch(() => null);
   });
 
-  // 🛠️ Ajuste no handler sos:triggered
+  // --- ALERTA SOS ---
   handleSocketEvent(socket, 'sos:triggered', async (data) => {
     if (isSocketRateLimited(socket, 'sos:triggered', 5000, 2)) return;
     
     const { rideId, latitude, longitude, timestamp } = data || {};
     const userId = socket.data.user?.id;
 
-    // Valida o rideId apenas se ele for enviado
     if (rideId && !isUuid(rideId)) {
       socket.emit('error', { message: 'ID de corrida inválido fornecido para o alerta SOS.' });
       return;
@@ -766,6 +768,7 @@ io.on('connection', (socket) => {
     });
   });
 
+  // --- MOTORISTA FICA ONLINE ---
   handleSocketEvent(socket, 'driver:online', async (data) => {
     if (isSocketRateLimited(socket, 'driver:online')) return;
     if (!isDriver(socket)) {
@@ -780,7 +783,6 @@ io.on('connection', (socket) => {
     socket.join(`driver_${driverId}`);
     socket.join('available_drivers');
 
-    // Cancela timer de desconexão pendente se houver
     if (disconnectTimers.has(driverId)) {
       clearTimeout(disconnectTimers.get(driverId)!);
       disconnectTimers.delete(driverId);
@@ -800,7 +802,8 @@ io.on('connection', (socket) => {
     const currentLng = Number(lng) || Number(updatedDriver.lastLng);
 
     if (isValidCoordinate(currentLat, currentLng)) {
-      await safeRedis.geoAdd('drivers_locations', {
+      // 🟢 CORRIGIDO: Chave padronizada no Redis ('drivers:locations')
+      await safeRedis.geoAdd('drivers:locations', {
         longitude: currentLng,
         latitude: currentLat,
         member: driverId
@@ -846,16 +849,12 @@ io.on('connection', (socket) => {
 
   // --- PASSAGEIRO SOLICITA CORRIDA ---
   handleSocketEvent(socket, 'passenger:request_ride', async (rideData) => {
-    console.log(`🔴 [LOG 2 - BACKEND] RECEBEU A SOLICITAÇÃO! Socket ID: ${socket.id}`, rideData);
+    console.log(`🔴 [SOLICITAÇÃO DE CORRIDA] Socket ID: ${socket.id}`, rideData);
 
-    if (isSocketRateLimited(socket, 'passenger:request_ride', 5000, 2)) {
-      console.warn('⚠️ Requisição bloqueada por Rate Limit.');
-      return;
-    }
+    if (isSocketRateLimited(socket, 'passenger:request_ride', 5000, 2)) return;
 
     const passengerId = socket.data.user?.id;
     if (!passengerId || !isPassenger(socket)) {
-      console.error(`❌ [LOG 2 - ERRO BACKEND] Não autorizado: Socket sem perfil de Passageiro válido. User:`, socket.data.user);
       socket.emit('error', { message: 'Ação não autorizada. Faça login novamente como passageiro.' });
       return;
     }
@@ -866,14 +865,12 @@ io.on('connection', (socket) => {
     const dLng = Number(rideData?.destinationLng);
 
     if (!isValidCoordinate(pLat, pLng) || !isValidCoordinate(dLat, dLng)) {
-      console.error('❌ Coordenadas inválidas recebidas:', { pLat, pLng, dLat, dLng });
       socket.emit('error', { message: 'Coordenadas de origem ou destino inválidas.' });
       return;
     }
 
     // 🛡️ TRAVA GEOGRÁFICA (GUINÉ-BISSAU)
     if (!isWithinGuineaBissau(pLat, pLng)) {
-      console.warn(`⚠️ [OUT OF BOUNDS] Solicitação recusada fora da Guiné-Bissau (Lat: ${pLat}, Lng: ${pLng})`);
       socket.emit('error', { 
         message: '📍 Fora da área de cobertura. O Nô Bai 245 opera exclusivamente na Guiné-Bissau.' 
       });
@@ -929,54 +926,50 @@ io.on('connection', (socket) => {
         fareXOF: Number(ride.priceXof), status: 'PENDING',
       }));
 
+      // 🟢 CORRIGIDO: Chave padronizada no Redis ('drivers:locations')
       const nearbyDriverIds: string[] = (await safeRedis.geoSearch(
-        'drivers_locations', 
+        'drivers:locations', 
         { longitude: pLng, latitude: pLat }, 
         { radius: 50, unit: 'km' }
       )) as string[];
 
-      console.log('📍 Driver IDs encontrados no Redis:', nearbyDriverIds);
-
       if (!nearbyDriverIds || nearbyDriverIds.length === 0) {
-        console.log('⚠️ Nenhum motorista no Redis drivers_locations dentro de 50km');
         socket.emit('ride:no_drivers_found');
-        socket.emit('error', { message: `Nenhum motorista disponível próximo de si.` });
+        socket.emit('error', { message: 'Nenhum motorista disponível próximo de si.' });
         await cancelRideLogic(rideId, passengerId, 'PASSENGER', 'Sem motoristas no raio');
         return;
       }
 
-      // 🔄 BUSCA PERMISSIVA: Busca motoristas ONLINE (Livres OU em Viagem para Fila)
-const candidateDrivers = await prisma.driver.findMany({
-  where: { 
-    id: { in: nearbyDriverIds }, 
-    vehicleType: normalizedVehicleType as any,
-    isOnline: true, 
-    status: 'APPROVED'
-  },
-  select: { 
-    id: true, 
-    deviceToken: true,
-    isAvailable: true,
-    currentRideId: true,
-    rides: { // 🟢 CORRIGIDO: de ridesAsDriver para rides
-      where: {
-        status: { in: ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] }
-      },
-      select: { id: true }
-    }
-  }
-});
+      const candidateDrivers = await prisma.driver.findMany({
+        where: { 
+          id: { in: nearbyDriverIds }, 
+          vehicleType: normalizedVehicleType as any,
+          isOnline: true, 
+          status: 'APPROVED'
+        },
+        select: { 
+          id: true, 
+          deviceToken: true,
+          isAvailable: true,
+          currentRideId: true,
+          rides: {
+            where: {
+              status: { in: ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] }
+            },
+            select: { id: true }
+          }
+        }
+      });
 
-// 🚗 FILTRAGEM DE ELEGIBILIDADE PARA CORRIDA ATIVA + FILA
-const matchingDrivers = candidateDrivers.filter((driver: any) => {
-  if (driver.isAvailable || !driver.currentRideId) return true;
-  const activeRidesCount = Array.isArray(driver.rides) ? driver.rides.length : 0; // 🟢 CORRIGIDO
-  return activeRidesCount <= 1;
-});
-      console.log('🚗 Motoristas elegíveis encontrados no Banco:', matchingDrivers.map(d => d.id));
+      const matchingDrivers = candidateDrivers.filter((driver: any) => {
+        if (driver.isAvailable || !driver.currentRideId) return true;
+        const activeRidesCount = Array.isArray(driver.rides) ? driver.rides.length : 0;
+        return activeRidesCount <= 1;
+      });
+
       if (matchingDrivers.length === 0) {
         socket.emit('ride:no_drivers_found');
-        socket.emit('error', { message: `Motoristas na categoria ${normalizedVehicleType} estão offline ou com fila cheia.` });
+        socket.emit('error', { message: `Motoristas na categoria ${normalizedVehicleType} estão ocupados.` });
         await cancelRideLogic(rideId, passengerId, 'PASSENGER', 'Categoria ocupada');
         return;
       }
@@ -1010,14 +1003,8 @@ const matchingDrivers = candidateDrivers.filter((driver: any) => {
       for (const d of matchingDrivers) {
         const isQueuedOffer = !d.isAvailable || !!d.currentRideId;
 
-        io.to(d.id).emit('ride:new_request', {
-          ...requestPayload,
-          isQueuedOffer
-        });
-        io.to(`driver_${d.id}`).emit('ride:new_request', {
-          ...requestPayload,
-          isQueuedOffer
-        });
+        io.to(d.id).emit('ride:new_request', { ...requestPayload, isQueuedOffer });
+        io.to(`driver_${d.id}`).emit('ride:new_request', { ...requestPayload, isQueuedOffer });
 
         if (d.deviceToken) {
           const pushTitle = isQueuedOffer 
@@ -1027,14 +1014,12 @@ const matchingDrivers = candidateDrivers.filter((driver: any) => {
           sendPushNotification(
             d.deviceToken,
             pushTitle,
-            `Passageiro: ${passengerInfo?.fullName || 'Passageiro'} está próximo do seu destino/rota!`,
+            `Passageiro: ${passengerInfo?.fullName || 'Passageiro'} solicitou corrida!`,
             { type: 'NEW_RIDE_REQUEST', rideId, isQueuedOffer },
             PUSH_CHANNELS.NEW_RIDE_ALARM
           ).catch(() => null);
         }
       }
-
-      console.log(`✅ Evento ride:new_request enviado para ${matchingDrivers.length} motorista(s).`);
 
     } catch (err: any) {
       console.error('❌ Erro na solicitação da corrida:', err);
@@ -1042,7 +1027,7 @@ const matchingDrivers = candidateDrivers.filter((driver: any) => {
     }
   });
 
-  // --- MOTORISTA ACEITA CORRIDA (SOCKET + PUSH) ---
+  // --- MOTORISTA ACEITA CORRIDA ---
   handleSocketEvent(socket, 'driver:accept_ride', async (data) => {
     if (isSocketRateLimited(socket, 'driver:accept_ride', 2000, 1)) return;
     if (!isDriver(socket)) {
@@ -1070,7 +1055,6 @@ const matchingDrivers = candidateDrivers.filter((driver: any) => {
       const updatedRide = await acceptRideLogic(rideId, driverId);
 
       await safeRedis.set(`driver_active_ride:${driverId}`, rideId);
-      
       socket.join(rideId);
       socket.leave('available_drivers');
 
@@ -1087,10 +1071,8 @@ const matchingDrivers = candidateDrivers.filter((driver: any) => {
         driverRating: Number(updatedRide.driver?.ratingAverage || 5.0)
       };
 
-      // 1. Socket para todos na sala da corrida
       io.to(rideId).emit('ride:accepted', publicDriverPayload);
 
-      // 2. Confirmação direta para o motorista
       socket.emit('driver:accept_ride_success', {
         ...publicDriverPayload,
         passengerName: updatedRide.passenger?.fullName,
@@ -1101,13 +1083,11 @@ const matchingDrivers = candidateDrivers.filter((driver: any) => {
         priceXof: Number(updatedRide.priceXof),
       });
 
-      // 3. Socket para o passageiro com o OTP
       io.to(`passenger_${updatedRide.passengerId}`).emit('ride:accepted', {
         ...publicDriverPayload,
         startOtp: updatedRide.startOtp
       });
 
-      // 4. 🔔 Push Notification para o Passageiro
       if (updatedRide.passenger?.deviceToken) {
         sendPushNotification(
           updatedRide.passenger.deviceToken,
@@ -1115,16 +1095,14 @@ const matchingDrivers = candidateDrivers.filter((driver: any) => {
           `${updatedRide.driver?.fullName || 'Seu motorista'} aceitou a corrida!`,
           { type: 'RIDE_ACCEPTED', rideId },
           PUSH_CHANNELS.RIDE_UPDATE
-        ).catch(err => console.warn('⚠️ Falha ao enviar Push para passageiro:', err));
+        ).catch(() => null);
       }
 
-      // 5. Atualização do Dashboard Admin
       io.to('admin_dashboard').emit('admin:ride_update', { 
         rideId, status: 'ACCEPTED', driverId, passengerId: updatedRide.passengerId 
       });
 
     } catch (err: any) {
-      console.error('❌ Erro ao aceitar corrida:', err);
       socket.emit('error', { message: err.message || 'Erro ao atribuir corrida.' });
     } finally {
       const lockHolder = await safeRedis.get(lockKey);
@@ -1146,7 +1124,12 @@ const matchingDrivers = candidateDrivers.filter((driver: any) => {
     const safeHeading = heading != null ? Number(heading) : 0;
     const safeDuration = durationMinutes != null ? Number(durationMinutes) : null;
 
-    await safeRedis.geoAdd('drivers_locations', { longitude: Number(longitude), latitude: Number(latitude), member: driverId });
+    // 🟢 CORRIGIDO: Chave padronizada no Redis ('drivers:locations')
+    await safeRedis.geoAdd('drivers:locations', { 
+      longitude: Number(longitude), 
+      latitude: Number(latitude), 
+      member: driverId 
+    });
 
     if (rideId && isUuid(rideId)) {
       io.to(rideId).emit('driver:position', { 
@@ -1223,7 +1206,7 @@ const matchingDrivers = candidateDrivers.filter((driver: any) => {
     }
   });
 
-  // --- INICIAR CORRIDA (VALIDAÇÃO DE OTP + PUSH) ---
+  // --- INICIAR CORRIDA ---
   handleSocketEvent(socket, 'driver:start_ride', async (data) => {
     if (isSocketRateLimited(socket, 'driver:start_ride')) return;
     if (!isDriver(socket)) {
@@ -1245,7 +1228,6 @@ const matchingDrivers = candidateDrivers.filter((driver: any) => {
       io.to(rideId).emit('ride:started', { rideId, status: 'IN_PROGRESS', startedAt: updatedRide?.startedAt });
       io.to('admin_dashboard').emit('admin:ride_update', { rideId, status: 'IN_PROGRESS', driverId });
 
-      // 🔔 Push Notification para o Passageiro
       if (updatedRide?.passenger?.deviceToken) {
         sendPushNotification(
           updatedRide.passenger.deviceToken,
@@ -1260,50 +1242,62 @@ const matchingDrivers = candidateDrivers.filter((driver: any) => {
     }
   });
   
-  // --- FINALIZAR CORRIDA E COBRANÇA (SOCKET + PUSH) ---
-  handleSocketEvent(socket, 'driver:finish_ride', async (data) => {
-    if (isSocketRateLimited(socket, 'driver:finish_ride')) return;
-    if (!isDriver(socket)) {
-      socket.emit('error', { message: 'Acesso negado.' });
-      return;
+  // --- FINALIZAR CORRIDA E COBRANÇA ---
+handleSocketEvent(socket, 'driver:finish_ride', async (data) => {
+  if (isSocketRateLimited(socket, 'driver:finish_ride')) return;
+  if (!isDriver(socket)) {
+    socket.emit('error', { message: 'Acesso negado.' });
+    return;
+  }
+
+  const { rideId, dropoffLat, dropoffLng, finishOtp } = data || {}; // 🟢 Captura o finishOtp
+  const driverId = socket.data.user.id;
+
+  if (!isUuid(rideId) || !isValidCoordinate(Number(dropoffLat), Number(dropoffLng))) {
+    socket.emit('error', { message: 'Coordenadas de destino inválidas.' });
+    return;
+  }
+
+  try {
+    // 🟢 Passa o finishOtp recebido do cliente para a função de liquidação
+    const result = await finalizeRideAndCharge(
+      rideId, 
+      Number(dropoffLat), 
+      Number(dropoffLng), 
+      finishOtp
+    );
+
+    // 🟢 1. LIMPEZA DE CHAVES NO REDIS
+    await safeRedis.del(`active_ride:${rideId}`);
+    await safeRedis.del(`driver_active_ride:${driverId}`);
+
+    // 🟢 2. COLOCA O MOTORISTA DE VOLTA NA SALA DE DISPONÍVEIS
+    socket.join('available_drivers');
+    socket.join(`driver_${driverId}`);
+    socket.leave(rideId);
+
+    io.to(rideId).emit('ride:finished', result);
+    io.to('admin_dashboard').emit('admin:ride_update', { rideId, status: 'FINISHED' });
+
+    const ride = await prisma.ride.findUnique({
+      where: { id: rideId },
+      include: { passenger: { select: { deviceToken: true } } }
+    });
+
+    if (ride?.passenger?.deviceToken) {
+      sendPushNotification(
+        ride.passenger.deviceToken,
+        '🏁 Viagem Concluída!',
+        `Você chegou ao seu destino. Total: ${result.fareXOF} XOF.`,
+        { type: 'RIDE_COMPLETED', rideId },
+        PUSH_CHANNELS.RIDE_UPDATE
+      ).catch(() => null);
     }
-
-    const { rideId, dropoffLat, dropoffLng } = data || {};
-    if (!isUuid(rideId) || !isValidCoordinate(Number(dropoffLat), Number(dropoffLng))) {
-      socket.emit('error', { message: 'Coordenadas de destino inválidas.' });
-      return;
-    }
-
-    try {
-      const result = await finalizeRideAndCharge(rideId, Number(dropoffLat), Number(dropoffLng));
-
-      await safeRedis.del(`active_ride:${rideId}`);
-      await safeRedis.del(`driver_active_ride:${socket.data.user.id}`);
-
-      io.to(rideId).emit('ride:finished', result);
-      io.to('admin_dashboard').emit('admin:ride_update', { rideId, status: 'FINISHED' });
-
-      // Busca dados do passageiro para o envio do Push
-      const ride = await prisma.ride.findUnique({
-        where: { id: rideId },
-        include: { passenger: { select: { deviceToken: true } } }
-      });
-
-      if (ride?.passenger?.deviceToken) {
-        sendPushNotification(
-          ride.passenger.deviceToken,
-          '🏁 Viagem Concluída!',
-          `Você chegou ao seu destino. Total: ${result.fareXOF} XOF.`,
-          { type: 'RIDE_COMPLETED', rideId },
-          PUSH_CHANNELS.RIDE_UPDATE
-        ).catch(() => null);
-      }
-    } catch (err: any) {
-      console.error(`🚨 Erro financeiro ao finalizar corrida ${rideId}:`, err);
-      socket.emit('error', { message: err.message || 'Erro ao cobrar passagem no Mobile Money.' });
-    }
-  }); 
-
+  } catch (err: any) {
+    console.error(`🚨 Erro financeiro ao finalizar corrida ${rideId}:`, err);
+    socket.emit('error', { message: err.message || 'Erro ao cobrar passagem no Mobile Money.' });
+  }
+});
   // --- CHAT DA CORRIDA ---
   handleSocketEvent(socket, 'chat:send_message', async (data) => {
     if (isSocketRateLimited(socket, 'chat:send_message', 2000, 5)) return;
@@ -1444,7 +1438,7 @@ const matchingDrivers = candidateDrivers.filter((driver: any) => {
       socket.emit('error', { message: error?.message || 'Falha ao processar a avaliação.' });
     }
   });
-}); // <--- ÚNICO E CORRETO FECHAMENTO PARA O io.on('connection')
+});
 
 // -----------------------------------------------------------------------------
 // 7. ENCERRAMENTO GRACIOSO DO SERVIDOR (SHUTDOWN)

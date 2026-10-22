@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import { prisma } from '../lib/prisma';
+import { prisma } from '../config/prisma';
 import { getIo } from '../server';
 import { formatPhoneNumber, isValidBissauPhone } from '../services/mobileMoneyService';
 import { sendSmsOtp } from '../services/smsService';
@@ -270,17 +270,11 @@ export class DriverAuthController {
     return this.resetPasswordWithOtp(req, res);
   }
 
-  /// ==========================================
-  // 📝 REGISTRO DE MOTORISTA (COM LOGS DE DEPURAÇÃO)
+  // ==========================================
+  // 📝 REGISTRO DE MOTORISTA
   // ==========================================
   async register(req: Request, res: Response): Promise<Response> {
     try {
-      // 🔍 LOG 1: CONTEÚDO BRUTO RECEBIDO NO REQ.BODY E REQ.FILES
-      console.log('=== 📥 [DEBUG BACKEND] REQ.BODY RECEBIDO ===');
-      console.log(JSON.stringify(req.body, null, 2));
-      console.log('=== 📁 [DEBUG BACKEND] REQ.FILES RECEBIDOS ===');
-      console.log(req.files ? Object.keys(req.files) : 'Nenhum arquivo capturado pelo Multer');
-
       const { 
         fullName, vehicleModel, password, vehicleColor, vehicleType, documentType 
       } = req.body;
@@ -294,26 +288,11 @@ export class DriverAuthController {
       const cleanVehicleModel = sanitizeText(vehicleModel, 80);
       const cleanVehicleColor = sanitizeText(vehicleColor, 40);
 
-      // 🔍 LOG 2: VERIFICAÇÃO DE CADA CAMPO APÓS A SANITIZAÇÃO
-      console.log('=== 🧪 [DEBUG BACKEND] AVALIAÇÃO DOS CAMPOS ===', {
-        cleanFullName: cleanFullName || '❌ VAZIO/UNDEFINED',
-        cleanVehicleModel: cleanVehicleModel || '❌ VAZIO/UNDEFINED',
-        vehiclePlate: vehiclePlate || '❌ VAZIO/UNDEFINED',
-        password: password ? '✅ OK' : '❌ VAZIO/UNDEFINED',
-        cleanVehicleColor: cleanVehicleColor || '❌ VAZIO/UNDEFINED',
-        documentNumber: documentNumber || '❌ VAZIO/UNDEFINED',
-        rawPhone,
-        formattedPhone,
-        isValidPhone: isValidBissauPhone(formattedPhone),
-      });
-
       if (!isValidBissauPhone(formattedPhone)) {
-        console.log('❌ [DEBUG BACKEND] Falhou na validação do telefone Bissau');
         return res.status(400).json({ success: false, error: 'O número de telefone deve ser válido para a Guiné-Bissau (+245).' });
       }
 
       if (!cleanFullName || !cleanVehicleModel || !vehiclePlate || !password || !cleanVehicleColor || !documentNumber) {
-        console.log('❌ [DEBUG BACKEND] Falhou no IF de campos obrigatórios');
         return res.status(400).json({ success: false, error: 'Todos os campos obrigatórios devem ser preenchidos.' });
       }
 
@@ -384,6 +363,7 @@ export class DriverAuthController {
       return res.status(500).json({ success: false, error: 'Erro interno no servidor ao cadastrar motorista.' });
     }
   }
+
   // ==========================================
   // 🚨 BOTÃO DE EMERGÊNCIA (SOS)
   // ==========================================
@@ -557,50 +537,54 @@ export class DriverAuthController {
     }
   }
 
- async deleteAccount(req: Request, res: Response): Promise<Response> {
-  try {
-    const driverId = (req as any).user?.id;
-    if (!driverId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
+  // ==========================================
+  // 🗑️ EXCLUSÃO DE CONTA
+  // ==========================================
+  async deleteAccount(req: Request, res: Response): Promise<Response> {
+    try {
+      const driverId = (req as any).user?.id;
+      if (!driverId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
 
-    const driver = await prisma.driver.findUnique({
-      where: { id: driverId },
-      include: { rides: { take: 1 }, transactions: { take: 1 } },
-    });
-
-    if (!driver) return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
-
-    const hasHistory = driver.rides.length > 0 || driver.transactions.length > 0;
-
-    if (!hasHistory) {
-      await prisma.driver.delete({ where: { id: driverId } });
-    } else {
-      const stamp = Date.now().toString().slice(-8);
-      await prisma.driver.update({
+      const driver = await prisma.driver.findUnique({
         where: { id: driverId },
-        data: {
-          phone: `d_${stamp}`,
-          vehiclePlate: `p_${stamp}`,
-          documentNumber: `doc_${stamp}`,
-          orangeNumber: null,
-          mtnNumber: null,
-          paymentAccountNumber: null,
-          status: 'SUSPENDED',
-          isOnline: false,
-          isAvailable: false,
-          currentRideId: null,
-          deletedAt: new Date(),
-          refreshTokenHash: null,
-          deviceToken: null,
-        },
+        include: { rides: { take: 1 }, transactions: { take: 1 } },
       });
-    }
 
-    return res.status(200).json({ success: true, message: 'Sua conta foi excluída e seus dados foram liberados com sucesso.' });
-  } catch (error: any) {
-    console.error('❌ [EXCLUSÃO DE CONTA MOTORISTA]:', error?.message || error);
-    return res.status(500).json({ success: false, error: 'Erro ao processar exclusão de conta.' });
+      if (!driver) return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
+
+      const hasHistory = driver.rides.length > 0 || driver.transactions.length > 0;
+
+      if (!hasHistory) {
+        await prisma.driver.delete({ where: { id: driverId } });
+      } else {
+        const stamp = Date.now().toString().slice(-8);
+        await prisma.driver.update({
+          where: { id: driverId },
+          data: {
+            phone: `d_${stamp}`,
+            vehiclePlate: `p_${stamp}`,
+            documentNumber: `doc_${stamp}`,
+            orangeNumber: null,
+            mtnNumber: null,
+            paymentAccountNumber: null,
+            status: 'SUSPENDED',
+            isOnline: false,
+            isAvailable: false,
+            currentRideId: null,
+            deletedAt: new Date(),
+            refreshTokenHash: null,
+            deviceToken: null,
+          },
+        });
+      }
+
+      return res.status(200).json({ success: true, message: 'Sua conta foi excluída e seus dados foram liberados com sucesso.' });
+    } catch (error: any) {
+      console.error('❌ [EXCLUSÃO DE CONTA MOTORISTA]:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro ao processar exclusão de conta.' });
+    }
   }
-}
+
   // ==========================================
   // 📱 ATUALIZAR MOBILE MONEY (ORANGE / MTN)
   // ==========================================
@@ -624,7 +608,6 @@ export class DriverAuthController {
         return res.status(400).json({ success: false, error: 'Informe o número de telefone do Mobile Money.' });
       }
 
-      // Remove caracteres não numéricos
       let cleanDigits = String(rawNumber).replace(/\D/g, '');
       if (cleanDigits.startsWith('245')) {
         cleanDigits = cleanDigits.substring(3);
@@ -752,16 +735,15 @@ export class DriverAuthController {
       return res.status(500).json({ success: false, error: 'Erro ao checar solicitações.' });
     }
   }
-  
+
   // ==========================================
-  // 🖼️ ATUALIZAR FOTO DE PERFIL (FLEXÍVEL)
+  // 🖼️ ATUALIZAR FOTO DE PERFIL
   // ==========================================
   async updateProfilePicture(req: Request, res: Response): Promise<Response> {
     try {
       const driverId = (req as any).user?.id;
       if (!driverId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
 
-      // Captura o arquivo vindo por req.file ou por req.files
       const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
       const file = req.file || 
                    files?.['profilePicture']?.[0] || 
@@ -792,9 +774,22 @@ export class DriverAuthController {
     }
   }
 }
+
 const driverAuthController = new DriverAuthController();
 
+export const login = (req: Request, res: Response) => driverAuthController.login(req, res);
+export const register = (req: Request, res: Response) => driverAuthController.register(req, res);
 export const requestForgotPasswordOtp = (req: Request, res: Response) => driverAuthController.requestForgotPasswordOtp(req, res);
 export const resetPasswordWithOtp = (req: Request, res: Response) => driverAuthController.resetPasswordWithOtp(req, res);
 export const forgotPassword = (req: Request, res: Response) => driverAuthController.forgotPassword(req, res);
 export const resetPassword = (req: Request, res: Response) => driverAuthController.resetPassword(req, res);
+export const triggerSos = (req: Request, res: Response) => driverAuthController.triggerSos(req, res);
+export const refreshToken = (req: Request, res: Response) => driverAuthController.refreshToken(req, res);
+export const getProfile = (req: Request, res: Response) => driverAuthController.getProfile(req, res);
+export const getFinance = (req: Request, res: Response) => driverAuthController.getFinance(req, res);
+export const deleteAccount = (req: Request, res: Response) => driverAuthController.deleteAccount(req, res);
+export const updatePaymentInfo = (req: Request, res: Response) => driverAuthController.updatePaymentInfo(req, res);
+export const updateDeviceToken = (req: Request, res: Response) => driverAuthController.updateDeviceToken(req, res);
+export const requestProfileUpdate = (req: Request, res: Response) => driverAuthController.requestProfileUpdate(req, res);
+export const checkPendingRequest = (req: Request, res: Response) => driverAuthController.checkPendingRequest(req, res);
+export const updateProfilePicture = (req: Request, res: Response) => driverAuthController.updateProfilePicture(req, res);

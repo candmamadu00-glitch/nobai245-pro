@@ -779,15 +779,24 @@ useEffect(() => {
       incomingRide.pickupLat
     );
   } else if (rideState === 'in_progress' && incomingRide.destinationLat && incomingRide.destinationLng) {
-    // 2. Filtra paradas pendentes suportando tanto o array quanto extraStopLat/extraStopLng
+    // 2. Parse e filtro de todas as paradas pendentes
+    let rawStops = incomingRide.stops;
+    if (typeof rawStops === 'string') {
+      try { rawStops = JSON.parse(rawStops); } catch (e) { rawStops = []; }
+    }
+
     let pendingStops: any[] = [];
-    if (Array.isArray(incomingRide.stops) && incomingRide.stops.length > 0) {
-      pendingStops = incomingRide.stops.filter((s: any) => s.status !== 'COMPLETED' && (s.lat || s.latitude));
+    if (Array.isArray(rawStops) && rawStops.length > 0) {
+      pendingStops = rawStops.filter((s: any) => {
+        const lat = Number(s.lat ?? s.latitude);
+        const lng = Number(s.lng ?? s.longitude);
+        return s.status !== 'COMPLETED' && !isNaN(lat) && !isNaN(lng) && lat !== 0;
+      });
     } else if (incomingRide.extraStopLat && incomingRide.extraStopLng) {
       pendingStops = [{ lat: incomingRide.extraStopLat, lng: incomingRide.extraStopLng }];
     }
 
-    // 3. Traça a rota contínua: GPS Motorista -> Parada(s) -> Destino Final
+    // 3. Traça a rota contínua no Mapa: GPS Motorista -> Parada 1 -> Parada 2 -> Destino Final
     fetchMapboxRoute(
       location.coords.longitude, 
       location.coords.latitude, 
@@ -801,8 +810,7 @@ useEffect(() => {
 
   persistActiveRideState(incomingRide, rideState, activeRideId);
 }, [rideState, activeRideId, location?.coords?.latitude, location?.coords?.longitude, incomingRide]);
-
-// 📡 ESCUTA DE SOCKETS COM SUPORTE COMPLETO A DUPLA PARADA
+// 📡 ESCUTA DE SOCKETS COM SUPORTE COMPLETO A MÚLTIPLAS PARADAS
 useEffect(() => {
   const handleConnect = async () => {
     if (driver?.id) {
@@ -815,35 +823,59 @@ useEffect(() => {
   };
 
   const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean }) => {
-    if (!isOnlineRef.current || !isMountedRef.current) return;
-    
-    const rawType = (data.serviceType || 'RIDE').toString().toUpperCase();
-    let normalizedService: 'RIDE' | 'DELIVERY' | 'RENTAL' = 'RIDE';
-    if (['ENTREGA', 'DELIVERY'].includes(rawType)) normalizedService = 'DELIVERY';
-    if (['ALUGUEL', 'RENTAL'].includes(rawType)) normalizedService = 'RENTAL';
+  if (!isOnlineRef.current || !isMountedRef.current) return;
 
-    if (serviceFiltersRef.current && serviceFiltersRef.current[normalizedService] === false) return;
+  // 🟢 Fecha automaticamente modais de recibo/avaliação se uma nova corrida chegar
+  setShowReceiptModal(false);
+  setShowRatingModal(false);
+  
+  const rawType = (data.serviceType || 'RIDE').toString().toUpperCase();
+  let normalizedService: 'RIDE' | 'DELIVERY' | 'RENTAL' = 'RIDE';
+  if (['ENTREGA', 'DELIVERY'].includes(rawType)) normalizedService = 'DELIVERY';
+  if (['ALUGUEL', 'RENTAL'].includes(rawType)) normalizedService = 'RENTAL';
 
+  if (serviceFiltersRef.current && serviceFiltersRef.current[normalizedService] === false) return;
+
+  // 🟢 Força o estado para 'idle' para permitir aceitar o novo chamado
+  setRideState('idle'); 
     const rawPrice = (data as any).fareXOF ?? data.priceXof ?? 0;
 
-    // 🟢 GARANTE QUE O ARRAY DE PARADAS CARREGUE AS COORDENADAS CORRETAMENTE
+    // 🟢 1. TRATAMENTO SEGURO: GARANTE QUE `stops` SEJA ARRAY MESMO SE VIER COMO STRING JSON
+    let rawStops = data.stops;
+    if (typeof rawStops === 'string') {
+      try {
+        rawStops = JSON.parse(rawStops);
+      } catch (e) {
+        rawStops = [];
+      }
+    }
+
     let stopsArray: any[] = [];
-    if (Array.isArray(data.stops) && data.stops.length > 0) {
-      stopsArray = data.stops.map((s: any) => ({
-        ...s,
-        lat: Number(s.lat ?? s.latitude),
-        lng: Number(s.lng ?? s.longitude),
-        latitude: Number(s.lat ?? s.latitude),
-        longitude: Number(s.lng ?? s.longitude),
-        address: s.address || s.name || 'Parada Intermediária'
-      }));
+    if (Array.isArray(rawStops) && rawStops.length > 0) {
+      stopsArray = rawStops.map((s: any, index: number) => {
+        const latVal = Number(s.lat ?? s.latitude);
+        const lngVal = Number(s.lng ?? s.longitude);
+        return {
+          ...s,
+          id: s.id || `stop_${index}`,
+          lat: latVal,
+          lng: lngVal,
+          latitude: latVal,
+          longitude: lngVal,
+          address: s.address || s.name || `Parada ${index + 1}`,
+          status: s.status || 'PENDING'
+        };
+      });
     } else if ((data as any).extraStopLat && (data as any).extraStopLng) {
+      const latVal = Number((data as any).extraStopLat);
+      const lngVal = Number((data as any).extraStopLng);
       stopsArray = [{
+        id: 'stop_1',
         address: (data as any).extraStopAddress || 'Parada Intermediária',
-        lat: Number((data as any).extraStopLat),
-        lng: Number((data as any).extraStopLng),
-        latitude: Number((data as any).extraStopLat),
-        longitude: Number((data as any).extraStopLng),
+        lat: latVal,
+        lng: lngVal,
+        latitude: latVal,
+        longitude: lngVal,
         status: 'PENDING'
       }];
     }
@@ -866,7 +898,7 @@ useEffect(() => {
       pickupLng: Number(data.pickupLng ?? (data as any).originLng),
       destinationLat: Number(data.destinationLat),
       destinationLng: Number(data.destinationLng),
-      stops: stopsArray,
+      stops: stopsArray, // 👈 ARRAY COMPLETO DE PARADAS RESTAURADO
       extraStopAddress: (data as any).extraStopAddress || (stopsArray[0]?.address || undefined),
     });
   };
@@ -972,24 +1004,42 @@ const syncActiveRideWithServer = useCallback(async () => {
         activeRide.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
 
       if (mappedState !== 'idle') {
-        // 🟢 RESTAURANTE DAS PARADAS SE VIEREM DO BANCO DE DADOS
+        // 🟢 PARSE SEGURO DO JSON DE PARADAS
+        let rawStops = activeRide.stops;
+        if (typeof rawStops === 'string') {
+          try {
+            rawStops = JSON.parse(rawStops);
+          } catch (e) {
+            rawStops = [];
+          }
+        }
+
         let stopsArray: any[] = [];
-        if (Array.isArray(activeRide.stops) && activeRide.stops.length > 0) {
-          stopsArray = activeRide.stops.map((s: any) => ({
-            ...s,
-            lat: Number(s.lat ?? s.latitude),
-            lng: Number(s.lng ?? s.longitude),
-            latitude: Number(s.lat ?? s.latitude),
-            longitude: Number(s.lng ?? s.longitude),
-            address: s.address || s.name || 'Parada Intermediária'
-          }));
+        if (Array.isArray(rawStops) && rawStops.length > 0) {
+          stopsArray = rawStops.map((s: any, idx: number) => {
+            const lat = Number(s.lat ?? s.latitude);
+            const lng = Number(s.lng ?? s.longitude);
+            return {
+              ...s,
+              id: s.id || `stop_${idx}`,
+              lat,
+              lng,
+              latitude: lat,
+              longitude: lng,
+              address: s.address || s.name || `Parada ${idx + 1}`,
+              status: s.status || 'PENDING'
+            };
+          });
         } else if (activeRide.extraStopLat && activeRide.extraStopLng) {
+          const lat = Number(activeRide.extraStopLat);
+          const lng = Number(activeRide.extraStopLng);
           stopsArray = [{
+            id: 'stop_1',
             address: activeRide.extraStopAddress || 'Parada Intermediária',
-            lat: Number(activeRide.extraStopLat),
-            lng: Number(activeRide.extraStopLng),
-            latitude: Number(activeRide.extraStopLat),
-            longitude: Number(activeRide.extraStopLng),
+            lat,
+            lng,
+            latitude: lat,
+            longitude: lng,
             status: 'PENDING'
           }];
         }
@@ -1011,7 +1061,7 @@ const syncActiveRideWithServer = useCallback(async () => {
           destinationAddress: activeRide.destinationAddress,
           priceXof: Number(activeRide.priceXof),
           paymentMethod: activeRide.paymentMethod,
-          stops: stopsArray,
+          stops: stopsArray, // 👈 PARADAS RESTAURADAS APÓS REABRIR O APP
         });
         persistActiveRideState(activeRide, mappedState, activeRide.id);
       }
@@ -1020,7 +1070,6 @@ const syncActiveRideWithServer = useCallback(async () => {
     console.warn('⚠️ Erro ao sincronizar corrida ativa com servidor:', err);
   }
 }, []);
-
 useEffect(() => {
   const subscription = AppState.addEventListener('change', async (nextAppState: AppStateStatus) => {
     if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
@@ -1475,6 +1524,27 @@ const toggleAudioRecording = async () => {
 const topHeaderInset = Math.max((insets?.top || 0) + 10, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 16);
 const bottomInset = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 24 : 16);
 
+// 🟢 1. TRATAMENTO E PARSE SEGURO DE MÚLTIPLAS PARADAS PARA A UI
+const formattedStops = useMemo(() => {
+  if (!incomingRide?.stops) return [];
+  let raw = incomingRide.stops;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      raw = [];
+    }
+  }
+  if (!Array.isArray(raw)) return [];
+  return raw.map((s: any, idx: number) => ({
+    id: s.id || `stop_${idx}`,
+    address: s.address || s.name || s.extraStopAddress || `Parada ${idx + 1}`,
+    lat: Number(s.lat ?? s.latitude ?? 0),
+    lng: Number(s.lng ?? s.longitude ?? 0),
+    status: s.status || 'PENDING'
+  }));
+}, [incomingRide?.stops]);
+
 return (
   <View style={styles.container}>
     <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
@@ -1506,7 +1576,7 @@ return (
         </Mapbox.ShapeSource>
       )}
 
-      {/* 🏎️ MARCADOR DO VEÍCULO (SEM QUADRADO BRANCO E COM ROTAÇÃO) */}
+      {/* 🏎️ MARCADOR DO VEÍCULO */}
       {isOnline && location?.coords && (
         <Mapbox.PointAnnotation 
           key={`driver-car-${driver?.id || 'active'}`}
@@ -1552,15 +1622,12 @@ return (
         </Mapbox.ShapeSource>
       )}
 
-      {/* PARADAS INTERMEDIÁRIAS (NO MAPA DO MOTORISTA) */}
-      {stops && stops.length > 0 && stops.map((stop: any, index: number) => {
-        const stopLng = Number(stop.lng ?? stop.longitude ?? 0);
-        const stopLat = Number(stop.lat ?? stop.latitude ?? 0);
-        if (!stopLng || !stopLat) return null;
-
+      {/* 🟢 2. PARADAS INTERMEDIÁRIAS DESENHADAS NO MAPA */}
+      {formattedStops.length > 0 && formattedStops.map((stop: any, index: number) => {
+        if (!stop.lng || !stop.lat) return null;
         const isPassed = index < currentStopIndex;
         return (
-          <Mapbox.PointAnnotation key={`stop-${index}`} id={`stop-${index}`} coordinate={[stopLng, stopLat]}>
+          <Mapbox.PointAnnotation key={`stop-${stop.id || index}`} id={`stop-${stop.id || index}`} coordinate={[stop.lng, stop.lat]}>
             <View style={[styles.carMarkerContainer, { backgroundColor: isPassed ? '#94A3B8' : '#3B82F6', padding: 6, borderRadius: 20, borderWidth: 2, borderColor: '#FFF' }]}>
               <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '800' }}>P{index + 1}</Text>
             </View>
@@ -1649,7 +1716,7 @@ return (
     <DriverSOSModal visible={showSosModal} onClose={() => setShowSosModal(false)} currentRideId={activeRideId} />
     <RatingModal visible={showRatingModal} targetName={finishedTargetName} isDriverEvaluating={true} onClose={() => setShowRatingModal(false)} onSubmit={handleSubmitRating} />
 
-    {/* PAINEL FLUTUANTE INFERIOR (BOTTOM SHEET DESLIZANTE) */}
+    {/* PAINEL FLUTUANTE INFERIOR */}
     <KeyboardAvoidingView 
       style={styles.bottomSheetWrapper} 
       behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
@@ -1787,13 +1854,15 @@ return (
                   </View>
                 </View>
 
-                {/* PARADAS INTERMEDIÁRIAS - EM ANDAMENTO */}
-                {incomingRide?.stops && incomingRide.stops.length > 0 && incomingRide.stops.map((stop: any, idx: number) => (
-                  <View key={`active-stop-${idx}`} style={[styles.addressItem, { backgroundColor: 'rgba(59, 130, 246, 0.05)', padding: 4, borderRadius: 8 }]}>
+                {/* 🟢 3. PARADAS INTERMEDIÁRIAS NO PAINEL ATIVO */}
+                {formattedStops.length > 0 && formattedStops.map((stop: any, idx: number) => (
+                  <View key={`active-stop-${idx}`} style={[styles.addressItem, { backgroundColor: 'rgba(59, 130, 246, 0.08)', padding: 6, borderRadius: 8, marginVertical: 2 }]}>
                     <Ionicons name="navigate-circle" size={18} color="#3B82F6" />
                     <View style={styles.addressTextWrapper}>
-                      <Text style={[styles.addressLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>Parada Extra {idx + 1}:</Text>
-                      <Text style={styles.addressValue} numberOfLines={1}>{stop.address || stop.name || 'Parada intermediária'}</Text>
+                      <Text style={[styles.addressLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>
+                        Parada {idx + 1} de {formattedStops.length}:
+                      </Text>
+                      <Text style={styles.addressValue} numberOfLines={2}>{stop.address}</Text>
                     </View>
                   </View>
                 ))}
@@ -1927,109 +1996,129 @@ return (
       onConfirmStop={() => setCurrentStopIndex(prev => prev + 1)} 
     />
 
-    {/* MODAL DE NOVA SOLICITAÇÃO */}
-    <Modal visible={rideState === 'idle' && !!incomingRide} transparent animationType="fade">
-      <View style={styles.newRequestOverlay}>
-        <View style={styles.newRequestCard}>
-          <View style={styles.newRequestHeader}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Ionicons name={incomingRide?.serviceType === 'DELIVERY' ? 'cube' : 'car-sport'} size={18} color="#EAB308" />
-              <Text style={styles.newRequestTitle}>Nova Corrida!</Text>
-            </View>
-            <View style={styles.newRequestPriceBadge}>
-              <Text style={styles.newRequestPriceText}>
-                {formatCurrency(incomingRide?.priceXof)} XOF
-              </Text>
-            </View>
-          </View>
+    {/* 🟢 MODAL DE NOVA SOLICITAÇÃO (SUPORTE A CORRIDAS EM FILA/EM ANDAMENTO) */}
+<Modal 
+  visible={!!incomingRide && (rideState === 'idle' || rideState === 'accepted' || rideState === 'in_progress')} 
+  transparent 
+  animationType="fade"
+>
+  <View style={styles.newRequestOverlay}>
+    <View style={styles.newRequestCard}>
+      
+      {/* 🟢 BANNER DE ALERTA DE FILA SE O MOTORISTA JÁ TIVER EM VIAGEM */}
+      {['accepted', 'arrived', 'in_progress'].includes(rideState) && (
+        <View style={{ backgroundColor: '#3B82F6', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Ionicons name="layers-outline" size={16} color="#FFF" />
+          <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: 12 }}>
+            PRÓXIMA CORRIDA (ADICIONAR À FILA)
+          </Text>
+        </View>
+      )}
 
-          <View style={styles.progressBarContainer}>
-            <View style={[styles.progressBarFill, { width: `${Math.max(0, (timeLeft / 15) * 100)}%` }]} />
-          </View>
-          <Text style={styles.timerText}>Tempo restante: {timeLeft}s</Text>
+      <View style={styles.newRequestHeader}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Ionicons name={incomingRide?.serviceType === 'DELIVERY' ? 'cube' : 'car-sport'} size={18} color="#EAB308" />
+          <Text style={styles.newRequestTitle}>
+            {['accepted', 'arrived', 'in_progress'].includes(rideState) ? 'Nova Oferta em Fila!' : 'Nova Corrida!'}
+          </Text>
+        </View>
+        <View style={styles.newRequestPriceBadge}>
+          <Text style={styles.newRequestPriceText}>
+            {formatCurrency(incomingRide?.priceXof)} XOF
+          </Text>
+        </View>
+      </View>
 
-          <View style={styles.modalPassengerRow}>
-            <View style={styles.passengerPhotoContainerSm}>
-              {incomingRide?.passengerPhoto ? (
-                <Image source={{ uri: formatImageUrl(incomingRide.passengerPhoto) }} style={{ width: '100%', height: '100%', borderRadius: 16 }} />
-              ) : (
-                <Ionicons name="person" size={16} color="#94A3B8" />
-              )}
-            </View>
-            <View style={{ flex: 1, marginLeft: 10 }}>
-              <Text style={styles.modalPassengerName}>{displayPassengerName}</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-                <Ionicons name="star" size={12} color="#EAB308" />
-                <Text style={styles.modalPassengerRating}>{incomingRide?.passengerRating?.toFixed(1) || '5.0'}</Text>
-              </View>
-            </View>
-          </View>
+      <View style={styles.progressBarContainer}>
+        <View style={[styles.progressBarFill, { width: `${Math.max(0, (timeLeft / 15) * 100)}%` }]} />
+      </View>
+      <Text style={styles.timerText}>Tempo restante: {timeLeft}s</Text>
 
-          <View style={styles.routeTimelineContainer}>
-            {/* EMBARQUE / ORIGEM */}
-            <View style={styles.timelineRow}>
-              <Ionicons name="location" size={16} color="#10B981" />
-              <View style={styles.timelineTextContainer}>
-                <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
-                <Text style={styles.timelineAddress} numberOfLines={2}>
-                  {incomingRide?.originAddress || 'Local de origem'}
-                </Text>
-              </View>
-            </View>
-
-            {/* PARADAS INTERMEDIÁRIAS (EXIBIDAS ANTES DE ACEITAR) */}
-            {incomingRide?.stops && incomingRide.stops.length > 0 && incomingRide.stops.map((stop: any, idx: number) => (
-              <View key={`modal-stop-${idx}`} style={styles.timelineRow}>
-                <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
-                <View style={styles.timelineTextContainer}>
-                  <Text style={[styles.timelineLabel, { color: '#3B82F6' }]}>PARADA {idx + 1}:</Text>
-                  <Text style={styles.timelineAddress} numberOfLines={2}>{stop.address || stop.name || 'Parada intermediária'}</Text>
-                </View>
-              </View>
-            ))}
-
-            {/* DESTINO */}
-            <View style={styles.timelineRow}>
-              <Ionicons name="flag" size={16} color="#EF4444" />
-              <View style={styles.timelineTextContainer}>
-                <Text style={styles.timelineLabel}>LEVAR PARA:</Text>
-                <Text style={styles.timelineAddress} numberOfLines={2}>
-                  {incomingRide?.destinationAddress || 'Local de destino'}
-                </Text>
-              </View>
-            </View>
-          </View>
-
-          <View style={styles.newRequestActions}>
-            <TouchableOpacity 
-              style={styles.rejectBtn} 
-              onPress={() => { Vibration.cancel(); setIncomingRide(null); }} 
-              disabled={isLoading}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.rejectText}>Recusar</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={[styles.acceptBtn, isLoading && { opacity: 0.7 }]} 
-              activeOpacity={0.85} 
-              disabled={isLoading} 
-              onPress={() => {
-                if (isLoading) return;
-                if (incomingRide?.rideId && driver?.id) {
-                  const lat = Number(location?.coords?.latitude || BISSAU_CENTER_LAT);
-                  const lng = Number(location?.coords?.longitude || BISSAU_CENTER_LNG);
-                  acceptRide(incomingRide.rideId, driver.id, lat, lng);
-                }
-              }}
-            >
-              <Text style={styles.acceptText}>{isLoading ? 'Aceitando...' : 'Aceitar Chamada'}</Text>
-            </TouchableOpacity>
+      <View style={styles.modalPassengerRow}>
+        <View style={styles.passengerPhotoContainerSm}>
+          {incomingRide?.passengerPhoto ? (
+            <Image source={{ uri: formatImageUrl(incomingRide.passengerPhoto) }} style={{ width: '100%', height: '100%', borderRadius: 16 }} />
+          ) : (
+            <Ionicons name="person" size={16} color="#94A3B8" />
+          )}
+        </View>
+        <View style={{ flex: 1, marginLeft: 10 }}>
+          <Text style={styles.modalPassengerName}>{displayPassengerName}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+            <Ionicons name="star" size={12} color="#EAB308" />
+            <Text style={styles.modalPassengerRating}>{incomingRide?.passengerRating?.toFixed(1) || '5.0'}</Text>
           </View>
         </View>
       </View>
-    </Modal>
 
+      <View style={styles.routeTimelineContainer}>
+        {/* EMBARQUE / ORIGEM */}
+        <View style={styles.timelineRow}>
+          <Ionicons name="location" size={16} color="#10B981" />
+          <View style={styles.timelineTextContainer}>
+            <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
+            <Text style={styles.timelineAddress} numberOfLines={2}>
+              {incomingRide?.originAddress || 'Local de origem'}
+            </Text>
+          </View>
+        </View>
+
+        {/* PARADAS INTERMEDIÁRIAS */}
+        {formattedStops.length > 0 && formattedStops.map((stop: any, idx: number) => (
+          <View key={`modal-stop-${idx}`} style={styles.timelineRow}>
+            <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
+            <View style={styles.timelineTextContainer}>
+              <Text style={[styles.timelineLabel, { color: '#3B82F6' }]}>
+                PARADA {idx + 1} DE {formattedStops.length}:
+              </Text>
+              <Text style={styles.timelineAddress} numberOfLines={2}>{stop.address}</Text>
+            </View>
+          </View>
+        ))}
+
+        {/* DESTINO */}
+        <View style={styles.timelineRow}>
+          <Ionicons name="flag" size={16} color="#EF4444" />
+          <View style={styles.timelineTextContainer}>
+            <Text style={styles.timelineLabel}>LEVAR PARA:</Text>
+            <Text style={styles.timelineAddress} numberOfLines={2}>
+              {incomingRide?.destinationAddress || 'Local de destino'}
+            </Text>
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.newRequestActions}>
+        <TouchableOpacity 
+          style={styles.rejectBtn} 
+          onPress={() => { Vibration.cancel(); setIncomingRide(null); }} 
+          disabled={isLoading}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.rejectText}>Recusar</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={[styles.acceptBtn, isLoading && { opacity: 0.7 }]} 
+          activeOpacity={0.85} 
+          disabled={isLoading} 
+          onPress={() => {
+            if (isLoading) return;
+            if (incomingRide?.rideId && driver?.id) {
+              const lat = Number(location?.coords?.latitude || BISSAU_CENTER_LAT);
+              const lng = Number(location?.coords?.longitude || BISSAU_CENTER_LNG);
+              acceptRide(incomingRide.rideId, driver.id, lat, lng);
+            }
+          }}
+        >
+          <Text style={styles.acceptText}>
+            {isLoading ? 'Aceitando...' : (['accepted', 'arrived', 'in_progress'].includes(rideState) ? 'Adicionar à Fila 🔄' : 'Aceitar Chamada')}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  </View>
+</Modal>
     {/* CHAT INTERNO */}
     <ChatModal 
       visible={isChatVisible} 
@@ -2043,28 +2132,48 @@ return (
     />
 
     {/* MODAL RECIBO */}
-    <Modal visible={showReceiptModal} transparent animationType="slide">
-      <View style={styles.receiptOverlay}>
-        <View style={[
-          styles.receiptCard,
-          { paddingBottom: Math.max((insets?.bottom || 0) + 20, Platform.OS === 'android' ? 32 : 20) }
-        ]}>
-          <Text style={styles.receiptHeader}>✅ Serviço Concluído</Text>
-          <Text style={styles.receiptSub}>Obrigado por mais um serviço finalizado com sucesso.</Text>
-          <View style={styles.divider} />
-          <Text style={styles.receiptLabel}>Total Ganho:</Text>
-          <Text style={styles.receiptAmount}>
-            {formatCurrency(completedInfo?.fareXOF)} XOF
-          </Text>
-          <Text style={styles.receiptDist}>ID da Transação: {completedInfo?.transactionId || 'N/A'}</Text>
-          <View style={{ width: '100%', gap: 10 }}>
-            <TouchableOpacity style={styles.closeReceiptBtn} onPress={() => { setShowReceiptModal(false); setShowRatingModal(true); }} activeOpacity={0.85}>
-              <Text style={styles.closeReceiptText}>Avaliar Cliente</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+<Modal visible={showReceiptModal} transparent animationType="slide">
+  <View style={styles.receiptOverlay}>
+    <View style={[
+      styles.receiptCard,
+      { paddingBottom: Math.max((insets?.bottom || 0) + 20, Platform.OS === 'android' ? 32 : 20) }
+    ]}>
+      <Text style={styles.receiptHeader}>✅ Serviço Concluído</Text>
+      <Text style={styles.receiptSub}>Obrigado por mais um serviço finalizado com sucesso.</Text>
+      <View style={styles.divider} />
+      <Text style={styles.receiptLabel}>Total Ganho:</Text>
+      <Text style={styles.receiptAmount}>
+        {formatCurrency(completedInfo?.fareXOF)} XOF
+      </Text>
+      <Text style={styles.receiptDist}>ID da Transação: {completedInfo?.transactionId || 'N/A'}</Text>
+      
+      <View style={{ width: '100%', gap: 10, marginTop: 15 }}>
+        <TouchableOpacity 
+          style={styles.closeReceiptBtn} 
+          onPress={() => { 
+            setShowReceiptModal(false); 
+            setShowRatingModal(true); 
+          }} 
+          activeOpacity={0.85}
+        >
+          <Text style={styles.closeReceiptText}>Avaliar Cliente</Text>
+        </TouchableOpacity>
+
+        {/* 🟢 Botão para fechar o recibo sem avaliar e já ficar livre para chamadas */}
+        <TouchableOpacity 
+          style={[styles.closeReceiptBtn, { backgroundColor: '#334155' }]} 
+          onPress={() => { 
+            setShowReceiptModal(false); 
+            resetDriverState(); 
+          }} 
+          activeOpacity={0.85}
+        >
+          <Text style={[styles.closeReceiptText, { color: '#94A3B8' }]}>Concluir e Voltar</Text>
+        </TouchableOpacity>
       </View>
-    </Modal>
+    </View>
+  </View>
+</Modal>
 
     <StartRideOtpModal visible={showOtpModal} onCancel={() => setShowOtpModal(false)} onSubmitOtp={handleStartRideWithOtp} />
     <CancelModal visible={showCancelModal} userType="DRIVER" isPenaltyApplicable={false} onClose={() => setShowCancelModal(false)} onConfirm={handleConfirmCancel} />

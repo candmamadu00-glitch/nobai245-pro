@@ -8,14 +8,14 @@ import {
   TransactionStatus,
   RideStatus
 } from '@prisma/client';
-import { prisma } from '../lib/prisma';
+import { prisma } from '../config/prisma';
 
 // Configurações de ambiente MTN
 const MTN_BASE_URL = process.env.MTN_MOMO_BASE_URL || 'https://sandbox.momodeveloper.mtn.com';
 const MTN_SUBSCRIPTION_KEY = process.env.MTN_MOMO_SUBSCRIPTION_KEY || process.env.MTN_SUBSCRIPTION_KEY || '';
 const MTN_TARGET_ENV = process.env.MTN_MOMO_TARGET_ENV || 'sandbox';
 
-// Configurações de ambiente ORANGE (com suporte a ambos os padrões de nomes)
+// Configurações de ambiente ORANGE
 const ORANGE_BASE_URL = process.env.ORANGE_MONEY_API_URL || process.env.ORANGE_BASE_URL || 'https://api.orange.com';
 const ORANGE_CLIENT_ID = process.env.ORANGE_CLIENT_ID || process.env.ORANGE_MONEY_CLIENT_ID || '';
 const ORANGE_CLIENT_SECRET = process.env.ORANGE_CLIENT_SECRET || process.env.ORANGE_MONEY_CLIENT_SECRET || '';
@@ -90,7 +90,7 @@ function isUuid(str?: string): boolean {
 }
 
 // -----------------------------------------------------------------------------
-// 1. GERENCIAMENTO MUTEX E CACHE DE TOKENS OAUTH
+// 1. CACHE E GERENCIAMENTO DE TOKENS OAUTH
 // -----------------------------------------------------------------------------
 
 export async function getOrangeAccessToken(): Promise<string> {
@@ -104,10 +104,7 @@ export async function getOrangeAccessToken(): Promise<string> {
   tokenPromises.orange = (async () => {
     try {
       if (!ORANGE_CLIENT_ID || !ORANGE_CLIENT_SECRET) {
-        console.error('❌ [CONFIG ERRO ORANGE]: Client ID/Secret vazios.', {
-          ORANGE_CLIENT_ID: ORANGE_CLIENT_ID ? 'OK' : 'MISSING',
-          ORANGE_CLIENT_SECRET: ORANGE_CLIENT_SECRET ? 'OK' : 'MISSING'
-        });
+        console.error('❌ [CONFIG ERRO ORANGE]: Client ID/Secret vazios.');
         throw new Error('MISSING_CONFIG: Credenciais Orange Money não configuradas.');
       }
 
@@ -275,21 +272,20 @@ export async function chargePassengerMobileMoney(
     if (enumProvider === MobileMoneyProvider.ORANGE_MONEY) {
       const accessToken = await getOrangeAccessToken();
 
-      // Para:
-const baseDomain = process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com';
-const webhookUrl = process.env.ORANGE_WEBHOOK_URL || `${baseDomain}/api/payments/orange/webhook`;
+      const baseDomain = process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com';
+      const webhookUrl = process.env.ORANGE_WEBHOOK_URL || `${baseDomain}/api/payments/orange/webhook`;
 
-const payload = {
-  merchant_key: ORANGE_MERCHANT_KEY,
-  currency: 'XOF',
-  order_id: rawTransactionId,
-  amount: cleanAmount,
-  reference: params.isWalletRecharge ? `RECHARGE-${rawTransactionId.substring(0, 8)}` : `RIDE-${(params.rideId || rawTransactionId).substring(0, 8)}`,
-  subscriber_msisdn: cleanMsisdn,
-  return_url: `${baseDomain}/api/payments/orange/return`,
-  cancel_url: `${baseDomain}/api/payments/orange/cancel`,
-  notif_url: webhookUrl
-};
+      const payload = {
+        merchant_key: ORANGE_MERCHANT_KEY,
+        currency: 'XOF',
+        order_id: rawTransactionId,
+        amount: cleanAmount,
+        reference: params.isWalletRecharge ? `RECHARGE-${rawTransactionId.substring(0, 8)}` : `RIDE-${(params.rideId || rawTransactionId).substring(0, 8)}`,
+        subscriber_msisdn: cleanMsisdn,
+        return_url: `${baseDomain}/api/payments/orange/return`,
+        cancel_url: `${baseDomain}/api/payments/orange/cancel`,
+        notif_url: webhookUrl
+      };
 
       console.log('🍊 [REQUISICAO ORANGE WEBPAY]:', JSON.stringify({
         url: `${ORANGE_BASE_URL}/orange-money-webpay/gw/v1/webpayment`,
@@ -318,7 +314,7 @@ const payload = {
         currency: 'XOF',
         externalId: rawTransactionId,
         payer: { partyIdType: 'MSISDN', partyId: cleanMsisdn },
-        payerMessage: 'Pagamento BAI 245',
+        payerMessage: 'Pagamento Nô Bai 245',
         payeeNote: params.isWalletRecharge ? 'Recarga de Carteira' : `Corrida: ${params.rideId || 'N/A'}`,
       };
 
@@ -591,8 +587,8 @@ export async function executeRideDisbursement(params: DisbursementParams): Promi
         currency: 'XOF',
         externalId: ref,
         payee: { partyIdType: 'MSISDN', partyId: cleanPhone },
-        payerMessage: 'Pagamento BAI 245',
-        payeeNote: `Repasse BAI 245 (${rideId || 'Geral'})`
+        payerMessage: 'Pagamento Nô Bai 245',
+        payeeNote: `Repasse Nô Bai 245 (${rideId || 'Geral'})`
       }, {
         headers: {
           Authorization: `Bearer ${token}`,
