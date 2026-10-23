@@ -822,25 +822,33 @@ useEffect(() => {
     }
   };
 
-  const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean }) => {
-  if (!isOnlineRef.current || !isMountedRef.current) return;
+  // 🟢 1. HANDLER DE NOVA SOLICITAÇÃO DE CORRIDA
+  const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean; rideId?: string }) => {
+    if (!isOnlineRef.current || !isMountedRef.current) return;
 
-  // 🟢 Fecha automaticamente modais de recibo/avaliação se uma nova corrida chegar
-  setShowReceiptModal(false);
-  setShowRatingModal(false);
-  
-  const rawType = (data.serviceType || 'RIDE').toString().toUpperCase();
-  let normalizedService: 'RIDE' | 'DELIVERY' | 'RENTAL' = 'RIDE';
-  if (['ENTREGA', 'DELIVERY'].includes(rawType)) normalizedService = 'DELIVERY';
-  if (['ALUGUEL', 'RENTAL'].includes(rawType)) normalizedService = 'RENTAL';
+    const currentRideId = activeRideIdRef.current || activeRideId;
+    const currentRideState = rideStateRef.current || rideState;
 
-  if (serviceFiltersRef.current && serviceFiltersRef.current[normalizedService] === false) return;
+    // 🛑 TRAVA 1: Se esta corrida JÁ É a corrida ativa atual do motorista, ignora chamados duplicados
+    if (currentRideId && currentRideId === data.rideId) {
+      console.log('⚠️ [APP] Oferta ignorada: corrida já aceita/ativa.');
+      return;
+    }
 
-  // 🟢 Força o estado para 'idle' para permitir aceitar o novo chamado
-  setRideState('idle'); 
+    // 🟢 Fecha modais de recibo/avaliação anteriores apenas se o motorista estiver livre
+    setShowReceiptModal(false);
+    setShowRatingModal(false);
+    
+    const rawType = (data.serviceType || 'RIDE').toString().toUpperCase();
+    let normalizedService: 'RIDE' | 'DELIVERY' | 'RENTAL' = 'RIDE';
+    if (['ENTREGA', 'DELIVERY'].includes(rawType)) normalizedService = 'DELIVERY';
+    if (['ALUGUEL', 'RENTAL'].includes(rawType)) normalizedService = 'RENTAL';
+
+    if (serviceFiltersRef.current && serviceFiltersRef.current[normalizedService] === false) return;
+
     const rawPrice = (data as any).fareXOF ?? data.priceXof ?? 0;
 
-    // 🟢 1. TRATAMENTO SEGURO: GARANTE QUE `stops` SEJA ARRAY MESMO SE VIER COMO STRING JSON
+    // 🟢 TRATAMENTO SEGURO DE PARADAS
     let rawStops = data.stops;
     if (typeof rawStops === 'string') {
       try {
@@ -880,15 +888,16 @@ useEffect(() => {
       }];
     }
 
-    const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(rideState);
+    // 🟢 Verifica se o motorista já está em uma corrida ativa
+    const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
     
-    if (!isCurrentlyInRide) {
-      setRideState('idle'); 
-    }
+    // 🟢 A oferta SÓ É em fila se o motorista já estiver em viagem com outra corrida
+    const isRealQueuedOffer = isCurrentlyInRide && data.rideId !== currentRideId;
 
     setTimeLeft(15);
     setIncomingRide({
       ...data,
+      isQueuedOffer: isRealQueuedOffer,
       passengerName: data.passengerName || 'Passageiro',
       passengerRating: data.passengerRating || 5.0,
       serviceType: normalizedService,
@@ -898,59 +907,61 @@ useEffect(() => {
       pickupLng: Number(data.pickupLng ?? (data as any).originLng),
       destinationLat: Number(data.destinationLat),
       destinationLng: Number(data.destinationLng),
-      stops: stopsArray, // 👈 ARRAY COMPLETO DE PARADAS RESTAURADO
+      stops: stopsArray,
       extraStopAddress: (data as any).extraStopAddress || (stopsArray[0]?.address || undefined),
     });
+
+    Vibration.vibrate([0, 500, 200, 500], true);
   };
 
+  // 🟢 2. HANDLER DE CORRIDA ACEITA
   const handleRideAccepted = async (data: any) => {
-  Vibration.cancel();
-  if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
-  if (!isMountedRef.current) return;
-  setIsLoading(false);
+    Vibration.cancel();
+    if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
+    if (!isMountedRef.current) return;
+    setIsLoading(false);
 
-  if (data.driverId === driver?.id) {
-    const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(rideState);
-    
-    if (!isCurrentlyInRide) {
-      setActiveRideId(data.rideId);
-      setRideState('accepted');
-
-      // 🟢 ATUALIZA O INCOMING RIDE COM OS DADOS DO SERVIDOR EM VEZ DE ZERAR (NULL)
-      setIncomingRide((prev: any) => ({
-        ...prev,
-        ...data,
-        passengerName: data.passengerName || prev?.passengerName || 'Passageiro',
-        passengerPhone: data.passengerPhone || prev?.passengerPhone,
-        passengerPhoto: data.passengerPhoto || prev?.passengerPhoto,
-        originAddress: data.originAddress || prev?.originAddress,
-        destinationAddress: data.destinationAddress || prev?.destinationAddress,
-        priceXof: Number(data.priceXof || prev?.priceXof || 0),
-      }));
-
-      if (incomingRideRef.current) {
-        persistActiveRideState(incomingRideRef.current, 'accepted', data.rideId);
-      }
+    if (data.driverId === driver?.id) {
+      const currentRideState = rideStateRef.current || rideState;
+      const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
       
-      snapToState(true); // Expandir o painel flutuante
+      if (!isCurrentlyInRide || activeRideId === data.rideId) {
+        // CORRIDA PRINCIPAL
+        setActiveRideId(data.rideId);
+        setRideState('accepted');
+
+        // 🟢 LIMPA O MODAL DE OFERTA PARA DAR LUGAR AO NAVEGADOR PRINCIPAL
+        setIncomingRide(null);
+
+        if (incomingRideRef.current) {
+          persistActiveRideState(incomingRideRef.current, 'accepted', data.rideId);
+        }
+        
+        snapToState(true); // Expandir o painel flutuante
+      } else {
+        // CORRIDA EM FILA
+        setIncomingRide(null); // Fecha o modal da oferta em fila
+        Alert.alert('Fila Confirmada 🔄', 'Nova corrida adicionada à sua fila com sucesso! Conclua a viagem atual para iniciar o novo embarque.');
+      }
     } else {
-      setIncomingRide(null); // Fecha o modal apenas se for uma corrida em fila
-      Alert.alert('Fila Confirmada 🔄', 'Nova corrida adicionada à sua fila com sucesso! Conclua a viagem atual para iniciar o novo embarque.');
+      setIncomingRide(null);
+      Alert.alert('Corrida Indisponível', 'Outro motorista aceitou esta corrida.');
     }
-  } else {
-    setIncomingRide(null);
-    Alert.alert('Corrida Indisponível', 'Outro motorista aceitou esta corrida.');
-  }
-};
+  };
+
+  // 🟢 3. HANDLER DE CORRIDA INICIADA
   const handleRideStarted = () => {
     if (!isMountedRef.current) return;
     setIsLoading(false);
     setRideState('in_progress');
     setShowOtpModal(false);
     snapToState(true);
-    if (incomingRideRef.current && activeRideIdRef.current) persistActiveRideState(incomingRideRef.current, 'in_progress', activeRideIdRef.current);
+    if (incomingRideRef.current && activeRideIdRef.current) {
+      persistActiveRideState(incomingRideRef.current, 'in_progress', activeRideIdRef.current);
+    }
   };
 
+  // 🟢 4. HANDLER DE CORRIDA FINALIZADA
   const handleRideFinished = (data: any) => {
     if (!isMountedRef.current) return;
     setIsLoading(false);
@@ -963,7 +974,6 @@ useEffect(() => {
       setShowReceiptModal(false);
       fetchTodayEarnings();
     } else {
-      // 🟢 CORREÇÃO: Reseta o estado local e notifica o socket da nova disponibilidade
       setActiveRideId(null);
       setIncomingRide(null);
       setRideState('idle'); 
@@ -972,7 +982,6 @@ useEffect(() => {
       persistActiveRideState(null, 'idle', null);
       fetchTodayEarnings();
 
-      // 🟢 Dispara atualização imediata de localização para o backend registrar o motorista como livre
       if (driver?.id && location?.coords && socket?.connected) {
         socket.emit('driver:location_update', {
           driverId: driver.id,
@@ -984,6 +993,7 @@ useEffect(() => {
       }
     }
   };
+
   const handleQueuedNowActive = (data: { rideId: string; status: string }) => {
     if (!isMountedRef.current) return;
     setActiveRideId(data.rideId);
@@ -1033,7 +1043,6 @@ const syncActiveRideWithServer = useCallback(async () => {
         activeRide.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
 
       if (mappedState !== 'idle') {
-        // 🟢 PARSE SEGURO DO JSON DE PARADAS
         let rawStops = activeRide.stops;
         if (typeof rawStops === 'string') {
           try {
@@ -1090,7 +1099,7 @@ const syncActiveRideWithServer = useCallback(async () => {
           destinationAddress: activeRide.destinationAddress,
           priceXof: Number(activeRide.priceXof),
           paymentMethod: activeRide.paymentMethod,
-          stops: stopsArray, // 👈 PARADAS RESTAURADAS APÓS REABRIR O APP
+          stops: stopsArray,
         });
         persistActiveRideState(activeRide, mappedState, activeRide.id);
       }

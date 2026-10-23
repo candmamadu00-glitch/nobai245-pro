@@ -1023,28 +1023,34 @@ io.on('connection', (socket) => {
         paymentMethod: ride.paymentMethod || 'ORANGE_MONEY'
       };
 
-      for (const d of matchingDrivers) {
-        const isQueuedOffer = !d.isAvailable || !!d.currentRideId;
+      // 🟢 NO EVENTO 'passenger:request_ride' EM backend/src/server.ts:
 
-        console.log(`📡 [DISPARANDO OFERTA] Para motorista ID: ${d.id} (Em fila: ${isQueuedOffer})`);
+for (const d of matchingDrivers) {
+  // 1. Conta quantas corridas ativas o motorista realmente tem no banco
+  const activeRidesCount = Array.isArray(d.rides) ? d.rides.length : 0;
 
-        io.to(d.id).emit('ride:new_request', { ...requestPayload, isQueuedOffer });
-        io.to(`driver_${d.id}`).emit('ride:new_request', { ...requestPayload, isQueuedOffer });
+  // 🟢 CORREÇÃO DEFINITIVA: Só é "Em Fila" se o motorista JÁ TIVER 1 corrida ativa em andamento com outro passageiro
+  const isQueuedOffer = activeRidesCount > 0;
 
-        if (d.deviceToken) {
-          const pushTitle = isQueuedOffer 
-            ? `🚗 Próxima Corrida em Fila (Valor: ${ride.priceXof} XOF)` 
-            : `🚕 Nova Corrida (Valor: ${ride.priceXof} XOF)`;
+  console.log(`📡 [DISPARANDO OFERTA] Para motorista ID: ${d.id} (Em fila: ${isQueuedOffer})`);
 
-          sendPushNotification(
-            d.deviceToken,
-            pushTitle,
-            `Passageiro: ${passengerInfo?.fullName || 'Passageiro'} solicitou corrida!`,
-            { type: 'NEW_RIDE_REQUEST', rideId, isQueuedOffer },
-            PUSH_CHANNELS.NEW_RIDE_ALARM
-          ).catch(() => null);
-        }
-      }
+  io.to(d.id).emit('ride:new_request', { ...requestPayload, isQueuedOffer });
+  io.to(`driver_${d.id}`).emit('ride:new_request', { ...requestPayload, isQueuedOffer });
+
+  if (d.deviceToken) {
+    const pushTitle = isQueuedOffer 
+      ? `🚗 Próxima Corrida em Fila (Valor: ${ride.priceXof} XOF)` 
+      : `🚕 Nova Corrida (Valor: ${ride.priceXof} XOF)`;
+
+    sendPushNotification(
+      d.deviceToken,
+      pushTitle,
+      `Passageiro: ${passengerInfo?.fullName || 'Passageiro'} solicitou corrida!`,
+      { type: 'NEW_RIDE_REQUEST', rideId, isQueuedOffer },
+      PUSH_CHANNELS.NEW_RIDE_ALARM
+    ).catch(() => null);
+  }
+}
 
     } catch (err: any) {
       console.error('❌ Erro na solicitação da corrida:', err);
