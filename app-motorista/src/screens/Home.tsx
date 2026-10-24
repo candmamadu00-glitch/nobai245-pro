@@ -815,22 +815,21 @@ useEffect(() => {
     }
   };
 
-  // 🟢 1. HANDLER DE NOVA SOLICITAÇÃO DE CORRIDA (CORRIGIDO)
-const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean; rideId?: string }) => {
-  console.log('🔔 [APP MOTORISTA] Chamada recebida via Socket:', data);
+  const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean; rideId?: string }) => {
+  console.log('🚨 [APP MOTORISTA] EVENTO DE CORRIDA CHEGOU VIA SOCKET:', data);
 
   if (!isMountedRef.current) return;
 
   const currentRideId = activeRideIdRef.current || activeRideId;
   const currentRideState = rideStateRef.current || rideState;
 
-  // 🛑 TRAVA 1: Se esta corrida JÁ É a corrida ativa atual do motorista, ignora chamados duplicados
+  // 🛑 Se a corrida já for a atual do motorista, ignora
   if (currentRideId && currentRideId === data.rideId) {
     console.log('⚠️ [APP] Oferta ignorada: corrida já aceita/ativa.');
     return;
   }
 
-  // 🟢 Fecha modais de recibo/avaliação anteriores apenas se o motorista estiver livre
+  // 🟢 Limpa modais anteriores e prepara os dados
   setShowReceiptModal(false);
   setShowRatingModal(false);
   
@@ -843,14 +842,10 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
 
   const rawPrice = (data as any).fareXOF ?? data.priceXof ?? 0;
 
-  // 🟢 TRATAMENTO SEGURO DE PARADAS
+  // 🟢 Trata as paradas intermediárias
   let rawStops = data.stops;
   if (typeof rawStops === 'string') {
-    try {
-      rawStops = JSON.parse(rawStops);
-    } catch (e) {
-      rawStops = [];
-    }
+    try { rawStops = JSON.parse(rawStops); } catch (e) { rawStops = []; }
   }
 
   let stopsArray: any[] = [];
@@ -883,12 +878,10 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
     }];
   }
 
-  // 🟢 Verifica se o motorista já está em uma corrida ativa
   const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
-  
-  // 🟢 A oferta SÓ É em fila se o motorista já estiver em viagem com outra corrida
   const isRealQueuedOffer = isCurrentlyInRide && data.rideId !== currentRideId;
 
+  // 🟢 Define os dados da corrida recebida
   setTimeLeft(15);
   setIncomingRide({
     ...data,
@@ -906,7 +899,7 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
     extraStopAddress: (data as any).extraStopAddress || (stopsArray[0]?.address || undefined),
   });
 
-  // 🟢 EXPANDE O PAINEL INFERIOR NA TELA PARA MOSTRAR A SOLICITAÇÃO
+  // 🟢 FORÇA O PAINEL A EXPANDIR NA TELA DO MOTORISTA
   snapToState(true);
 
   Vibration.vibrate([0, 500, 200, 500], true);
