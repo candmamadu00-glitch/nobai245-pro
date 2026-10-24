@@ -12,7 +12,7 @@ import {
   calculateDistance
 } from '../services/rideRulesService';
 import { sendPushNotification, PUSH_CHANNELS } from '../services/pushNotifications';
-
+import { getRouteDistanceAndDuration, submitRatingLogic } from '../services/rideService';
 // -----------------------------------------------------------------------------
 // HELPERS DE VALIDAÇÃO E SANITIZAÇÃO
 // -----------------------------------------------------------------------------

@@ -14,7 +14,7 @@ import { enqueuePayoutJob, enqueueRefundJob } from '../jobs/payoutQueue';
 import { chargePassengerMobileMoney, isValidBissauPhone, executeRideDisbursement } from './mobileMoneyService';
 import { sendPushNotification, PUSH_CHANNELS } from './pushNotifications';
 import { getIo } from '../server';
-import { getRouteDistanceAndDuration, submitRatingLogic } from '../services/rideService';
+
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
 const IS_MOCK_MODE = process.env.ENABLE_MOCK_PAYMENTS === 'true' || process.env.NODE_ENV !== 'production';
 const CANCELLATION_PENALTY_XOF = 500;
