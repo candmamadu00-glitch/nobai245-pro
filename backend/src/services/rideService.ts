@@ -1143,7 +1143,7 @@ export async function cancelRideLogic(
       const remainingQueuedRide = await tx.ride.findFirst({
         where: {
           driverId: ride.driverId,
-          status: { in: [RideStatus.ACCEPTED, RideStatus.QUEUED] },
+          status: { in: [RideStatus.ACCEPTED, 'QUEUED' as any] },
           id: { not: ride.id }
         }
       });
