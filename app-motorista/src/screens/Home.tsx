@@ -815,97 +815,102 @@ useEffect(() => {
     }
   };
 
-  // 🟢 1. HANDLER DE NOVA SOLICITAÇÃO DE CORRIDA
-  const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean; rideId?: string }) => {
-    if (!isOnlineRef.current || !isMountedRef.current) return;
+  // 🟢 1. HANDLER DE NOVA SOLICITAÇÃO DE CORRIDA (CORRIGIDO)
+const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean; rideId?: string }) => {
+  console.log('🔔 [APP MOTORISTA] Chamada recebida via Socket:', data);
 
-    const currentRideId = activeRideIdRef.current || activeRideId;
-    const currentRideState = rideStateRef.current || rideState;
+  if (!isMountedRef.current) return;
 
-    // 🛑 TRAVA 1: Se esta corrida JÁ É a corrida ativa atual do motorista, ignora chamados duplicados
-    if (currentRideId && currentRideId === data.rideId) {
-      console.log('⚠️ [APP] Oferta ignorada: corrida já aceita/ativa.');
-      return;
+  const currentRideId = activeRideIdRef.current || activeRideId;
+  const currentRideState = rideStateRef.current || rideState;
+
+  // 🛑 TRAVA 1: Se esta corrida JÁ É a corrida ativa atual do motorista, ignora chamados duplicados
+  if (currentRideId && currentRideId === data.rideId) {
+    console.log('⚠️ [APP] Oferta ignorada: corrida já aceita/ativa.');
+    return;
+  }
+
+  // 🟢 Fecha modais de recibo/avaliação anteriores apenas se o motorista estiver livre
+  setShowReceiptModal(false);
+  setShowRatingModal(false);
+  
+  const rawType = (data.serviceType || 'RIDE').toString().toUpperCase();
+  let normalizedService: 'RIDE' | 'DELIVERY' | 'RENTAL' = 'RIDE';
+  if (['ENTREGA', 'DELIVERY'].includes(rawType)) normalizedService = 'DELIVERY';
+  if (['ALUGUEL', 'RENTAL'].includes(rawType)) normalizedService = 'RENTAL';
+
+  if (serviceFiltersRef.current && serviceFiltersRef.current[normalizedService] === false) return;
+
+  const rawPrice = (data as any).fareXOF ?? data.priceXof ?? 0;
+
+  // 🟢 TRATAMENTO SEGURO DE PARADAS
+  let rawStops = data.stops;
+  if (typeof rawStops === 'string') {
+    try {
+      rawStops = JSON.parse(rawStops);
+    } catch (e) {
+      rawStops = [];
     }
+  }
 
-    // 🟢 Fecha modais de recibo/avaliação anteriores apenas se o motorista estiver livre
-    setShowReceiptModal(false);
-    setShowRatingModal(false);
-    
-    const rawType = (data.serviceType || 'RIDE').toString().toUpperCase();
-    let normalizedService: 'RIDE' | 'DELIVERY' | 'RENTAL' = 'RIDE';
-    if (['ENTREGA', 'DELIVERY'].includes(rawType)) normalizedService = 'DELIVERY';
-    if (['ALUGUEL', 'RENTAL'].includes(rawType)) normalizedService = 'RENTAL';
-
-    if (serviceFiltersRef.current && serviceFiltersRef.current[normalizedService] === false) return;
-
-    const rawPrice = (data as any).fareXOF ?? data.priceXof ?? 0;
-
-    // 🟢 TRATAMENTO SEGURO DE PARADAS
-    let rawStops = data.stops;
-    if (typeof rawStops === 'string') {
-      try {
-        rawStops = JSON.parse(rawStops);
-      } catch (e) {
-        rawStops = [];
-      }
-    }
-
-    let stopsArray: any[] = [];
-    if (Array.isArray(rawStops) && rawStops.length > 0) {
-      stopsArray = rawStops.map((s: any, index: number) => {
-        const latVal = Number(s.lat ?? s.latitude);
-        const lngVal = Number(s.lng ?? s.longitude);
-        return {
-          ...s,
-          id: s.id || `stop_${index}`,
-          lat: latVal,
-          lng: lngVal,
-          latitude: latVal,
-          longitude: lngVal,
-          address: s.address || s.name || `Parada ${index + 1}`,
-          status: s.status || 'PENDING'
-        };
-      });
-    } else if ((data as any).extraStopLat && (data as any).extraStopLng) {
-      const latVal = Number((data as any).extraStopLat);
-      const lngVal = Number((data as any).extraStopLng);
-      stopsArray = [{
-        id: 'stop_1',
-        address: (data as any).extraStopAddress || 'Parada Intermediária',
+  let stopsArray: any[] = [];
+  if (Array.isArray(rawStops) && rawStops.length > 0) {
+    stopsArray = rawStops.map((s: any, index: number) => {
+      const latVal = Number(s.lat ?? s.latitude);
+      const lngVal = Number(s.lng ?? s.longitude);
+      return {
+        ...s,
+        id: s.id || `stop_${index}`,
         lat: latVal,
         lng: lngVal,
         latitude: latVal,
         longitude: lngVal,
-        status: 'PENDING'
-      }];
-    }
-
-    // 🟢 Verifica se o motorista já está em uma corrida ativa
-    const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
-    
-    // 🟢 A oferta SÓ É em fila se o motorista já estiver em viagem com outra corrida
-    const isRealQueuedOffer = isCurrentlyInRide && data.rideId !== currentRideId;
-
-    setTimeLeft(15);
-    setIncomingRide({
-      ...data,
-      isQueuedOffer: isRealQueuedOffer,
-      passengerName: data.passengerName || 'Passageiro',
-      passengerRating: data.passengerRating || 5.0,
-      serviceType: normalizedService,
-      paymentMethod: data.paymentMethod || 'CASH',
-      priceXof: typeof rawPrice === 'string' ? parseFloat(rawPrice) : Number(rawPrice),
-      pickupLat: Number(data.pickupLat ?? (data as any).originLat),
-      pickupLng: Number(data.pickupLng ?? (data as any).originLng),
-      destinationLat: Number(data.destinationLat),
-      destinationLng: Number(data.destinationLng),
-      stops: stopsArray,
-      extraStopAddress: (data as any).extraStopAddress || (stopsArray[0]?.address || undefined),
+        address: s.address || s.name || `Parada ${index + 1}`,
+        status: s.status || 'PENDING'
+      };
     });
+  } else if ((data as any).extraStopLat && (data as any).extraStopLng) {
+    const latVal = Number((data as any).extraStopLat);
+    const lngVal = Number((data as any).extraStopLng);
+    stopsArray = [{
+      id: 'stop_1',
+      address: (data as any).extraStopAddress || 'Parada Intermediária',
+      lat: latVal,
+      lng: lngVal,
+      latitude: latVal,
+      longitude: lngVal,
+      status: 'PENDING'
+    }];
+  }
 
-    Vibration.vibrate([0, 500, 200, 500], true);
-  };
+  // 🟢 Verifica se o motorista já está em uma corrida ativa
+  const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
+  
+  // 🟢 A oferta SÓ É em fila se o motorista já estiver em viagem com outra corrida
+  const isRealQueuedOffer = isCurrentlyInRide && data.rideId !== currentRideId;
+
+  setTimeLeft(15);
+  setIncomingRide({
+    ...data,
+    isQueuedOffer: isRealQueuedOffer,
+    passengerName: data.passengerName || 'Passageiro',
+    passengerRating: data.passengerRating || 5.0,
+    serviceType: normalizedService,
+    paymentMethod: data.paymentMethod || 'CASH',
+    priceXof: typeof rawPrice === 'string' ? parseFloat(rawPrice) : Number(rawPrice),
+    pickupLat: Number(data.pickupLat ?? (data as any).originLat),
+    pickupLng: Number(data.pickupLng ?? (data as any).originLng),
+    destinationLat: Number(data.destinationLat),
+    destinationLng: Number(data.destinationLng),
+    stops: stopsArray,
+    extraStopAddress: (data as any).extraStopAddress || (stopsArray[0]?.address || undefined),
+  });
+
+  // 🟢 EXPANDE O PAINEL INFERIOR NA TELA PARA MOSTRAR A SOLICITAÇÃO
+  snapToState(true);
+
+  Vibration.vibrate([0, 500, 200, 500], true);
+};
 
   // 🟢 2. HANDLER DE CORRIDA ACEITA
   const handleRideAccepted = async (data: any) => {

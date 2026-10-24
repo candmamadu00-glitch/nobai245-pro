@@ -1027,6 +1027,7 @@ io.on('connection', (socket) => {
         select: { fullName: true, phone: true, profilePicture: true, ratingAverage: true }
       });
 
+      // 🟢 PACOTE PADRONIZADO (Inclui ambas as nomenclaturas para o modal carregar sem erros)
       const requestPayload = {
         rideId, 
         passengerId: ride.passengerId,
@@ -1034,15 +1035,20 @@ io.on('connection', (socket) => {
         passengerPhone: passengerInfo?.phone || null,
         passengerPhoto: passengerInfo?.profilePicture || null,
         passengerRating: Number(passengerInfo?.ratingAverage || 5.0),
-        pickupLat: Number(ride.originLat), 
-        pickupLng: Number(ride.originLng), 
+        // Envia as duas variações de coordenadas para garantir leitura
+        pickupLat: pLat, 
+        pickupLng: pLng, 
+        originLat: pLat,
+        originLng: pLng,
         originAddress: rideData.originAddress, 
-        destinationLat: Number(ride.destinationLat),
-        destinationLng: Number(ride.destinationLng), 
+        destinationLat: dLat,
+        destinationLng: dLng, 
         destinationAddress: rideData.destinationAddress,
         stops: ride.stops || rawStops,
         referencePoint: rideData.referencePoint || null,
+        // Envia as duas variações do valor da corrida
         fareXOF: Number(ride.priceXof), 
+        priceXof: Number(ride.priceXof),
         vehicleType: normalizedVehicleType,
         serviceType: ride.serviceType, 
         paymentMethod: ride.paymentMethod || 'ORANGE_MONEY'
@@ -1052,7 +1058,6 @@ io.on('connection', (socket) => {
         const activeRidesCount = Array.isArray(d.rides) ? d.rides.length : 0;
         const isQueuedOffer = activeRidesCount > 0;
 
-        // 🟢 Sincronização Schema V3.0: Registra oferta pendente com expiração de 15s
         await prisma.rideOffer.upsert({
           where: { rideId_driverId: { rideId, driverId: d.id } },
           update: { status: 'PENDING', expiresAt: new Date(Date.now() + 15000) },
@@ -1061,8 +1066,11 @@ io.on('connection', (socket) => {
 
         console.log(`📡 [DISPARANDO OFERTA] Para motorista ID: ${d.id} (Em fila: ${isQueuedOffer})`);
 
-        io.to(d.id).emit('ride:new_request', { ...requestPayload, isQueuedOffer });
-        io.to(`driver_${d.id}`).emit('ride:new_request', { ...requestPayload, isQueuedOffer });
+        // 🟢 EMISSÃO EM TODAS AS SALAS POSSÍVEIS DO MOTORISTA
+        io.to(d.id)
+          .to(`driver_${d.id}`)
+          .to(`driver:${d.id}`)
+          .emit('ride:new_request', { ...requestPayload, isQueuedOffer });
 
         if (d.deviceToken) {
           const pushTitle = isQueuedOffer 
