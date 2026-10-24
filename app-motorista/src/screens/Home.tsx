@@ -15,6 +15,7 @@ import Mapbox from '@rnmapbox/maps';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import * as Speech from 'expo-speech';
+import * as Notifications from 'expo-notifications';
 import { registerAndSendPushToken as registerForPushNotifications } from '../services/notifications';
 import { ChatModal } from '../components/ChatModal';
 import { saveActionToQueue, processOfflineQueue } from '../services/offlineSync';
@@ -30,7 +31,6 @@ import { DriverSOSModal } from '../components/DriverSOSModal';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { createAudioPlayer } from 'expo-audio';
 import { useBilingualVoice } from '../hooks/useBilingualVoice';
-
 // 🛡️ BLINDAGEM 1: Token do Mapbox via Variável de Ambiente
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
 if (!MAPBOX_TOKEN) {
@@ -347,15 +347,17 @@ export function Home() {
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
   const lastSpokenInstructionRef = useRef<string>('');
   
+  // 🟢 CORREÇÃO: Declaração e sincronização do rideStateRef
+  const rideStateRef = useRef(rideState);
   const incomingRideRef = useRef(incomingRide);
   const activeRideIdRef = useRef(activeRideId);
   const isOnlineRef = useRef(isOnline);
   const serviceFiltersRef = useRef(serviceFilters);
   const lastDriverCoordsRef = useRef<{ latitude: number; longitude: number; heading: number } | null>(null);
-
   const { speakInstruction: playBilingualVoice } = useBilingualVoice();
   const alertPlayerRef = useRef<any>(null);
 
+  useEffect(() => { rideStateRef.current = rideState; }, [rideState]);
   useEffect(() => { incomingRideRef.current = incomingRide; }, [incomingRide]);
   useEffect(() => { activeRideIdRef.current = activeRideId; }, [activeRideId]);
   useEffect(() => { isOnlineRef.current = isOnline; }, [isOnline]);
@@ -805,6 +807,8 @@ useEffect(() => {
     if (driver?.id) {
       await processOfflineQueue(socket);
       socket.emit('driver:request_state');
+      
+      // 🟢 Re-registra o motorista na sala do Socket assim que a rede reconecta
       if (isOnlineRef.current && location?.coords) {
         socket.emit('driver:online', { 
           driverId: driver.id, 
@@ -815,6 +819,10 @@ useEffect(() => {
     }
   };
 
+  // Garante que o socket reconecte se tiver caído
+  if (socket && !socket.connected) {
+    socket.connect();
+  }
   // 🟢 1. HANDLER DE NOVA SOLICITAÇÃO DE CORRIDA (CORRIGIDO)
 const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean; rideId?: string }) => {
   console.log('🚨 [APP MOTORISTA] EVENTO DE CORRIDA CHEGOU VIA SOCKET:', data);
@@ -1097,7 +1105,50 @@ const syncActiveRideWithServer = useCallback(async () => {
     console.warn('⚠️ Erro ao sincronizar corrida ativa com servidor:', err);
   }
 }, []);
+// 🟢 REDUNDÂNCIA PROFISSIONAL: Se o Socket oscilar, a Notificação Push abre a tela instantaneamente
+useEffect(() => {
+  const subscription = Notifications.addNotificationReceivedListener(async (notification) => {
+    const data = notification.request.content.data;
+    console.log('🔔 [PUSH RECEBIDO NO APLICATIVO]:', data);
 
+    if (data && (data.type === 'NEW_RIDE_REQUEST' || data.type === 'NEW_RIDE_ALARM' || data.rideId)) {
+      try {
+        // Busca a corrida diretamente na API REST caso o Socket tenha oscilado
+        const response = await api.get('/drivers/active-ride');
+        if (response?.data?.ride && isMountedRef.current) {
+          const ride = response.data.ride;
+          
+          setTimeLeft(15);
+          setIncomingRide({
+            rideId: ride.id,
+            passengerId: ride.passengerId,
+            passengerName: ride.passenger?.fullName || 'Passageiro',
+            passengerRating: Number(ride.passenger?.ratingAverage || 5.0),
+            pickupLat: Number(ride.originLat),
+            pickupLng: Number(ride.originLng),
+            originAddress: ride.originAddress,
+            destinationLat: Number(ride.destinationLat),
+            destinationLng: Number(ride.destinationLng),
+            destinationAddress: ride.destinationAddress,
+            priceXof: Number(ride.priceXof),
+            paymentMethod: ride.paymentMethod || 'CASH',
+            serviceType: ride.serviceType || 'RIDE',
+            stops: ride.stops || [],
+          });
+
+          snapToState(true);
+          Vibration.vibrate([0, 500, 200, 500], true);
+        }
+      } catch (err) {
+        console.warn('⚠️ Erro ao carregar corrida via Push fallback:', err);
+      }
+    }
+  });
+
+  return () => {
+    subscription.remove();
+  };
+}, [snapToState]);
 useEffect(() => {
   const subscription = AppState.addEventListener('change', async (nextAppState: AppStateStatus) => {
     if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
