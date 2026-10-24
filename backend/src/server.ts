@@ -1027,7 +1027,7 @@ io.on('connection', (socket) => {
         select: { fullName: true, phone: true, profilePicture: true, ratingAverage: true }
       });
 
-      // 🟢 PACOTE PADRONIZADO (Inclui ambas as nomenclaturas para o modal carregar sem erros)
+      // 🟢 1. PACOTE PADRONIZADO DA CORRIDA
       const requestPayload = {
         rideId, 
         passengerId: ride.passengerId,
@@ -1035,7 +1035,6 @@ io.on('connection', (socket) => {
         passengerPhone: passengerInfo?.phone || null,
         passengerPhoto: passengerInfo?.profilePicture || null,
         passengerRating: Number(passengerInfo?.ratingAverage || 5.0),
-        // Envia as duas variações de coordenadas para garantir leitura
         pickupLat: pLat, 
         pickupLng: pLng, 
         originLat: pLat,
@@ -1046,7 +1045,6 @@ io.on('connection', (socket) => {
         destinationAddress: rideData.destinationAddress,
         stops: ride.stops || rawStops,
         referencePoint: rideData.referencePoint || null,
-        // Envia as duas variações do valor da corrida
         fareXOF: Number(ride.priceXof), 
         priceXof: Number(ride.priceXof),
         vehicleType: normalizedVehicleType,
@@ -1054,7 +1052,25 @@ io.on('connection', (socket) => {
         paymentMethod: ride.paymentMethod || 'ORANGE_MONEY'
       };
 
-      if (d.deviceToken) {
+      // 🟢 2. LOOP DE ENVIO PARA MOTORISTAS (DECLARA 'd' E 'isQueuedOffer')
+      for (const d of matchingDrivers) {
+        const activeRidesCount = Array.isArray(d.rides) ? d.rides.length : 0;
+        const isQueuedOffer = activeRidesCount > 0;
+
+        await (prisma as any).rideOffer?.upsert({
+          where: { rideId_driverId: { rideId, driverId: d.id } },
+          update: { status: 'PENDING', expiresAt: new Date(Date.now() + 15000) },
+          create: { rideId, driverId: d.id, status: 'PENDING', expiresAt: new Date(Date.now() + 15000) }
+        }).catch(() => null);
+
+        console.log(`📡 [DISPARANDO OFERTA] Para motorista ID: ${d.id} (Em fila: ${isQueuedOffer})`);
+
+        io.to(d.id)
+          .to(`driver_${d.id}`)
+          .to(`driver:${d.id}`)
+          .emit('ride:new_request', { ...requestPayload, isQueuedOffer });
+
+        if (d.deviceToken) {
           const pushTitle = isQueuedOffer 
             ? `🚗 Próxima Corrida em Fila (Valor: ${ride.priceXof} XOF)` 
             : `🚕 Nova Corrida (Valor: ${ride.priceXof} XOF)`;
@@ -1067,6 +1083,7 @@ io.on('connection', (socket) => {
             PUSH_CHANNELS.NEW_RIDE_ALARM
           ).catch(() => null);
         }
+      } 
     } catch (err: any) {
       console.error('❌ Erro na solicitação da corrida:', err);
       socket.emit('error', { message: 'Erro ao processar sua corrida e carteira digital.' });
