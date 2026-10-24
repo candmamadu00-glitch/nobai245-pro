@@ -911,41 +911,61 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
   snapToState(true);
   Vibration.vibrate([0, 500, 200, 500], true);
 };
-  // 🟢 2. HANDLER DE CORRIDA ACEITA
-  const handleRideAccepted = async (data: any) => {
-    Vibration.cancel();
-    if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
-    if (!isMountedRef.current) return;
-    setIsLoading(false);
+  // 🟢 2. HANDLER DE CORRIDA ACEITA (MANTÉM DADOS NO PAINEL)
+const handleRideAccepted = async (data: any) => {
+  Vibration.cancel();
+  if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
+  if (!isMountedRef.current) return;
+  setIsLoading(false);
 
-    if (data.driverId === driver?.id) {
-      const currentRideState = rideStateRef.current || rideState;
-      const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
-      
-      if (!isCurrentlyInRide || activeRideId === data.rideId) {
-        // CORRIDA PRINCIPAL
-        setActiveRideId(data.rideId);
-        setRideState('accepted');
+  const currentRideState = rideStateRef.current || rideState;
+  const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
 
-        // 🟢 LIMPA O MODAL DE OFERTA PARA DAR LUGAR AO NAVEGADOR PRINCIPAL
-        setIncomingRide(null);
+  if (data.driverId === driver?.id || data.rideId) {
+    if (!isCurrentlyInRide || activeRideIdRef.current === data.rideId) {
+      // CORRIDA PRINCIPAL
+      setActiveRideId(data.rideId);
+      setRideState('accepted');
 
-        if (incomingRideRef.current) {
-          persistActiveRideState(incomingRideRef.current, 'accepted', data.rideId);
-        }
-        
-        snapToState(true);
-      } else {
-        // CORRIDA EM FILA
-        setIncomingRide(null);
-        Alert.alert('Fila Confirmada 🔄', 'Nova corrida adicionada à sua fila com sucesso! Conclua a viagem atual para iniciar o novo embarque.');
+      // 🟢 ATUALIZA E PRESERVA OS DADOS NO PAINEL DE NAVEGAÇÃO
+      setIncomingRide((prev) => {
+        const base = prev || {};
+        return {
+          ...base,
+          rideId: data.rideId,
+          passengerId: data.passengerId || base.passengerId || '',
+          passengerName: data.passengerName || base.passengerName || 'Passageiro',
+          passengerPhone: data.passengerPhone || base.passengerPhone,
+          passengerPhoto: data.passengerPhoto || base.passengerPhoto,
+          passengerRating: data.passengerRating || base.passengerRating || 5.0,
+          pickupLat: Number(data.pickupLat || base.pickupLat || 0),
+          pickupLng: Number(data.pickupLng || base.pickupLng || 0),
+          originAddress: data.originAddress || base.originAddress,
+          destinationLat: Number(data.destinationLat || base.destinationLat || 0),
+          destinationLng: Number(data.destinationLng || base.destinationLng || 0),
+          destinationAddress: data.destinationAddress || base.destinationAddress,
+          priceXof: Number(data.priceXof || base.priceXof || 0),
+          paymentMethod: data.paymentMethod || base.paymentMethod || 'CASH',
+          serviceType: data.serviceType || base.serviceType || 'RIDE',
+          stops: data.stops || base.stops || [],
+        };
+      });
+
+      if (incomingRideRef.current) {
+        persistActiveRideState(incomingRideRef.current, 'accepted', data.rideId);
       }
+      
+      snapToState(true);
     } else {
+      // CORRIDA EM FILA
       setIncomingRide(null);
-      Alert.alert('Corrida Indisponível', 'Outro motorista aceitou esta corrida.');
+      Alert.alert('Fila Confirmada 🔄', 'Nova corrida adicionada à sua fila com sucesso! Conclua a viagem atual para iniciar o novo embarque.');
     }
-  };
-
+  } else {
+    setIncomingRide(null);
+    Alert.alert('Corrida Indisponível', 'Outro motorista aceitou esta corrida.');
+  }
+};
   // 🟢 3. HANDLER DE CORRIDA INICIADA
   const handleRideStarted = () => {
     if (!isMountedRef.current) return;
@@ -1009,6 +1029,7 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
   socket.on('connect', handleConnect);
   socket.on('ride:new_request', handleNewRideRequest);
   socket.on('ride:accepted', handleRideAccepted);
+  socket.on('driver:accept_ride_success', handleRideAccepted); // 🟢 ADICIONADO
   socket.on('ride:started', handleRideStarted);
   socket.on('ride:finished', handleRideFinished);
   socket.on('ride:queued_now_active', handleQueuedNowActive);
@@ -1019,6 +1040,7 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
     socket.off('connect', handleConnect);
     socket.off('ride:new_request', handleNewRideRequest);
     socket.off('ride:accepted', handleRideAccepted);
+    socket.off('driver:accept_ride_success', handleRideAccepted); // 🟢 ADICIONADO
     socket.off('ride:started', handleRideStarted);
     socket.off('ride:finished', handleRideFinished);
     socket.off('ride:queued_now_active', handleQueuedNowActive);
@@ -1388,13 +1410,17 @@ function acceptRide(rideId: string, driverId: string, currentLat: number, curren
       return Alert.alert('Aviso', response.message);
     }
 
-    const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(rideState);
+    const currentRideState = rideStateRef.current || rideState;
+    const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
     
     if (!isCurrentlyInRide) {
       setActiveRideId(rideId);
       setRideState('accepted');
-      if (incomingRide) persistActiveRideState(incomingRide, 'accepted', rideId);
-      setIncomingRide(null); 
+      
+      // 🟢 NÃO CHAMA setIncomingRide(null) PARA MANTER O PAINEL DE NAVEGAÇÃO ATIVO
+      if (incomingRideRef.current) {
+        persistActiveRideState(incomingRideRef.current, 'accepted', rideId);
+      }
       snapToState(true);
     } else {
       setIncomingRide(null); 
@@ -1402,7 +1428,6 @@ function acceptRide(rideId: string, driverId: string, currentLat: number, curren
     }
   });
 }
-
 async function handleArrived() {
   if (!activeRideId) return;
   setIsLoading(true);

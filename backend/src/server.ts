@@ -1077,12 +1077,18 @@ io.on('connection', (socket) => {
             ? `🚗 Próxima Corrida em Fila (Valor: ${ride.priceXof} XOF)` 
             : `🚕 Nova Corrida (Valor: ${ride.priceXof} XOF)`;
 
+          // 🚨 AJUSTADO: Passa opções de prioridade alta para acender o visor no Android
           sendPushNotification(
             d.deviceToken,
             pushTitle,
             `Passageiro: ${passengerInfo?.fullName || 'Passageiro'} solicitou corrida!`,
             { type: 'NEW_RIDE_REQUEST', rideId, isQueuedOffer },
-            PUSH_CHANNELS.NEW_RIDE_ALARM
+            PUSH_CHANNELS.NEW_RIDE_ALARM,
+            {
+              priority: 'high',
+              sound: 'default',
+              ttl: 15
+            }
           ).catch(() => null);
         }
       }
