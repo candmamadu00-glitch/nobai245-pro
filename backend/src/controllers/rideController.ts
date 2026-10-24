@@ -1,8 +1,7 @@
 import { Request, Response } from 'express';
 import { safeRedis, getIo } from '../server';
 import { prisma } from '../config/prisma';
-import { 
-  getRouteDistanceAndDuration, 
+import {  
   calculateRidePrice, 
   createRideAndInitiateEscrow,
   acceptRideLogic,
@@ -10,7 +9,6 @@ import {
   startRideLogic,
   finalizeRideAndCharge,
   cancelRideLogic,
-  submitRatingLogic,
   calculateDistance
 } from '../services/rideRulesService';
 import { sendPushNotification, PUSH_CHANNELS } from '../services/pushNotifications';
@@ -114,7 +112,7 @@ export const estimateRidePrice = async (req: Request, res: Response): Promise<vo
     const estimates = await Promise.all(
       activeTariffs.map(async (tariff) => {
         // 🟢 Sincronizado: Extrai o valor numérico de totalPrice do retorno { totalPrice, commissionRate }
-        const { totalPrice } = await calculateRidePrice(distanceKm, durationMin, tariff.vehicleType as any, serviceType as any);
+        const totalPrice = await calculateRidePrice(distanceKm, durationMin, tariff.vehicleType as any, serviceType as any);
         return { 
           vehicleType: tariff.vehicleType, 
           priceXOF: Math.max(0, Math.round(totalPrice))
@@ -235,7 +233,7 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
       destinationAddress: cleanDestinationAddress,
       stops: sanitizedStops,
       idempotencyKey: cleanIdempotencyKey || undefined,
-      estimatedPrice: cleanEstimatedPrice
+      
     });
 
     if (result.ride && result.ride.status === 'SEARCHING') {
@@ -482,7 +480,6 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
       currentRide.id, 
       Number(finalLat), 
       Number(finalLng),
-      otpInput ? String(otpInput) : undefined
     );
 
     // 🟢 LIMPEZA REDIS & RECUPERAÇÃO DE DISPONIBILIDADE

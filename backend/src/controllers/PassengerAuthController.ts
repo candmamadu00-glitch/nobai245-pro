@@ -650,7 +650,7 @@ export class PassengerAuthController {
         rides: rides.map(r => ({
           ...r,
           priceXof: Number(r.priceXof || 0),
-          estimatedPriceXof: Number(r.estimatedPriceXof || 0)
+          estimatedPriceXof: Number((r as any).estimatedPriceXof || 0)
         })),
       });
     } catch (error: any) {
@@ -1021,7 +1021,7 @@ export class PassengerAuthController {
       const activeRide = await prisma.ride.findFirst({
         where: {
           passengerId,
-          status: { in: ['PENDING', 'SEARCHING', 'AWAITING_PAYMENT', 'ACCEPTED', 'QUEUED', 'ARRIVED', 'IN_PROGRESS'] }
+          status: { in: ['PENDING', 'SEARCHING', 'AWAITING_PAYMENT', 'ACCEPTED', 'QUEUED', 'ARRIVED', 'IN_PROGRESS'] as any }
         }
       });
 

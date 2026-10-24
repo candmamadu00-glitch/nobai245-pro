@@ -380,7 +380,7 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
         <div class="info-card">
           <div class="header">
             <div class="title">🚕 Nô Bai 245</div>
-            <div id="statusBadge" class="badge ${ride.status === 'CANCELLED' ? 'cancelled' : (ride.status === 'COMPLETED' ? 'completed' : (ride.status === 'QUEUED' ? 'queued' : ''))}">${sanitizeHtmlText(ride.status) || 'EM ANDAMENTO'}</div>
+            <div id="statusBadge" class="badge ${ride.status === 'CANCELLED' ? 'cancelled' : (ride.status === 'COMPLETED' ? 'completed' : ((ride.status as any) === 'QUEUED' ? 'queued' : ''))}">${sanitizeHtmlText(ride.status) || 'EM ANDAMENTO'}</div>
           </div>
 
           <div class="metrics-grid">
