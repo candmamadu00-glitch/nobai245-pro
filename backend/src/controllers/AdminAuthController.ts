@@ -13,7 +13,7 @@ if (!JWT_SECRET) {
 
 export class AdminAuthController {
   // 🗑️ Soft/Hard Delete de Motorista pelo Admin com Liberação de Credenciais
-  async deleteDriver(req: Request, res: Response) {
+  async deleteDriver(req: Request, res: Response): Promise<Response> {
     try {
       const { driverId } = req.params;
 
@@ -29,10 +29,10 @@ export class AdminAuthController {
       const hasHistory = driver.rides.length > 0 || driver.transactions.length > 0;
 
       if (!hasHistory) {
-        // 🟢 Sem histórico: Remoção definitiva da base de dados
+        // Sem histórico: Remoção definitiva da base de dados
         await prisma.driver.delete({ where: { id: String(driverId) } });
       } else {
-        // 🟢 Com histórico: Anonimiza dados únicos para liberar telefone, placa e documento
+        // Com histórico: Anonimiza dados únicos para liberar telefone, placa e documento
         const stamp = Date.now().toString().slice(-8);
         await prisma.driver.update({
           where: { id: String(driverId) },
@@ -62,7 +62,7 @@ export class AdminAuthController {
   }
 
   // 🗑️ Soft/Hard Delete de Passageiro pelo Admin com Liberação de Telefone
-  async deletePassenger(req: Request, res: Response) {
+  async deletePassenger(req: Request, res: Response): Promise<Response> {
     try {
       const { passengerId } = req.params;
 
@@ -78,10 +78,10 @@ export class AdminAuthController {
       const hasHistory = passenger.rides.length > 0 || passenger.transactions.length > 0;
 
       if (!hasHistory) {
-        // 🟢 Sem histórico: Remoção definitiva da base de dados
+        // Sem histórico: Remoção definitiva da base de dados
         await prisma.passenger.delete({ where: { id: String(passengerId) } });
       } else {
-        // 🟢 Com histórico: Anonimiza telefone e e-mail para liberar cadastro futuro
+        // Com histórico: Anonimiza telefone e e-mail para liberar cadastro futuro
         const stamp = Date.now().toString().slice(-8);
         const rand = Math.floor(100 + Math.random() * 900);
         await prisma.passenger.update({
@@ -108,7 +108,7 @@ export class AdminAuthController {
   }
 
   // 📋 Listar solicitações de exclusão enviadas pelos Apps
-  async listAccountDeletionRequests(req: Request, res: Response) {
+  async listAccountDeletionRequests(req: Request, res: Response): Promise<Response> {
     try {
       const requests = await prisma.accountDeletionRequest.findMany({
         include: {
@@ -120,12 +120,13 @@ export class AdminAuthController {
 
       return res.status(200).json(requests);
     } catch (error) {
+      console.error('[ERRO AO LISTAR SOLICITAÇÕES DE DELEÇÃO]:', error);
       return res.status(500).json({ error: 'SERVER_ERROR', message: 'Erro ao listar solicitações.' });
     }
   }
 
   // ⚙️ Aprovar ou Rejeitar pedido de exclusão enviado pelo App
-  async reviewAccountDeletionRequest(req: Request, res: Response) {
+  async reviewAccountDeletionRequest(req: Request, res: Response): Promise<Response> {
     try {
       const { requestId } = req.params;
       const { status } = req.body;
@@ -328,6 +329,8 @@ export class AdminAuthController {
           documentNumber: true,
           status: true,
           isOnline: true,
+          walletBalance: true,
+          ratingAverage: true,
           profilePicture: true,
           licenseFrontPicture: true,
           licenseBackPicture: true,
@@ -348,6 +351,8 @@ export class AdminAuthController {
 
         return {
           ...driver,
+          walletBalance: Number(driver.walletBalance || 0),
+          ratingAverage: Number(driver.ratingAverage || 5.0),
           mobileMoneyProvider: provider,
           mobileMoneyNumber: driver.paymentAccountNumber
         };
@@ -377,14 +382,15 @@ export class AdminAuthController {
 
       const prefix = cleanNumber.substring(0, 2);
       const providerUpper = String(mobileMoneyProvider).toUpperCase();
-      let updateData: any = { paymentAccountNumber: cleanNumber };
+      const formattedPhone = `+245${cleanNumber}`;
+      let updateData: any = { paymentAccountNumber: formattedPhone };
 
       if (providerUpper.includes('ORANGE')) {
         if (prefix !== '95') return res.status(400).json({ error: 'Números da Orange devem começar com 95.' });
-        updateData.orangeNumber = cleanNumber;
+        updateData.orangeNumber = formattedPhone;
       } else if (providerUpper.includes('MTN')) {
         if (!['96', '97'].includes(prefix)) return res.status(400).json({ error: 'Números da MTN devem começar com 96 ou 97.' });
-        updateData.mtnNumber = cleanNumber;
+        updateData.mtnNumber = formattedPhone;
       } else {
         return res.status(400).json({ error: 'Operadora inválida.' });
       }
@@ -455,6 +461,8 @@ export class AdminAuthController {
 
       const formattedPassengers = passengers.map(passenger => ({
         ...passenger,
+        walletBalance: Number(passenger.walletBalance || 0),
+        ratingAverage: Number(passenger.ratingAverage || 5.0),
         avatarUrl: passenger.profilePicture || null,
         totalRides: passenger._count?.rides || 0
       }));
@@ -531,8 +539,14 @@ export class AdminAuthController {
       });
 
       return res.status(200).json({
-        wallet: mainWallet || { balance: 0, totalCollected: 0 },
-        transactions: recentTransactions
+        wallet: {
+          balance: Number(mainWallet?.balance || 0),
+          totalCollected: Number(mainWallet?.totalCollected || 0)
+        },
+        transactions: recentTransactions.map(t => ({
+          ...t,
+          amount: Number(t.amount || 0)
+        }))
       });
     } catch (error) {
       console.error('[ERRO AO BUSCAR DADOS FINANCEIROS]:', error);
@@ -563,12 +577,12 @@ export class AdminAuthController {
         vehiclePlate: ride.driver?.vehiclePlate || 'N/A',
         originAddress: ride.originAddress,
         destinationAddress: ride.destinationAddress,
-        originLat: (ride as any).originLat || null,
-        originLng: (ride as any).originLng || null,
-        destLat: (ride as any).destinationLat || null,
-        destLng: (ride as any).destinationLng || null,
+        originLat: (ride as any).originLat ? Number((ride as any).originLat) : null,
+        originLng: (ride as any).originLng ? Number((ride as any).originLng) : null,
+        destLat: (ride as any).destinationLat ? Number((ride as any).destinationLat) : null,
+        destLng: (ride as any).destinationLng ? Number((ride as any).destinationLng) : null,
         routePolyline: (ride as any).routePolyline || null, 
-        amount: ride.priceXof || 0,
+        amount: Number(ride.priceXof || 0),
         status: ride.status,
         createdAt: ride.createdAt,
         rating: ride.ratings && ride.ratings.length > 0 ? ride.ratings[0].stars : null
@@ -627,7 +641,13 @@ export class AdminAuthController {
         });
       });
 
-      return res.status(200).json({ message: 'Recarga efetuada com sucesso!', transaction: result });
+      return res.status(200).json({ 
+        message: 'Recarga efetuada com sucesso!', 
+        transaction: {
+          ...result,
+          amount: Number(result.amount)
+        } 
+      });
     } catch (error) {
       console.error('[ERRO AO RECARREGAR SALDO]:', error);
       return res.status(500).json({ error: 'Erro interno ao processar recarga.' });
@@ -835,8 +855,8 @@ export class AdminAuthController {
         phone: driver.phone,
         vehiclePlate: driver.vehiclePlate,
         vehicleBrand: driver.vehicleBrand,
-        latitude: (driver as any).lastLat || (driver as any).currentLat || (driver as any).latitude || 0,
-        longitude: (driver as any).lastLng || (driver as any).currentLng || (driver as any).longitude || 0,
+        latitude: (driver as any).lastLat ? Number((driver as any).lastLat) : 0,
+        longitude: (driver as any).lastLng ? Number((driver as any).lastLng) : 0,
         status: driver.isAvailable ? 'AVAILABLE' : 'ON_RIDE',
         lastUpdate: driver.updatedAt || new Date()
       }));

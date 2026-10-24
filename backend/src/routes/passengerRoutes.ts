@@ -18,13 +18,15 @@ import { estimateRidePrice, getRideChatHistory, rateRide } from '../controllers/
 const passengerRoutes = Router();
 const authController = new PassengerAuthController();
 const ticketController = new TicketController();
-// 🛡️ Middleware flexível para aceitar qualquer nome de campo de avatar enviado pelo App Passageiro
+
+// 🛡️ Middleware flexível para avatar do passageiro
 const handlePassengerAvatarUpload = upload.fields([
   { name: 'profilePicture', maxCount: 1 },
   { name: 'avatar', maxCount: 1 },
   { name: 'photo', maxCount: 1 },
   { name: 'file', maxCount: 1 },
 ]);
+
 // -----------------------------------------------------------------------------
 // 🟢 ROTAS PÚBLICAS
 // -----------------------------------------------------------------------------
@@ -35,6 +37,7 @@ passengerRoutes.post('/verify-otp', (req, res) => authController.verifyOTP(req, 
 passengerRoutes.post('/login', validate(loginPassengerSchema), (req, res) => authController.login(req, res));
 passengerRoutes.post('/refresh-token', (req, res) => authController.refreshToken(req, res));
 passengerRoutes.post('/payments/initiate', (req, res) => authController.initiatePayment(req, res));
+
 // 🛡️ Autenticação Google
 passengerRoutes.post('/auth/google', validate(googleSignInSchema), (req, res) => authController.googleSignIn(req, res));
 passengerRoutes.post('/google-login', validate(googleSignInSchema), (req, res) => authController.googleSignIn(req, res));

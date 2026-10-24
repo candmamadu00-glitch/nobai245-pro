@@ -1,10 +1,8 @@
-// 🟢 ADICIONE ESTA LINHA NO TOPO DO ARQUIVO:
-import { safeRedis } from '../server';
 import { Request, Response } from 'express';
-import { getIo } from '../server';
+import { safeRedis, getIo } from '../server';
 import { prisma } from '../config/prisma';
 import { 
-  calculateRouteAndDistance, 
+  getRouteDistanceAndDuration, 
   calculateRidePrice, 
   createRideAndInitiateEscrow,
   acceptRideLogic,
@@ -12,9 +10,11 @@ import {
   startRideLogic,
   finalizeRideAndCharge,
   cancelRideLogic,
+  submitRatingLogic,
   calculateDistance
 } from '../services/rideRulesService';
 import { sendPushNotification, PUSH_CHANNELS } from '../services/pushNotifications';
+
 // -----------------------------------------------------------------------------
 // HELPERS DE VALIDAÇÃO E SANITIZAÇÃO
 // -----------------------------------------------------------------------------
@@ -100,7 +100,7 @@ export const estimateRidePrice = async (req: Request, res: Response): Promise<vo
     const dLat = Number(dropoffLat);
     const dLng = Number(dropoffLng);
 
-    const { distanceKm, durationMin } = await calculateRouteAndDistance(pLat, pLng, dLat, dLng);
+    const { distanceKm, durationMin } = await getRouteDistanceAndDuration(pLat, pLng, dLat, dLng);
 
     const activeTariffs = await prisma.tariffConfig.findMany({
       where: { serviceType, isActive: true }
@@ -113,8 +113,8 @@ export const estimateRidePrice = async (req: Request, res: Response): Promise<vo
 
     const estimates = await Promise.all(
       activeTariffs.map(async (tariff) => {
-        // 🟢 CORRIGIDO: calculateRidePrice retorna um número diretamente
-        const totalPrice = await calculateRidePrice(distanceKm, durationMin, tariff.vehicleType as any, serviceType as any);
+        // 🟢 Sincronizado: Extrai o valor numérico de totalPrice do retorno { totalPrice, commissionRate }
+        const { totalPrice } = await calculateRidePrice(distanceKm, durationMin, tariff.vehicleType as any, serviceType as any);
         return { 
           vehicleType: tariff.vehicleType, 
           priceXOF: Math.max(0, Math.round(totalPrice))
@@ -167,7 +167,7 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
     const ongoing = await prisma.ride.findFirst({
       where: { 
         passengerId, 
-        status: { in: ['PENDING', 'SEARCHING', 'AWAITING_PAYMENT', 'ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] } 
+        status: { in: ['PENDING', 'SEARCHING', 'AWAITING_PAYMENT', 'ACCEPTED', 'QUEUED', 'ARRIVED', 'IN_PROGRESS'] } 
       }
     });
     
@@ -235,7 +235,7 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
       destinationAddress: cleanDestinationAddress,
       stops: sanitizedStops,
       idempotencyKey: cleanIdempotencyKey || undefined,
-      customPriceXof: cleanEstimatedPrice
+      estimatedPrice: cleanEstimatedPrice
     });
 
     if (result.ride && result.ride.status === 'SEARCHING') {
@@ -264,7 +264,6 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
         ? result.ride.stops 
         : (req.body.extraStopAddress ? [{ address: req.body.extraStopAddress, lat: req.body.extraStopLat, lng: req.body.extraStopLng }] : []);
 
-      // 🟢 CORRIGIDO: Busca detalhada do perfil do passageiro
       const passengerData = await prisma.passenger.findUnique({
         where: { id: passengerId },
         select: { fullName: true, ratingAverage: true, profilePicture: true }
@@ -381,7 +380,6 @@ export const driverArrived = async (req: Request, res: Response): Promise<void> 
 
     const updatedRide = await driverArrivedLogic(String(rideId), driverId);
     
-    // 🟢 ADICIONE ESTA TRAVA
     if (!updatedRide) {
       res.status(400).json({ success: false, error: 'Corrida não encontrada.' });
       return;
@@ -424,7 +422,6 @@ export const startRide = async (req: Request, res: Response): Promise<void> => {
 
     const updatedRide = await startRideLogic(String(rideId), driverId, String(otp));
 
-    // 🟢 ADICIONE ESTA TRAVA
     if (!updatedRide) {
       res.status(400).json({ success: false, error: 'Corrida não encontrada ou OTP inválido.' });
       return;
@@ -448,11 +445,12 @@ export const startRide = async (req: Request, res: Response): Promise<void> => {
     res.status(400).json({ success: false, error: error?.message || 'Falha ao iniciar a corrida.' });
   }
 };
+
 export const finishRide = async (req: Request, res: Response): Promise<void> => {
   try {
     const driverId = (req as any).user?.id;
     const { rideId } = req.params;
-    const { finalLat, finalLng } = req.body;
+    const { finalLat, finalLng, finishOtp, otp } = req.body;
 
     if (!driverId) {
       res.status(401).json({ success: false, error: 'Não autorizado.' });
@@ -479,7 +477,13 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    const result = await finalizeRideAndCharge(currentRide.id, Number(finalLat), Number(finalLng));
+    const otpInput = finishOtp || otp;
+    const result = await finalizeRideAndCharge(
+      currentRide.id, 
+      Number(finalLat), 
+      Number(finalLng),
+      otpInput ? String(otpInput) : undefined
+    );
 
     // 🟢 LIMPEZA REDIS & RECUPERAÇÃO DE DISPONIBILIDADE
     await safeRedis.del(`active_ride:${currentRide.id}`).catch(() => null);
@@ -501,7 +505,6 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
         io.to(currentRide.id).emit('ride:completed', finishedPayload);
         io.to('admin_dashboard').emit('admin:ride_update', { rideId: currentRide.id, status: 'FINISHED' });
 
-        // 🟢 Reinsere os sockets do motorista na sala de disponíveis
         const driverSockets = await io.in(driverId).fetchSockets();
         for (const s of driverSockets) {
           s.join('available_drivers');
@@ -629,6 +632,7 @@ export const getRideChatHistory = async (req: Request, res: Response): Promise<v
         id: true,
         senderType: true,
         message: true,
+        isRead: true,
         createdAt: true,
       }
     });
@@ -677,12 +681,14 @@ export const uploadChatAudio = async (req: Request, res: Response): Promise<void
     const audioUrl = `${baseUrl}/uploads/${safeFilename}`;
     const formattedMessage = `[AUDIO]${audioUrl}`;
 
+    // 🟢 Sincronizado Schema V3.0: Adicionado isRead: false
     const chatMessage = await prisma.rideChatMessage.create({
       data: {
         rideId: String(rideId),
         senderId,
         senderType: senderType as any,
         message: formattedMessage,
+        isRead: false
       },
     });
 
@@ -749,17 +755,15 @@ export const rateRide = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // Chama o serviço de avaliação existente no banco
-    const rating = await prisma.rating.create({
-      data: {
-        rideId: String(rideId),
-        reviewerId,
-        reviewerType: reviewerType as any,
-        receiverId: String(receiverId),
-        stars: numericStars,
-        tags: Array.isArray(tags) ? tags.map(t => String(t).slice(0, 50)) : [],
-        comment: sanitizeText(comment, 500)
-      }
+    // 🟢 Sincronizado Schema V3.0: Utiliza submitRatingLogic para atualizar as médias na tabela Passenger/Driver
+    const rating = await submitRatingLogic({
+      rideId: String(rideId),
+      reviewerId,
+      reviewerType: reviewerType as any,
+      receiverId: String(receiverId),
+      stars: numericStars,
+      tags: Array.isArray(tags) ? tags.map(t => String(t).slice(0, 50)) : [],
+      comment: sanitizeText(comment, 500)
     });
 
     res.json({ success: true, message: 'Avaliação enviada com sucesso!', rating });

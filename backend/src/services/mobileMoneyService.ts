@@ -392,7 +392,7 @@ export async function lockFundsInEscrow(passengerId: string, amount: number, rid
 
     await tx.transaction.update({
       where: { id: transactionId },
-      data: { status: TransactionStatus.HELD_IN_ESCROW, balanceAfter: updatedPassenger!.walletBalance }
+      data: { status: TransactionStatus.HELD_IN_ESCROW, balanceAfter: Number(updatedPassenger!.walletBalance) }
     });
 
     return updatedPassenger;

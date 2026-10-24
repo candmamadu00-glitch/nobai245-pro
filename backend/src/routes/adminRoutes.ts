@@ -219,7 +219,7 @@ adminRoutes.patch(
 );
 
 // ------------------------------------------
-// 🗑️ GESTÃO DE EXCLUSÃO DE CONTAS (SOFT DELETE)
+// 🗑️ GESTÃO DE EXCLUSÃO DE CONTAS
 // ------------------------------------------
 adminRoutes.delete(
   '/drivers/:driverId', 

@@ -27,17 +27,18 @@ import {
 const driverRoutes = Router();
 const authController = new DriverAuthController();
 const ticketController = new TicketController();
-// 🛡️ Middleware flexível para aceitar qualquer nome de campo enviado pelo App
+
+// 🛡️ Middleware flexível para uploads de foto de perfil
 const handleProfilePictureUpload = upload.fields([
   { name: 'profilePicture', maxCount: 1 },
   { name: 'photo', maxCount: 1 },
   { name: 'file', maxCount: 1 },
   { name: 'image', maxCount: 1 },
 ]);
+
 // -----------------------------------------------------------------------------
 // 🟢 ROTAS PÚBLICAS (AUTENTICAÇÃO & RECUPERAÇÃO)
 // -----------------------------------------------------------------------------
-
 driverRoutes.post(
   '/register',
   upload.fields([
@@ -45,9 +46,9 @@ driverRoutes.post(
     { name: 'licenseFront', maxCount: 1 },
     { name: 'licenseBack', maxCount: 1 },
   ]),
-  // validate(registerDriverSchema),
   (req, res) => authController.register(req, res)
 );
+
 driverRoutes.post('/login', validate(loginDriverSchema), (req, res) => authController.login(req, res));
 driverRoutes.post('/refresh-token', (req, res) => authController.refreshToken(req, res));
 driverRoutes.post('/forgot-password', validate(forgotPasswordSchema), (req, res) => authController.forgotPassword(req, res));
@@ -56,10 +57,9 @@ driverRoutes.post('/reset-password', validate(resetPasswordSchema), (req, res) =
 // -----------------------------------------------------------------------------
 // 🔒 ROTAS PROTEGIDAS (EXCLUSIVAS PARA MOTORISTAS)
 // -----------------------------------------------------------------------------
-
 driverRoutes.use(authenticate, authorizeRole(['DRIVER']));
 
-// 👤 Perfil e Conta (Aceita ambas as rotas)
+// 👤 Perfil e Conta
 driverRoutes.get('/profile', (req, res) => authController.getProfile(req, res));
 driverRoutes.patch('/profile/picture', handleProfilePictureUpload, (req, res) => authController.updateProfilePicture(req, res));
 driverRoutes.patch('/profile-picture', handleProfilePictureUpload, (req, res) => authController.updateProfilePicture(req, res));
@@ -72,7 +72,7 @@ driverRoutes.get('/finance', (req, res) => authController.getFinance(req, res));
 driverRoutes.put('/payment-info', validate(updateDriverPaymentSchema), (req, res) => authController.updatePaymentInfo(req, res));
 driverRoutes.put('/device-token', validate(updateDeviceTokenSchema), (req, res) => authController.updateDeviceToken(req, res));
 
-// 🚗 Fluxo de Corridas (Motorista)
+// 🚗 Fluxo de Corridas
 driverRoutes.post('/rides/accept', (req, res) => acceptRide(req, res));
 driverRoutes.post('/rides/:rideId/arrived', (req, res) => driverArrived(req, res));
 driverRoutes.post('/rides/:rideId/start', (req, res) => startRide(req, res));

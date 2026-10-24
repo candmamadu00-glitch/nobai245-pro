@@ -41,12 +41,12 @@ const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com').
 const BISSAU_CENTER = { latitude: 11.8636, longitude: -15.5977 };
 const BISSAU_BBOX = '-15.75,11.70,-15.40,12.05';
 
-type RideStatus = 'idle' | 'searching' | 'accepted' | 'arrived' | 'in_progress' | 'completed';
-type BookingStep = 'ADDRESS' | 'SERVICE_AND_PRICE' | 'PAYMENT' | 'SEARCHING';
-type VehicleType = 'moto' | 'taxi' | 'moto-carro' | 'particular';
-type ServiceType = 'viagem' | 'entrega' | 'aluguel';
-type PaymentMethod = 'ORANGE_MONEY' | 'MTN_MOMO' | 'CASH';
-type RegionType = 'BISSAU' | 'PRABIS' | 'QUINHAMEL' | 'SURU' | 'BAFATA' | 'GABU';
+export type RideStatus = 'idle' | 'searching' | 'queued' | 'accepted' | 'arrived' | 'in_progress' | 'completed';
+export type BookingStep = 'ADDRESS' | 'SERVICE_AND_PRICE' | 'PAYMENT' | 'SEARCHING';
+export type VehicleType = 'moto' | 'taxi' | 'moto-carro' | 'particular';
+export type ServiceType = 'viagem' | 'entrega' | 'aluguel';
+export type PaymentMethod = 'ORANGE_MONEY' | 'MTN_MOMO' | 'CASH';
+export type RegionType = 'BISSAU' | 'PRABIS' | 'QUINHAMEL' | 'SURU' | 'BAFATA' | 'GABU';
 
 export interface RideStop {
   address: string;
@@ -498,6 +498,7 @@ export function Home() {
         const ride = response.data.ride;
         const mappedStatus: RideStatus = 
           ride.status === 'SEARCHING' ? 'searching' :
+          ride.status === 'QUEUED' ? 'queued' :
           ride.status === 'ACCEPTED' ? 'accepted' :
           ride.status === 'ARRIVED' ? 'arrived' :
           ride.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
@@ -657,7 +658,7 @@ export function Home() {
       setSearchResults([]);
       return;
     }
-  
+
   
     console.log(`\n==================================================`);
     console.log(`🔍 [BUSCA INICIADA] Termo: "${text}"`);
@@ -942,7 +943,7 @@ export function Home() {
       if (response?.data?.ride && isMountedRef.current) {
         const ride = response.data.ride;
         const mappedStatus: RideStatus = 
-          ride.status === 'SEARCHING' ? 'searching' :
+          ride.status === 'SEARCHING' || ride.status === 'QUEUED' || ride.status === 'PENDING' ? 'searching' :
           ride.status === 'ACCEPTED' ? 'accepted' :
           ride.status === 'ARRIVED' ? 'arrived' :
           ride.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
@@ -1119,18 +1120,18 @@ export function Home() {
     connectPassengerSocket();
 
     const handleConnect = () => {
-  if (isMountedRef.current) setIsConnected(true);
-  
-  if (socket && socket.connected) {
-    socket.emit('passenger:request_state');
-    
-    // ✅ CORREÇÃO: Reingressar na sala da corrida se houver uma ativa
-    if (activeRideIdRef.current) {
-      socket.emit('passenger:rejoin_ride', { rideId: activeRideIdRef.current });
-      console.log(`📡 [RECONEXÃO] Passageiro reingressou na sala: ${activeRideIdRef.current}`);
-    }
-  }
-};
+      if (isMountedRef.current) setIsConnected(true);
+      
+      if (socket && socket.connected) {
+        socket.emit('passenger:request_state');
+        
+        // ✅ Reingressar na sala da corrida se houver uma ativa
+        if (activeRideIdRef.current) {
+          socket.emit('passenger:rejoin_ride', { rideId: activeRideIdRef.current });
+          console.log(`📡 [RECONEXÃO] Passageiro reingressou na sala: ${activeRideIdRef.current}`);
+        }
+      }
+    };
 
     const handleDisconnect = () => {
       if (isMountedRef.current) setIsConnected(false);
@@ -1293,155 +1294,155 @@ export function Home() {
     };
 
     const handleNoDriversFound = () => {
-    if (!isMountedRef.current) return;
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    Alert.alert(t('search_ended_title', 'Busca Encerrada'), t('no_drivers_found_msg', 'Não encontramos motoristas disponíveis na sua região. Tente novamente.'));
-    resetRideState();
-  };
+      if (!isMountedRef.current) return;
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      Alert.alert(t('search_ended_title', 'Busca Encerrada'), t('no_drivers_found_msg', 'Não encontramos motoristas disponíveis na sua região. Tente novamente.'));
+      resetRideState();
+    };
 
-  const handlePriceCalculated = (data: any) => {
-    if (!isMountedRef.current || !data) return;
-    if (typeof data.price === 'number') setEstimatedPrice(data.price);
-    if (typeof data.distance === 'number') setEstimatedDistance(data.distance);
-  };
+    const handlePriceCalculated = (data: any) => {
+      if (!isMountedRef.current || !data) return;
+      if (typeof data.price === 'number') setEstimatedPrice(data.price);
+      if (typeof data.distance === 'number') setEstimatedDistance(data.distance);
+    };
 
-  const handleDriverPosition = (data: any) => {
-    if (!isMountedRef.current || !data) return;
-    const lat = Number(data.latitude ?? data.lat);
-    const lng = Number(data.longitude ?? data.lng);
+    const handleDriverPosition = (data: any) => {
+      if (!isMountedRef.current || !data) return;
+      const lat = Number(data.latitude ?? data.lat);
+      const lng = Number(data.longitude ?? data.lng);
 
-    if (!isNaN(lat) && !isNaN(lng)) {
-      setDriverLocation({
-        latitude: lat,
-        longitude: lng,
-        heading: typeof data.heading === 'number' ? data.heading : 0,
-      });
+      if (!isNaN(lat) && !isNaN(lng)) {
+        setDriverLocation({
+          latitude: lat,
+          longitude: lng,
+          heading: typeof data.heading === 'number' ? data.heading : 0,
+        });
+      }
+    };
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('passenger:state_recovered', handleStateRecovered);
+    socket.on('driver:position', handleDriverPosition);
+    socket.on('ride:accepted', handleRideAccepted);
+    socket.on('ride:driver_arrived', handleDriverArrived);
+    socket.on('ride:started', handleRideStarted);
+    socket.on('ride:finished', handleRideFinished);
+    socket.on('ride:cancelled', handleRideCancelled);
+    socket.on('chat:receive_message', handleReceiveMessage);
+    socket.on('ride:no_drivers_found', handleNoDriversFound);
+    socket.on('ride:price_calculated', handlePriceCalculated);
+    socket.on('ride:inaccessible_location', handleInaccessibleLocationAlert);
+
+    return () => {
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('passenger:state_recovered', handleStateRecovered);
+      socket.off('driver:position', handleDriverPosition);
+      socket.off('ride:accepted', handleRideAccepted);
+      socket.off('ride:driver_arrived', handleDriverArrived);
+      socket.off('ride:started', handleRideStarted);
+      socket.off('ride:finished', handleRideFinished);
+      socket.off('ride:cancelled', handleRideCancelled);
+      socket.off('chat:receive_message', handleReceiveMessage);
+      socket.off('ride:no_drivers_found', handleNoDriversFound);
+      socket.off('ride:price_calculated', handlePriceCalculated);
+      socket.off('ride:inaccessible_location', handleInaccessibleLocationAlert);
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
+  }, [getCurrentLocationWithFallback, handleInaccessibleLocationAlert, resetRideState, syncPassengerActiveRide, t]);
+
+  useEffect(() => {
+    let origin = pickupCoords;
+    let destination = dropoffCoords;
+    let extra = extraStopCoords;
+
+    if (rideStatus === 'accepted' && driverLocation) {
+      origin = driverLocation;
+      destination = pickupCoords;
+      extra = null;
+    } else if (rideStatus === 'in_progress' && driverLocation) {
+      origin = driverLocation;
+      destination = dropoffCoords;
+      extra = extraStopCoords;
     }
-  };
 
-  socket.on('connect', handleConnect);
-  socket.on('disconnect', handleDisconnect);
-  socket.on('passenger:state_recovered', handleStateRecovered);
-  socket.on('driver:position', handleDriverPosition);
-  socket.on('ride:accepted', handleRideAccepted);
-  socket.on('ride:driver_arrived', handleDriverArrived);
-  socket.on('ride:started', handleRideStarted);
-  socket.on('ride:finished', handleRideFinished);
-  socket.on('ride:cancelled', handleRideCancelled);
-  socket.on('chat:receive_message', handleReceiveMessage);
-  socket.on('ride:no_drivers_found', handleNoDriversFound);
-  socket.on('ride:price_calculated', handlePriceCalculated);
-  socket.on('ride:inaccessible_location', handleInaccessibleLocationAlert);
+    if (origin && destination) {
+      let fitPoints = [origin, destination];
+      if (extra) fitPoints.push(extra);
+      
+      fitMapBounds(fitPoints);
+      fetchMapboxRoute(origin, destination, extra);
+    }
+  }, [pickupCoords, dropoffCoords, extraStopCoords, driverLocation, rideStatus, fitMapBounds, fetchMapboxRoute]);
 
-  return () => {
-    socket.off('connect', handleConnect);
-    socket.off('disconnect', handleDisconnect);
-    socket.off('passenger:state_recovered', handleStateRecovered);
-    socket.off('driver:position', handleDriverPosition);
-    socket.off('ride:accepted', handleRideAccepted);
-    socket.off('ride:driver_arrived', handleDriverArrived);
-    socket.off('ride:started', handleRideStarted);
-    socket.off('ride:finished', handleRideFinished);
-    socket.off('ride:cancelled', handleRideCancelled);
-    socket.off('chat:receive_message', handleReceiveMessage);
-    socket.off('ride:no_drivers_found', handleNoDriversFound);
-    socket.off('ride:price_calculated', handlePriceCalculated);
-    socket.off('ride:inaccessible_location', handleInaccessibleLocationAlert);
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-  };
-}, [getCurrentLocationWithFallback, handleInaccessibleLocationAlert, resetRideState, syncPassengerActiveRide, t]);
+  useEffect(() => {
+    if (route.params?.openChat) {
+      setIsChatVisible(true);
+      navigation.setParams({ openChat: undefined });
+    }
+  }, [route.params?.openChat, navigation]);
 
-useEffect(() => {
-  let origin = pickupCoords;
-  let destination = dropoffCoords;
-  let extra = extraStopCoords;
+  useEffect(() => {
+    if (pickupCoords && dropoffCoords) {
+      setEstimatedPrice(null); 
+      calculateEstimate(pickupCoords, dropoffCoords, extraStopCoords);
+    }
+  }, [pickupCoords, dropoffCoords, extraStopCoords, serviceType, vehicleType, calculateEstimate]);
 
-  if (rideStatus === 'accepted' && driverLocation) {
-    origin = driverLocation;
-    destination = pickupCoords;
-    extra = null;
-  } else if (rideStatus === 'in_progress' && driverLocation) {
-    origin = driverLocation;
-    destination = dropoffCoords;
-    extra = extraStopCoords;
-  }
+  useEffect(() => {
+    const activeRideStates = ['searching', 'accepted', 'arrived', 'in_progress'];
+    const isRideActive = activeRideStates.includes(rideStatus);
 
-  if (origin && destination) {
-    let fitPoints = [origin, destination];
-    if (extra) fitPoints.push(extra);
-    
-    fitMapBounds(fitPoints);
-    fetchMapboxRoute(origin, destination, extra);
-  }
-}, [pickupCoords, dropoffCoords, extraStopCoords, driverLocation, rideStatus, fitMapBounds, fetchMapboxRoute]);
+    if (isRideActive) {
+      activateKeepAwakeAsync('passenger_ride_tag').catch((err) => {
+        console.warn('⚠️ Não foi possível manter a tela acesa:', err);
+      });
+    } else {
+      deactivateKeepAwake('passenger_ride_tag').catch(() => {});
+    }
 
-useEffect(() => {
-  if (route.params?.openChat) {
-    setIsChatVisible(true);
-    navigation.setParams({ openChat: undefined });
-  }
-}, [route.params?.openChat, navigation]);
+    return () => {
+      deactivateKeepAwake('passenger_ride_tag').catch(() => {});
+    };
+  }, [rideStatus]);
 
-useEffect(() => {
-  if (pickupCoords && dropoffCoords) {
-    setEstimatedPrice(null); 
-    calculateEstimate(pickupCoords, dropoffCoords, extraStopCoords);
-  }
-}, [pickupCoords, dropoffCoords, extraStopCoords, serviceType, vehicleType, calculateEstimate]);
-
-useEffect(() => {
-  const activeRideStates = ['searching', 'accepted', 'arrived', 'in_progress'];
-  const isRideActive = activeRideStates.includes(rideStatus);
-
-  if (isRideActive) {
-    activateKeepAwakeAsync('passenger_ride_tag').catch((err) => {
-      console.warn('⚠️ Não foi possível manter a tela acesa:', err);
-    });
-  } else {
-    deactivateKeepAwake('passenger_ride_tag').catch(() => {});
-  }
-
-  return () => {
-    deactivateKeepAwake('passenger_ride_tag').catch(() => {});
-  };
-}, [rideStatus]);
-
-async function handleInitialRequestRide() {
-  const needsDropoff = serviceType !== 'aluguel';
-  if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
-    Alert.alert(
-      t('warning_title', 'Aviso ⚠️'), 
-      t('select_origin_destination_msg', 'Selecione a origem e o destino antes de solicitar.')
-    );
-    return;
-  }
-
-  try {
-    const currentLoc = await Location.getCurrentPositionAsync({ 
-      accuracy: Location.Accuracy.Balanced 
-    });
-    const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
-
-    if (isMocked) {
+  async function handleInitialRequestRide() {
+    const needsDropoff = serviceType !== 'aluguel';
+    if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
       Alert.alert(
-        "🚨 Localização Simulada Detectada",
-        "Por motivos de segurança, não é possível solicitar corridas utilizando aplicativos de GPS falso. Desative a simulação de localização para continuar.",
-        [{ text: "Entendido" }]
+        t('warning_title', 'Aviso ⚠️'), 
+        t('select_origin_destination_msg', 'Selecione a origem e o destino antes de solicitar.')
       );
       return;
     }
-  } catch (e) {}
 
-  if (paymentMethod === 'CASH') {
-    executeRideRequest();
-    return;
-  }
+    try {
+      const currentLoc = await Location.getCurrentPositionAsync({ 
+        accuracy: Location.Accuracy.Balanced 
+      });
+      const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
 
-  if (!paymentPhone && user?.phone) {
-    setPaymentPhone(user.phone);
+      if (isMocked) {
+        Alert.alert(
+          "🚨 Localização Simulada Detectada",
+          "Por motivos de segurança, não é possível solicitar corridas utilizando aplicativos de GPS falso. Desative a simulação de localização para continuar.",
+          [{ text: "Entendido" }]
+        );
+        return;
+      }
+    } catch (e) {}
+
+    if (paymentMethod === 'CASH') {
+      executeRideRequest();
+      return;
+    }
+
+    if (!paymentPhone && user?.phone) {
+      setPaymentPhone(user.phone);
+    }
+    setIsPaymentModalVisible(true);
   }
-  setIsPaymentModalVisible(true);
-}
 
 async function confirmPaymentAndRide() {
   if (!user?.id) {
@@ -1521,8 +1522,14 @@ function executeRideRequest() {
 
     setRideStatus('searching');
     
+    // Mapeamento estrito para os Enums do Schema V3.0
     const mappedServiceType = serviceType === 'viagem' ? 'RIDE' : serviceType === 'entrega' ? 'DELIVERY' : 'RENTAL';
-    const mappedVehicleType = vehicleType === 'particular' ? 'PARTICULAR' : vehicleType === 'moto-carro' ? 'MOTO_CARRO' : vehicleType.toUpperCase();
+    const mappedVehicleType = 
+      vehicleType === 'particular' ? 'PARTICULAR' : 
+      vehicleType === 'moto-carro' ? 'MOTO_CARRO' : 
+      vehicleType === 'toca-toca' ? 'TOCA_TOCA' : 
+      vehicleType.toUpperCase();
+      
     const regionLabel = RENTAL_PRICES[selectedRegion]?.label || selectedRegion;
 
     emitRequestRide({
@@ -1579,6 +1586,7 @@ function executeRideRequest() {
     );
   }
 }
+
 function checkPenaltyApplicable() {
   if (!acceptedAt) return false;
   return (new Date().getTime() - acceptedAt.getTime()) > 2 * 60 * 1000;
@@ -1765,7 +1773,6 @@ const handleSosPress = () => {
     { cancelable: true }
   );
 };
-
 if (!passengerLocation || (locationError && !passengerLocation)) {
   return (
     <View style={[styles.loadingContainer, { paddingTop: Math.max(insets?.top || 0, 40), paddingBottom: Math.max(insets?.bottom || 0, 20) }]}>
@@ -1854,7 +1861,7 @@ return (
         animationDuration={1000}
       />
 
-      {/* ROTA MAPBOX (A API deve retornar as coordinates passando por origem, parada e destino) */}
+      {/* ROTA MAPBOX (Desenhada passando por origem, parada extra e destino) */}
       {routeGeometry?.type === 'Feature' && routeGeometry?.geometry?.coordinates && (
         <Mapbox.ShapeSource id="routeSource" shape={routeGeometry}>
           <Mapbox.LineLayer
@@ -1953,11 +1960,6 @@ return (
       )}
     </Mapbox.MapView>
 
-    {/* 📡 ONDAS DE RADAR DE BUSCA */}
-    {isSearchingRide && (
-      <SearchingRadarPulse statusText="Procurando motorista Nô Bai próximo..." />
-    )}
-
     {/* PINO CENTRAL FLUTUANTE */}
     {rideStatus === 'idle' && bookingStep === 'ADDRESS' && (
       <View style={styles.centerPinContainer} pointerEvents="none">
@@ -2021,7 +2023,8 @@ return (
         </View>
       </View>
     )}
-      {/* 3. PAINEL SLIDING BOTTOM SHEET */}
+
+    {/* 3. PAINEL SLIDING BOTTOM SHEET */}
     <KeyboardAvoidingView 
       behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
       style={styles.bottomSheetWrapper} 
@@ -2097,223 +2100,261 @@ return (
             </View>
           )}
 
-            {rideStatus === 'idle' && bookingStep === 'SERVICE_AND_PRICE' && (
-              <View style={{ width: '100%' }}>
-                {/* RESUMO DO ITINERÁRIO (MÚLTIPLAS PARADAS) */}
-                <View style={{ backgroundColor: '#1E293B', padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: '#334155' }}>
-                  <Text style={{ color: '#94A3B8', fontSize: 11, fontWeight: 'bold', marginBottom: 6 }}>RESUMO DO PERCURSO</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                    <Ionicons name="ellipse" size={10} color="#EAB308" style={{ marginRight: 8 }} />
-                    <Text style={{ color: '#F8FAFC', fontSize: 13, flex: 1 }} numberOfLines={1}>{pickupAddress}</Text>
-                  </View>
-
-                  {extraStopCoords && (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 4 }}>
-                      <Ionicons name="location-sharp" size={12} color="#3B82F6" style={{ marginRight: 6 }} />
-                      <Text style={{ color: '#60A5FA', fontSize: 13, flex: 1, fontWeight: '600' }} numberOfLines={1}>
-                        Parada: {extraStopAddress}
-                      </Text>
-                    </View>
-                  )}
-
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-                    <Ionicons name="flag" size={12} color="#EF4444" style={{ marginRight: 6 }} />
-                    <Text style={{ color: '#F8FAFC', fontSize: 13, flex: 1 }} numberOfLines={1}>{dropoffAddress}</Text>
-                  </View>
+          {/* SERVIÇO E VEÍCULO */}
+          {rideStatus === 'idle' && bookingStep === 'SERVICE_AND_PRICE' && (
+            <View style={{ width: '100%' }}>
+              {/* RESUMO DO ITINERÁRIO (MÚLTIPLAS PARADAS) */}
+              <View style={{ backgroundColor: '#1E293B', padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: '#334155' }}>
+                <Text style={{ color: '#94A3B8', fontSize: 11, fontWeight: 'bold', marginBottom: 6 }}>RESUMO DO PERCURSO</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                  <Ionicons name="ellipse" size={10} color="#EAB308" style={{ marginRight: 8 }} />
+                  <Text style={{ color: '#F8FAFC', fontSize: 13, flex: 1 }} numberOfLines={1}>{pickupAddress}</Text>
                 </View>
 
-                <Text style={styles.sectionLabel}>{t('service_type', 'Tipo de Serviço')}</Text>
-                <View style={styles.serviceTypesContainer}>
-                  <TouchableOpacity 
-                    style={[styles.serviceTypeButton, serviceType === 'viagem' && styles.serviceTypeActive]}
-                    onPress={() => setServiceType('viagem')}
-                  >
-                    <Ionicons name="car-outline" size={18} color={serviceType === 'viagem' ? '#0F172A' : '#94A3B8'} />
-                    <Text style={[styles.serviceTypeText, serviceType === 'viagem' && styles.serviceTypeTextActive]}>{t('ride_service', 'Viagem')}</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity 
-                    style={[styles.serviceTypeButton, serviceType === 'entrega' && styles.serviceTypeActive]}
-                    onPress={() => setServiceType('entrega')}
-                  >
-                    <Ionicons name="cube-outline" size={18} color={serviceType === 'entrega' ? '#0F172A' : '#94A3B8'} />
-                    <Text style={[styles.serviceTypeText, serviceType === 'entrega' && styles.serviceTypeTextActive]}>{t('delivery_service', 'Entrega')}</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity 
-                    style={[styles.serviceTypeButton, serviceType === 'aluguel' && styles.serviceTypeActive]}
-                    onPress={() => setServiceType('aluguel')}
-                  >
-                    <Ionicons name="key-outline" size={18} color={serviceType === 'aluguel' ? '#0F172A' : '#94A3B8'} />
-                    <Text style={[styles.serviceTypeText, serviceType === 'aluguel' && styles.serviceTypeTextActive]}>{t('rental_service', 'Aluguel')}</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {serviceType === 'aluguel' ? (
-                  <View style={{ marginTop: 12 }}>
-                    <Text style={styles.sectionLabel}>{t('select_coverage_region', 'Selecione a Região de Cobertura')}</Text>
-                    <TouchableOpacity style={[styles.categoryCard, styles.categoryCardActive, { borderColor: '#EAB308', borderWidth: 2 }]} activeOpacity={0.9}>
-                      <View style={{ backgroundColor: '#FEF08A', padding: 8, borderRadius: 8, marginRight: 12 }}>
-                        <Ionicons name="map-outline" size={24} color="#0F172A" />
-                      </View>
-                      <View style={styles.categoryTextWrapper}>
-                        <Text style={[styles.categoryTitle, styles.categoryTextActive]}>{RENTAL_PRICES[selectedRegion]?.label || 'Bissau'}</Text>
-                        <Text style={styles.categorySubtitle}>{RENTAL_PRICES[selectedRegion]?.description}</Text>
-                      </View>
-                      <Text style={[styles.categoryPriceText, styles.categoryPriceTextActive, { color: '#10B981' }]}>
-                        {RENTAL_PRICES[selectedRegion]?.price ? `${RENTAL_PRICES[selectedRegion].price?.toLocaleString('pt-BR')} XOF` : t('on_request', 'Sob Consulta')}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  <View>
-                    <Text style={styles.sectionLabel}>{t('vehicle_options', 'Opções de Veículo')}</Text>
-                    <View style={styles.vehicleCategoryContainer}>
-                      {VEHICLE_OPTIONS.map((item) => {
-                        const isSelected = vehicleType === item.id;
-                        const price = calculateVehiclePrice(item.id, estimatedDistance);
-                        return (
-                          <TouchableOpacity 
-                            key={item.id} 
-                            style={[styles.categoryCard, isSelected && styles.categoryCardActive]}
-                            activeOpacity={0.8}
-                            onPress={() => setVehicleType(item.id)}
-                          >
-                            <Image source={item.image} style={styles.vehicleImage} resizeMode="contain" />
-                            <View style={styles.categoryTextWrapper}>
-                              <Text style={[styles.categoryTitle, isSelected && styles.categoryTextActive]}>{item.title}</Text>
-                              <Text style={styles.categorySubtitle}>{item.subtitle}</Text>
-                            </View>
-                            <Text style={[styles.categoryPriceText, isSelected && styles.categoryPriceTextActive]}>
-                              {price ? `${price} XOF` : t('calculating', 'Calculando...')}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
+                {extraStopCoords && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 4 }}>
+                    <Ionicons name="location-sharp" size={12} color="#3B82F6" style={{ marginRight: 6 }} />
+                    <Text style={{ color: '#60A5FA', fontSize: 13, flex: 1, fontWeight: '600' }} numberOfLines={1}>
+                      Parada: {extraStopAddress}
+                    </Text>
                   </View>
                 )}
 
-                <Text style={styles.sectionLabel}>{t('reference_point', 'Ponto de Referência (Opcional)')}</Text>
-                <View style={styles.referenceContainer}>
-                  <TextInput
-                    style={styles.referenceInput}
-                    placeholder={t('reference_placeholder', 'Ex: Próximo à farmácia, casa azul...')}
-                    placeholderTextColor="#94A3B8"
-                    value={referencePoint}
-                    onChangeText={setReferencePoint}
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                  <Ionicons name="flag" size={12} color="#EF4444" style={{ marginRight: 6 }} />
+                  <Text style={{ color: '#F8FAFC', fontSize: 13, flex: 1 }} numberOfLines={1}>{dropoffAddress}</Text>
+                </View>
+              </View>
+
+              <Text style={styles.sectionLabel}>{t('service_type', 'Tipo de Serviço')}</Text>
+              <View style={styles.serviceTypesContainer}>
+                <TouchableOpacity 
+                  style={[styles.serviceTypeButton, serviceType === 'viagem' && styles.serviceTypeActive]}
+                  onPress={() => setServiceType('viagem')}
+                >
+                  <Ionicons name="car-outline" size={18} color={serviceType === 'viagem' ? '#0F172A' : '#94A3B8'} />
+                  <Text style={[styles.serviceTypeText, serviceType === 'viagem' && styles.serviceTypeTextActive]}>{t('ride_service', 'Viagem')}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={[styles.serviceTypeButton, serviceType === 'entrega' && styles.serviceTypeActive]}
+                  onPress={() => setServiceType('entrega')}
+                >
+                  <Ionicons name="cube-outline" size={18} color={serviceType === 'entrega' ? '#0F172A' : '#94A3B8'} />
+                  <Text style={[styles.serviceTypeText, serviceType === 'entrega' && styles.serviceTypeTextActive]}>{t('delivery_service', 'Entrega')}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={[styles.serviceTypeButton, serviceType === 'aluguel' && styles.serviceTypeActive]}
+                  onPress={() => setServiceType('aluguel')}
+                >
+                  <Ionicons name="key-outline" size={18} color={serviceType === 'aluguel' ? '#0F172A' : '#94A3B8'} />
+                  <Text style={[styles.serviceTypeText, serviceType === 'aluguel' && styles.serviceTypeTextActive]}>{t('rental_service', 'Aluguel')}</Text>
+                </TouchableOpacity>
+              </View>
+
+              {serviceType === 'aluguel' ? (
+                <View style={{ marginTop: 12 }}>
+                  <Text style={styles.sectionLabel}>{t('select_coverage_region', 'Selecione a Região de Cobertura')}</Text>
+                  <TouchableOpacity style={[styles.categoryCard, styles.categoryCardActive, { borderColor: '#EAB308', borderWidth: 2 }]} activeOpacity={0.9}>
+                    <View style={{ backgroundColor: '#FEF08A', padding: 8, borderRadius: 8, marginRight: 12 }}>
+                      <Ionicons name="map-outline" size={24} color="#0F172A" />
+                    </View>
+                    <View style={styles.categoryTextWrapper}>
+                      <Text style={[styles.categoryTitle, styles.categoryTextActive]}>{RENTAL_PRICES[selectedRegion]?.label || 'Bissau'}</Text>
+                      <Text style={styles.categorySubtitle}>{RENTAL_PRICES[selectedRegion]?.description}</Text>
+                    </View>
+                    <Text style={[styles.categoryPriceText, styles.categoryPriceTextActive, { color: '#10B981' }]}>
+                      {RENTAL_PRICES[selectedRegion]?.price ? `${RENTAL_PRICES[selectedRegion].price?.toLocaleString('pt-BR')} XOF` : t('on_request', 'Sob Consulta')}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View>
+                  <Text style={styles.sectionLabel}>{t('vehicle_options', 'Opções de Veículo')}</Text>
+                  <View style={styles.vehicleCategoryContainer}>
+                    {VEHICLE_OPTIONS.map((item) => {
+                      const isSelected = vehicleType === item.id;
+                      const price = calculateVehiclePrice(item.id, estimatedDistance);
+                      return (
+                        <TouchableOpacity 
+                          key={item.id} 
+                          style={[styles.categoryCard, isSelected && styles.categoryCardActive]}
+                          activeOpacity={0.8}
+                          onPress={() => setVehicleType(item.id)}
+                        >
+                          <Image source={item.image} style={styles.vehicleImage} resizeMode="contain" />
+                          <View style={styles.categoryTextWrapper}>
+                            <Text style={[styles.categoryTitle, isSelected && styles.categoryTextActive]}>{item.title}</Text>
+                            <Text style={styles.categorySubtitle}>{item.subtitle}</Text>
+                          </View>
+                          <Text style={[styles.categoryPriceText, isSelected && styles.categoryPriceTextActive]}>
+                            {price ? `${price} XOF` : t('calculating', 'Calculando...')}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
+
+              <Text style={styles.sectionLabel}>{t('reference_point', 'Ponto de Referência (Opcional)')}</Text>
+              <View style={styles.referenceContainer}>
+                <TextInput
+                  style={styles.referenceInput}
+                  placeholder={t('reference_placeholder', 'Ex: Próximo à farmácia, casa azul...')}
+                  placeholderTextColor="#94A3B8"
+                  value={referencePoint}
+                  onChangeText={setReferencePoint}
+                />
+              </View>
+
+              <View style={styles.actionRow}>
+                <TouchableOpacity style={styles.cancelButtonOutline} onPress={() => setBookingStep('ADDRESS')}>
+                  <Text style={styles.cancelButtonOutlineText}>{t('back_btn', 'Voltar')}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={[styles.requestButton, { flex: 1, marginLeft: 10 }]} onPress={() => setBookingStep('PAYMENT')}>
+                  <Text style={styles.requestButtonText}>{t('continue_btn', 'Continuar')}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* 💳 SELEÇÃO DE FORMA DE PAGAMENTO */}
+          {rideStatus === 'idle' && bookingStep === 'PAYMENT' && (
+            <View style={{ width: '100%' }}>
+              <Text style={styles.sectionLabel}>{t('payment_method', 'Forma de Pagamento')}</Text>
+              
+              <View style={styles.paymentOptionsContainer}>
+                {/* 1. ORANGE MONEY */}
+                <TouchableOpacity 
+                  style={[
+                    styles.paymentBtn, 
+                    paymentMethod === 'ORANGE_MONEY' && styles.paymentBtnActive, 
+                    { 
+                      backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#1E293B' : '#0F172A', 
+                      borderColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#334155', 
+                      borderWidth: 1,
+                      paddingVertical: 14,
+                      marginBottom: 10
+                    }
+                  ]}
+                  onPress={() => setPaymentMethod('ORANGE_MONEY')}
+                  activeOpacity={0.9}
+                >
+                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(255, 102, 0, 0.15)', justifyContent: 'center', alignItems: 'center' }}>
+                    <Ionicons name="phone-portrait" size={18} color="#FF6600" />
+                  </View>
+                  
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={[styles.paymentBtnText, { color: '#F8FAFC', fontWeight: '800', fontSize: 14 }]}>
+                      Orange Money
+                    </Text>
+                    <Text style={{ color: '#94A3B8', fontSize: 11, marginTop: 2 }}>
+                      {t('orange_money_desc', 'Pagamento automático e seguro via USSD')}
+                    </Text>
+                  </View>
+
+                  <Ionicons 
+                    name={paymentMethod === 'ORANGE_MONEY' ? "checkmark-circle" : "ellipse-outline"} 
+                    size={22} 
+                    color={paymentMethod === 'ORANGE_MONEY' ? "#FF6600" : "#64748B"} 
                   />
-                </View>
+                </TouchableOpacity>
 
-                <View style={styles.actionRow}>
-                  <TouchableOpacity style={styles.cancelButtonOutline} onPress={() => setBookingStep('ADDRESS')}>
-                    <Text style={styles.cancelButtonOutlineText}>{t('back_btn', 'Voltar')}</Text>
-                  </TouchableOpacity>
+                {/* 2. MTN MOMO */}
+                <TouchableOpacity 
+                  style={[
+                    styles.paymentBtn, 
+                    paymentMethod === 'MTN_MOMO' && styles.paymentBtnActive, 
+                    { 
+                      backgroundColor: paymentMethod === 'MTN_MOMO' ? '#1E293B' : '#0F172A', 
+                      borderColor: paymentMethod === 'MTN_MOMO' ? '#EAB308' : '#334155', 
+                      borderWidth: 1,
+                      paddingVertical: 14,
+                      marginBottom: 10
+                    }
+                  ]}
+                  onPress={() => setPaymentMethod('MTN_MOMO')}
+                  activeOpacity={0.9}
+                >
+                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(234, 179, 8, 0.15)', justifyContent: 'center', alignItems: 'center' }}>
+                    <Ionicons name="wallet-outline" size={18} color="#EAB308" />
+                  </View>
+                  
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={[styles.paymentBtnText, { color: '#F8FAFC', fontWeight: '800', fontSize: 14 }]}>
+                      MTN Mobile Money
+                    </Text>
+                    <Text style={{ color: '#94A3B8', fontSize: 11, marginTop: 2 }}>
+                      {t('mtn_momo_desc', 'Débito direto na sua conta MTN MoMo')}
+                    </Text>
+                  </View>
 
-                  <TouchableOpacity style={[styles.requestButton, { flex: 1, marginLeft: 10 }]} onPress={() => setBookingStep('PAYMENT')}>
-                    <Text style={styles.requestButtonText}>{t('continue_btn', 'Continuar')}</Text>
-                  </TouchableOpacity>
-                </View>
+                  <Ionicons 
+                    name={paymentMethod === 'MTN_MOMO' ? "checkmark-circle" : "ellipse-outline"} 
+                    size={22} 
+                    color={paymentMethod === 'MTN_MOMO' ? "#EAB308" : "#64748B"} 
+                  />
+                </TouchableOpacity>
+
+                {/* 3. DINHEIRO (CASH) */}
+                <TouchableOpacity 
+                  style={[
+                    styles.paymentBtn, 
+                    paymentMethod === 'CASH' && styles.paymentBtnActive, 
+                    { 
+                      backgroundColor: paymentMethod === 'CASH' ? '#1E293B' : '#0F172A', 
+                      borderColor: paymentMethod === 'CASH' ? '#10B981' : '#334155', 
+                      borderWidth: 1,
+                      paddingVertical: 14 
+                    }
+                  ]}
+                  onPress={() => setPaymentMethod('CASH')}
+                  activeOpacity={0.9}
+                >
+                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(16, 185, 129, 0.15)', justifyContent: 'center', alignItems: 'center' }}>
+                    <Ionicons name="cash-outline" size={18} color="#10B981" />
+                  </View>
+
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={[styles.paymentBtnText, { color: '#F8FAFC', fontWeight: '800', fontSize: 14 }]}>
+                      {t('cash_payment', 'Dinheiro')}
+                    </Text>
+                    <Text style={{ color: '#94A3B8', fontSize: 11, marginTop: 2 }}>
+                      {t('cash_desc', 'Pague diretamente ao motorista no final da viagem')}
+                    </Text>
+                  </View>
+
+                  <Ionicons 
+                    name={paymentMethod === 'CASH' ? "checkmark-circle" : "ellipse-outline"} 
+                    size={22} 
+                    color={paymentMethod === 'CASH' ? "#10B981" : "#64748B"} 
+                  />
+                </TouchableOpacity>
               </View>
-            )}
 
-            {/* 💳 SELEÇÃO DE FORMA DE PAGAMENTO */}
-            {rideStatus === 'idle' && bookingStep === 'PAYMENT' && (
-              <View style={{ width: '100%' }}>
-                <Text style={styles.sectionLabel}>{t('payment_method', 'Forma de Pagamento')}</Text>
-                
-                <View style={styles.paymentOptionsContainer}>
-                  {/* 1. ORANGE MONEY */}
-                  <TouchableOpacity 
-                    style={[
-                      styles.paymentBtn, 
-                      paymentMethod === 'ORANGE_MONEY' && styles.paymentBtnActive, 
-                      { 
-                        backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#1E293B' : '#0F172A', 
-                        borderColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#334155', 
-                        borderWidth: 1,
-                        paddingVertical: 14,
-                        marginBottom: 10
-                      }
-                    ]}
-                    onPress={() => setPaymentMethod('ORANGE_MONEY')}
-                    activeOpacity={0.9}
-                  >
-                    <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(255, 102, 0, 0.15)', justifyContent: 'center', alignItems: 'center' }}>
-                      <Ionicons name="phone-portrait" size={18} color="#FF6600" />
-                    </View>
-                    
-                    <View style={{ flex: 1, marginLeft: 10 }}>
-                      <Text style={[styles.paymentBtnText, { color: '#F8FAFC', fontWeight: '800', fontSize: 14 }]}>
-                        Orange Money
-                      </Text>
-                      <Text style={{ color: '#94A3B8', fontSize: 11, marginTop: 2 }}>
-                        {t('orange_money_desc', 'Pagamento automático e seguro via USSD')}
-                      </Text>
-                    </View>
+              {/* BOTÕES DE AÇÃO */}
+              <View style={styles.actionRow}>
+                <TouchableOpacity 
+                  style={styles.cancelButtonOutline} 
+                  onPress={() => setBookingStep('SERVICE_AND_PRICE')}
+                >
+                  <Text style={styles.cancelButtonOutlineText}>{t('back_btn', 'Voltar')}</Text>
+                </TouchableOpacity>
 
-                    <Ionicons 
-                      name={paymentMethod === 'ORANGE_MONEY' ? "checkmark-circle" : "ellipse-outline"} 
-                      size={22} 
-                      color={paymentMethod === 'ORANGE_MONEY' ? "#FF6600" : "#64748B"} 
-                    />
-                  </TouchableOpacity>
-
-                  {/* 2. DINHEIRO (CASH) */}
-                  <TouchableOpacity 
-                    style={[
-                      styles.paymentBtn, 
-                      paymentMethod === 'CASH' && styles.paymentBtnActive, 
-                      { 
-                        backgroundColor: paymentMethod === 'CASH' ? '#1E293B' : '#0F172A', 
-                        borderColor: paymentMethod === 'CASH' ? '#10B981' : '#334155', 
-                        borderWidth: 1,
-                        paddingVertical: 14 
-                      }
-                    ]}
-                    onPress={() => setPaymentMethod('CASH')}
-                    activeOpacity={0.9}
-                  >
-                    <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(16, 185, 129, 0.15)', justifyContent: 'center', alignItems: 'center' }}>
-                      <Ionicons name="cash-outline" size={18} color="#10B981" />
-                    </View>
-
-                    <View style={{ flex: 1, marginLeft: 10 }}>
-                      <Text style={[styles.paymentBtnText, { color: '#F8FAFC', fontWeight: '800', fontSize: 14 }]}>
-                        {t('cash_payment', 'Dinheiro')}
-                      </Text>
-                      <Text style={{ color: '#94A3B8', fontSize: 11, marginTop: 2 }}>
-                        {t('cash_desc', 'Pague diretamente ao motorista no final da viagem')}
-                      </Text>
-                    </View>
-
-                    <Ionicons 
-                      name={paymentMethod === 'CASH' ? "checkmark-circle" : "ellipse-outline"} 
-                      size={22} 
-                      color={paymentMethod === 'CASH' ? "#10B981" : "#64748B"} 
-                    />
-                  </TouchableOpacity>
-                </View>
-
-                {/* BOTÕES DE AÇÃO */}
-                <View style={styles.actionRow}>
-                  <TouchableOpacity 
-                    style={styles.cancelButtonOutline} 
-                    onPress={() => setBookingStep('SERVICE_AND_PRICE')}
-                  >
-                    <Text style={styles.cancelButtonOutlineText}>{t('back_btn', 'Voltar')}</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity 
-                    style={[styles.requestButton, { flex: 1, marginLeft: 10 }]} 
-                    onPress={handleInitialRequestRide}
-                  >
-                    <Text style={styles.requestButtonText}>{t('request_now_btn', 'Pedir Agora')}</Text>
-                  </TouchableOpacity>
-                </View>
+                <TouchableOpacity 
+                  style={[styles.requestButton, { flex: 1, marginLeft: 10 }]} 
+                  onPress={handleInitialRequestRide}
+                >
+                  <Text style={styles.requestButtonText}>{t('request_now_btn', 'Pedir Agora')}</Text>
+                </TouchableOpacity>
               </View>
-            )}
-
+            </View>
+          )}
+       
+            {/* 🔑 PIN DE EMBARQUE DE SEGURANÇA */}
             {(rideStatus === 'accepted' || rideStatus === 'arrived') && Boolean(activeOtpPin) && (
               <View style={styles.pinCardContainer}>
                 <View style={styles.pinHeader}>
@@ -2323,7 +2364,7 @@ return (
                 <Text style={styles.pinSubtitle}>{t('tell_pin_to_driver_msg', 'Fale este código ao motorista para iniciar a corrida')}</Text>
                 <View style={styles.pinDigitsRow}>
                   {activeOtpPin.split('').map((digit, index) => (
-                    <View key={index} style={styles.pinDigitBox}>
+                    <View key={`pin-digit-${index}`} style={styles.pinDigitBox}>
                       <Text style={styles.pinDigitText}>{digit}</Text>
                     </View>
                   ))}
@@ -2331,22 +2372,28 @@ return (
               </View>
             )}
 
+            {/* 📡 STATUS DE BUSCA DE MOTORISTAS */}
             {rideStatus === 'searching' && (
               <View style={styles.statusBox}>
                 <ActivityIndicator size="large" color="#EAB308" style={{ marginBottom: 12 }} />
                 <Text style={styles.statusTitle}>{t('searching_drivers_title', 'Buscando motoristas...')}</Text>
                 <Text style={styles.statusSub}>{t('locating_nearest_vehicle', 'Localizando o veículo mais próximo de você.')}</Text>
-                <TouchableOpacity style={[styles.cancelButtonOutline, { marginTop: 16 }]} onPress={() => setShowCancelModal(true)}>
+                <TouchableOpacity 
+                  style={[styles.cancelButtonOutline, { marginTop: 16 }]} 
+                  onPress={() => setShowCancelModal(true)}
+                  activeOpacity={0.8}
+                >
                   <Text style={styles.cancelButtonOutlineText}>{t('cancel_search_btn', 'Cancelar Busca')}</Text>
                 </TouchableOpacity>
               </View>
             )}
 
+            {/* 🚘 CARD DO MOTORISTA E VEÍCULO */}
             {driverInfo && rideStatus !== 'searching' && (
               <View style={styles.driverCardContainer}>
                 <View style={styles.driverMainInfo}>
-                  {driverInfo?.photoUrl ? (
-                    <Image source={{ uri: driverInfo.photoUrl }} style={styles.driverAvatarProfile} />
+                  {driverInfo?.photoUrl || driverInfo?.profilePicture ? (
+                    <Image source={{ uri: driverInfo.photoUrl || driverInfo.profilePicture }} style={styles.driverAvatarProfile} />
                   ) : (
                     <View style={styles.driverAvatarProfile}>
                       <Ionicons name="person" size={24} color="#94A3B8" />
@@ -2391,6 +2438,7 @@ return (
               </View>
             )}
 
+            {/* 📊 BANNER DE STATUS E CONTROLES EM ANDAMENTO */}
             {['accepted', 'arrived', 'in_progress'].includes(rideStatus) && driverInfo && (
               <View style={{ width: '100%' }}>
                 <View style={styles.statusBanner}>
@@ -2401,7 +2449,7 @@ return (
                       ? t('driver_arrived', 'O motorista chegou!') : 
                      (driverEta ? `${t('destination_in', 'Destino em')} ${driverEta} min` : t('ride_in_progress', 'Viagem em andamento'))}
                   </Text>
-                  <TouchableOpacity onPress={handleShareTrip} style={styles.shareButton}>
+                  <TouchableOpacity onPress={handleShareTrip} style={styles.shareButton} activeOpacity={0.8}>
                     <Ionicons name="share-social-outline" size={18} color="#0F172A" />
                   </TouchableOpacity>
                 </View>
@@ -2410,19 +2458,20 @@ return (
                   <TouchableOpacity 
                     style={[styles.iconCircleButton, styles.sosButton]} 
                     onPress={handleSosPress}
+                    activeOpacity={0.8}
                   >
                     <Ionicons name="shield-checkmark" size={18} color="#EF4444" />
                   </TouchableOpacity>
 
-                  <TouchableOpacity style={styles.iconCircleButton} onPress={handleCallDriver}>
+                  <TouchableOpacity style={styles.iconCircleButton} onPress={handleCallDriver} activeOpacity={0.8}>
                     <Ionicons name="call" size={18} color="#EAB308" />
                   </TouchableOpacity>
 
-                  <TouchableOpacity style={styles.cancelButtonOutline} onPress={() => setShowCancelModal(true)}>
+                  <TouchableOpacity style={styles.cancelButtonOutline} onPress={() => setShowCancelModal(true)} activeOpacity={0.8}>
                     <Text style={styles.cancelButtonOutlineText}>{t('cancel_ride', 'Cancelar')}</Text>
                   </TouchableOpacity>
 
-                  <TouchableOpacity style={[styles.requestButton, { flex: 1, marginLeft: 6 }]} onPress={() => setIsChatVisible(true)}>
+                  <TouchableOpacity style={[styles.requestButton, { flex: 1, marginLeft: 6 }]} onPress={() => setIsChatVisible(true)} activeOpacity={0.85}>
                     <Ionicons name="chatbubble-ellipses" size={16} color="#0F172A" style={{ marginRight: 6 }} />
                     <Text style={styles.requestButtonText}>Chat</Text>
                   </TouchableOpacity>
@@ -2434,6 +2483,7 @@ return (
       </KeyboardAvoidingView>
 
       {/* 4. MODAIS DO SISTEMA */}
+
       {/* MODAL DE IDIOMAS */}
       <Modal visible={langModalVisible} transparent animationType="slide" onRequestClose={() => setLangModalVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
@@ -2447,6 +2497,7 @@ return (
                       key={lang.code}
                       style={styles.langOption}
                       onPress={() => changeLanguage(lang.code)}
+                      activeOpacity={0.7}
                     >
                       <Text style={styles.langOptionText}>{lang.label}</Text>
                     </TouchableOpacity>
@@ -2454,6 +2505,7 @@ return (
                   <TouchableOpacity 
                     style={styles.closeButton} 
                     onPress={() => setLangModalVisible(false)}
+                    activeOpacity={0.8}
                   >
                     <Text style={{ color: '#EF4444', fontWeight: 'bold' }}>{t('back_btn', 'Fechar')}</Text>
                   </TouchableOpacity>
@@ -2482,6 +2534,7 @@ return (
                   <TouchableOpacity 
                     style={[styles.requestButton, { width: '100%', marginBottom: 12 }]} 
                     onPress={() => Linking.openSettings()}
+                    activeOpacity={0.85}
                   >
                     <Text style={styles.requestButtonText}>{t('open_settings', 'Abrir Configurações')}</Text>
                   </TouchableOpacity>
@@ -2489,6 +2542,7 @@ return (
                   <TouchableOpacity 
                     style={styles.cancelButtonOutline} 
                     onPress={getCurrentLocationWithFallback}
+                    activeOpacity={0.8}
                   >
                     <Text style={styles.cancelButtonOutlineText}>{t('try_again', 'Já ativei / Tentar novamente')}</Text>
                   </TouchableOpacity>
@@ -2532,6 +2586,7 @@ return (
                     <TouchableOpacity 
                       onPress={() => !isProcessingPayment && setIsPaymentModalVisible(false)}
                       disabled={isProcessingPayment}
+                      activeOpacity={0.7}
                     >
                       <Ionicons name="close-circle" size={26} color="rgba(255,255,255,0.8)" />
                     </TouchableOpacity>
@@ -2604,7 +2659,8 @@ return (
           </TouchableWithoutFeedback>
         </KeyboardAvoidingView>
       </Modal>
-{/* MENU LATERAL */}
+
+      {/* MENU LATERAL DRAWER */}
       <Modal visible={isMenuVisible} animationType="fade" transparent onRequestClose={() => setIsMenuVisible(false)}>
         <TouchableOpacity style={styles.menuOverlay} activeOpacity={1} onPress={() => setIsMenuVisible(false)}>
           <View style={[styles.menuDrawer, { paddingTop: Math.max((insets?.top || 0) + 16, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 20), paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>

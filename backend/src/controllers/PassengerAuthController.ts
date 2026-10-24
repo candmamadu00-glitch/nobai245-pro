@@ -119,10 +119,7 @@ export class PassengerAuthController {
       const otpCodeHash = await bcrypt.hash(otpCode, 10);
       const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-      console.log(`\n🔑 =================================================`);
-      console.log(`🔑 [NOVO CADASTRO PASSAGEIRO] Telefone: ${formattedPhone}`);
-      console.log(`🔑 [CÓDIGO OTP GERADO]: ${otpCode}`);
-      console.log(`🔑 =================================================\n`);
+      console.log(`\n🔑 [NOVO CADASTRO PASSAGEIRO] Telefone: ${formattedPhone} | OTP: ${otpCode}`);
 
       const passenger = await prisma.passenger.create({
         data: {
@@ -221,8 +218,8 @@ export class PassengerAuthController {
           email: passenger.email,
           phone: passenger.phone,
           profilePicture: passenger.profilePicture,
-          walletBalance: passenger.walletBalance,
-          ratingAverage: passenger.ratingAverage,
+          walletBalance: Number(passenger.walletBalance || 0),
+          ratingAverage: Number(passenger.ratingAverage || 5.0),
           paymentProvider: passenger.paymentProvider,
           paymentAccountNumber: passenger.paymentAccountNumber,
           isVerified: passenger.isVerified
@@ -254,10 +251,7 @@ export class PassengerAuthController {
       const otpCodeHash = await bcrypt.hash(otpCode, 10);
       const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-      console.log(`\n🔑 =================================================`);
-      console.log(`🔑 [SOLICITAÇÃO DE OTP] Telefone: ${formattedPhone}`);
-      console.log(`🔑 [CÓDIGO OTP GERADO]: ${otpCode}`);
-      console.log(`🔑 =================================================\n`);
+      console.log(`\n🔑 [SOLICITAÇÃO DE OTP] Telefone: ${formattedPhone} | OTP: ${otpCode}`);
 
       await prisma.passenger.update({
         where: { id: passenger.id },
@@ -366,13 +360,22 @@ export class PassengerAuthController {
           ratingAverage: true,
           paymentProvider: true,
           paymentAccountNumber: true,
-          isVerified: true
+          isVerified: true,
+          status: true,
+          createdAt: true
         },
       });
 
       if (!passenger) return res.status(404).json({ success: false, error: 'Passageiro não encontrado.' });
 
-      return res.status(200).json({ success: true, passenger });
+      return res.status(200).json({ 
+        success: true, 
+        passenger: {
+          ...passenger,
+          walletBalance: Number(passenger.walletBalance || 0),
+          ratingAverage: Number(passenger.ratingAverage || 5.0)
+        } 
+      });
     } catch (error: any) {
       console.error('❌ [PERFIL PASSAGEIRO]:', error?.message || error);
       return res.status(500).json({ success: false, error: 'Erro ao buscar dados do perfil.' });
@@ -426,11 +429,17 @@ export class PassengerAuthController {
         },
       });
 
+      const responsePayload = {
+        ...updatedPassenger,
+        walletBalance: Number(updatedPassenger.walletBalance || 0),
+        ratingAverage: Number(updatedPassenger.ratingAverage || 5.0)
+      };
+
       return res.status(200).json({
         success: true,
         message: 'Perfil atualizado com sucesso!',
-        passenger: updatedPassenger,
-        user: updatedPassenger,
+        passenger: responsePayload,
+        user: responsePayload,
       });
     } catch (error: any) {
       console.error('❌ [ATUALIZAR PERFIL PASSAGEIRO]:', error?.message || error);
@@ -459,10 +468,13 @@ export class PassengerAuthController {
 
       return res.status(200).json({
         success: true,
-        walletBalance: passenger.walletBalance,
+        walletBalance: Number(passenger.walletBalance || 0),
         paymentProvider: passenger.paymentProvider || 'ORANGE_MONEY',
         paymentAccountNumber: passenger.paymentAccountNumber || passenger.phone,
-        transactions,
+        transactions: transactions.map(t => ({
+          ...t,
+          amount: Number(t.amount || 0)
+        })),
       });
     } catch (error: any) {
       console.error('❌ [FINANCEIRO PASSAGEIRO]:', error?.message || error);
@@ -473,12 +485,9 @@ export class PassengerAuthController {
   // 9. INICIAR COBRANÇA DIRETA DE CORRIDA NO MOBILE MONEY
   async initiatePayment(req: Request, res: Response): Promise<Response> {
     try {
-      console.log('📥 [REQ BODY RECEBIDO DO APP]:', JSON.stringify(req.body));
-      
       const passengerId = (req as any).user?.id || (req as any).userId || (req as any).passenger?.id || req.body.passengerId;
       
       if (!passengerId) {
-        console.error('❌ [AUTH ERRO]: ID do passageiro não encontrado na requisição.');
         return res.status(401).json({ success: false, error: 'Não autorizado. ID do passageiro ausente.' });
       }
 
@@ -489,7 +498,6 @@ export class PassengerAuthController {
 
       const cleanAmount = Math.round(Number(rawAmount));
       if (isNaN(cleanAmount) || cleanAmount <= 0) {
-        console.error('❌ [ERRO DE VALORAÇÃO]: O valor recebido foi inválido ou ausente:', rawAmount);
         return res.status(400).json({ success: false, error: 'O valor da cobrança deve ser maior que zero XOF.' });
       }
 
@@ -499,7 +507,6 @@ export class PassengerAuthController {
       });
 
       if (!passenger) {
-        console.error('❌ [PASSAGEIRO NÃO ENCONTRADO NO BANCO]:', passengerId);
         return res.status(404).json({ success: false, error: 'Passageiro não encontrado no banco de dados.' });
       }
 
@@ -508,7 +515,6 @@ export class PassengerAuthController {
       const targetPhone = formatPhoneNumber(String(phoneToUse));
 
       if (!isValidBissauPhone(targetPhone)) {
-        console.error('❌ [TELEFONE BISSAU INVÁLIDO]:', targetPhone);
         return res.status(400).json({ success: false, error: 'Número de telefone Mobile Money inválido para Guiné-Bissau (+245).' });
       }
 
@@ -641,7 +647,11 @@ export class PassengerAuthController {
 
       return res.status(200).json({
         success: true,
-        rides,
+        rides: rides.map(r => ({
+          ...r,
+          priceXof: Number(r.priceXof || 0),
+          estimatedPriceXof: Number(r.estimatedPriceXof || 0)
+        })),
       });
     } catch (error: any) {
       console.error('❌ [HISTORICO PASSAGEIRO]:', error?.message || error);
@@ -792,8 +802,8 @@ export class PassengerAuthController {
           email: passenger.email,
           phone: passenger.phone,
           profilePicture: passenger.profilePicture || picture,
-          walletBalance: passenger.walletBalance,
-          ratingAverage: passenger.ratingAverage,
+          walletBalance: Number(passenger.walletBalance || 0),
+          ratingAverage: Number(passenger.ratingAverage || 5.0),
           paymentProvider: passenger.paymentProvider,
           paymentAccountNumber: passenger.paymentAccountNumber,
         },
@@ -804,7 +814,6 @@ export class PassengerAuthController {
       return res.status(500).json({ success: false, error: `Erro ao validar Google: ${error?.message || 'Falha no servidor'}` });
     }
   }
-
   // 16. CONCLUIR REGISTRO GOOGLE
   async completeGoogleRegistration(req: Request, res: Response): Promise<Response> {
     try {
@@ -882,7 +891,9 @@ export class PassengerAuthController {
           fullName: passenger.fullName, 
           phone: passenger.phone,
           email: passenger.email,
-          profilePicture: passenger.profilePicture
+          profilePicture: passenger.profilePicture,
+          walletBalance: Number(passenger.walletBalance || 0),
+          ratingAverage: Number(passenger.ratingAverage || 5.0)
         },
       });
     } catch (error: any) {
@@ -1010,7 +1021,7 @@ export class PassengerAuthController {
       const activeRide = await prisma.ride.findFirst({
         where: {
           passengerId,
-          status: { in: ['PENDING', 'SEARCHING', 'AWAITING_PAYMENT', 'ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] }
+          status: { in: ['PENDING', 'SEARCHING', 'AWAITING_PAYMENT', 'ACCEPTED', 'QUEUED', 'ARRIVED', 'IN_PROGRESS'] }
         }
       });
 
@@ -1039,7 +1050,7 @@ export class PassengerAuthController {
           where: { id: passengerId },
           data: {
             fullName: 'Passageiro Anônimo',
-            phone: `p_${stamp}_${rand}`, // 14 caracteres (cabe em VARCHAR(20))
+            phone: `p_${stamp}_${rand}`,
             email: `del_${stamp}_${rand}@anon.com`,
             documentNumber: null,
             paymentAccountNumber: null,

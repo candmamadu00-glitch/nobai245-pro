@@ -4,7 +4,7 @@ import {
   KeyboardAvoidingView, Platform, StatusBar, Dimensions, Image, Vibration, Switch,
   Animated, PanResponder, Easing, ScrollView, AppState, AppStateStatus
 } from 'react-native';
-import { useKeepAwake } from 'expo-keep-awake'; // 💡 MANTÉM A TELA ACESA
+import { useKeepAwake } from 'expo-keep-awake';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
@@ -28,7 +28,7 @@ import { StartRideOtpModal } from '../components/StartRideOtpModal';
 import { api } from '../services/api';
 import { DriverSOSModal } from '../components/DriverSOSModal';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
-import { createAudioPlayer, AudioModule } from 'expo-audio';
+import { createAudioPlayer } from 'expo-audio';
 import { useBilingualVoice } from '../hooks/useBilingualVoice';
 
 // 🛡️ BLINDAGEM 1: Token do Mapbox via Variável de Ambiente
@@ -65,17 +65,24 @@ const demandZonesData = {
   ],
 };
 
-// 🛡️ Helper seguro para tradução (evita ReferenceError se a função de Crioulo não existir)
-const translateToKriolSafe = (text: string): string => {
+// 🛡️ Helper de tradução para Crioulo da Guiné-Bissau
+function translateToKriol(text: string): string {
   if (!text) return '';
-  return text
-    .replace(/Turn right/i, 'Vira na direita')
-    .replace(/Turn left/i, 'Vira na esquerda')
-    .replace(/Head/i, 'Siga em frente')
-    .replace(/destination/i, 'destino');
-};
 
-// 🛡️ TASK EM SEGUNDO PLANO BLINDADA (COM TRAVA DE GPS FAKE)
+  return text
+    .replace(/Vire à direita/gi, 'Dobra pa direitu')
+    .replace(/Vire à esquerda/gi, 'Dobra pa eskerda')
+    .replace(/Mantenha-se à direita/gi, 'Pega na ladu direitu')
+    .replace(/Mantenha-se à esquerda/gi, 'Pega na ladu eskerdu')
+    .replace(/Siga em frente/gi, 'Siga na frenti')
+    .replace(/Em (\d+) metros/gi, 'Na $1 metro')
+    .replace(/Na rotatória/gi, 'Na rotunda')
+    .replace(/pegue a (\d+)ª saída/gi, 'pense $1 saída')
+    .replace(/Você chegou ao seu destino/gi, 'Bu tchega ja na bu distinu')
+    .replace(/Você está se aproximando do seu destino/gi, 'Bu sta kuazi pa tchega na bu distinu lembranta passageiro de pega se objetos na veiculo tchabe telemovel');
+}
+
+// 🛡️ TASK EM SEGUNDO PLANO
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) => {
   if (error || !data) return;
   const { locations } = data;
@@ -83,11 +90,12 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) =>
 
   if (location?.coords) {
     const isMocked = location.mocked || (location.coords as any)?.mocked;
-    if (isMocked) {
-      console.warn('🚨 [SECURITY] Coordenada simulada por GPS Fake descartada.');
+    
+    // 🔓 PERMITE GPS FAKE SE ESTIVER EM MODO DE DESENVOLVIMENTO (__DEV__)
+    if (isMocked && !__DEV__) {
+      console.warn('🚨 [SECURITY] Coordenada simulada por GPS Fake descartada em produção.');
       return;
     }
-
     try {
       const storedUser = await AsyncStorage.getItem('@nobai245:driverUser');
       const driverId = storedUser ? JSON.parse(storedUser)?.id : null;
@@ -142,9 +150,9 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) =>
   }
 });
 
-type RideState = 'idle' | 'searching' | 'accepted' | 'arrived' | 'in_progress' | 'completed';
+export type RideState = 'idle' | 'searching' | 'accepted' | 'arrived' | 'in_progress' | 'completed';
 
-interface IncomingRideData {
+export interface IncomingRideData {
   rideId: string;
   passengerId: string;
   passengerName?: string;
@@ -172,7 +180,7 @@ interface IncomingRideData {
   stops?: any[]; 
 }
 
-interface CompletedRideInfo { fareXOF: number; distanceKm: number; transactionId: string; }
+export interface CompletedRideInfo { fareXOF: number; distanceKm: number; transactionId: string; }
 
 function calculateDirectDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371;
@@ -476,7 +484,7 @@ export function Home() {
     return () => { if (sub?.remove) sub.remove(); };
   }, []);
 
-  // 🔔 DISPARAR SOM DE ALERTA, VOZ E VIBRAÇÃO QUANDO CHEGA UMA CORRIDA (UNIFICADO)
+  // 🔔 DISPARAR SOM DE ALERTA, VOZ E VIBRAÇÃO QUANDO CHEGA UMA CORRIDA
   useEffect(() => {
     let activePlayer: any = null;
 
@@ -647,169 +655,150 @@ export function Home() {
     restoreLocalState();
   }, []);
 
+  // 🗺️ BUSCA ROTA COMPLETA NO MAPBOX (ORIGEM -> PARADAS INTERMEDIÁRIAS -> DESTINO)
+  const fetchMapboxRoute = async (
+    startLng: number, 
+    startLat: number, 
+    endLng: number, 
+    endLat: number,
+    waypoints: Array<any> = []
+  ) => {
+    try {
+      // 🟢 Normaliza e valida todas as coordenadas das paradas extras
+      const validWaypoints = (waypoints || [])
+        .map(w => {
+          const lat = Number(w?.lat ?? w?.latitude);
+          const lng = Number(w?.lng ?? w?.longitude);
+          return (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) ? `${lng},${lat}` : null;
+        })
+        .filter((wp): wp is string => wp !== null);
 
-// 🌐 Função de tradução de instruções do Mapbox para Crioulo da Guiné-Bissau
-function translateToKriol(text: string): string {
-  if (!text) return '';
+      const waypointsString = validWaypoints.length > 0 ? `${validWaypoints.join(';')};` : '';
 
-  return text
-    .replace(/Vire à direita/gi, 'Dobra pa direitu')
-    .replace(/Vire à esquerda/gi, 'Dobra pa eskerda')
-    .replace(/Mantenha-se à direita/gi, 'Pega na ladu direitu')
-    .replace(/Mantenha-se à esquerda/gi, 'Pega na ladu eskerdu')
-    .replace(/Siga em frente/gi, 'Siga na frenti')
-    .replace(/Em (\d+) metros/gi, 'Na $1 metro')
-    .replace(/Na rotatória/gi, 'Na rotunda')
-    .replace(/pegue a (\d+)ª saída/gi, 'pense $1 saída')
-    .replace(/Você chegou ao seu destino/gi, 'Bu tchega ja na bu distinu')
-    .replace(/Você está se aproximando do seu destino/gi, 'Bu sta kuazi pa tchega na bu distinu lembranta passageiro de pega se objetos na veiculo tchabe telemovel');
-}
-
-
-// 🗺️ BUSCA ROTA COMPLETA NO MAPBOX (ORIGEM -> PARADAS INTERMEDIÁRIAS -> DESTINO)
-const fetchMapboxRoute = async (
-  startLng: number, 
-  startLat: number, 
-  endLng: number, 
-  endLat: number,
-  waypoints: Array<any> = []
-) => {
-  try {
-    // 🟢 Normaliza e valida todas as coordenadas das paradas extras
-    const validWaypoints = (waypoints || [])
-      .map(w => {
-        const lat = Number(w?.lat ?? w?.latitude);
-        const lng = Number(w?.lng ?? w?.longitude);
-        return (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) ? `${lng},${lat}` : null;
-      })
-      .filter((wp): wp is string => wp !== null);
-
-    const waypointsString = validWaypoints.length > 0 ? `${validWaypoints.join(';')};` : '';
-
-    const token = MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '';
-    const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${startLng},${startLat};${waypointsString}${endLng},${endLat}?geometries=geojson&steps=true&voice_instructions=true&banner_instructions=true&language=pt&access_token=${token}`;
-    
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Falha requisição rota Mapbox: ${response.status}`);
-    const data = await response.json();
-
-    if (data.routes && data.routes.length > 0 && isMountedRef.current) {
-      const route = data.routes[0];
+      const token = MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '';
+      const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${startLng},${startLat};${waypointsString}${endLng},${endLat}?geometries=geojson&steps=true&voice_instructions=true&banner_instructions=true&language=pt&access_token=${token}`;
       
-      // Define as coordenadas de toda a linha (incluindo as curvas até as paradas)
-      setRouteCoordinates(route.geometry.coordinates);
-      
-      const eta = Math.ceil(route.duration / 60);
-      setDriverEta(eta);
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Falha requisição rota Mapbox: ${response.status}`);
+      const data = await response.json();
 
-      if (route.legs && route.legs.length > 0) {
-        const steps = route.legs.flatMap((leg: any) => leg.steps || []);
-        setRouteSteps(steps);
-        setCurrentStepIndex(0);
+      if (data.routes && data.routes.length > 0 && isMountedRef.current) {
+        const route = data.routes[0];
+        
+        // Define as coordenadas de toda a linha
+        setRouteCoordinates(route.geometry.coordinates);
+        
+        const eta = Math.ceil(route.duration / 60);
+        setDriverEta(eta);
 
-        if (steps.length > 0 && steps[0]?.maneuver?.instruction) {
-          const firstInstruction = translateToKriol(steps[0].maneuver.instruction);
-          speakInstruction(firstInstruction);
+        if (route.legs && route.legs.length > 0) {
+          const steps = route.legs.flatMap((leg: any) => leg.steps || []);
+          setRouteSteps(steps);
+          setCurrentStepIndex(0);
+
+          if (steps.length > 0 && steps[0]?.maneuver?.instruction) {
+            const firstInstruction = translateToKriol(steps[0].maneuver.instruction);
+            playBilingualVoice('navigation', firstInstruction);
+          }
+        }
+
+        if ((activeRideId || incomingRide?.rideId) && driver?.id && location?.coords && socket?.connected) {
+          socket.emit('driver:location_update', {
+            rideId: activeRideId || incomingRide?.rideId,
+            driverId: driver.id,
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+            speed: location.coords.speed || 0,
+            heading: location.coords.heading || 0,
+            durationMinutes: eta
+          });
         }
       }
+    } catch (err) {
+      console.warn('⚠️ Erro ao buscar rota no Mapbox, aplicando rota direta fallback:', err);
+      if (isMountedRef.current) {
+        setRouteCoordinates([[startLng, startLat], [endLng, endLat]]);
+        const distKm = calculateDirectDistance(startLat, startLng, endLat, endLng);
+        setDriverEta(Math.max(1, Math.ceil((distKm / 30) * 60)));
+      }
+    }
+  };
 
-      if ((activeRideId || incomingRide?.rideId) && driver?.id && location?.coords && socket?.connected) {
-        socket.emit('driver:location_update', {
-          rideId: activeRideId || incomingRide?.rideId,
-          driverId: driver.id,
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude,
-          speed: location.coords.speed || 0,
-          heading: location.coords.heading || 0,
-          durationMinutes: eta
+  // 🧭 Monitora a posição GPS do motorista e compara com a próxima curva da rota
+  useEffect(() => {
+    if (!location?.coords || routeSteps.length === 0 || currentStepIndex >= routeSteps.length) return;
+
+    const currentStep = routeSteps[currentStepIndex];
+    if (!currentStep?.maneuver?.location) return;
+
+    const [stepLng, stepLat] = currentStep.maneuver.location;
+    const distToStepKm = calculateDirectDistance(
+      location.coords.latitude,
+      location.coords.longitude,
+      stepLat,
+      stepLng
+    );
+
+    const distMeters = distToStepKm * 1000;
+
+    if (distMeters <= 40) {
+      const nextIndex = currentStepIndex + 1;
+      if (nextIndex < routeSteps.length) {
+        setCurrentStepIndex(nextIndex);
+        const nextInstruction = routeSteps[nextIndex]?.maneuver?.instruction;
+        if (nextInstruction) {
+          playBilingualVoice('navigation', translateToKriol(nextInstruction));
+        }
+      } else {
+        playBilingualVoice('navigation', 'Bu sta kuazi pa tchega na bu distinu');
+      }
+    }
+  }, [location?.coords, routeSteps, currentStepIndex, playBilingualVoice]);
+
+  // 🗺️ Envia as paradas pendentes para o Mapbox traçar a rota completa no Mapa
+  useEffect(() => {
+    if (!location?.coords || !incomingRide) return;
+
+    if (rideState === 'accepted') {
+      // 1. Rota do motorista até o passageiro (Embarque)
+      fetchMapboxRoute(
+        location.coords.longitude, 
+        location.coords.latitude, 
+        incomingRide.pickupLng, 
+        incomingRide.pickupLat
+      );
+    } else if (rideState === 'in_progress' && incomingRide.destinationLat && incomingRide.destinationLng) {
+      // 2. Parse e filtro de todas as paradas pendentes
+      let rawStops = incomingRide.stops;
+      if (typeof rawStops === 'string') {
+        try { rawStops = JSON.parse(rawStops); } catch (e) { rawStops = []; }
+      }
+
+      let pendingStops: any[] = [];
+      if (Array.isArray(rawStops) && rawStops.length > 0) {
+        pendingStops = rawStops.filter((s: any) => {
+          const lat = Number(s.lat ?? s.latitude);
+          const lng = Number(s.lng ?? s.longitude);
+          return s.status !== 'COMPLETED' && !isNaN(lat) && !isNaN(lng) && lat !== 0;
         });
+      } else if (incomingRide.extraStopLat && incomingRide.extraStopLng) {
+        pendingStops = [{ lat: incomingRide.extraStopLat, lng: incomingRide.extraStopLng }];
       }
-    }
-  } catch (err) {
-    console.warn('⚠️ Erro ao buscar rota no Mapbox, aplicando rota direta fallback:', err);
-    if (isMountedRef.current) {
-      setRouteCoordinates([[startLng, startLat], [endLng, endLat]]);
-      const distKm = calculateDirectDistance(startLat, startLng, endLat, endLng);
-      setDriverEta(Math.max(1, Math.ceil((distKm / 30) * 60)));
-    }
-  }
-};
 
-// 🧭 Monitora a posição GPS do motorista e compara com a próxima curva da rota
-useEffect(() => {
-  if (!location?.coords || routeSteps.length === 0 || currentStepIndex >= routeSteps.length) return;
-
-  const currentStep = routeSteps[currentStepIndex];
-  if (!currentStep?.maneuver?.location) return;
-
-  const [stepLng, stepLat] = currentStep.maneuver.location;
-  const distToStepKm = calculateDirectDistance(
-    location.coords.latitude,
-    location.coords.longitude,
-    stepLat,
-    stepLng
-  );
-
-  const distMeters = distToStepKm * 1000;
-
-  if (distMeters <= 40) {
-    const nextIndex = currentStepIndex + 1;
-    if (nextIndex < routeSteps.length) {
-      setCurrentStepIndex(nextIndex);
-      const nextInstruction = routeSteps[nextIndex]?.maneuver?.instruction;
-      if (nextInstruction) {
-        speakInstruction(translateToKriol(nextInstruction));
-      }
-    } else {
-      speakInstruction('Bu sta kuazi pa tchega na bu distinu');
-    }
-  }
-}, [location?.coords, routeSteps, currentStepIndex]);
-
-// 🗺️ Envia as paradas pendentes para o Mapbox traçar a rota completa no Mapa
-useEffect(() => {
-  if (!location?.coords || !incomingRide) return;
-
-  if (rideState === 'accepted') {
-    // 1. Rota do motorista até o passageiro (Embarque)
-    fetchMapboxRoute(
-      location.coords.longitude, 
-      location.coords.latitude, 
-      incomingRide.pickupLng, 
-      incomingRide.pickupLat
-    );
-  } else if (rideState === 'in_progress' && incomingRide.destinationLat && incomingRide.destinationLng) {
-    // 2. Parse e filtro de todas as paradas pendentes
-    let rawStops = incomingRide.stops;
-    if (typeof rawStops === 'string') {
-      try { rawStops = JSON.parse(rawStops); } catch (e) { rawStops = []; }
+      // 3. Traça a rota contínua no Mapa: GPS Motorista -> Parada 1 -> Parada 2 -> Destino Final
+      fetchMapboxRoute(
+        location.coords.longitude, 
+        location.coords.latitude, 
+        incomingRide.destinationLng, 
+        incomingRide.destinationLat,
+        pendingStops
+      );
+    } else if (rideState === 'idle' || rideState === 'arrived') {
+      setRouteCoordinates(null);
     }
 
-    let pendingStops: any[] = [];
-    if (Array.isArray(rawStops) && rawStops.length > 0) {
-      pendingStops = rawStops.filter((s: any) => {
-        const lat = Number(s.lat ?? s.latitude);
-        const lng = Number(s.lng ?? s.longitude);
-        return s.status !== 'COMPLETED' && !isNaN(lat) && !isNaN(lng) && lat !== 0;
-      });
-    } else if (incomingRide.extraStopLat && incomingRide.extraStopLng) {
-      pendingStops = [{ lat: incomingRide.extraStopLat, lng: incomingRide.extraStopLng }];
-    }
-
-    // 3. Traça a rota contínua no Mapa: GPS Motorista -> Parada 1 -> Parada 2 -> Destino Final
-    fetchMapboxRoute(
-      location.coords.longitude, 
-      location.coords.latitude, 
-      incomingRide.destinationLng, 
-      incomingRide.destinationLat,
-      pendingStops
-    );
-  } else if (rideState === 'idle' || rideState === 'arrived') {
-    setRouteCoordinates(null);
-  }
-
-  persistActiveRideState(incomingRide, rideState, activeRideId);
-}, [rideState, activeRideId, location?.coords?.latitude, location?.coords?.longitude, incomingRide]);
+    persistActiveRideState(incomingRide, rideState, activeRideId);
+  }, [rideState, activeRideId, location?.coords?.latitude, location?.coords?.longitude, incomingRide]);
 // 📡 ESCUTA DE SOCKETS COM SUPORTE COMPLETO A MÚLTIPLAS PARADAS
 useEffect(() => {
   const handleConnect = async () => {
@@ -817,7 +806,11 @@ useEffect(() => {
       await processOfflineQueue(socket);
       socket.emit('driver:request_state');
       if (isOnlineRef.current && location?.coords) {
-        socket.emit('driver:online', { driverId: driver.id, lat: location.coords.latitude, lng: location.coords.longitude });
+        socket.emit('driver:online', { 
+          driverId: driver.id, 
+          lat: location.coords.latitude, 
+          lng: location.coords.longitude 
+        });
       }
     }
   };
@@ -937,10 +930,10 @@ useEffect(() => {
           persistActiveRideState(incomingRideRef.current, 'accepted', data.rideId);
         }
         
-        snapToState(true); // Expandir o painel flutuante
+        snapToState(true);
       } else {
         // CORRIDA EM FILA
-        setIncomingRide(null); // Fecha o modal da oferta em fila
+        setIncomingRide(null);
         Alert.alert('Fila Confirmada 🔄', 'Nova corrida adicionada à sua fila com sucesso! Conclua a viagem atual para iniciar o novo embarque.');
       }
     } else {
@@ -1108,6 +1101,7 @@ const syncActiveRideWithServer = useCallback(async () => {
     console.warn('⚠️ Erro ao sincronizar corrida ativa com servidor:', err);
   }
 }, []);
+
 useEffect(() => {
   const subscription = AppState.addEventListener('change', async (nextAppState: AppStateStatus) => {
     if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
@@ -1249,7 +1243,9 @@ async function startTracking() {
     });
 
     const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
-    if (isMocked) {
+    
+    // 🔓 PERMITE GPS FAKE EM DESENVOLVIMENTO
+    if (isMocked && !__DEV__) {
       if (isMountedRef.current) setIsOnline(false);
       return Alert.alert(
         'GPS Simulado Detectado',
@@ -1340,14 +1336,15 @@ function acceptRide(rideId: string, driverId: string, currentLat: number, curren
       setActiveRideId(rideId);
       setRideState('accepted');
       if (incomingRide) persistActiveRideState(incomingRide, 'accepted', rideId);
-      setIncomingRide(null); // 🟢 CORREÇÃO: Limpa a oferta e FECHA O MODAL imediatamente!
+      setIncomingRide(null); 
       snapToState(true);
     } else {
-      setIncomingRide(null); // 🟢 Garante que a oferta de fila também se feche
+      setIncomingRide(null); 
       Alert.alert('Corrida Agendada 🔄', 'A corrida foi aceita e colocada na sua fila.');
     }
   });
 }
+
 async function handleArrived() {
   if (!activeRideId) return;
   setIsLoading(true);
@@ -1435,8 +1432,8 @@ async function handleStartRideWithOtp(otp: string) {
 async function handleFinishRide() {
   if (!activeRideId) return;
   setIsLoading(true);
-  const fallbackLat = Number(location?.coords?.latitude || incomingRide?.destinationLat || 11.8632);
-  const fallbackLng = Number(location?.coords?.longitude || incomingRide?.destinationLng || -15.5977);
+  const fallbackLat = Number(location?.coords?.latitude || incomingRide?.destinationLat || BISSAU_CENTER_LAT);
+  const fallbackLng = Number(location?.coords?.longitude || incomingRide?.destinationLng || BISSAU_CENTER_LNG);
   const payload = { rideId: activeRideId, dropoffLat: fallbackLat, dropoffLng: fallbackLng };
 
   const processOfflineFinish = async () => {
@@ -1530,7 +1527,7 @@ const toggleAudioRecording = async () => {
       
       if (typeof audioRecorder.stop === 'function') {
         await audioRecorder.stop();
-      } else if (typeof audioRecorder.stopRecording === 'function') {
+      } else if (typeof (audioRecorder as any).stopRecording === 'function') {
         await (audioRecorder as any).stopRecording();
       }
 
@@ -1588,7 +1585,7 @@ return (
   <View style={styles.container}>
     <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
     
-    {/* MAPA DE NAVEGAÇÃO MAPBOX */}
+    {/* 🗺️ MAPA DE NAVEGAÇÃO MAPBOX */}
     <Mapbox.MapView 
       style={StyleSheet.absoluteFill} 
       styleURL={mapStyle}
@@ -1601,21 +1598,32 @@ return (
       <Mapbox.Camera
         ref={cameraRef}
         defaultSettings={{
-          centerCoordinate: [Number(location?.coords.longitude || BISSAU_CENTER_LNG), Number(location?.coords.latitude || BISSAU_CENTER_LAT)],
+          centerCoordinate: [
+            Number(location?.coords.longitude || BISSAU_CENTER_LNG), 
+            Number(location?.coords.latitude || BISSAU_CENTER_LAT)
+          ],
           zoomLevel: 16,
         }}
         animationMode="flyTo"
         animationDuration={1000}
       />
      
-      {/* ZONAS DE DEMANDA */}
+      {/* 🔴 ZONAS DE ALTA DEMANDA */}
       {isOnline && (
         <Mapbox.ShapeSource id="demandZonesSource" shape={demandZonesData as any}>
-          <Mapbox.CircleLayer id="demandZonesLayer" style={{ circleRadius: 40, circleColor: '#FF3300', circleOpacity: 0.2, circleBlur: 0.6 }} />
+          <Mapbox.CircleLayer 
+            id="demandZonesLayer" 
+            style={{ 
+              circleRadius: 40, 
+              circleColor: '#FF3300', 
+              circleOpacity: 0.2, 
+              circleBlur: 0.6 
+            }} 
+          />
         </Mapbox.ShapeSource>
       )}
 
-      {/* 🏎️ MARCADOR DO VEÍCULO */}
+      {/* 🏎️ MARCADOR VEICULAR 3D */}
       {isOnline && location?.coords && (
         <Mapbox.PointAnnotation 
           key={`driver-car-${driver?.id || 'active'}`}
@@ -1654,37 +1662,45 @@ return (
         </Mapbox.PointAnnotation>
       )}
 
-      {/* LINHA DA ROTA */}
+      {/* 🛣️ LINHA DA ROTA */}
       {routeCoordinates && routeCoordinates.length > 0 && (
         <Mapbox.ShapeSource id="routeSource" shape={{ type: 'Feature', geometry: { type: 'LineString', coordinates: routeCoordinates } }}>
-          <Mapbox.LineLayer id="routeLine" style={{ lineColor: rideState === 'in_progress' ? '#3B82F6' : '#EAB308', lineWidth: 5, lineCap: 'round', lineJoin: 'round' }} />
+          <Mapbox.LineLayer 
+            id="routeLine" 
+            style={{ 
+              lineColor: rideState === 'in_progress' ? '#3B82F6' : '#EAB308', 
+              lineWidth: 5, 
+              lineCap: 'round', 
+              lineJoin: 'round' 
+            }} 
+          />
         </Mapbox.ShapeSource>
       )}
 
-      {/* 🟢 2. PARADAS INTERMEDIÁRIAS DESENHADAS NO MAPA */}
+      {/* 📍 PARADAS INTERMEDIÁRIAS NO MAPA */}
       {formattedStops.length > 0 && formattedStops.map((stop: any, index: number) => {
         if (!stop.lng || !stop.lat) return null;
         const isPassed = index < currentStopIndex;
         return (
           <Mapbox.PointAnnotation key={`stop-${stop.id || index}`} id={`stop-${stop.id || index}`} coordinate={[stop.lng, stop.lat]}>
-            <View style={[styles.carMarkerContainer, { backgroundColor: isPassed ? '#94A3B8' : '#3B82F6', padding: 6, borderRadius: 20, borderWidth: 2, borderColor: '#FFF' }]}>
-              <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '800' }}>P{index + 1}</Text>
+            <View style={[styles.carMarkerContainer, { backgroundColor: isPassed ? '#64748B' : '#3B82F6', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 2, borderColor: '#FFFFFF' }]}>
+              <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '900' }}>P{index + 1}</Text>
             </View>
           </Mapbox.PointAnnotation>
         );
       })}
 
-      {/* PONTO DE DESEMBARQUE (DESTINO FINAL) */}
+      {/* 🏁 PONTO DE DESEMBARQUE (DESTINO FINAL) */}
       {incomingRide?.destinationLng != null && incomingRide?.destinationLat != null && !isNaN(Number(incomingRide.destinationLng)) && !isNaN(Number(incomingRide.destinationLat)) && (
         <Mapbox.PointAnnotation id="dropoffMarker" coordinate={[Number(incomingRide.destinationLng), Number(incomingRide.destinationLat)]}>
           <View style={styles.markerDestination}>
-            <Ionicons name="flag" size={18} color="#FFF" />
+            <Ionicons name="flag" size={18} color="#FFFFFF" />
           </View>
         </Mapbox.PointAnnotation>
       )}
     </Mapbox.MapView>
 
-    {/* HEADER SUPERIOR FLUTUANTE DE STATUS E GANHOS */}
+    {/* 📊 HEADER SUPERIOR FLUTUANTE DE GANHOS E STATUS */}
     <View style={[styles.headerContainer, { top: topHeaderInset }]} pointerEvents="box-none">
       <View style={styles.headerRow}>
         <TouchableOpacity 
@@ -1694,7 +1710,7 @@ return (
           activeOpacity={0.85}
         >
           <View style={[styles.statusDot, isOnline ? styles.dotGreen : styles.dotRed]} />
-          <Text style={[styles.statusPillText, { color: isOnline ? '#0F172A' : '#FFF' }]}>
+          <Text style={[styles.statusPillText, { color: isOnline ? '#0F172A' : '#FFFFFF' }]}>
             {isOnline ? 'Online' : 'Offline'}
           </Text>
         </TouchableOpacity>
@@ -1719,15 +1735,15 @@ return (
 
       {isLowBattery && (
         <View style={styles.lowBatteryBanner}>
-          <Ionicons name="battery-dead" size={13} color="#FFF" />
+          <Ionicons name="battery-dead" size={13} color="#FFFFFF" />
           <Text style={styles.lowBatteryText}>
-            Bateria Fraca ({Math.round((batteryLevel || 0) * 100)}%) - Modo Economia
+            Bateria Fraca ({Math.round((batteryLevel || 0) * 100)}%) - Modo Economia Ativo
           </Text>
         </View>
       )}
     </View>
 
-    {/* BOTÕES FLUTUANTES SOBRE O MAPA */}
+    {/* 🎛️ BOTÕES FLUTUANTES SOBRE O MAPA */}
     <View style={styles.floatingButtonsWrapper} pointerEvents="box-none">
       <TouchableOpacity style={styles.recenterButton} onPress={handleRecenterMap} activeOpacity={0.85}>
         <Ionicons name="locate" size={20} color="#EAB308" />
@@ -1745,17 +1761,17 @@ return (
           onPress={toggleAudioRecording}
           activeOpacity={0.85}
         >
-          <Ionicons name={audioRecorder.isRecording ? 'mic' : 'mic-outline'} size={16} color="#FFF" />
+          <Ionicons name={audioRecorder.isRecording ? 'mic' : 'mic-outline'} size={16} color="#FFFFFF" />
           <Text style={styles.audioRecordText}>{audioRecorder.isRecording ? 'Gravando...' : 'Gravar Áudio'}</Text>
         </TouchableOpacity>
       )}
     </View>
 
-    {/* MODAIS DE SEGURANÇA E AVALIAÇÃO */}
+    {/* 🛡️ MODAIS DE SEGURANÇA E AVALIAÇÃO */}
     <DriverSOSModal visible={showSosModal} onClose={() => setShowSosModal(false)} currentRideId={activeRideId} />
     <RatingModal visible={showRatingModal} targetName={finishedTargetName} isDriverEvaluating={true} onClose={() => setShowRatingModal(false)} onSubmit={handleSubmitRating} />
 
-    {/* PAINEL FLUTUANTE INFERIOR */}
+    {/* 📋 PAINEL FLUTUANTE INFERIOR (BOTTOM SHEET) */}
     <KeyboardAvoidingView 
       style={styles.bottomSheetWrapper} 
       behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
@@ -1819,12 +1835,12 @@ return (
                 <View style={styles.serviceBadgeRow}>
                   {incomingRide.serviceType === 'DELIVERY' ? (
                     <View style={[styles.serviceTypeBadge, { backgroundColor: '#3B82F6' }]}>
-                      <Ionicons name="cube" size={12} color="#FFF" />
+                      <Ionicons name="cube" size={12} color="#FFFFFF" />
                       <Text style={styles.serviceTypeBadgeText}>ENTREGA DE ENCOMENDA</Text>
                     </View>
                   ) : incomingRide.serviceType === 'RENTAL' ? (
                     <View style={[styles.serviceTypeBadge, { backgroundColor: '#7C3AED' }]}>
-                      <Ionicons name="time" size={12} color="#FFF" />
+                      <Ionicons name="time" size={12} color="#FFFFFF" />
                       <Text style={styles.serviceTypeBadgeText}>ALUGUEL</Text>
                     </View>
                   ) : (
@@ -1893,7 +1909,7 @@ return (
                   </View>
                 </View>
 
-                {/* 🟢 3. PARADAS INTERMEDIÁRIAS NO PAINEL ATIVO */}
+                {/* PARADAS INTERMEDIÁRIAS */}
                 {formattedStops.length > 0 && formattedStops.map((stop: any, idx: number) => (
                   <View key={`active-stop-${idx}`} style={[styles.addressItem, { backgroundColor: 'rgba(59, 130, 246, 0.08)', padding: 6, borderRadius: 8, marginVertical: 2 }]}>
                     <Ionicons name="navigate-circle" size={18} color="#3B82F6" />
@@ -1938,7 +1954,7 @@ return (
 
                   {canCancelNoShow ? (
                     <TouchableOpacity style={styles.noShowBtnDanger} onPress={handleNoShowCancel}>
-                      <Ionicons name="alert-circle" size={16} color="#FFF" />
+                      <Ionicons name="alert-circle" size={16} color="#FFFFFF" />
                       <Text style={styles.noShowBtnText}>No-Show</Text>
                     </TouchableOpacity>
                   ) : (
@@ -1987,7 +2003,7 @@ return (
       </Animated.View>
     </KeyboardAvoidingView>
 
-    {/* MODAL PREFERÊNCIAS DE CHAMADA */}
+    {/* ⚙️ MODAL PREFERÊNCIAS DE SERVIÇOS */}
     <Modal visible={showFilterModal} transparent animationType="slide">
       <View style={styles.filterModalOverlay}>
         <View style={[
@@ -2026,7 +2042,7 @@ return (
       </View>
     </Modal>
 
-    {/* NAVEGAÇÃO PASSOS A PASSO */}
+    {/* 🧭 NAVEGAÇÃO GUIA PASSO A PASSO */}
     <TurnByTurnSheet 
       visible={showNavSheet} 
       onClose={() => setShowNavSheet(false)} 
@@ -2035,130 +2051,130 @@ return (
       onConfirmStop={() => setCurrentStopIndex(prev => prev + 1)} 
     />
 
-    {/* 🟢 MODAL DE NOVA SOLICITAÇÃO (SUPORTE A CORRIDAS EM FILA/EM ANDAMENTO) */}
-<Modal 
-  visible={!!incomingRide && (rideState === 'idle' || rideState === 'accepted' || rideState === 'in_progress')} 
-  transparent 
-  animationType="fade"
->
-  <View style={styles.newRequestOverlay}>
-    <View style={styles.newRequestCard}>
-      
-      {/* 🟢 BANNER DE ALERTA DE FILA SE O MOTORISTA JÁ TIVER EM VIAGEM */}
-      {['accepted', 'arrived', 'in_progress'].includes(rideState) && (
-        <View style={{ backgroundColor: '#3B82F6', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Ionicons name="layers-outline" size={16} color="#FFF" />
-          <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: 12 }}>
-            PRÓXIMA CORRIDA (ADICIONAR À FILA)
-          </Text>
-        </View>
-      )}
-
-      <View style={styles.newRequestHeader}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Ionicons name={incomingRide?.serviceType === 'DELIVERY' ? 'cube' : 'car-sport'} size={18} color="#EAB308" />
-          <Text style={styles.newRequestTitle}>
-            {['accepted', 'arrived', 'in_progress'].includes(rideState) ? 'Nova Oferta em Fila!' : 'Nova Corrida!'}
-          </Text>
-        </View>
-        <View style={styles.newRequestPriceBadge}>
-          <Text style={styles.newRequestPriceText}>
-            {formatCurrency(incomingRide?.priceXof)} XOF
-          </Text>
-        </View>
-      </View>
-
-      <View style={styles.progressBarContainer}>
-        <View style={[styles.progressBarFill, { width: `${Math.max(0, (timeLeft / 15) * 100)}%` }]} />
-      </View>
-      <Text style={styles.timerText}>Tempo restante: {timeLeft}s</Text>
-
-      <View style={styles.modalPassengerRow}>
-        <View style={styles.passengerPhotoContainerSm}>
-          {incomingRide?.passengerPhoto ? (
-            <Image source={{ uri: formatImageUrl(incomingRide.passengerPhoto) }} style={{ width: '100%', height: '100%', borderRadius: 16 }} />
-          ) : (
-            <Ionicons name="person" size={16} color="#94A3B8" />
-          )}
-        </View>
-        <View style={{ flex: 1, marginLeft: 10 }}>
-          <Text style={styles.modalPassengerName}>{displayPassengerName}</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-            <Ionicons name="star" size={12} color="#EAB308" />
-            <Text style={styles.modalPassengerRating}>{incomingRide?.passengerRating?.toFixed(1) || '5.0'}</Text>
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.routeTimelineContainer}>
-        {/* EMBARQUE / ORIGEM */}
-        <View style={styles.timelineRow}>
-          <Ionicons name="location" size={16} color="#10B981" />
-          <View style={styles.timelineTextContainer}>
-            <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
-            <Text style={styles.timelineAddress} numberOfLines={2}>
-              {incomingRide?.originAddress || 'Local de origem'}
-            </Text>
-          </View>
-        </View>
-
-        {/* PARADAS INTERMEDIÁRIAS */}
-        {formattedStops.length > 0 && formattedStops.map((stop: any, idx: number) => (
-          <View key={`modal-stop-${idx}`} style={styles.timelineRow}>
-            <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
-            <View style={styles.timelineTextContainer}>
-              <Text style={[styles.timelineLabel, { color: '#3B82F6' }]}>
-                PARADA {idx + 1} DE {formattedStops.length}:
+    {/* 🔔 MODAL DE OFERTA DE CORRIDA */}
+    <Modal 
+      visible={!!incomingRide && (rideState === 'idle' || rideState === 'accepted' || rideState === 'in_progress')} 
+      transparent 
+      animationType="fade"
+    >
+      <View style={styles.newRequestOverlay}>
+        <View style={styles.newRequestCard}>
+          
+          {['accepted', 'arrived', 'in_progress'].includes(rideState) && (
+            <View style={{ backgroundColor: '#3B82F6', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Ionicons name="layers-outline" size={16} color="#FFFFFF" />
+              <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 12 }}>
+                PRÓXIMA CORRIDA (ADICIONAR À FILA)
               </Text>
-              <Text style={styles.timelineAddress} numberOfLines={2}>{stop.address}</Text>
+            </View>
+          )}
+
+          <View style={styles.newRequestHeader}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Ionicons name={incomingRide?.serviceType === 'DELIVERY' ? 'cube' : 'car-sport'} size={18} color="#EAB308" />
+              <Text style={styles.newRequestTitle}>
+                {['accepted', 'arrived', 'in_progress'].includes(rideState) ? 'Nova Oferta em Fila!' : 'Nova Corrida!'}
+              </Text>
+            </View>
+            <View style={styles.newRequestPriceBadge}>
+              <Text style={styles.newRequestPriceText}>
+                {formatCurrency(incomingRide?.priceXof)} XOF
+              </Text>
             </View>
           </View>
-        ))}
 
-        {/* DESTINO */}
-        <View style={styles.timelineRow}>
-          <Ionicons name="flag" size={16} color="#EF4444" />
-          <View style={styles.timelineTextContainer}>
-            <Text style={styles.timelineLabel}>LEVAR PARA:</Text>
-            <Text style={styles.timelineAddress} numberOfLines={2}>
-              {incomingRide?.destinationAddress || 'Local de destino'}
-            </Text>
+          <View style={styles.progressBarContainer}>
+            <View style={[styles.progressBarFill, { width: `${Math.max(0, (timeLeft / 15) * 100)}%` }]} />
+          </View>
+          <Text style={styles.timerText}>Tempo restante: {timeLeft}s</Text>
+
+          <View style={styles.modalPassengerRow}>
+            <View style={styles.passengerPhotoContainerSm}>
+              {incomingRide?.passengerPhoto ? (
+                <Image source={{ uri: formatImageUrl(incomingRide.passengerPhoto) }} style={{ width: '100%', height: '100%', borderRadius: 16 }} />
+              ) : (
+                <Ionicons name="person" size={16} color="#94A3B8" />
+              )}
+            </View>
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={styles.modalPassengerName}>{displayPassengerName}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                <Ionicons name="star" size={12} color="#EAB308" />
+                <Text style={styles.modalPassengerRating}>{incomingRide?.passengerRating?.toFixed(1) || '5.0'}</Text>
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.routeTimelineContainer}>
+            {/* EMBARQUE / ORIGEM */}
+            <View style={styles.timelineRow}>
+              <Ionicons name="location" size={16} color="#10B981" />
+              <View style={styles.timelineTextContainer}>
+                <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
+                <Text style={styles.timelineAddress} numberOfLines={2}>
+                  {incomingRide?.originAddress || 'Local de origem'}
+                </Text>
+              </View>
+            </View>
+
+            {/* PARADAS INTERMEDIÁRIAS */}
+            {formattedStops.length > 0 && formattedStops.map((stop: any, idx: number) => (
+              <View key={`modal-stop-${idx}`} style={styles.timelineRow}>
+                <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
+                <View style={styles.timelineTextContainer}>
+                  <Text style={[styles.timelineLabel, { color: '#3B82F6' }]}>
+                    PARADA {idx + 1} DE {formattedStops.length}:
+                  </Text>
+                  <Text style={styles.timelineAddress} numberOfLines={2}>{stop.address}</Text>
+                </View>
+              </View>
+            ))}
+
+            {/* DESTINO */}
+            <View style={styles.timelineRow}>
+              <Ionicons name="flag" size={16} color="#EF4444" />
+              <View style={styles.timelineTextContainer}>
+                <Text style={styles.timelineLabel}>LEVAR PARA:</Text>
+                <Text style={styles.timelineAddress} numberOfLines={2}>
+                  {incomingRide?.destinationAddress || 'Local de destino'}
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.newRequestActions}>
+            <TouchableOpacity 
+              style={styles.rejectBtn} 
+              onPress={() => { Vibration.cancel(); setIncomingRide(null); }} 
+              disabled={isLoading}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.rejectText}>Recusar</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[styles.acceptBtn, isLoading && { opacity: 0.7 }]} 
+              activeOpacity={0.85} 
+              disabled={isLoading} 
+              onPress={() => {
+                if (isLoading) return;
+                if (incomingRide?.rideId && driver?.id) {
+                  const lat = Number(location?.coords?.latitude || BISSAU_CENTER_LAT);
+                  const lng = Number(location?.coords?.longitude || BISSAU_CENTER_LNG);
+                  acceptRide(incomingRide.rideId, driver.id, lat, lng);
+                }
+              }}
+            >
+              <Text style={styles.acceptText}>
+                {isLoading ? 'Aceitando...' : (['accepted', 'arrived', 'in_progress'].includes(rideState) ? 'Adicionar à Fila 🔄' : 'Aceitar Chamada')}
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       </View>
+    </Modal>
 
-      <View style={styles.newRequestActions}>
-        <TouchableOpacity 
-          style={styles.rejectBtn} 
-          onPress={() => { Vibration.cancel(); setIncomingRide(null); }} 
-          disabled={isLoading}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.rejectText}>Recusar</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={[styles.acceptBtn, isLoading && { opacity: 0.7 }]} 
-          activeOpacity={0.85} 
-          disabled={isLoading} 
-          onPress={() => {
-            if (isLoading) return;
-            if (incomingRide?.rideId && driver?.id) {
-              const lat = Number(location?.coords?.latitude || BISSAU_CENTER_LAT);
-              const lng = Number(location?.coords?.longitude || BISSAU_CENTER_LNG);
-              acceptRide(incomingRide.rideId, driver.id, lat, lng);
-            }
-          }}
-        >
-          <Text style={styles.acceptText}>
-            {isLoading ? 'Aceitando...' : (['accepted', 'arrived', 'in_progress'].includes(rideState) ? 'Adicionar à Fila 🔄' : 'Aceitar Chamada')}
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  </View>
-</Modal>
-    {/* CHAT INTERNO */}
+    {/* 💬 CHAT INTERNO */}
     <ChatModal 
       visible={isChatVisible} 
       onClose={() => setIsChatVisible(false)} 
@@ -2170,49 +2186,48 @@ return (
       otherUserPhoto={formatImageUrl(incomingRide?.passengerPhoto)} 
     />
 
-    {/* MODAL RECIBO */}
-<Modal visible={showReceiptModal} transparent animationType="slide">
-  <View style={styles.receiptOverlay}>
-    <View style={[
-      styles.receiptCard,
-      { paddingBottom: Math.max((insets?.bottom || 0) + 20, Platform.OS === 'android' ? 32 : 20) }
-    ]}>
-      <Text style={styles.receiptHeader}>✅ Serviço Concluído</Text>
-      <Text style={styles.receiptSub}>Obrigado por mais um serviço finalizado com sucesso.</Text>
-      <View style={styles.divider} />
-      <Text style={styles.receiptLabel}>Total Ganho:</Text>
-      <Text style={styles.receiptAmount}>
-        {formatCurrency(completedInfo?.fareXOF)} XOF
-      </Text>
-      <Text style={styles.receiptDist}>ID da Transação: {completedInfo?.transactionId || 'N/A'}</Text>
-      
-      <View style={{ width: '100%', gap: 10, marginTop: 15 }}>
-        <TouchableOpacity 
-          style={styles.closeReceiptBtn} 
-          onPress={() => { 
-            setShowReceiptModal(false); 
-            setShowRatingModal(true); 
-          }} 
-          activeOpacity={0.85}
-        >
-          <Text style={styles.closeReceiptText}>Avaliar Cliente</Text>
-        </TouchableOpacity>
+    {/* 🧾 MODAL RECIBO */}
+    <Modal visible={showReceiptModal} transparent animationType="slide">
+      <View style={styles.receiptOverlay}>
+        <View style={[
+          styles.receiptCard,
+          { paddingBottom: Math.max((insets?.bottom || 0) + 20, Platform.OS === 'android' ? 32 : 20) }
+        ]}>
+          <Text style={styles.receiptHeader}>✅ Serviço Concluído</Text>
+          <Text style={styles.receiptSub}>Obrigado por mais um serviço finalizado com sucesso.</Text>
+          <View style={styles.divider} />
+          <Text style={styles.receiptLabel}>Total Ganho:</Text>
+          <Text style={styles.receiptAmount}>
+            {formatCurrency(completedInfo?.fareXOF)} XOF
+          </Text>
+          <Text style={styles.receiptDist}>ID da Transação: {completedInfo?.transactionId || 'N/A'}</Text>
+          
+          <View style={{ width: '100%', gap: 10, marginTop: 15 }}>
+            <TouchableOpacity 
+              style={styles.closeReceiptBtn} 
+              onPress={() => { 
+                setShowReceiptModal(false); 
+                setShowRatingModal(true); 
+              }} 
+              activeOpacity={0.85}
+            >
+              <Text style={styles.closeReceiptText}>Avaliar Cliente</Text>
+            </TouchableOpacity>
 
-        {/* 🟢 Botão para fechar o recibo sem avaliar e já ficar livre para chamadas */}
-        <TouchableOpacity 
-          style={[styles.closeReceiptBtn, { backgroundColor: '#334155' }]} 
-          onPress={() => { 
-            setShowReceiptModal(false); 
-            resetDriverState(); 
-          }} 
-          activeOpacity={0.85}
-        >
-          <Text style={[styles.closeReceiptText, { color: '#94A3B8' }]}>Concluir e Voltar</Text>
-        </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.closeReceiptBtn, { backgroundColor: '#334155' }]} 
+              onPress={() => { 
+                setShowReceiptModal(false); 
+                resetDriverState(); 
+              }} 
+              activeOpacity={0.85}
+            >
+              <Text style={[styles.closeReceiptText, { color: '#94A3B8' }]}>Concluir e Voltar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
-    </View>
-  </View>
-</Modal>
+    </Modal>
 
     <StartRideOtpModal visible={showOtpModal} onCancel={() => setShowOtpModal(false)} onSubmitOtp={handleStartRideWithOtp} />
     <CancelModal visible={showCancelModal} userType="DRIVER" isPenaltyApplicable={false} onClose={() => setShowCancelModal(false)} onConfirm={handleConfirmCancel} />

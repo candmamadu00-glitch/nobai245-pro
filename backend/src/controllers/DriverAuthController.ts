@@ -107,7 +107,11 @@ export class DriverAuthController {
           phone: driver.phone,
           status: driver.status,
           vehiclePlate: driver.vehiclePlate,
-          profilePicture: driver.profilePicture
+          vehicleBrand: driver.vehicleBrand,
+          vehicleType: driver.vehicleType,
+          profilePicture: driver.profilePicture,
+          walletBalance: Number(driver.walletBalance || 0),
+          ratingAverage: Number(driver.ratingAverage || 5.0)
         },
       });
     } catch (error: any) {
@@ -276,7 +280,7 @@ export class DriverAuthController {
   async register(req: Request, res: Response): Promise<Response> {
     try {
       const { 
-        fullName, vehicleModel, password, vehicleColor, vehicleType, documentType 
+        fullName, vehicleModel, vehicleBrand, password, vehicleColor, vehicleType, documentType 
       } = req.body;
 
       const rawPhone = req.body.phone ? String(req.body.phone).trim() : '';
@@ -285,14 +289,14 @@ export class DriverAuthController {
       const vehiclePlate = sanitize(req.body.vehiclePlate);
       const documentNumber = sanitize(req.body.documentNumber);
       const cleanFullName = sanitizeText(fullName, 120);
-      const cleanVehicleModel = sanitizeText(vehicleModel, 80);
+      const cleanVehicleBrand = sanitizeText(vehicleBrand || vehicleModel, 80);
       const cleanVehicleColor = sanitizeText(vehicleColor, 40);
 
       if (!isValidBissauPhone(formattedPhone)) {
         return res.status(400).json({ success: false, error: 'O número de telefone deve ser válido para a Guiné-Bissau (+245).' });
       }
 
-      if (!cleanFullName || !cleanVehicleModel || !vehiclePlate || !password || !cleanVehicleColor || !documentNumber) {
+      if (!cleanFullName || !cleanVehicleBrand || !vehiclePlate || !password || !cleanVehicleColor || !documentNumber) {
         return res.status(400).json({ success: false, error: 'Todos os campos obrigatórios devem ser preenchidos.' });
       }
 
@@ -341,7 +345,7 @@ export class DriverAuthController {
           phone: formattedPhone, 
           passwordHash,
           vehiclePlate, 
-          vehicleBrand: cleanVehicleModel, 
+          vehicleBrand: cleanVehicleBrand, 
           vehicleType: vehicleType || 'TAXI', 
           vehicleColor: cleanVehicleColor, 
           documentType: documentType || 'BI',
@@ -355,7 +359,7 @@ export class DriverAuthController {
 
       return res.status(201).json({
         success: true,
-        message: 'Cadastro realizado com sucesso!',
+        message: 'Cadastro realizado com sucesso! Aguarde a aprovação do seu perfil.',
         driver: { id: driver.id, fullName: driver.fullName, phone: driver.phone, status: driver.status, profilePicture: driver.profilePicture },
       });
     } catch (error: any) {
@@ -470,7 +474,23 @@ export class DriverAuthController {
           phone: true,
           status: true,
           vehiclePlate: true,
+          vehicleBrand: true,
+          vehicleType: true,
+          vehicleColor: true,
+          documentType: true,
+          documentNumber: true,
           profilePicture: true,
+          licenseFrontPicture: true,
+          licenseBackPicture: true,
+          walletBalance: true,
+          ratingAverage: true,
+          totalRatings: true,
+          isOnline: true,
+          isAvailable: true,
+          orangeNumber: true,
+          mtnNumber: true,
+          paymentAccountNumber: true,
+          createdAt: true
         }
       });
 
@@ -478,7 +498,14 @@ export class DriverAuthController {
         return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
       }
 
-      return res.status(200).json({ success: true, driver });
+      return res.status(200).json({ 
+        success: true, 
+        driver: {
+          ...driver,
+          walletBalance: Number(driver.walletBalance || 0),
+          ratingAverage: Number(driver.ratingAverage || 5.0)
+        } 
+      });
     } catch (error: any) {
       console.error('❌ [PERFIL MOTORISTA]:', error?.message || error);
       return res.status(500).json({ success: false, error: 'Erro interno ao buscar perfil.' });
@@ -497,6 +524,7 @@ export class DriverAuthController {
         where: { id: driverId },
         select: { 
           fullName: true,
+          walletBalance: true,
           orangeNumber: true,
           mtnNumber: true,
           paymentAccountNumber: true
@@ -511,7 +539,7 @@ export class DriverAuthController {
         take: 30,
         select: {
           id: true, createdAt: true, originAddress: true, destinationAddress: true,
-          priceXof: true, status: true, driverEarnings: true,
+          priceXof: true, status: true, driverEarnings: true, platformFee: true,
           passenger: { select: { fullName: true, profilePicture: true } },
           ratings: { where: { reviewerType: 'PASSENGER' }, select: { stars: true } }
         }
@@ -524,12 +552,18 @@ export class DriverAuthController {
 
       return res.status(200).json({
         success: true,
+        walletBalance: Number(driver.walletBalance || 0),
         totalEarned: Math.round(totalEarned),
         mobileMoneyAccount: driver.paymentAccountNumber,
         orangeNumber: driver.orangeNumber,
         mtnNumber: driver.mtnNumber,
         totalRides: rides.filter(r => r.status === 'COMPLETED').length,
-        history: rides,
+        history: rides.map(r => ({
+          ...r,
+          priceXof: Number(r.priceXof || 0),
+          driverEarnings: Number(r.driverEarnings || 0),
+          platformFee: Number(r.platformFee || 0)
+        })),
       });
     } catch (error: any) {
       console.error('❌ [FINANCEIRO MOTORISTA]:', error?.message || error);
