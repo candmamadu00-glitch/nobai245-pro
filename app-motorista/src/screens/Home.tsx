@@ -815,7 +815,8 @@ useEffect(() => {
     }
   };
 
-  const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean; rideId?: string }) => {
+  // 🟢 1. HANDLER DE NOVA SOLICITAÇÃO DE CORRIDA (CORRIGIDO)
+const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean; rideId?: string }) => {
   console.log('🚨 [APP MOTORISTA] EVENTO DE CORRIDA CHEGOU VIA SOCKET:', data);
 
   if (!isMountedRef.current) return;
@@ -823,13 +824,13 @@ useEffect(() => {
   const currentRideId = activeRideIdRef.current || activeRideId;
   const currentRideState = rideStateRef.current || rideState;
 
-  // 🛑 Se a corrida já for a atual do motorista, ignora
+  // 🛑 Se a corrida já for a atual do motorista, ignora chamados duplicados
   if (currentRideId && currentRideId === data.rideId) {
     console.log('⚠️ [APP] Oferta ignorada: corrida já aceita/ativa.');
     return;
   }
 
-  // 🟢 Limpa modais anteriores e prepara os dados
+  // 🟢 Limpa modais de recibo/avaliação anteriores
   setShowReceiptModal(false);
   setShowRatingModal(false);
   
@@ -881,7 +882,7 @@ useEffect(() => {
   const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
   const isRealQueuedOffer = isCurrentlyInRide && data.rideId !== currentRideId;
 
-  // 🟢 Define os dados da corrida recebida
+  // 🟢 Define primeiro o timer para 15 segundos antes de salvar o objeto da corrida
   setTimeLeft(15);
   setIncomingRide({
     ...data,
@@ -899,12 +900,9 @@ useEffect(() => {
     extraStopAddress: (data as any).extraStopAddress || (stopsArray[0]?.address || undefined),
   });
 
-  // 🟢 FORÇA O PAINEL A EXPANDIR NA TELA DO MOTORISTA
   snapToState(true);
-
   Vibration.vibrate([0, 500, 200, 500], true);
 };
-
   // 🟢 2. HANDLER DE CORRIDA ACEITA
   const handleRideAccepted = async (data: any) => {
     Vibration.cancel();
@@ -1117,19 +1115,30 @@ useEffect(() => {
   };
 }, [syncActiveRideWithServer]);
 
+// 🔔 CONTROLE DO TIMER E EXPIRAÇÃO DA OFERTA DE CORRIDA (CORRIGIDO)
 useEffect(() => {
   let timer: NodeJS.Timeout;
-  if (incomingRide && rideState === 'idle' && timeLeft > 0) {
-    timer = setInterval(() => {
-      if (isMountedRef.current) setTimeLeft((prev) => prev - 1);
-    }, 1000);
-  } else if (timeLeft === 0 && incomingRide && rideState === 'idle') { 
-    Vibration.cancel(); 
-    if (isMountedRef.current) setIncomingRide(null); 
+  const isDriverAvailableForOffer = ['idle', 'accepted', 'arrived', 'in_progress'].includes(rideState);
+
+  if (incomingRide && isDriverAvailableForOffer) {
+    if (timeLeft > 0) {
+      timer = setInterval(() => {
+        if (isMountedRef.current) {
+          setTimeLeft((prev) => prev - 1);
+        }
+      }, 1000);
+    } else {
+      // Quando o tempo chega a zero, cancela vibração e limpa a oferta
+      Vibration.cancel();
+      if (isMountedRef.current) {
+        setIncomingRide(null);
+        setTimeLeft(15);
+      }
+    }
   }
+
   return () => clearInterval(timer);
 }, [incomingRide, rideState, timeLeft]);
-
 async function stopBackgroundLocation() {
   const hasTask = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
   if (hasTask) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
@@ -2049,9 +2058,9 @@ return (
       onConfirmStop={() => setCurrentStopIndex(prev => prev + 1)} 
     />
 
-    {/* 🔔 MODAL DE OFERTA DE CORRIDA */}
+    {/* 🔔 MODAL DE OFERTA DE CORRIDA (CORRIGIDO COM ARRAYS COMPLETO DE ESTADOS) */}
     <Modal 
-      visible={!!incomingRide && (rideState === 'idle' || rideState === 'accepted' || rideState === 'in_progress')} 
+      visible={!!incomingRide && ['idle', 'accepted', 'arrived', 'in_progress'].includes(rideState)} 
       transparent 
       animationType="fade"
     >
