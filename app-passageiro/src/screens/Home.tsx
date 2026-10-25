@@ -436,57 +436,85 @@ export function Home() {
     }
   }, [user]);
 
-  useEffect(() => {
-    if (!socket) return;
+ // 🟢 HANDLER UNIFICADO DE RECEBIMENTO DE MENSAGENS DO CHAT
+  const handleIncomingChatMessage = useCallback((data: any) => {
+    if (!isMountedRef.current || !data) return;
 
-    const handleIncomingChatMessage = (data: { id?: string; sender: string; text: string; senderName?: string }) => {
-      if (data.sender === 'driver' || data.sender !== 'passenger') {
-        const newMsgId = data.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`;
-        
-        setMessages(prev => {
-          if (prev.some(m => m.id === newMsgId || m.text === data.text)) return prev;
-          return [...prev, { id: newMsgId, sender: 'driver', text: data.text }];
-        });
+    const text = String(data.text || data.message || '').trim();
+    if (!text) return;
 
-        if (!isChatVisible) {
-          Alert.alert(
-            `💬 Mensagem do Motorista`,
-            data.text,
-            [
-              { text: 'Fechar', style: 'cancel' },
-              { text: 'Responder', onPress: () => setIsChatVisible(true) }
-            ]
-          );
-        }
+    // Normaliza e identifica se a mensagem veio do motorista
+    const rawSender = String(data.sender || '').toLowerCase();
+    const isFromDriver = rawSender.includes('driver') || rawSender !== 'passenger';
+    const normalizedSender: 'passenger' | 'driver' = isFromDriver ? 'driver' : 'passenger';
+
+    const messageId = String(data.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`);
+
+    // Adiciona ao estado evitando mensagens duplicadas
+    setMessages(prev => {
+      if (prev.some(m => m.id === messageId || (m.text === text && m.sender === normalizedSender))) {
+        return prev;
       }
-    };
+      return [...prev, { id: messageId, sender: normalizedSender, text, senderPhoto: data.senderPhoto }];
+    });
 
-    socket.on('chat:message', handleIncomingChatMessage);
-    socket.on('chat:new_message', handleIncomingChatMessage);
-
-    return () => {
-      socket.off('chat:message', handleIncomingChatMessage);
-      socket.off('chat:new_message', handleIncomingChatMessage);
-    };
-  }, [socket, isChatVisible]);
+    // 🔔 NOTIFICAÇÃO POP-UP NA TELA DO PASSAGEIRO
+    if (isFromDriver && !isChatVisible) {
+      Alert.alert(
+        `💬 Mensagem do Motorista`,
+        text,
+        [
+          { text: 'Fechar', style: 'cancel' },
+          { text: 'Responder', onPress: () => setIsChatVisible(true) }
+        ],
+        { cancelable: true }
+      );
+    }
+  }, [isChatVisible]);
 
   const isNightTimeForPin = useCallback(() => {
     const currentHour = new Date().getHours();
     return currentHour >= 18 || currentHour < 6;
   }, []);
 
-  const persistRideState = async (rideId: string | null, status: RideStatus) => {
-    try {
-      if (rideId && status !== 'idle' && status !== 'completed') {
-        await AsyncStorage.setItem(STORAGE_RIDE_KEY, JSON.stringify({ rideId, status }));
-      } else {
-        await AsyncStorage.removeItem(STORAGE_RIDE_KEY);
-      }
-    } catch (e) {
-      console.error('Erro ao salvar estado local:', e);
+  const persistRideState = async (
+  rideId: string | null, 
+  status: RideStatus, 
+  extraData?: {
+    driverInfo?: DriverInfo | null;
+    pickupCoords?: { latitude: number; longitude: number } | null;
+    pickupAddress?: string;
+    dropoffCoords?: { latitude: number; longitude: number } | null;
+    dropoffAddress?: string;
+    extraStopCoords?: { latitude: number; longitude: number } | null;
+    extraStopAddress?: string;
+    startOtp?: string;
+    estimatedPrice?: number | null;
+  }
+) => {
+  try {
+    if (rideId && status !== 'idle' && status !== 'completed') {
+      const payload = {
+        rideId,
+        status,
+        driverInfo: extraData?.driverInfo ?? driverInfo,
+        pickupCoords: extraData?.pickupCoords ?? pickupCoords,
+        pickupAddress: extraData?.pickupAddress ?? pickupAddress,
+        dropoffCoords: extraData?.dropoffCoords ?? dropoffCoords,
+        dropoffAddress: extraData?.dropoffAddress ?? dropoffAddress,
+        extraStopCoords: extraData?.extraStopCoords ?? extraStopCoords,
+        extraStopAddress: extraData?.extraStopAddress ?? extraStopAddress,
+        startOtp: extraData?.startOtp ?? startOtp,
+        estimatedPrice: extraData?.estimatedPrice ?? estimatedPrice,
+      };
+      await AsyncStorage.setItem(STORAGE_RIDE_KEY, JSON.stringify(payload));
+    } else {
+      await AsyncStorage.removeItem(STORAGE_RIDE_KEY);
     }
-  };
-
+  } catch (e) {
+    console.error('Erro ao salvar estado local do passageiro:', e);
+  }
+};
   // 🟢 SINCRONIZAÇÃO COMPLETA DE CORRIDA ATIVA (INCLUINDO SUPORTE A PARADAS)
   const syncActiveRideWithServer = useCallback(async () => {
     try {
@@ -934,94 +962,118 @@ export function Home() {
     return () => backHandlerSubscription.remove();
   }, [isMenuVisible, isChatVisible, isSearchModalVisible, showCancelModal, showRatingModal, bookingStep, rideStatus]);
 
-  // 🔄 Sincroniza corrida ativa do passageiro via API REST e Socket
   const syncPassengerActiveRide = useCallback(async () => {
-    try {
-      if (!api || typeof api.get !== 'function') return;
+  try {
+    if (!api || typeof api.get !== 'function') return;
 
-      const response = await api.get('/passengers/active-ride').catch(() => null);
-      if (response?.data?.ride && isMountedRef.current) {
-        const ride = response.data.ride;
-        const mappedStatus: RideStatus = 
-          ride.status === 'SEARCHING' || ride.status === 'QUEUED' || ride.status === 'PENDING' ? 'searching' :
-          ride.status === 'ACCEPTED' ? 'accepted' :
-          ride.status === 'ARRIVED' ? 'arrived' :
-          ride.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
+    let response = await api.get('/passengers/active-ride').catch(() => null);
+    if (!response?.data?.ride) {
+      response = await api.get('/rides/active').catch(() => null);
+    }
+    
+    if (response?.data?.ride && isMountedRef.current) {
+      const ride = response.data.ride;
+      const mappedStatus: RideStatus = 
+        ride.status === 'SEARCHING' || ride.status === 'QUEUED' || ride.status === 'PENDING' ? 'searching' :
+        ride.status === 'ACCEPTED' ? 'accepted' :
+        ride.status === 'ARRIVED' ? 'arrived' :
+        ride.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
 
-        if (mappedStatus !== 'idle') {
-          setActiveRideId(ride.id);
-          activeRideIdRef.current = ride.id;
-          setRideStatus(mappedStatus);
-          if (ride.startOtp) setStartOtp(ride.startOtp);
+      if (mappedStatus !== 'idle') {
+        setActiveRideId(ride.id);
+        activeRideIdRef.current = ride.id;
+        setRideStatus(mappedStatus);
 
-          if (ride.driver) {
-            setDriverInfo({
-              id: ride.driver.id,
-              name: ride.driver.fullName || 'Motorista',
-              photoUrl: formatPhotoUrl(ride.driver.profilePicture),
-              profilePicture: formatPhotoUrl(ride.driver.profilePicture),
-              carModel: ride.driver.vehicleModel || ride.driver.vehicleBrand,
-              carColor: ride.driver.vehicleColor,
-              licensePlate: ride.driver.vehiclePlate,
-              rating: Number(ride.driver.ratingAverage || 5.0),
-              phone: ride.driver.phone,
+        const otpCode = String(ride.startOtp || ride.otpPin || ride.pin || '');
+        if (otpCode) setStartOtp(otpCode);
+
+        let parsedDriverInfo: DriverInfo | null = null;
+        if (ride.driver) {
+          parsedDriverInfo = {
+            id: ride.driver.id,
+            name: ride.driver.fullName || 'Motorista',
+            photoUrl: formatPhotoUrl(ride.driver.profilePicture),
+            profilePicture: formatPhotoUrl(ride.driver.profilePicture),
+            carModel: ride.driver.vehicleModel || ride.driver.vehicleBrand,
+            carColor: ride.driver.vehicleColor,
+            licensePlate: ride.driver.vehiclePlate,
+            rating: Number(ride.driver.ratingAverage || 5.0),
+            phone: ride.driver.phone,
+            startOtp: otpCode,
+          };
+          setDriverInfo(parsedDriverInfo);
+
+          if (ride.driver.currentLat && ride.driver.currentLng) {
+            setDriverLocation({
+              latitude: Number(ride.driver.currentLat),
+              longitude: Number(ride.driver.currentLng),
+              heading: Number(ride.driver.heading || 0),
             });
-
-            if (ride.driver.currentLat && ride.driver.currentLng) {
-              setDriverLocation({
-                latitude: Number(ride.driver.currentLat),
-                longitude: Number(ride.driver.currentLng),
-                heading: Number(ride.driver.heading || 0),
-              });
-            }
           }
+        }
 
-          if (ride.originLat && ride.originLng) {
-            setPickupCoords({ latitude: Number(ride.originLat), longitude: Number(ride.originLng) });
-            if (ride.originAddress) setPickupAddress(ride.originAddress);
+        let pCoords = null;
+        if (ride.originLat && ride.originLng) {
+          pCoords = { latitude: Number(ride.originLat), longitude: Number(ride.originLng) };
+          setPickupCoords(pCoords);
+          if (ride.originAddress) setPickupAddress(ride.originAddress);
+        }
+
+        let dCoords = null;
+        if (ride.destinationLat && ride.destinationLng) {
+          dCoords = { latitude: Number(ride.destinationLat), longitude: Number(ride.destinationLng) };
+          setDropoffCoords(dCoords);
+          if (ride.destinationAddress) setDropoffAddress(ride.destinationAddress);
+        }
+
+        let eCoords = null;
+        if (Array.isArray(ride.stops) && ride.stops.length > 0) {
+          const firstStop = ride.stops[0];
+          const stopLat = Number(firstStop.lat || firstStop.latitude);
+          const stopLng = Number(firstStop.lng || firstStop.longitude);
+          if (!isNaN(stopLat) && !isNaN(stopLng)) {
+            eCoords = { latitude: stopLat, longitude: stopLng };
+            setExtraStopCoords(eCoords);
+            setExtraStopAddress(firstStop.address || 'Parada Intermediária');
+            setShowExtraStop(true);
           }
-
-          // 🟢 RESTAURANTE DE PARADAS INTERMEDIÁRIAS NA SINCRONIZAÇÃO
-          let stopsToPass: Array<{ latitude: number; longitude: number }> = [];
-          if (Array.isArray(ride.stops) && ride.stops.length > 0) {
-            const firstStop = ride.stops[0];
-            const stopLat = Number(firstStop.lat || firstStop.latitude);
-            const stopLng = Number(firstStop.lng || firstStop.longitude);
-            if (!isNaN(stopLat) && !isNaN(stopLng)) {
-              setExtraStopCoords({ latitude: stopLat, longitude: stopLng });
-              setExtraStopAddress(firstStop.address || 'Parada Intermediária');
-              setShowExtraStop(true);
-              stopsToPass.push({ latitude: stopLat, longitude: stopLng });
-            }
-          } else if (ride.extraStopLat && ride.extraStopLng) {
-            const lat = Number(ride.extraStopLat);
-            const lng = Number(ride.extraStopLng);
-            if (!isNaN(lat) && !isNaN(lng)) {
-              setExtraStopCoords({ latitude: lat, longitude: lng });
-              if (ride.extraStopAddress) setExtraStopAddress(ride.extraStopAddress);
-              setShowExtraStop(true);
-              stopsToPass.push({ latitude: lat, longitude: lng });
-            }
+        } else if (ride.extraStopLat && ride.extraStopLng) {
+          const lat = Number(ride.extraStopLat);
+          const lng = Number(ride.extraStopLng);
+          if (!isNaN(lat) && !isNaN(lng)) {
+            eCoords = { latitude: lat, longitude: lng };
+            setExtraStopCoords(eCoords);
+            if (ride.extraStopAddress) setExtraStopAddress(ride.extraStopAddress);
+            setShowExtraStop(true);
           }
+        }
 
-          if (ride.destinationLat && ride.destinationLng) {
-            setDropoffCoords({ latitude: Number(ride.destinationLat), longitude: Number(ride.destinationLng) });
-            if (ride.destinationAddress) setDropoffAddress(ride.destinationAddress);
-          }
+        const price = ride.priceXof ? Number(ride.priceXof) : null;
+        if (price) setEstimatedPrice(price);
 
-          if (ride.priceXof) setEstimatedPrice(Number(ride.priceXof));
+        activateKeepAwakeAsync('PASSENGER_RIDE_KEEP_AWAKE').catch(() => {});
 
-          fetchMapboxRoute(
-            { latitude: Number(ride.originLat), longitude: Number(ride.originLng) },
-            { latitude: Number(ride.destinationLat), longitude: Number(ride.destinationLng) },
-            stopsToPass.length > 0 ? stopsToPass : null
-          );
+        await persistRideState(ride.id, mappedStatus, {
+          driverInfo: parsedDriverInfo,
+          pickupCoords: pCoords,
+          pickupAddress: ride.originAddress,
+          dropoffCoords: dCoords,
+          dropoffAddress: ride.destinationAddress,
+          extraStopCoords: eCoords,
+          extraStopAddress: ride.extraStopAddress,
+          startOtp: otpCode,
+          estimatedPrice: price,
+        });
+
+        if (socket && socket.connected) {
+          socket.emit('passenger:rejoin_ride', { rideId: ride.id });
         }
       }
-    } catch (err) {
-      console.warn('⚠️ Erro ao sincronizar corrida do passageiro:', err);
     }
-  }, [fetchMapboxRoute]);
+  } catch (err) {
+    console.warn('⚠️ Erro ao sincronizar corrida do passageiro:', err);
+  }
+}, []);
 
   // 📱 Monitora mudança de plano do aplicativo
   useEffect(() => {
@@ -1096,29 +1148,42 @@ export function Home() {
     isManualPickupRef.current = false;
   }, []);
 
-  // -----------------------------------------------------------------------------
-  // 🔄 CONEXÃO SOCKET E LISTENERS DE CORRIDA
-  // -----------------------------------------------------------------------------
   useEffect(() => {
-    async function initAppAndPermissions() {
-      await getCurrentLocationWithFallback();
-      await syncPassengerActiveRide();
-
-      try {
-        const savedState = await AsyncStorage.getItem(STORAGE_RIDE_KEY);
-        if (savedState && isMountedRef.current) {
-          const { rideId, status: savedStatus } = JSON.parse(savedState);
-          setActiveRideId(rideId);
-          setRideStatus(savedStatus);
+  async function initAppAndPermissions() {
+    // 1️⃣ Restaura o estado salvo localmente de forma instantânea
+    try {
+      const savedState = await AsyncStorage.getItem(STORAGE_RIDE_KEY);
+      if (savedState && isMountedRef.current) {
+        const parsed = JSON.parse(savedState);
+        if (parsed?.rideId && parsed?.status && parsed.status !== 'idle' && parsed.status !== 'completed') {
+          setActiveRideId(parsed.rideId);
+          activeRideIdRef.current = parsed.rideId;
+          setRideStatus(parsed.status);
+          if (parsed.driverInfo) setDriverInfo(parsed.driverInfo);
+          if (parsed.pickupCoords) setPickupCoords(parsed.pickupCoords);
+          if (parsed.pickupAddress) setPickupAddress(parsed.pickupAddress);
+          if (parsed.dropoffCoords) setDropoffCoords(parsed.dropoffCoords);
+          if (parsed.dropoffAddress) setDropoffAddress(parsed.dropoffAddress);
+          if (parsed.extraStopCoords) setExtraStopCoords(parsed.extraStopCoords);
+          if (parsed.extraStopAddress) {
+            setExtraStopAddress(parsed.extraStopAddress);
+            setShowExtraStop(true);
+          }
+          if (parsed.startOtp) setStartOtp(parsed.startOtp);
+          if (parsed.estimatedPrice) setEstimatedPrice(parsed.estimatedPrice);
         }
-      } catch (err) {
-        console.error('Erro ao recuperar corrida salva:', err);
       }
+    } catch (err) {
+      console.error('Erro ao recuperar corrida salva localmente:', err);
     }
 
-    initAppAndPermissions();
-    connectPassengerSocket();
+    // 2️⃣ Obtém GPS e sincroniza os dados mais recentes com o servidor em segundo plano
+    await getCurrentLocationWithFallback();
+    await syncPassengerActiveRide();
+  }
 
+  initAppAndPermissions();
+  connectPassengerSocket();
     const handleConnect = () => {
       if (isMountedRef.current) setIsConnected(true);
       
@@ -1329,7 +1394,12 @@ export function Home() {
     socket.on('ride:started', handleRideStarted);
     socket.on('ride:finished', handleRideFinished);
     socket.on('ride:cancelled', handleRideCancelled);
-    socket.on('chat:receive_message', handleReceiveMessage);
+    
+    // 🟢 ENTRA AQUI
+    socket.on('chat:receive_message', handleIncomingChatMessage);
+    socket.on('chat:message', handleIncomingChatMessage);
+    socket.on('chat:new_message', handleIncomingChatMessage);
+    
     socket.on('ride:no_drivers_found', handleNoDriversFound);
     socket.on('ride:price_calculated', handlePriceCalculated);
     socket.on('ride:inaccessible_location', handleInaccessibleLocationAlert);
@@ -1344,7 +1414,12 @@ export function Home() {
       socket.off('ride:started', handleRideStarted);
       socket.off('ride:finished', handleRideFinished);
       socket.off('ride:cancelled', handleRideCancelled);
-      socket.off('chat:receive_message', handleReceiveMessage);
+      
+      // 🟢 ENTRA AQUI TAMBÉM
+      socket.off('chat:receive_message', handleIncomingChatMessage);
+      socket.off('chat:message', handleIncomingChatMessage);
+      socket.off('chat:new_message', handleIncomingChatMessage);
+      
       socket.off('ride:no_drivers_found', handleNoDriversFound);
       socket.off('ride:price_calculated', handlePriceCalculated);
       socket.off('ride:inaccessible_location', handleInaccessibleLocationAlert);
