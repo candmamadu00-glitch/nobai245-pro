@@ -1,0 +1,10 @@
+node_modules/
+.expo/
+android/build/
+android/app/build/
+android/.gradle/
+build/
+.npm-cache/
+dist/
+*.apk
+*.aab
