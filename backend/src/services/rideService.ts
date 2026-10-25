@@ -20,6 +20,17 @@ const IS_MOCK_MODE = process.env.ENABLE_MOCK_PAYMENTS === 'true' || process.env.
 const CANCELLATION_PENALTY_XOF = 500;
 const MIN_DRIVER_BALANCE_FOR_CASH = -2000;
 
+export interface FinalizeRideResult {
+  success: boolean;
+  fareXOF: number;
+  driverEarnings: number;
+  platformFee: number;
+  distanceKm: number;
+  paymentMethod: string;
+  hasQueuedRide: boolean;
+  nextRideId: string | null;
+}
+
 export const FALLBACK_TARIFFS: Record<string, { baseFare: number; perKm: number; perMin: number; commissionRate: number }> = {
   MOTO: { baseFare: 300, perKm: 150, perMin: 25, commissionRate: 15 },
   MOTO_CARRO: { baseFare: 400, perKm: 200, perMin: 35, commissionRate: 15 },
@@ -155,7 +166,6 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
     const offerExpiresAt = new Date(Date.now() + 15000); // 15 segundos para resposta
 
     for (const driver of qualifiedDrivers) {
-      // 🟢 Sincronizado Schema V3.0: Grava oferta pendente na tabela RideOffer
       await prisma.rideOffer.upsert({
         where: { rideId_driverId: { rideId: ride.id, driverId: driver.id } },
         update: { status: RideOfferStatus.PENDING, expiresAt: offerExpiresAt },
@@ -387,7 +397,6 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     ? TransactionStatus.PENDING 
     : (IS_MOCK_MODE ? TransactionStatus.HELD_IN_ESCROW : TransactionStatus.PENDING);
   
-  // 🟢 Gera os PINs de Segurança
   const startOtp = Math.floor(1000 + Math.random() * 9000).toString();
   const finishOtp = Math.floor(1000 + Math.random() * 9000).toString();
 
@@ -406,7 +415,7 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
         stops: stops.length > 0 ? stops : undefined,
         distanceKm,
         durationMin,
-        estimatedPriceXof: priceXof, // 🟢 Preenche estimatedPriceXof V3.0
+        estimatedPriceXof: priceXof,
         priceXof, 
         status: initialStatus, 
         startOtp,
@@ -428,7 +437,6 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
       }
     });
 
-    // 🟢 Sincronizado Schema V3.0: Event Log imutável
     await tx.rideEventLog.create({
       data: {
         rideId: newRide.id,
@@ -579,7 +587,6 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
 
   console.log(`🚗 [RIDE LOG - ACCEPT] Motorista "${result.driver?.fullName}" aceitou a corrida ID: ${result.id} (Status: ${targetStatus})`);
 
-  // 🟢 PAYLOAD PADRONIZADO (Compatível com Home.tsx do Passageiro)
   const passengerAcceptedPayload = {
     rideId: result.id,
     status: targetStatus,
@@ -597,12 +604,10 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     isQueuedRide: targetStatus === RideStatus.QUEUED
   };
 
-  // 📣 MULTI-BROADCAST SOCKET (Envia para todas as salas do passageiro)
   safeSocketEmit(result.id, 'ride:accepted', passengerAcceptedPayload);
   safeSocketEmit(result.passengerId, 'ride:accepted', passengerAcceptedPayload);
   safeSocketEmit(`passenger_${result.passengerId}`, 'ride:accepted', passengerAcceptedPayload);
 
-  // 🔔 PUSH NOTIFICATION
   if (result.passenger?.deviceToken) {
     const pushMsg = targetStatus === RideStatus.QUEUED 
       ? `O motorista ${result.driver?.fullName || 'parceiro'} aceitou sua corrida! Ele concluirá a viagem atual antes de ir até você.`
@@ -663,7 +668,6 @@ export async function driverArrivedLogic(rideId: string, driverId: string) {
     startOtp: updated.startOtp
   };
 
-  // 📣 MULTI-BROADCAST COM NOME DUPLO PARA EVITAR DIVERGÊNCIA
   [updated.id, updated.passengerId, `passenger_${updated.passengerId}`].forEach(room => {
     safeSocketEmit(room, 'ride:arrived', arrivedPayload);
     safeSocketEmit(room, 'ride:driver_arrived', arrivedPayload);
@@ -684,6 +688,7 @@ export async function driverArrivedLogic(rideId: string, driverId: string) {
     passenger: updated.passenger ? { ...updated.passenger, phone: maskPhoneNumber(updated.passenger.phone) } : null
   };
 }
+
 // 🟢 3. INÍCIO DA VIAGEM (MULTI-BROADCAST)
 export async function startRideLogic(rideId: string, driverId: string, otpInput: string) {
   const ride = await prisma.ride.findUnique({ 
@@ -721,7 +726,6 @@ export async function startRideLogic(rideId: string, driverId: string, otpInput:
 
   const startPayload = { rideId: ride.id, status: 'IN_PROGRESS' };
 
-  // 📣 MULTI-BROADCAST PARA TODAS AS SALAS
   safeSocketEmit(ride.id, 'ride:started', startPayload);
   safeSocketEmit(ride.passengerId, 'ride:started', startPayload);
   safeSocketEmit(`passenger_${ride.passengerId}`, 'ride:started', startPayload);
@@ -765,6 +769,7 @@ export async function notifyDriverNearbyIfClose(rideId: string, distanceMeters: 
     ).catch(err => console.error('❌ Erro no Push de proximidade:', err));
   }
 }
+
 // -----------------------------------------------------------------------------
 // 5. FINALIZAÇÃO DA CORRIDA E LIQUIDAÇÃO (COM MULTI-BROADCAST E SUPORTE À FILA)
 // -----------------------------------------------------------------------------
@@ -773,7 +778,7 @@ export async function finalizeRideAndCharge(
   finalLat: number, 
   finalLng: number,
   finishOtpInput?: string
-) {
+): Promise<FinalizeRideResult> {
   if (!isValidCoordinate(finalLat, finalLng)) {
     throw new Error('INVALID_COORDINATES: Coordenadas finais de desembarque inválidas.');
   }
@@ -791,7 +796,6 @@ export async function finalizeRideAndCharge(
     throw new Error('RIDE_FINISHED: A corrida já foi finalizada anteriormente.');
   }
 
-  // 🟢 VALIDAÇÃO SEGURA DO PIN DE CONFIRMAÇÃO DE ENTREGA / CHEGADA
   const rideFinishOtp = ride.finishOtp;
   if (ride.serviceType === ServiceType.DELIVERY || rideFinishOtp) {
     const cleanInput = (finishOtpInput || '').toString().trim();
@@ -841,7 +845,6 @@ export async function finalizeRideAndCharge(
       throw new Error('CONCURRENCY_ERROR: Ocorreu um conflito ao tentar finalizar a corrida.');
     }
 
-    // 🟢 Sincronização Schema V3.0: Log Imutável de Finalização
     await tx.rideEventLog.create({
       data: {
         rideId,
@@ -855,7 +858,6 @@ export async function finalizeRideAndCharge(
 
     await tx.passenger.update({ where: { id: ride.passengerId }, data: { currentRideId: null } });
   
-    // Busca próxima corrida na fila do motorista
     queuedRideToPromote = await tx.ride.findFirst({
       where: {
         driverId: ride.driverId!,
@@ -968,7 +970,6 @@ export async function finalizeRideAndCharge(
 
   console.log(`🏁 [RIDE LOG - COMPLETED] Corrida ID: ${rideId} finalizada com sucesso. Valor: ${calculatedFare} XOF`);
 
-  // 📣 MULTI-BROADCAST PARA PASSAGEIRO 1 (Garante notificação via Socket independente da sala)
   const completedPayload = {
     rideId: ride.id,
     status: 'COMPLETED',
@@ -994,7 +995,6 @@ export async function finalizeRideAndCharge(
   if (queuedRideToPromote) {
     console.log(`🔄 [RIDE LOG - QUEUE] Motorista possui próxima corrida agendada na fila ID: ${queuedRideToPromote.id}`);
 
-    // 📢 Notifica o Motorista para alternar a tela para a rota do Passageiro 2
     const queuedPayload = {
       rideId: queuedRideToPromote.id,
       status: 'ACCEPTED'
@@ -1004,7 +1004,6 @@ export async function finalizeRideAndCharge(
     safeSocketEmit(`driver_${ride.driverId}`, 'ride:queued_now_active', queuedPayload);
     safeSocketEmit(`driver:${ride.driverId}`, 'ride:queued_now_active', queuedPayload);
 
-    // 📣 MULTI-BROADCAST PARA O PASSAGEIRO 2 (Garante recepção em qualquer tipo de sala)
     const enRoutePayload = {
       rideId: queuedRideToPromote.id,
       status: 'ACCEPTED',
@@ -1111,11 +1110,12 @@ export async function finalizeRideAndCharge(
     driverEarnings, 
     platformFee, 
     distanceKm, 
-    paymentMethod: ride.paymentMethod, 
+    paymentMethod: String(ride.paymentMethod), 
     hasQueuedRide: !!queuedRideToPromote, 
     nextRideId: queuedRideToPromote?.id || null 
   };
 }
+
 // -----------------------------------------------------------------------------
 // 6. CANCELAMENTO DE CORRIDA E REEMBOLSO
 // -----------------------------------------------------------------------------
@@ -1167,7 +1167,6 @@ export async function cancelRideLogic(
       throw new Error('STATE_CONFLICT: A corrida já foi alterada por outra operação.');
     }
 
-    // 🟢 Sincronização Schema V3.0: Log imutável do cancelamento
     await tx.rideEventLog.create({
       data: {
         rideId,

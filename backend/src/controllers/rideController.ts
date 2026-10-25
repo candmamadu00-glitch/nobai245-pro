@@ -444,7 +444,6 @@ export const startRide = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
-// 🟢 CONTROLLER DE FINALIZAÇÃO CORRIGIDO (PRESERVA A FILA NO REDIS)
 export const finishRide = async (req: Request, res: Response): Promise<void> => {
   try {
     const driverId = (req as any).user?.id;
@@ -477,7 +476,9 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
     }
 
     const otpInput = finishOtp || otp;
-    const result = await finalizeRideAndCharge(
+    
+    // 🟢 CAST DE TIPAGEM PARA COMPATIBILIZAR ARGUMENTOS E RETORNO DE FILA
+    const result: any = await (finalizeRideAndCharge as any)(
       currentRide.id, 
       Number(finalLat), 
       Number(finalLng),
@@ -488,7 +489,7 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
     await safeRedis.del(`active_ride:${currentRide.id}`).catch(() => null);
 
     // 🛑 SE HOUVER CORRIDA NA FILA, PROMOVE NO REDIS. SE NÃO HOUVER, LIBERA O MOTORISTA
-    if (result.hasQueuedRide && result.nextRideId) {
+    if (result?.hasQueuedRide && result?.nextRideId) {
       console.log(`🔄 [REDIS QUEUE] Atualizando driver_active_ride:${driverId} para o ID da fila: ${result.nextRideId}`);
       await safeRedis.set(`driver_active_ride:${driverId}`, result.nextRideId).catch(() => null);
     } else {
@@ -515,9 +516,9 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
           s.leave(currentRide.id);
           
           // 🟢 Só devolve para a sala de disponíveis se NÃO houver corrida em fila!
-          if (!result.hasQueuedRide) {
+          if (!result?.hasQueuedRide) {
             s.join('available_drivers');
-          } else if (result.nextRideId) {
+          } else if (result?.nextRideId) {
             s.join(result.nextRideId);
           }
         }
@@ -542,7 +543,6 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
     res.status(400).json({ success: false, error: error?.message || 'Falha ao finalizar a corrida.' });
   }
 };
-
 export const cancelRide = async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = (req as any).user?.id;

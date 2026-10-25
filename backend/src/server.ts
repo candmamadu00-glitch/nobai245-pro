@@ -1192,7 +1192,7 @@ handleSocketEvent(socket, 'driver:accept_ride', async (data, ackCallback?: Funct
       driverLng: Number(driverLng || driverUser?.lastLng || 0),
       driverName: driverUser?.fullName || 'Motorista',
       driverPhoto: driverUser?.profilePicture || null,
-      carModel: driverUser?.vehicleModel || driverUser?.vehicleBrand || 'Veículo Padrão',
+      carModel: driverUser?.vehicleBrand || 'Veículo Padrão',
       carColor: driverUser?.vehicleColor || 'BRANCO',
       vehicleType: driverUser?.vehicleType || 'PARTICULAR',
       licensePlate: driverUser?.vehiclePlate || 'N/A',
