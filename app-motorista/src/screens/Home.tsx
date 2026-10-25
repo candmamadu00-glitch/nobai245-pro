@@ -356,7 +356,9 @@ export function Home() {
   const lastDriverCoordsRef = useRef<{ latitude: number; longitude: number; heading: number } | null>(null);
   const { speakInstruction: playBilingualVoice } = useBilingualVoice();
   const alertPlayerRef = useRef<any>(null);
-
+const [queuedOfferData, setQueuedOfferData] = useState<IncomingRideData | null>(null);
+const queuedOfferDataRef = useRef(queuedOfferData);
+useEffect(() => { queuedOfferDataRef.current = queuedOfferData; }, [queuedOfferData]);
   useEffect(() => { rideStateRef.current = rideState; }, [rideState]);
   useEffect(() => { incomingRideRef.current = incomingRide; }, [incomingRide]);
   useEffect(() => { activeRideIdRef.current = activeRideId; }, [activeRideId]);
@@ -823,25 +825,18 @@ useEffect(() => {
   if (socket && !socket.connected) {
     socket.connect();
   }
-  // 🟢 1. HANDLER DE NOVA SOLICITAÇÃO DE CORRIDA (CORRIGIDO)
+ // 🟢 1. HANDLER DE NOVA SOLICITAÇÃO (SEPARA OFERTA DA CORRIDA ATIVA)
 const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean; rideId?: string }) => {
-  console.log('🚨 [APP MOTORISTA] EVENTO DE CORRIDA CHEGOU VIA SOCKET:', data);
-
   if (!isMountedRef.current) return;
 
   const currentRideId = activeRideIdRef.current || activeRideId;
   const currentRideState = rideStateRef.current || rideState;
 
-  // 🛑 Se a corrida já for a atual do motorista, ignora chamados duplicados
-  if (currentRideId && currentRideId === data.rideId) {
-    console.log('⚠️ [APP] Oferta ignorada: corrida já aceita/ativa.');
-    return;
-  }
+  if (currentRideId && currentRideId === data.rideId) return;
 
-  // 🟢 Limpa modais de recibo/avaliação anteriores
   setShowReceiptModal(false);
   setShowRatingModal(false);
-  
+
   const rawType = (data.serviceType || 'RIDE').toString().toUpperCase();
   let normalizedService: 'RIDE' | 'DELIVERY' | 'RENTAL' = 'RIDE';
   if (['ENTREGA', 'DELIVERY'].includes(rawType)) normalizedService = 'DELIVERY';
@@ -851,50 +846,28 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
 
   const rawPrice = (data as any).fareXOF ?? data.priceXof ?? 0;
 
-  // 🟢 Trata as paradas intermediárias
   let rawStops = data.stops;
   if (typeof rawStops === 'string') {
-    try { rawStops = JSON.parse(rawStops); } catch (e) { rawStops = []; }
+    try { rawStops = JSON.parse(rawStops); } catch { rawStops = []; }
   }
 
   let stopsArray: any[] = [];
   if (Array.isArray(rawStops) && rawStops.length > 0) {
-    stopsArray = rawStops.map((s: any, index: number) => {
-      const latVal = Number(s.lat ?? s.latitude);
-      const lngVal = Number(s.lng ?? s.longitude);
-      return {
-        ...s,
-        id: s.id || `stop_${index}`,
-        lat: latVal,
-        lng: lngVal,
-        latitude: latVal,
-        longitude: lngVal,
-        address: s.address || s.name || `Parada ${index + 1}`,
-        status: s.status || 'PENDING'
-      };
-    });
-  } else if ((data as any).extraStopLat && (data as any).extraStopLng) {
-    const latVal = Number((data as any).extraStopLat);
-    const lngVal = Number((data as any).extraStopLng);
-    stopsArray = [{
-      id: 'stop_1',
-      address: (data as any).extraStopAddress || 'Parada Intermediária',
-      lat: latVal,
-      lng: lngVal,
-      latitude: latVal,
-      longitude: lngVal,
-      status: 'PENDING'
-    }];
+    stopsArray = rawStops.map((s: any, index: number) => ({
+      ...s,
+      id: s.id || `stop_${index}`,
+      lat: Number(s.lat ?? s.latitude),
+      lng: Number(s.lng ?? s.longitude),
+      address: s.address || s.name || `Parada ${index + 1}`,
+      status: s.status || 'PENDING'
+    }));
   }
 
   const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
-  const isRealQueuedOffer = isCurrentlyInRide && data.rideId !== currentRideId;
 
-  // 🟢 Define primeiro o timer para 15 segundos antes de salvar o objeto da corrida
-  setTimeLeft(15);
-  setIncomingRide({
+  const formattedOffer = {
     ...data,
-    isQueuedOffer: isRealQueuedOffer,
+    isQueuedOffer: isCurrentlyInRide,
     passengerName: data.passengerName || 'Passageiro',
     passengerRating: data.passengerRating || 5.0,
     serviceType: normalizedService,
@@ -905,126 +878,97 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
     destinationLat: Number(data.destinationLat),
     destinationLng: Number(data.destinationLng),
     stops: stopsArray,
-    extraStopAddress: (data as any).extraStopAddress || (stopsArray[0]?.address || undefined),
-  });
+  };
+
+  setTimeLeft(15);
+  // 🟢 Salva no estado da OFERTA para exibir o modal por cima sem apagar o fundo
+  setQueuedOfferData(formattedOffer);
+  if (!isCurrentlyInRide) {
+    setIncomingRide(formattedOffer);
+  }
 
   snapToState(true);
   Vibration.vibrate([0, 500, 200, 500], true);
 };
-  // 🟢 2. HANDLER DE CORRIDA ACEITA (MANTÉM DADOS NO PAINEL)
-const handleRideAccepted = async (data: any) => {
+
+// 🟢 2. CONTROLE DO TIMER (EXPIRA APENAS O MODAL DA OFERTA)
+useEffect(() => {
+  let timer: NodeJS.Timeout;
+  if (queuedOfferData) {
+    if (timeLeft > 0) {
+      timer = setInterval(() => {
+        if (isMountedRef.current) setTimeLeft((prev) => prev - 1);
+      }, 1000);
+    } else {
+      Vibration.cancel();
+      if (isMountedRef.current) {
+        setQueuedOfferData(null); // 🟢 Limpa APENAS o modal da fila!
+        if (rideState === 'idle') setIncomingRide(null);
+        setTimeLeft(15);
+      }
+    }
+  }
+  return () => clearInterval(timer);
+}, [queuedOfferData, timeLeft, rideState]);
+
+// 🟢 3. ACEITAÇÃO DE CORRIDA
+function acceptRide(rideId: string, driverId: string, currentLat: number, currentLng: number) {
   Vibration.cancel();
-  if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
+  setIsLoading(true);
+
+  if (!socket || !socket.connected) {
+    setIsLoading(false);
+    return Alert.alert('Sem Conexão', 'Sinal de internet insuficiente.');
+  }
+
+  socket.timeout(8000).emit('driver:accept_ride', { 
+    rideId, driverId, driverLat: currentLat, driverLng: currentLng 
+  }, (err: any, response: any) => {
+    if (!isMountedRef.current) return;
+    setIsLoading(false);
+
+    if (err) return Alert.alert('Sinal Fraco 📡', 'Não foi possível confirmar a corrida a tempo.');
+    
+    if (response?.error) {
+      setQueuedOfferData(null); 
+      return Alert.alert('Aviso', response.message);
+    }
+
+    const currentRideState = rideStateRef.current || rideState;
+    const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
+    
+    if (!isCurrentlyInRide) {
+      setActiveRideId(rideId);
+      setRideState('accepted');
+      if (queuedOfferDataRef.current) {
+        setIncomingRide(queuedOfferDataRef.current);
+        persistActiveRideState(queuedOfferDataRef.current, 'accepted', rideId);
+      }
+      setQueuedOfferData(null);
+      snapToState(true);
+    } else {
+      setQueuedOfferData(null); // 🟢 Fecha o modal da oferta e MANTÉM a corrida ativa no painel do fundo
+      Alert.alert('Corrida Agendada 🔄', 'A corrida foi aceita e colocada na sua fila.');
+    }
+  });
+}
+
+// 🟢 4. CANCELAMENTO ISOLADO POR ID
+const handleRideCancelled = (data: { cancelledBy?: string; rideId?: string }) => {
   if (!isMountedRef.current) return;
   setIsLoading(false);
 
-  const currentRideState = rideStateRef.current || rideState;
-  const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
-
-  if (data.driverId === driver?.id || data.rideId) {
-    if (!isCurrentlyInRide || activeRideIdRef.current === data.rideId) {
-      // CORRIDA PRINCIPAL
-      setActiveRideId(data.rideId);
-      setRideState('accepted');
-
-      // 🟢 ATUALIZA E PRESERVA OS DADOS NO PAINEL DE NAVEGAÇÃO
-      setIncomingRide((prev) => {
-        const base = prev || {};
-        return {
-          ...base,
-          rideId: data.rideId,
-          passengerId: data.passengerId || base.passengerId || '',
-          passengerName: data.passengerName || base.passengerName || 'Passageiro',
-          passengerPhone: data.passengerPhone || base.passengerPhone,
-          passengerPhoto: data.passengerPhoto || base.passengerPhoto,
-          passengerRating: data.passengerRating || base.passengerRating || 5.0,
-          pickupLat: Number(data.pickupLat || base.pickupLat || 0),
-          pickupLng: Number(data.pickupLng || base.pickupLng || 0),
-          originAddress: data.originAddress || base.originAddress,
-          destinationLat: Number(data.destinationLat || base.destinationLat || 0),
-          destinationLng: Number(data.destinationLng || base.destinationLng || 0),
-          destinationAddress: data.destinationAddress || base.destinationAddress,
-          priceXof: Number(data.priceXof || base.priceXof || 0),
-          paymentMethod: data.paymentMethod || base.paymentMethod || 'CASH',
-          serviceType: data.serviceType || base.serviceType || 'RIDE',
-          stops: data.stops || base.stops || [],
-        };
-      });
-
-      if (incomingRideRef.current) {
-        persistActiveRideState(incomingRideRef.current, 'accepted', data.rideId);
-      }
-      
-      snapToState(true);
-    } else {
-      // CORRIDA EM FILA
-      setIncomingRide(null);
-      Alert.alert('Fila Confirmada 🔄', 'Nova corrida adicionada à sua fila com sucesso! Conclua a viagem atual para iniciar o novo embarque.');
-    }
-  } else {
-    setIncomingRide(null);
-    Alert.alert('Corrida Indisponível', 'Outro motorista aceitou esta corrida.');
+  // Se o cancelamento for da corrida que estava na fila, limpa apenas a oferta
+  if (data.rideId && queuedOfferDataRef.current && data.rideId === queuedOfferDataRef.current.rideId) {
+    setQueuedOfferData(null);
+    Alert.alert('Oferta Cancelada', 'A solicitação em fila foi cancelada pelo passageiro.');
+    return;
   }
+
+  // Se for a corrida principal, reseta o estado
+  if (data.cancelledBy === 'PASSENGER') Alert.alert('Corrida Cancelada ⚠️', 'O passageiro cancelou a viagem.');
+  resetDriverState();
 };
-  // 🟢 3. HANDLER DE CORRIDA INICIADA
-  const handleRideStarted = () => {
-    if (!isMountedRef.current) return;
-    setIsLoading(false);
-    setRideState('in_progress');
-    setShowOtpModal(false);
-    snapToState(true);
-    if (incomingRideRef.current && activeRideIdRef.current) {
-      persistActiveRideState(incomingRideRef.current, 'in_progress', activeRideIdRef.current);
-    }
-  };
-
-  // 🟢 4. HANDLER DE CORRIDA FINALIZADA
-  const handleRideFinished = (data: any) => {
-    if (!isMountedRef.current) return;
-    setIsLoading(false);
-    setCompletedInfo({ fareXOF: data.fareXOF, distanceKm: data.distanceKm, transactionId: data.transactionId });
-
-    if (data.hasQueuedRide && data.nextRideId) {
-      Alert.alert('Viagem Concluída! 🏁', 'Direcionando você para a próxima corrida que estava na fila.');
-      setActiveRideId(data.nextRideId);
-      setRideState('accepted');
-      setShowReceiptModal(false);
-      fetchTodayEarnings();
-    } else {
-      setActiveRideId(null);
-      setIncomingRide(null);
-      setRideState('idle'); 
-      setShowReceiptModal(true);
-      setShowNavSheet(false);
-      persistActiveRideState(null, 'idle', null);
-      fetchTodayEarnings();
-
-      if (driver?.id && location?.coords && socket?.connected) {
-        socket.emit('driver:location_update', {
-          driverId: driver.id,
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude,
-          speed: 0,
-          heading: location.coords.heading || 0,
-        });
-      }
-    }
-  };
-
-  const handleQueuedNowActive = (data: { rideId: string; status: string }) => {
-    if (!isMountedRef.current) return;
-    setActiveRideId(data.rideId);
-    setRideState('accepted');
-    snapToState(true);
-    Alert.alert('Próxima Corrida Ativa 🚀', 'Seu novo passageiro já foi notificado de que você está a caminho!');
-  };
-
-  const handleRideCancelled = (data: { cancelledBy?: string }) => {
-    if (!isMountedRef.current) return;
-    setIsLoading(false);
-    if (data.cancelledBy === 'PASSENGER') Alert.alert('Corrida Cancelada ⚠️', 'O passageiro cancelou a viagem.');
-    resetDriverState();
-  };
 
   socket.on('connect', handleConnect);
   socket.on('ride:new_request', handleNewRideRequest);
@@ -2134,129 +2078,115 @@ return (
       onConfirmStop={() => setCurrentStopIndex(prev => prev + 1)} 
     />
 
-    {/* 🔔 MODAL DE OFERTA DE CORRIDA (CORRIGIDO COM ARRAYS COMPLETO DE ESTADOS) */}
-    <Modal 
-      visible={!!incomingRide && ['idle', 'accepted', 'arrived', 'in_progress'].includes(rideState)} 
-      transparent 
-      animationType="fade"
-    >
-      <View style={styles.newRequestOverlay}>
-        <View style={styles.newRequestCard}>
-          
-          {['accepted', 'arrived', 'in_progress'].includes(rideState) && (
-            <View style={{ backgroundColor: '#3B82F6', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Ionicons name="layers-outline" size={16} color="#FFFFFF" />
-              <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 12 }}>
-                PRÓXIMA CORRIDA (ADICIONAR À FILA)
-              </Text>
-            </View>
+    {/* 🔔 MODAL DE OFERTA DE CORRIDA */}
+<Modal 
+  visible={!!queuedOfferData} 
+  transparent 
+  animationType="fade"
+>
+  <View style={styles.newRequestOverlay}>
+    <View style={styles.newRequestCard}>
+      
+      {['accepted', 'arrived', 'in_progress'].includes(rideState) && (
+        <View style={{ backgroundColor: '#3B82F6', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Ionicons name="layers-outline" size={16} color="#FFFFFF" />
+          <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 12 }}>
+            PRÓXIMA CORRIDA (ADICIONAR À FILA)
+          </Text>
+        </View>
+      )}
+
+      <View style={styles.newRequestHeader}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Ionicons name={queuedOfferData?.serviceType === 'DELIVERY' ? 'cube' : 'car-sport'} size={18} color="#EAB308" />
+          <Text style={styles.newRequestTitle}>
+            {['accepted', 'arrived', 'in_progress'].includes(rideState) ? 'Nova Oferta em Fila!' : 'Nova Corrida!'}
+          </Text>
+        </View>
+        <View style={styles.newRequestPriceBadge}>
+          <Text style={styles.newRequestPriceText}>
+            {formatCurrency(queuedOfferData?.priceXof)} XOF
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.progressBarContainer}>
+        <View style={[styles.progressBarFill, { width: `${Math.max(0, (timeLeft / 15) * 100)}%` }]} />
+      </View>
+      <Text style={styles.timerText}>Tempo restante: {timeLeft}s</Text>
+
+      <View style={styles.modalPassengerRow}>
+        <View style={styles.passengerPhotoContainerSm}>
+          {queuedOfferData?.passengerPhoto ? (
+            <Image source={{ uri: formatImageUrl(queuedOfferData.passengerPhoto) }} style={{ width: '100%', height: '100%', borderRadius: 16 }} />
+          ) : (
+            <Ionicons name="person" size={16} color="#94A3B8" />
           )}
-
-          <View style={styles.newRequestHeader}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Ionicons name={incomingRide?.serviceType === 'DELIVERY' ? 'cube' : 'car-sport'} size={18} color="#EAB308" />
-              <Text style={styles.newRequestTitle}>
-                {['accepted', 'arrived', 'in_progress'].includes(rideState) ? 'Nova Oferta em Fila!' : 'Nova Corrida!'}
-              </Text>
-            </View>
-            <View style={styles.newRequestPriceBadge}>
-              <Text style={styles.newRequestPriceText}>
-                {formatCurrency(incomingRide?.priceXof)} XOF
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.progressBarContainer}>
-            <View style={[styles.progressBarFill, { width: `${Math.max(0, (timeLeft / 15) * 100)}%` }]} />
-          </View>
-          <Text style={styles.timerText}>Tempo restante: {timeLeft}s</Text>
-
-          <View style={styles.modalPassengerRow}>
-            <View style={styles.passengerPhotoContainerSm}>
-              {incomingRide?.passengerPhoto ? (
-                <Image source={{ uri: formatImageUrl(incomingRide.passengerPhoto) }} style={{ width: '100%', height: '100%', borderRadius: 16 }} />
-              ) : (
-                <Ionicons name="person" size={16} color="#94A3B8" />
-              )}
-            </View>
-            <View style={{ flex: 1, marginLeft: 10 }}>
-              <Text style={styles.modalPassengerName}>{displayPassengerName}</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-                <Ionicons name="star" size={12} color="#EAB308" />
-                <Text style={styles.modalPassengerRating}>{incomingRide?.passengerRating?.toFixed(1) || '5.0'}</Text>
-              </View>
-            </View>
-          </View>
-
-          <View style={styles.routeTimelineContainer}>
-            {/* EMBARQUE / ORIGEM */}
-            <View style={styles.timelineRow}>
-              <Ionicons name="location" size={16} color="#10B981" />
-              <View style={styles.timelineTextContainer}>
-                <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
-                <Text style={styles.timelineAddress} numberOfLines={2}>
-                  {incomingRide?.originAddress || 'Local de origem'}
-                </Text>
-              </View>
-            </View>
-
-            {/* PARADAS INTERMEDIÁRIAS */}
-            {formattedStops.length > 0 && formattedStops.map((stop: any, idx: number) => (
-              <View key={`modal-stop-${idx}`} style={styles.timelineRow}>
-                <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
-                <View style={styles.timelineTextContainer}>
-                  <Text style={[styles.timelineLabel, { color: '#3B82F6' }]}>
-                    PARADA {idx + 1} DE {formattedStops.length}:
-                  </Text>
-                  <Text style={styles.timelineAddress} numberOfLines={2}>{stop.address}</Text>
-                </View>
-              </View>
-            ))}
-
-            {/* DESTINO */}
-            <View style={styles.timelineRow}>
-              <Ionicons name="flag" size={16} color="#EF4444" />
-              <View style={styles.timelineTextContainer}>
-                <Text style={styles.timelineLabel}>LEVAR PARA:</Text>
-                <Text style={styles.timelineAddress} numberOfLines={2}>
-                  {incomingRide?.destinationAddress || 'Local de destino'}
-                </Text>
-              </View>
-            </View>
-          </View>
-
-          <View style={styles.newRequestActions}>
-            <TouchableOpacity 
-              style={styles.rejectBtn} 
-              onPress={() => { Vibration.cancel(); setIncomingRide(null); }} 
-              disabled={isLoading}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.rejectText}>Recusar</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={[styles.acceptBtn, isLoading && { opacity: 0.7 }]} 
-              activeOpacity={0.85} 
-              disabled={isLoading} 
-              onPress={() => {
-                if (isLoading) return;
-                if (incomingRide?.rideId && driver?.id) {
-                  const lat = Number(location?.coords?.latitude || BISSAU_CENTER_LAT);
-                  const lng = Number(location?.coords?.longitude || BISSAU_CENTER_LNG);
-                  acceptRide(incomingRide.rideId, driver.id, lat, lng);
-                }
-              }}
-            >
-              <Text style={styles.acceptText}>
-                {isLoading ? 'Aceitando...' : (['accepted', 'arrived', 'in_progress'].includes(rideState) ? 'Adicionar à Fila 🔄' : 'Aceitar Chamada')}
-              </Text>
-            </TouchableOpacity>
+        </View>
+        <View style={{ flex: 1, marginLeft: 10 }}>
+          <Text style={styles.modalPassengerName}>{queuedOfferData?.guestName || queuedOfferData?.passengerName || 'Passageiro'}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+            <Ionicons name="star" size={12} color="#EAB308" />
+            <Text style={styles.modalPassengerRating}>{queuedOfferData?.passengerRating?.toFixed(1) || '5.0'}</Text>
           </View>
         </View>
       </View>
-    </Modal>
 
+      <View style={styles.routeTimelineContainer}>
+        {/* EMBARQUE / ORIGEM */}
+        <View style={styles.timelineRow}>
+          <Ionicons name="location" size={16} color="#10B981" />
+          <View style={styles.timelineTextContainer}>
+            <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
+            <Text style={styles.timelineAddress} numberOfLines={2}>
+              {queuedOfferData?.originAddress || 'Local de origem'}
+            </Text>
+          </View>
+        </View>
+
+        {/* DESTINO */}
+        <View style={styles.timelineRow}>
+          <Ionicons name="flag" size={16} color="#EF4444" />
+          <View style={styles.timelineTextContainer}>
+            <Text style={styles.timelineLabel}>LEVAR PARA:</Text>
+            <Text style={styles.timelineAddress} numberOfLines={2}>
+              {queuedOfferData?.destinationAddress || 'Local de destino'}
+            </Text>
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.newRequestActions}>
+        <TouchableOpacity 
+          style={styles.rejectBtn} 
+          onPress={() => { Vibration.cancel(); setQueuedOfferData(null); }} 
+          disabled={isLoading}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.rejectText}>Recusar</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={[styles.acceptBtn, isLoading && { opacity: 0.7 }]} 
+          activeOpacity={0.85} 
+          disabled={isLoading} 
+          onPress={() => {
+            if (isLoading) return;
+            if (queuedOfferData?.rideId && driver?.id) {
+              const lat = Number(location?.coords?.latitude || BISSAU_CENTER_LAT);
+              const lng = Number(location?.coords?.longitude || BISSAU_CENTER_LNG);
+              acceptRide(queuedOfferData.rideId, driver.id, lat, lng);
+            }
+          }}
+        >
+          <Text style={styles.acceptText}>
+            {isLoading ? 'Aceitando...' : (['accepted', 'arrived', 'in_progress'].includes(rideState) ? 'Adicionar à Fila 🔄' : 'Aceitar Chamada')}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  </View>
+</Modal>
     {/* 💬 CHAT INTERNO */}
     <ChatModal 
       visible={isChatVisible} 
