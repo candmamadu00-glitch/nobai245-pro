@@ -81,7 +81,7 @@ const styles = StyleSheet.create({
   otpBox: {
     flexDirection: 'row',
     gap: 10,
-    justify: 'center',
+    justifyContent: 'center',
     flexWrap: 'wrap',
   },
   digitBox: {

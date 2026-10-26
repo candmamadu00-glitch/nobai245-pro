@@ -45,7 +45,7 @@ if (process.env.EXPO_PUBLIC_SENTRY_DSN) {
   });
 }
 
-// Canal de Chat no Android (Sem a propriedade sound: 'default' para evitar conflito)
+// Canal de Chat no Android
 if (Platform.OS === 'android') {
   Notifications.setNotificationChannelAsync('chat-messages', {
     name: 'Mensagens do Chat',
@@ -53,11 +53,13 @@ if (Platform.OS === 'android') {
     vibrationPattern: [0, 250, 250, 250],
   });
 }
+
 if (!__DEV__) {
   console.log = () => {};
   console.warn = () => {};
   console.info = () => {};
 }
+
 const Stack = createNativeStackNavigator();
 
 const AppTheme = {
@@ -180,7 +182,7 @@ function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ErrorBoundary>
         <NavigationContainer ref={navigationRef} theme={AppTheme}>
-          <StatusBar style="dark" backgroundColor="transparent" translucent />
+          <StatusBar style="dark" />
           <AuthProvider>
             <RideProvider>
               <Rotas />

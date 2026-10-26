@@ -395,7 +395,7 @@ export function Home() {
 
   const cameraRef = useRef<Mapbox.Camera>(null);
   const locationWatcherRef = useRef<Location.LocationSubscription | null>(null);
-  const acceptTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const acceptTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastCameraUpdateRef = useRef<number>(0);
 
   const mapStyle = useMemo(() => {
@@ -541,7 +541,7 @@ export function Home() {
   }, [socket, isChatVisible]);
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let interval: ReturnType<typeof setInterval>;
     if (rideState === 'arrived') {
       interval = setInterval(() => {
         if (!isMountedRef.current) return;
@@ -562,7 +562,7 @@ export function Home() {
   }, [rideState]);
 
   useEffect(() => {
-    let syncInterval: NodeJS.Timeout;
+    let syncInterval: ReturnType<typeof setInterval>;
     if (['accepted', 'arrived', 'in_progress'].includes(rideState) && activeRideId) {
       syncInterval = setInterval(() => {
         if (socket && socket.connected) {
@@ -842,7 +842,7 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
   const formattedOffer = {
     ...data,
     rideId: newRideId,
-    referencePoint: data.referencePoint || (data as any).reference_point || '',
+    referencePoint: (data as any).referencePoint || (data as any).reference_point || '',
     isQueuedOffer: isCurrentlyInRide,
     passengerName: data.passengerName || 'Passageiro',
     passengerRating: data.passengerRating || 5.0,
@@ -954,23 +954,23 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
           setActiveRideId(activeRide.id);
           setRideState(mappedState);
           setIncomingRide({
-            rideId: activeRide.id,
-            referencePoint: activeRide.referencePoint || activeRide.reference_point || '',
-            passengerId: activeRide.passengerId,
-            passengerName: activeRide.passenger?.fullName || 'Passageiro',
-            passengerPhone: activeRide.passenger?.phone,
-            passengerPhoto: activeRide.passenger?.profilePicture,
-            passengerRating: activeRide.passenger?.ratingAverage || 5.0,
-            pickupLat: Number(activeRide.originLat),
-            pickupLng: Number(activeRide.originLng),
-            originAddress: activeRide.originAddress,
-            destinationLat: Number(activeRide.destinationLat),
-            destinationLng: Number(activeRide.destinationLng),
-            destinationAddress: activeRide.destinationAddress,
-            priceXof: Number(activeRide.priceXof),
-            paymentMethod: activeRide.paymentMethod,
-            stops: stopsArray,
-          });
+  rideId: activeRide.id,
+  referencePoint: (activeRide as any)?.referencePoint || (activeRide as any)?.reference_point || '',
+  passengerId: activeRide.passengerId,
+  passengerName: activeRide.passenger?.fullName || 'Passageiro',
+  passengerPhone: activeRide.passenger?.phone,
+  passengerPhoto: activeRide.passenger?.profilePicture,
+  passengerRating: activeRide.passenger?.ratingAverage || 5.0,
+  pickupLat: Number(activeRide.originLat),
+  pickupLng: Number(activeRide.originLng),
+  originAddress: activeRide.originAddress,
+  destinationLat: Number(activeRide.destinationLat),
+  destinationLng: Number(activeRide.destinationLng),
+  destinationAddress: activeRide.destinationAddress,
+  priceXof: Number(activeRide.priceXof),
+  paymentMethod: activeRide.paymentMethod,
+  stops: stopsArray,
+} as any);
           persistActiveRideState(activeRide, mappedState, activeRide.id);
         }
       }
@@ -1069,7 +1069,7 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
 
   // 🟢 4. CONTROLE DO TIMER DE EXPIRAÇÃO DA OFERTA (15s)
   useEffect(() => {
-    let timer: NodeJS.Timeout;
+    let timer: ReturnType<typeof setTimeout>;
     const currentOffer = queuedOfferData || (rideState === 'idle' ? incomingRide : null);
 
     if (currentOffer) {
@@ -1276,7 +1276,7 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
         }
       }
 
-      const socketToUse = activeSocket || socket;
+      const socketToUse = (activeSocket as any) || socket;
       if (socketToUse) {
         const payload = {
           driverId: driver?.id,
@@ -1533,14 +1533,18 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
   // 🟢 GRAVAÇÃO DE ÁUDIO PROTEGIDA (SEM DEPENDER DE AudioModule GLOBAL)
   const toggleAudioRecording = async () => {
     try {
-      if (audioRecorder?.isRecording) {
-        if (typeof audioRecorder.stop === 'function') {
-          await audioRecorder.stop();
+      if ((audioRecorder as any)?.isRecording) {
+        if (typeof (audioRecorder as any)?.stopRecording === 'function') {
+          await (audioRecorder as any).stopRecording();
+        } else if (typeof (audioRecorder as any)?.stop === 'function') {
+          await (audioRecorder as any).stop();
         }
         Alert.alert('Gravação Encerrada', 'O áudio de segurança foi gravado e salvo localmente.');
       } else {
-        if (typeof audioRecorder?.record === 'function') {
-          await audioRecorder.record();
+        if (typeof (audioRecorder as any)?.startRecording === 'function') {
+          await (audioRecorder as any).startRecording();
+        } else if (typeof (audioRecorder as any)?.record === 'function') {
+          await (audioRecorder as any).record();
         }
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       }
@@ -1645,8 +1649,8 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
               >
                 <Image
                   source={getVehicle3DIconAsset(
-                    driver?.vehicleType || incomingRide?.vehicleType || 'PARTICULAR',
-                    driver?.carColor || 'BRANCO'
+                    (driver as any)?.vehicleType || incomingRide?.vehicleType || 'PARTICULAR',
+                    (driver as any)?.carColor || 'BRANCO'
                   )}
                   style={{ width: 40, height: 40, backgroundColor: 'transparent' }}
                   fadeDuration={0}
@@ -1659,7 +1663,14 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
 
         {/* 🛣️ LINHA DA ROTA */}
         {routeCoordinates && routeCoordinates.length > 0 && (
-          <Mapbox.ShapeSource id="routeSource" shape={{ type: 'Feature', geometry: { type: 'LineString', coordinates: routeCoordinates } }}>
+          <Mapbox.ShapeSource 
+  id="routeSource" 
+  shape={{ 
+    type: 'Feature', 
+    properties: {}, 
+    geometry: { type: 'LineString', coordinates: routeCoordinates } 
+  }}
+>
             <Mapbox.LineLayer 
               id="routeLine" 
               style={{ 
@@ -1905,24 +1916,24 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
     </Text>
 
     {/* 💡 PONTO DE REFERÊNCIA EM DESTAQUE NA CORRIDA ATIVA */}
-    {Boolean(incomingRide?.referencePoint) && (
-      <View style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: 'rgba(234, 179, 8, 0.15)',
-        borderWidth: 1,
-        borderColor: '#EAB308',
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 6,
-        marginTop: 4
-      }}>
-        <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
-        <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
-          Ref: {incomingRide.referencePoint}
-        </Text>
-      </View>
-    )}
+    {Boolean((incomingRide as any)?.referencePoint) && (
+  <View style={{
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(234, 179, 8, 0.15)',
+    borderWidth: 1,
+    borderColor: '#EAB308',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginTop: 4
+  }}>
+    <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
+    <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
+      Ref: {(incomingRide as any).referencePoint}
+    </Text>
+  </View>
+)}
   </View>
 </View>
 
@@ -2133,24 +2144,24 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
     </Text>
 
     {/* 💡 PONTO DE REFERÊNCIA EM DESTAQUE NA OFERTA */}
-    {Boolean(activeOffer?.referencePoint) && (
-      <View style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: 'rgba(234, 179, 8, 0.15)',
-        borderWidth: 1,
-        borderColor: '#EAB308',
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 6,
-        marginTop: 4
-      }}>
-        <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
-        <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
-          Ref: {activeOffer.referencePoint}
-        </Text>
-      </View>
-    )}
+{Boolean((activeOffer as any)?.referencePoint) && (
+  <View style={{
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(234, 179, 8, 0.15)',
+    borderWidth: 1,
+    borderColor: '#EAB308',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginTop: 4
+  }}>
+    <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
+    <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
+      Ref: {(activeOffer as any)?.referencePoint}
+    </Text>
+  </View>
+)}
   </View>
 </View>
 
@@ -2786,7 +2797,7 @@ const styles = StyleSheet.create({
   filterModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.75)',
-    justify: 'flex-end',
+    justifyContent: 'flex-end',
   },
   filterModalCard: {
     backgroundColor: '#1E293B',

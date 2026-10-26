@@ -22,7 +22,7 @@ export function ForgotPassword() {
   const [timer, setTimer] = useState(0);
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let interval: ReturnType<typeof setInterval>;
     if (timer > 0) {
       interval = setInterval(() => setTimer((prev) => prev - 1), 1000);
     }
@@ -224,7 +224,7 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: 20,
     backgroundColor: 'rgba(255, 255, 255, 0.12)',
-    justify: 'center',
+    justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 20,
   },

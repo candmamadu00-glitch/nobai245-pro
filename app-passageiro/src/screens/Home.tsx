@@ -1610,7 +1610,7 @@ function executeRideRequest() {
     const mappedVehicleType = 
       vehicleType === 'particular' ? 'PARTICULAR' : 
       vehicleType === 'moto-carro' ? 'MOTO_CARRO' : 
-      vehicleType === 'toca-toca' ? 'TOCA_TOCA' : 
+      (vehicleType as string) === 'toca-toca' ? 'TOCA_TOCA' :
       vehicleType.toUpperCase();
       
     const regionLabel = RENTAL_PRICES[selectedRegion]?.label || selectedRegion;
@@ -1748,7 +1748,6 @@ const handleSubmitRating = useCallback((stars: number, tags: string[], comment: 
     rateDriver({ 
       rideId: activeRideId, 
       reviewerId: user.id, 
-      reviewerType: 'PASSENGER', 
       receiverId: driverInfo.id, 
       stars, 
       tags,
@@ -3135,7 +3134,7 @@ const styles = StyleSheet.create({
   },
   loadingContainer: { 
     flex: 1, 
-    justify: 'center', 
+    justifyContent: 'center', 
     alignItems: 'center', 
     backgroundColor: '#0F172A', 
     paddingHorizontal: 20 

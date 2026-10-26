@@ -240,10 +240,10 @@ export function ChatModal({
 const styles = StyleSheet.create({
   chatOverlay: {
     flex: 1,
-    justify: 'flex-end',
+    justifyContent: 'flex-end',
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(15, 23, 42, 0.4)', 
   },
   chatContainer: {
@@ -394,4 +394,4 @@ const styles = StyleSheet.create({
   sendIcon: {
     marginLeft: 2, 
   },
-});
+}); 

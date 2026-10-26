@@ -75,7 +75,7 @@ export function SearchingRadarPulse({ statusText = "Procurando motoristas próxi
 
 const styles = StyleSheet.create({
   container: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 10,

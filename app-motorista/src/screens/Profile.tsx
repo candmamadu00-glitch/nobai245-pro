@@ -31,7 +31,7 @@ import { api } from '../services/api';
 import { PrivacyPolicyModal } from '../components/PrivacyPolicyModal';
 
 // Tipagem de Rotas
-import { RootStackParamList } from '../routes/app.routes';
+type RootStackParamList = any;
 
 // Configuração segura do URL da API
 const API_URL = process.env.EXPO_PUBLIC_API_URL || (__DEV__ ? 'http://192.168.18.29:3333' : '');
@@ -106,9 +106,9 @@ export function Profile() {
   const [updateData, setUpdateData] = useState<UpdateFormState>({
     newFullName: driver?.fullName || '',
     newVehiclePlate: driver?.vehiclePlate || '',
-    newVehicleBrand: driver?.vehicleBrand || '',
-    newVehicleColor: driver?.vehicleColor || '',
-    newDocumentNumber: driver?.documentNumber || '',
+    newVehicleBrand: (driver as any)?.vehicleBrand || '',
+    newVehicleColor: (driver as any)?.vehicleColor || '',
+    newDocumentNumber: (driver as any)?.documentNumber || '',
   });
 
   // --- EFEITOS E CARREGAMENTO INICIAL ---
@@ -158,7 +158,6 @@ export function Profile() {
   // --- ABRIR EDIÇÃO DE PAGAMENTO ---
   function handleOpenEdit() {
     setIsEditingPayment(true);
-    // Força o padrão para Orange Money para evitar seleção de MTN
     setMmProvider('ORANGE');
     setMmNumber(financeData?.orangeNumber || financeData?.mobileMoneyAccount || '');
   }
@@ -170,7 +169,7 @@ export function Profile() {
         'Aviso Nobai245 📲',
         'O serviço de recebimento automático via MTN Mobile Money está temporariamente em fase de atualização técnica. Por favor, utilize a Orange Money para o recebimento dos seus ganhos no momento.'
       );
-      return; // Impede a alteração do estado para MTN
+      return;
     }
     setMmProvider('ORANGE');
     setMmNumber(financeData?.orangeNumber || financeData?.mobileMoneyAccount || '');
@@ -270,14 +269,15 @@ export function Profile() {
       setLoading(false);
     }
   }
+
   // --- SOLICITAÇÃO DE ALTERAÇÃO DE DADOS ---
   function openUpdateModal() {
     setUpdateData({
       newFullName: driver?.fullName || '',
       newVehiclePlate: driver?.vehiclePlate || '',
-      newVehicleBrand: driver?.vehicleBrand || '',
-      newVehicleColor: driver?.vehicleColor || '',
-      newDocumentNumber: driver?.documentNumber || ''
+      newVehicleBrand: (driver as any)?.vehicleBrand || '',
+      newVehicleColor: (driver as any)?.vehicleColor || '',
+      newDocumentNumber: (driver as any)?.documentNumber || ''
     });
     setIsUpdateModalVisible(true);
   }
@@ -286,9 +286,9 @@ export function Profile() {
     return (
       updateData.newFullName.trim() !== (driver?.fullName || '') ||
       updateData.newVehiclePlate.trim() !== (driver?.vehiclePlate || '') ||
-      updateData.newVehicleBrand.trim() !== (driver?.vehicleBrand || '') ||
-      updateData.newVehicleColor.trim() !== (driver?.vehicleColor || '') ||
-      updateData.newDocumentNumber.trim() !== (driver?.documentNumber || '')
+      updateData.newVehicleBrand.trim() !== ((driver as any)?.vehicleBrand || '') ||
+      updateData.newVehicleColor.trim() !== ((driver as any)?.vehicleColor || '') ||
+      updateData.newDocumentNumber.trim() !== ((driver as any)?.documentNumber || '')
     );
   }
 
@@ -367,7 +367,6 @@ export function Profile() {
   const profileImageUrl = formatImageUrl(driver?.profilePicture || undefined);
   const currentLang = LANGUAGES.find(l => l.code === i18n.language) || LANGUAGES[0];
 
-  // Cálculos dinâmicos para recuo seguro em topo e rodapé (Android e iOS)
   const dynamicTopPadding = Math.max((insets?.top || 0) + 6, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 6 : 14);
   const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 28 : 16);
 
@@ -525,8 +524,6 @@ export function Profile() {
               
               <Text style={styles.inputLabel}>1. Escolha a Operadora:</Text>
               <View style={styles.providerSelect}>
-                
-                {/* ORANGE MONEY (ATIVA) */}
                 <TouchableOpacity 
                   style={[styles.providerBtn, mmProvider === 'ORANGE' && styles.providerActiveOrange]} 
                   onPress={() => handleProviderChange('ORANGE')}
@@ -535,7 +532,6 @@ export function Profile() {
                   <Text style={[styles.providerText, mmProvider === 'ORANGE' && { color: '#FFF' }]}>Orange Money</Text>
                 </TouchableOpacity>
 
-                {/* MTN MOMO (DESATIVADA COM ALERTA) */}
                 <TouchableOpacity 
                   style={[styles.providerBtn, { opacity: 0.5, backgroundColor: '#E2E8F0' }]} 
                   onPress={() => handleProviderChange('MTN')}
@@ -543,7 +539,6 @@ export function Profile() {
                 >
                   <Text style={[styles.providerText, { color: '#64748B' }]}>MTN MoMo (Em Breve)</Text>
                 </TouchableOpacity>
-
               </View>
 
               <Text style={styles.inputLabel}>2. Número da Conta Orange Money:</Text>
@@ -572,7 +567,7 @@ export function Profile() {
                   onPress={handleSavePaymentInfo} 
                   disabled={loading || !mmNumber || mmProvider === 'MTN'}
                   activeOpacity={0.85}
-                >
+                > 
                   {loading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.saveBtnText}>Salvar Conta</Text>}
                 </TouchableOpacity>
               </View>
@@ -706,104 +701,84 @@ export function Profile() {
   );
 }
 
-// --- ESTILOS DO COMPONENTE ---
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4F4F5' },
-  header: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    justify: 'space-between', 
-    paddingHorizontal: 16, 
-    paddingBottom: 14, 
-    backgroundColor: '#FFF', 
-    borderBottomWidth: 1, 
-    borderBottomColor: '#E5E7EB', 
-    elevation: 2 
+  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+    backgroundColor: '#FFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
   },
   backButton: { padding: 4 },
-  headerTitle: { fontSize: 18, fontWeight: '800', color: '#1F2937' },
-  
+  headerTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A' },
+  offlineBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#DC2626', paddingVertical: 8, paddingHorizontal: 16, gap: 8 },
+  offlineText: { color: '#FFF', fontSize: 12, fontWeight: '600' },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  loadingText: { marginTop: 12, fontSize: 15, color: '#6B7280', fontWeight: '500' },
-  
-  offlineBanner: { backgroundColor: '#DC2626', flexDirection: 'row', alignItems: 'center', padding: 10, justifyContent: 'center', gap: 8 },
-  offlineText: { color: '#FFF', fontSize: 13, fontWeight: '600' },
-  content: { padding: 16 },
-
-  profileHeader: { alignItems: 'center', marginBottom: 20, marginTop: 4 },
-  imageContainer: { position: 'relative', marginBottom: 10 },
-  profileImage: { width: 100, height: 100, borderRadius: 50, borderWidth: 3, borderColor: '#059669' },
-  imagePlaceholder: { width: 100, height: 100, borderRadius: 50, backgroundColor: '#E5E7EB', alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#D1D5DB' },
-  cameraBadge: { position: 'absolute', bottom: 0, right: 0, backgroundColor: '#059669', width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#FFF' },
-  profileName: { fontSize: 20, fontWeight: 'bold', color: '#111827' },
-  profilePhone: { fontSize: 15, color: '#6B7280', marginTop: 2 },
-  
-  statusBanner: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 12, marginBottom: 14, gap: 8 },
-  statusText: { fontWeight: 'bold', fontSize: 14 },
-
-  gridContainer: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 8 },
-  gridCard: {
-    width: '48%',
-    backgroundColor: '#FFF',
-    padding: 16,
-    borderRadius: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    elevation: 1,
-  },
-  gridIconBox: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
-  gridTitle: { fontSize: 13, color: '#6B7280', fontWeight: '600', marginBottom: 4 },
-  gridValue: { fontSize: 15, fontWeight: '900', color: '#059669' },
-  gridValuePlate: { fontSize: 14, fontWeight: '800', color: '#1F2937' },
-  gridValueSecondary: { fontSize: 13, fontWeight: '700', color: '#4338CA' },
-  
-  warningText: { color: '#DC2626', fontSize: 12, fontWeight: '600' },
-  editFormContainer: { backgroundColor: '#FFF', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 16 },
-  cardTitle: { fontSize: 16, fontWeight: '800', color: '#111827', marginBottom: 4 },
-  infoText: { fontSize: 12, color: '#6B7280', marginBottom: 12 },
-  inputLabel: { fontSize: 13, fontWeight: '700', color: '#374151', marginBottom: 6, marginTop: 8 },
+  loadingText: { marginTop: 12, fontSize: 14, color: '#4B5563', fontWeight: '600' },
+  content: { paddingHorizontal: 20, paddingTop: 16 },
+  profileHeader: { alignItems: 'center', marginBottom: 16 },
+  imageContainer: { position: 'relative', marginBottom: 12 },
+  profileImage: { width: 90, height: 90, borderRadius: 45 },
+  imagePlaceholder: { width: 90, height: 90, borderRadius: 45, backgroundColor: '#E2E8F0', justifyContent: 'center', alignItems: 'center' },
+  cameraBadge: { position: 'absolute', bottom: 0, right: 0, backgroundColor: '#059669', width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFF' },
+  profileName: { fontSize: 20, fontWeight: '800', color: '#0F172A' },
+  profilePhone: { fontSize: 14, color: '#64748B', marginTop: 2 },
+  statusBanner: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 12, marginBottom: 16, gap: 10 },
+  statusText: { fontSize: 13, fontWeight: '700' },
+  gridContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 16 },
+  gridCard: { width: '48%', backgroundColor: '#FFF', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0' },
+  gridIconBox: { width: 34, height: 34, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
+  gridTitle: { fontSize: 12, color: '#64748B', fontWeight: '600' },
+  gridValue: { fontSize: 14, fontWeight: '800', marginTop: 2 },
+  gridValuePlate: { fontSize: 14, fontWeight: '800', color: '#0F172A', marginTop: 2 },
+  gridValueSecondary: { fontSize: 13, fontWeight: '700', color: '#4338CA', marginTop: 2 },
+  warningText: { fontSize: 12, color: '#DC2626', fontWeight: '700', textAlign: 'center' },
+  editFormContainer: { backgroundColor: '#FFF', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 16 },
+  cardTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
+  infoText: { fontSize: 12, color: '#64748B', marginTop: 2, marginBottom: 12 },
+  inputLabel: { fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6, marginTop: 8 },
   providerSelect: { flexDirection: 'row', gap: 10, marginBottom: 12 },
-  providerBtn: { flex: 1, paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB', alignItems: 'center', backgroundColor: '#F9FAFB' },
-  providerActiveOrange: { backgroundColor: '#FF6600', borderColor: '#FF6600' },
-  providerActiveMtn: { backgroundColor: '#EAB308', borderColor: '#EAB308' },
-  providerText: { fontSize: 12, fontWeight: '700', color: '#374151' },
-  phoneInputContainer: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 10, backgroundColor: '#F9FAFB', overflow: 'hidden' },
-  countryBadge: { backgroundColor: '#E5E7EB', paddingHorizontal: 12, paddingVertical: 12 },
-  countryBadgeText: { fontSize: 13, fontWeight: '800', color: '#1F2937' },
-  phoneInput: { flex: 1, paddingHorizontal: 12, fontSize: 14, color: '#111827' },
-  formActions: { flexDirection: 'row', gap: 10, marginTop: 16 },
-  cancelBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: '#F3F4F6', alignItems: 'center' },
-  cancelBtnText: { color: '#4B5563', fontWeight: '700', fontSize: 13 },
+  providerBtn: { flex: 1, paddingVertical: 10, borderRadius: 10, backgroundColor: '#F1F5F9', alignItems: 'center' },
+  providerActiveOrange: { backgroundColor: '#FF6600' },
+  providerText: { fontSize: 12, fontWeight: '700', color: '#334155' },
+  phoneInputContainer: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  countryBadge: { backgroundColor: '#F1F5F9', paddingHorizontal: 12, borderRadius: 10, justifyContent: 'center' },
+  countryBadgeText: { fontSize: 13, fontWeight: '700', color: '#0F172A' },
+  phoneInput: { flex: 1, height: 44, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, paddingHorizontal: 12, fontSize: 14, color: '#0F172A' },
+  formActions: { flexDirection: 'row', gap: 10 },
+  cancelBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: '#F1F5F9', alignItems: 'center' },
+  cancelBtnText: { fontSize: 13, fontWeight: '700', color: '#475569' },
   saveBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: '#059669', alignItems: 'center' },
-  saveBtnText: { color: '#FFF', fontWeight: '800', fontSize: 13 },
-  updateBtn: { backgroundColor: '#FFF', borderWidth: 1, borderColor: '#059669', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
-  updateBtnDisabled: { borderColor: '#D1D5DB', backgroundColor: '#F3F4F6' },
-  updateBtnText: { color: '#059669', fontWeight: '800', fontSize: 13 },
-  updateBtnTextDisabled: { color: '#9CA3AF' },
-  sectionTitle: { fontSize: 15, fontWeight: '800', color: '#1F2937', marginBottom: 12, marginTop: 8 },
-  seriesContainer: { backgroundColor: '#FFF', borderRadius: 16, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 20, overflow: 'hidden' },
+  saveBtnText: { fontSize: 13, fontWeight: '700', color: '#FFF' },
+  updateBtn: { backgroundColor: '#F1F5F9', paddingVertical: 14, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#CBD5E1' },
+  updateBtnDisabled: { opacity: 0.6 },
+  updateBtnText: { fontSize: 14, fontWeight: '700', color: '#0F172A' },
+  updateBtnTextDisabled: { color: '#64748B' },
+  sectionTitle: { fontSize: 14, fontWeight: '800', color: '#475569', marginBottom: 10 },
+  seriesContainer: { backgroundColor: '#FFF', borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 20 },
   seriesBtn: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12 },
-  seriesIconBox: { width: 32, height: 32, borderRadius: 8, backgroundColor: '#F3F4F6', alignItems: 'center', justifyContent: 'center' },
-  seriesBtnText: { flex: 1, fontSize: 14, fontWeight: '600', color: '#1F2937' },
-  seriesDivider: { height: 1, backgroundColor: '#F3F4F6', marginLeft: 58 },
-  languageSelectedText: { fontSize: 11, color: '#059669', fontWeight: '700', marginTop: 2 },
-  logoutButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FEE2E2', paddingVertical: 14, borderRadius: 12, marginBottom: 10 },
+  seriesIconBox: { width: 32, height: 32, borderRadius: 8, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center' },
+  seriesBtnText: { fontSize: 14, fontWeight: '700', color: '#0F172A', flex: 1 },
+  seriesDivider: { height: 1, backgroundColor: '#F1F5F9', marginHorizontal: 14 },
+  languageSelectedText: { fontSize: 12, color: '#059669', fontWeight: '600', marginTop: 2 },
+  logoutButton: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: '#FEE2E2', paddingVertical: 14, borderRadius: 12, marginBottom: 10 },
   logoutButtonText: { color: '#DC2626', fontWeight: '800', fontSize: 14 },
-  deleteAccountBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
-  deleteAccountText: { color: '#991B1B', fontWeight: '700', fontSize: 13 },
-  
+  deleteAccountBtn: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', paddingVertical: 10 },
+  deleteAccountText: { color: '#991B1B', fontWeight: '700', fontSize: 12 },
   modalOverlay: { flex: 1, justifyContent: 'flex-end' },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(15, 23, 42, 0.5)' },
+  backdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(15, 23, 42, 0.6)' },
   modalContainer: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, maxHeight: '85%' },
-  modalTitle: { fontSize: 18, fontWeight: '900', color: '#111827', marginBottom: 4 },
-  modalSubtitle: { fontSize: 12, color: '#6B7280', marginBottom: 16 },
-  modalInput: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 10, padding: 12, fontSize: 14, color: '#111827', backgroundColor: '#F9FAFB', marginBottom: 10 },
-  
+  modalTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A' },
+  modalSubtitle: { fontSize: 12, color: '#64748B', marginBottom: 12 },
+  modalInput: { height: 44, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, paddingHorizontal: 12, fontSize: 14, color: '#0F172A', marginBottom: 10 },
   languageModalContainer: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20 },
-  languageOption: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#F3F4F6', gap: 12 },
-  languageOptionActive: { backgroundColor: '#ECFDF5', borderRadius: 12, paddingHorizontal: 12, borderBottomWidth: 0, marginVertical: 2 },
-  languageFlag: { fontSize: 20 },
-  languageName: { flex: 1, fontSize: 14, fontWeight: '600', color: '#374151' },
+  languageOption: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14, borderRadius: 10, marginBottom: 6, backgroundColor: '#F8FAFC' },
+  languageOptionActive: { backgroundColor: '#ECFDF5', borderWidth: 1, borderColor: '#A7F3D0' },
+  languageFlag: { fontSize: 20, marginRight: 12 },
+  languageName: { fontSize: 14, fontWeight: '700', color: '#334155', flex: 1 },
   languageNameActive: { color: '#059669', fontWeight: '800' },
 });

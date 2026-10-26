@@ -19,8 +19,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../services/api';
-import { getSocket } from '../services/socket';
-
+import { socket } from '../services/socket';
 export type TicketStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
 export type TicketPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
 export type TicketCategory =
@@ -74,8 +73,7 @@ export function SupportHelp({ navigation, route }: any) {
   const [inputMessage, setInputMessage] = useState('');
   const flatListRef = useRef<FlatList>(null);
 
-  const socket = typeof getSocket === 'function' ? getSocket() : null;
-
+const activeSocket = socket?.connected ? socket : null;
   const fetchTickets = async () => {
     try {
       const response = await api.get('/drivers/tickets/my-tickets');
@@ -408,7 +406,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justify: 'space-between',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingBottom: 14,
     backgroundColor: '#FFFFFF',
@@ -440,7 +438,7 @@ const styles = StyleSheet.create({
   chatLink: { fontSize: 12, color: '#059669', fontWeight: 'bold' },
   modalOverlay: { flex: 1, justifyContent: 'flex-end' },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(15, 23, 42, 0.5)',
   },
   modalContent: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, maxHeight: '90%' },

@@ -78,38 +78,18 @@ export function TurnByTurnSheet({ visible, onClose, destination, isIntermediateS
     </Modal>
   );
 }
-
 const styles = StyleSheet.create({
-  // ... (Estilos originais permanecem, adicione os estilos abaixo) ...
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 20,
-  },
-  stopBadge: {
-    backgroundColor: '#DBEAFE',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  stopBadgeText: {
-    color: '#1D4ED8',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  confirmStopButton: {
-    marginTop: 16,
-    paddingVertical: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#10B981', // Verde destacando a confirmação
-    borderRadius: 12,
-  },
-  confirmStopText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFF',
-  },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  sheetContainer: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20 },
+  dragIndicator: { width: 40, height: 4, backgroundColor: '#CBD5E1', borderRadius: 2, alignSelf: 'center', marginBottom: 12 },
+  title: { fontSize: 18, fontWeight: '800', color: '#0F172A' },
+  subtitle: { fontSize: 14, color: '#64748B', marginTop: 4 },
+  optionsContainer: { marginVertical: 16 },
+  cancelButton: { backgroundColor: '#F1F5F9', paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginTop: 8 },
+  cancelText: { color: '#0F172A', fontWeight: '700' },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 },
+  stopBadge: { backgroundColor: '#DBEAFE', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+  stopBadgeText: { color: '#1E40AF', fontSize: 12, fontWeight: '700' },
+  confirmStopButton: { backgroundColor: '#10B981', paddingVertical: 12, borderRadius: 10, alignItems: 'center', marginTop: 12 },
+  confirmStopText: { color: '#FFF', fontWeight: '700' },
 });

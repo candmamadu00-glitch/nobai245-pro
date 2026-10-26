@@ -9,7 +9,6 @@ interface KycCameraProps {
   onSuccess: (imageUrl: string) => void;
   onCancel: () => void;
 }
-
 export function KycCameraScreen({ documentType, onSuccess, onCancel }: KycCameraProps) {
   const [permission, requestPermission] = useCameraPermissions();
   const [photoUri, setPhotoUri] = useState<string | null>(null);
@@ -168,6 +167,19 @@ const styles = StyleSheet.create({
   actionButtonText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 16 },
   secondaryButton: { flex: 1, backgroundColor: '#374151', paddingVertical: 14, borderRadius: 8, alignItems: 'center' },
   secondaryButtonText: { color: '#FFFFFF', fontWeight: '600', fontSize: 16 },
-  loadingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center' },
-  uploadingText: { color: '#FFFFFF', marginTop: 12, fontSize: 15 }
+  // Altere no StyleSheet:
+loadingOverlay: { 
+  ...StyleSheet.absoluteFill, 
+  backgroundColor: 'rgba(0,0,0,0.85)', 
+  justifyContent: 'center', 
+  alignItems: 'center' 
+}, // 👈 Garanta que esta vírgula esteja aqui
+
+uploadingText: {
+  color: '#FFFFFF',
+  fontSize: 14,
+  fontWeight: '600',
+  marginTop: 12,
+  textAlign: 'center',
+},
 });

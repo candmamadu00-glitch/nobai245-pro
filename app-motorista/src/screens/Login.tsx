@@ -159,7 +159,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.primaryDark },
   scrollContainer: { 
     flexGrow: 1, 
-    justify: 'center', 
+    justifyContent: 'center', 
     padding: 20, 
     paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 30) + 20 : 40,
     paddingBottom: 30

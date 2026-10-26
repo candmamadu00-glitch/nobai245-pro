@@ -337,7 +337,7 @@ const styles = StyleSheet.create({
   contactRelation: { fontSize: 11, color: '#B45309', fontWeight: '800' },
   deleteButton: { padding: 8, backgroundColor: '#FEF2F2', borderRadius: 10 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.6)', justifyContent: 'flex-end' },
-  backdrop: { ...StyleSheet.absoluteFillObject },
+  backdrop: { ...StyleSheet.absoluteFill },
   modalContent: { 
     backgroundColor: '#FFF', 
     borderTopLeftRadius: 28, 

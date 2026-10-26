@@ -3,7 +3,9 @@ import { io, Socket } from 'socket.io-client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Sentry from '@sentry/react-native';
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://167.172.44.3/api';
+const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com';
+const BASE_URL = API_URL.replace(/\/api\/?$/, '');
+
 export const socket: Socket = io(BASE_URL, {
   autoConnect: false,
   reconnection: true,
@@ -117,8 +119,20 @@ export const sendChatMessage = (rideId: string, senderName: string, text: string
   emitCriticoPassenger('chat:send_message', { rideId, sender: senderName, text });
 };
 
-export const rateDriver = (payload: { rideId: string; reviewerId: string; receiverId: string; stars: number; comment?: string; tags?: string[] }) => {
-  emitCriticoPassenger('ride:rate', { ...payload, reviewerType: 'PASSENGER', tags: payload.tags || [] });
+export const rateDriver = (payload: { 
+  rideId: string; 
+  reviewerId: string; 
+  receiverId: string; 
+  stars: number; 
+  comment?: string; 
+  tags?: string[];
+  reviewerType?: string;
+}) => {
+  emitCriticoPassenger('ride:rate', { 
+    ...payload, 
+    reviewerType: payload.reviewerType || 'PASSENGER', 
+    tags: payload.tags || [] 
+  });
 };
 
 export const triggerSOS = (payload: { rideId?: string; latitude: number; longitude: number }) => {

@@ -4,6 +4,7 @@ import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from './api';
+import { socket } from './passengerSocket';
 
 const isExpoGo =
   Constants.executionEnvironment === ExecutionEnvironment.StoreClient ||
@@ -32,27 +33,27 @@ export async function registerAndSendPushToken(accessToken?: string): Promise<st
     }
 
     if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync('default', {
-        name: 'Geral',
-        importance: Notifications.AndroidImportance.DEFAULT,
-        sound: true, // Usa o som padrão do sistema Android
-      });
+  await Notifications.setNotificationChannelAsync('default', {
+    name: 'Geral',
+    importance: Notifications.AndroidImportance.DEFAULT,
+    sound: 'default',
+  });
 
-      await Notifications.setNotificationChannelAsync('ride-updates', {
-        name: 'Atualizações da Viagem',
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#EAB308',
-        sound: true, // Usa o som padrão do sistema Android
-      });
+  await Notifications.setNotificationChannelAsync('ride-updates', {
+    name: 'Atualizações da Viagem',
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 250, 250, 250],
+    lightColor: '#EAB308',
+    sound: 'default',
+  });
 
-      await Notifications.setNotificationChannelAsync('chat-messages', {
-        name: 'Mensagens do Chat',
-        importance: Notifications.AndroidImportance.HIGH,
-        vibrationPattern: [0, 150, 150, 150],
-        sound: true, // Usa o som padrão do sistema Android
-      });
-    }
+  await Notifications.setNotificationChannelAsync('chat-messages', {
+    name: 'Mensagens do Chat',
+    importance: Notifications.AndroidImportance.HIGH,
+    vibrationPattern: [0, 150, 150, 150],
+    sound: 'default',
+  });
+}
 
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
@@ -76,17 +77,22 @@ export async function registerAndSendPushToken(accessToken?: string): Promise<st
     const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
     const pushToken = tokenData?.data;
 
-    // No seu arquivo de notificações, dentro de registerAndSendPushToken():
-if (pushToken) {
-  await api.put('/passengers/device-token', { deviceToken: pushToken });
-  
-  // 🟢 Adicione esta linha para sincronizar também pelo Socket ativo:
-  if (socket && socket.connected) {
-    socket.emit('passenger:update_device_token', { deviceToken: pushToken });
-  }
+    if (pushToken) {
+      await api.put('/passengers/device-token', { deviceToken: pushToken }).catch(() => null);
 
-  console.log('✅ [PUSH PASSAGEIRO] Token registrado com sucesso!');
-  return pushToken;
+      if (socket && socket.connected) {
+        socket.emit('passenger:update_device_token', { deviceToken: pushToken });
+      }
+
+      console.log('✅ [PUSH PASSAGEIRO] Token registrado com sucesso!');
+      return pushToken;
+    }
+
+    return null;
+  } catch (error) {
+    console.warn('⚠️ [PUSH PASSAGEIRO] Erro ao registrar token de notificação:', error);
+    return null;
+  }
 }
 
 export const registerForPushNotifications = registerAndSendPushToken;

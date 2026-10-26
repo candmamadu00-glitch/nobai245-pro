@@ -116,7 +116,7 @@ export function RideDetails() {
         <View style={styles.totalCard}>
           <Text style={styles.totalLabel}>{t('amount_charged', 'Valor Cobrado')}</Text>
           <Text style={styles.totalValue}>{Number(ride.priceXof || 0).toLocaleString('pt-PT')} XOF</Text>
-          <Text style={styles.dateSub}>{formatDate(ride.createdAt)}</Text>
+          <Text style={styles.dateSub}>{formatDate(ride.createdAt || '')}</Text>
         </View>
 
         <Text style={styles.sectionTitle}>{t('route_title', 'Trajeto')}</Text>
