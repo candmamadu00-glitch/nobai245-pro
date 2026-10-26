@@ -222,11 +222,40 @@ export default function Home({ navigation }: any) {
     return closest;
   };
 
-  const getVehicleImage = (type?: VehicleType) => {
-    if (type === 'moto-carro') return require('../assets/images/moto-carro.png');
-    if (type === 'toca-toca') return require('../assets/images/toca-toca.png');
-    return require('../assets/images/particular.png');
-  };
+  const getVehicleImage = (type?: string) => {
+  const norm = normalizeVehicleType(type);
+  switch (norm) {
+    case 'moto':
+      return require('../../assets/images/vehicles/moto.jpg');
+    case 'moto-carro':
+    case 'toca-toca':
+      return require('../../assets/images/vehicles/toca_toca.jpg');
+    case 'taxi':
+      return require('../../assets/images/vehicles/taxi_yellow.jpg');
+    case 'particular':
+    default:
+      return require('../../assets/images/vehicles/car_white.jpg');
+  }
+};
+
+const getVehicleColorHex = (colorName?: string) => {
+  if (!colorName) return '#0F172A';
+  if (colorName.startsWith('#')) return colorName;
+  const c = colorName.toLowerCase().trim();
+  
+  if (c.includes('vermelh') || c.includes('vinho') || c.includes('red')) return '#EF4444';
+  if (c.includes('pret') || c.includes('black')) return '#18181B';
+  if (c.includes('branc') || c.includes('white')) return '#FFFFFF';
+  if (c.includes('prat') || c.includes('cinza') || c.includes('silver') || c.includes('grey')) return '#94A3B8';
+  if (c.includes('amarel') || c.includes('yellow')) return '#EAB308';
+  if (c.includes('azul') || c.includes('blue')) return '#2563EB';
+  if (c.includes('verd') || c.includes('green')) return '#16A34A';
+  if (c.includes('laranj') || c.includes('orange')) return '#EA580C';
+  if (c.includes('marrom') || c.includes('brown')) return '#78350F';
+  
+  return '#0F172A';
+};
+
 
   const getVehicle3DIconAsset = (type?: string, color?: string) => {
     return getVehicleImage(type);

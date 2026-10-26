@@ -1,8 +1,11 @@
 node_modules/
+.git/
 .expo/
-android/build/
+dist/
+build/
 android/app/build/
 android/.gradle/
-dist/
+android/build/
 *.apk
 *.aab
+*.tar.gz
