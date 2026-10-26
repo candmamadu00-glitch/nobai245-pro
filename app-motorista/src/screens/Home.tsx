@@ -842,6 +842,7 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
   const formattedOffer = {
     ...data,
     rideId: newRideId,
+    referencePoint: data.referencePoint || (data as any).reference_point || '',
     isQueuedOffer: isCurrentlyInRide,
     passengerName: data.passengerName || 'Passageiro',
     passengerRating: data.passengerRating || 5.0,
@@ -954,6 +955,7 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
           setRideState(mappedState);
           setIncomingRide({
             rideId: activeRide.id,
+            referencePoint: activeRide.referencePoint || activeRide.reference_point || '',
             passengerId: activeRide.passengerId,
             passengerName: activeRide.passenger?.fullName || 'Passageiro',
             passengerPhone: activeRide.passenger?.phone,
@@ -1099,6 +1101,7 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
             setTimeLeft(15);
             setIncomingRide({
               rideId: ride.id,
+              
               passengerId: ride.passengerId,
               passengerName: ride.passenger?.fullName || 'Passageiro',
               passengerRating: Number(ride.passenger?.ratingAverage || 5.0),
@@ -1893,13 +1896,35 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
 
                 <View style={styles.routeAddressesContainer}>
                   {/* ORIGEM */}
-                  <View style={styles.addressItem}>
-                    <Ionicons name="location" size={16} color="#10B981" />
-                    <View style={styles.addressTextWrapper}>
-                      <Text style={styles.addressLabel}>Buscar em:</Text>
-                      <Text style={styles.addressValue} numberOfLines={1}>{incomingRide?.originAddress || 'Endereço de origem'}</Text>
-                    </View>
-                  </View>
+<View style={styles.addressItem}>
+  <Ionicons name="location" size={16} color="#10B981" />
+  <View style={styles.addressTextWrapper}>
+    <Text style={styles.addressLabel}>Buscar em:</Text>
+    <Text style={styles.addressValue} numberOfLines={1}>
+      {incomingRide?.originAddress || 'Endereço de origem'}
+    </Text>
+
+    {/* 💡 PONTO DE REFERÊNCIA EM DESTAQUE NA CORRIDA ATIVA */}
+    {Boolean(incomingRide?.referencePoint) && (
+      <View style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(234, 179, 8, 0.15)',
+        borderWidth: 1,
+        borderColor: '#EAB308',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 6,
+        marginTop: 4
+      }}>
+        <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
+        <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
+          Ref: {incomingRide.referencePoint}
+        </Text>
+      </View>
+    )}
+  </View>
+</View>
 
                   {/* PARADAS INTERMEDIÁRIAS */}
                   {formattedStops.length > 0 && formattedStops.map((stop: any, idx: number) => (
@@ -2099,15 +2124,35 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
 
             <View style={styles.routeTimelineContainer}>
               {/* EMBARQUE / ORIGEM */}
-              <View style={styles.timelineRow}>
-                <Ionicons name="location" size={16} color="#10B981" />
-                <View style={styles.timelineTextContainer}>
-                  <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
-                  <Text style={styles.timelineAddress} numberOfLines={2}>
-                    {activeOffer?.originAddress || 'Local de origem'}
-                  </Text>
-                </View>
-              </View>
+<View style={styles.timelineRow}>
+  <Ionicons name="location" size={16} color="#10B981" />
+  <View style={styles.timelineTextContainer}>
+    <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
+    <Text style={styles.timelineAddress} numberOfLines={2}>
+      {activeOffer?.originAddress || 'Local de origem'}
+    </Text>
+
+    {/* 💡 PONTO DE REFERÊNCIA EM DESTAQUE NA OFERTA */}
+    {Boolean(activeOffer?.referencePoint) && (
+      <View style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(234, 179, 8, 0.15)',
+        borderWidth: 1,
+        borderColor: '#EAB308',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 6,
+        marginTop: 4
+      }}>
+        <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
+        <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
+          Ref: {activeOffer.referencePoint}
+        </Text>
+      </View>
+    )}
+  </View>
+</View>
 
               {/* DESTINO */}
               <View style={styles.timelineRow}>
