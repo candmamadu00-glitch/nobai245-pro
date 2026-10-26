@@ -76,16 +76,17 @@ export async function registerAndSendPushToken(accessToken?: string): Promise<st
     const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
     const pushToken = tokenData?.data;
 
-    if (pushToken) {
-      await api.put('/passengers/device-token', { deviceToken: pushToken });
-      console.log('✅ [PUSH PASSAGEIRO] Token registrado com sucesso!');
-      return pushToken;
-    }
-  } catch (err) {
-    console.warn('⚠️ [PUSH PASSAGEIRO] Erro ao registrar Push Token:', err);
+    // No seu arquivo de notificações, dentro de registerAndSendPushToken():
+if (pushToken) {
+  await api.put('/passengers/device-token', { deviceToken: pushToken });
+  
+  // 🟢 Adicione esta linha para sincronizar também pelo Socket ativo:
+  if (socket && socket.connected) {
+    socket.emit('passenger:update_device_token', { deviceToken: pushToken });
   }
 
-  return null;
+  console.log('✅ [PUSH PASSAGEIRO] Token registrado com sucesso!');
+  return pushToken;
 }
 
 export const registerForPushNotifications = registerAndSendPushToken;

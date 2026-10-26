@@ -51,7 +51,7 @@ function safeSocketEmit(room: string, event: string, payload: any): void {
 }
 
 // -----------------------------------------------------------------------------
-// HELPER PARA NOTIFICAÇÃO PUSH E SOCKET (CORRIDAS NORMAIS + EM FILA/BACK-TO-BACK)
+// HELPER PARA DISPARO DE NOVAS CORRIDAS PARA MOTORISTAS (INCLUINDO FILA)
 // -----------------------------------------------------------------------------
 export async function notifyDriversNewRide(rideId: string): Promise<void> {
   console.log(`\n🚨 [RIDE DISPATCH] Buscando motoristas para notificar sobre a corrida ${rideId}...`);
@@ -144,7 +144,7 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
       }
     }
 
-    console.log(`🔍 [RIDE DISPATCH] ${qualifiedDrivers.length} motoristas qualificados (incluindo fila de espera) no raio de 5km.`);
+    console.log(`🔍 [RIDE DISPATCH] ${qualifiedDrivers.length} motoristas qualificados no raio de 5km.`);
 
     const ridePayload = {
       rideId: ride.id,
@@ -163,7 +163,7 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
       stops: ride.stops || [],
     };
 
-    const offerExpiresAt = new Date(Date.now() + 15000); // 15 segundos para resposta
+    const offerExpiresAt = new Date(Date.now() + 15000);
 
     for (const driver of qualifiedDrivers) {
       await prisma.rideOffer.upsert({
@@ -493,7 +493,9 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
   }
 }
 
-// 🟢 1. ACEITAR CORRIDA (COM FORMATO DE DADOS COMPATÍVEL E MULTI-BROADCAST)
+// -----------------------------------------------------------------------------
+// 1. ACEITAR CORRIDA (COM MULTI-BROADCAST E PUSH)
+// -----------------------------------------------------------------------------
 export async function acceptRideLogic(rideId: string, driverId: string) {
   const driver = await prisma.driver.findUnique({ where: { id: driverId } });
   if (!driver || !driver.isOnline || driver.status !== 'APPROVED') {
@@ -604,20 +606,30 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     isQueuedRide: targetStatus === RideStatus.QUEUED
   };
 
-  safeSocketEmit(result.id, 'ride:accepted', passengerAcceptedPayload);
-  safeSocketEmit(result.passengerId, 'ride:accepted', passengerAcceptedPayload);
-  safeSocketEmit(`passenger_${result.passengerId}`, 'ride:accepted', passengerAcceptedPayload);
+  // 📣 MULTI-BROADCAST SOCKET COMPLETO
+  const passengerRooms = [
+    result.id,
+    result.passengerId,
+    `passenger_${result.passengerId}`,
+    `passenger:${result.passengerId}`,
+    `user_${result.passengerId}`
+  ];
 
+  passengerRooms.forEach(room => {
+    safeSocketEmit(room, 'ride:accepted', passengerAcceptedPayload);
+  });
+
+  // 🔔 PUSH NOTIFICATION DE ACEITE
   if (result.passenger?.deviceToken) {
     const pushMsg = targetStatus === RideStatus.QUEUED 
       ? `O motorista ${result.driver?.fullName || 'parceiro'} aceitou sua corrida! Ele concluirá a viagem atual antes de ir até você.`
-      : `O motorista ${result.driver?.fullName || 'parceiro'} aceitou sua corrida!`;
+      : `O motorista ${result.driver?.fullName || 'parceiro'} aceitou sua corrida e está a caminho!`;
 
     sendPushNotification(
       result.passenger.deviceToken,
       '✅ Corrida Aceita!',
       pushMsg,
-      { type: 'RIDE_ACCEPTED', rideId: result.id },
+      { type: 'RIDE_ACCEPTED', rideId: result.id, status: targetStatus },
       PUSH_CHANNELS.RIDE_UPDATE
     ).catch(err => console.error('❌ Erro no Push de Aceite:', err));
   }
@@ -631,7 +643,9 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
 
 export const acceptRide = acceptRideLogic;
 
-// 🟢 2. CHEGADA DO MOTORISTA (EMITE EVENTO DUPLO + MULTI-BROADCAST)
+// -----------------------------------------------------------------------------
+// 2. CHEGADA DO MOTORISTA (COM MULTI-BROADCAST E PUSH COM OTP)
+// -----------------------------------------------------------------------------
 export async function driverArrivedLogic(rideId: string, driverId: string) {
   const ride = await prisma.ride.findUnique({ where: { id: rideId } });
   if (!ride || ride.driverId !== driverId) throw new Error('UNAUTHORIZED: Motorista não associado a esta viagem.');
@@ -668,17 +682,27 @@ export async function driverArrivedLogic(rideId: string, driverId: string) {
     startOtp: updated.startOtp
   };
 
-  [updated.id, updated.passengerId, `passenger_${updated.passengerId}`].forEach(room => {
+  // 📣 MULTI-BROADCAST DUPLO (EVENTOS: 'ride:arrived' E 'ride:driver_arrived')
+  const passengerRooms = [
+    updated.id,
+    updated.passengerId,
+    `passenger_${updated.passengerId}`,
+    `passenger:${updated.passengerId}`,
+    `user_${updated.passengerId}`
+  ];
+
+  passengerRooms.forEach(room => {
     safeSocketEmit(room, 'ride:arrived', arrivedPayload);
     safeSocketEmit(room, 'ride:driver_arrived', arrivedPayload);
   });
 
+  // 🔔 PUSH NOTIFICATION DE CHEGADA
   if (updated.passenger?.deviceToken) {
     sendPushNotification(
       updated.passenger.deviceToken,
       '📍 Motorista Chegou!',
-      `Seu motorista está no local. Informe o código OTP ${updated.startOtp} ao embarcar.`,
-      { type: 'DRIVER_ARRIVED', rideId: updated.id, startOtp: updated.startOtp },
+      `Seu motorista está no local. Informe o código PIN ${updated.startOtp} ao embarcar.`,
+      { type: 'DRIVER_ARRIVED', rideId: updated.id, startOtp: updated.startOtp, status: 'ARRIVED' },
       PUSH_CHANNELS.RIDE_UPDATE
     ).catch(err => console.error('⚠️ Falha ao enviar push de chegada ao passageiro:', err));
   }
@@ -689,11 +713,13 @@ export async function driverArrivedLogic(rideId: string, driverId: string) {
   };
 }
 
-// 🟢 3. INÍCIO DA VIAGEM (MULTI-BROADCAST)
+// -----------------------------------------------------------------------------
+// 3. INÍCIO DA VIAGEM (COM MULTI-BROADCAST E PUSH)
+// -----------------------------------------------------------------------------
 export async function startRideLogic(rideId: string, driverId: string, otpInput: string) {
   const ride = await prisma.ride.findUnique({ 
     where: { id: rideId },
-    include: { passenger: { select: { deviceToken: true } } }
+    include: { passenger: { select: { id: true, deviceToken: true } } }
   });
   if (!ride || ride.driverId !== driverId) throw new Error('UNAUTHORIZED: Operação não autorizada.');
 
@@ -726,16 +752,26 @@ export async function startRideLogic(rideId: string, driverId: string, otpInput:
 
   const startPayload = { rideId: ride.id, status: 'IN_PROGRESS' };
 
-  safeSocketEmit(ride.id, 'ride:started', startPayload);
-  safeSocketEmit(ride.passengerId, 'ride:started', startPayload);
-  safeSocketEmit(`passenger_${ride.passengerId}`, 'ride:started', startPayload);
+  // 📣 MULTI-BROADCAST SOCKET
+  const passengerRooms = [
+    ride.id,
+    ride.passengerId,
+    `passenger_${ride.passengerId}`,
+    `passenger:${ride.passengerId}`,
+    `user_${ride.passengerId}`
+  ];
 
+  passengerRooms.forEach(room => {
+    safeSocketEmit(room, 'ride:started', startPayload);
+  });
+
+  // 🔔 PUSH NOTIFICATION DE INÍCIO
   if (ride.passenger?.deviceToken) {
     sendPushNotification(
       ride.passenger.deviceToken,
       '🚕 Viagem Iniciada!',
       'Sua viagem com o Nô Bai 245 começou. Tenha uma excelente viagem!',
-      { type: 'RIDE_STARTED', rideId: ride.id },
+      { type: 'RIDE_STARTED', rideId: ride.id, status: 'IN_PROGRESS' },
       PUSH_CHANNELS.RIDE_UPDATE
     ).catch(err => console.error('❌ Erro no Push de início:', err));
   }
@@ -743,7 +779,9 @@ export async function startRideLogic(rideId: string, driverId: string, otpInput:
   return updatedRide;
 }
 
-// 🟢 4. PROXIMIDADE DO MOTORISTA (MULTI-BROADCAST)
+// -----------------------------------------------------------------------------
+// 4. PROXIMIDADE DO MOTORISTA
+// -----------------------------------------------------------------------------
 export async function notifyDriverNearbyIfClose(rideId: string, distanceMeters: number) {
   if (distanceMeters > 300) return;
 
@@ -755,9 +793,16 @@ export async function notifyDriverNearbyIfClose(rideId: string, distanceMeters: 
 
   const nearbyPayload = { rideId: ride.id };
 
-  safeSocketEmit(ride.id, 'ride:driver_nearby', nearbyPayload);
-  safeSocketEmit(ride.passengerId, 'ride:driver_nearby', nearbyPayload);
-  safeSocketEmit(`passenger_${ride.passengerId}`, 'ride:driver_nearby', nearbyPayload);
+  const passengerRooms = [
+    ride.id,
+    ride.passengerId,
+    `passenger_${ride.passengerId}`,
+    `passenger:${ride.passengerId}`
+  ];
+
+  passengerRooms.forEach(room => {
+    safeSocketEmit(room, 'ride:driver_nearby', nearbyPayload);
+  });
 
   if (ride.passenger?.deviceToken) {
     sendPushNotification(
@@ -771,7 +816,7 @@ export async function notifyDriverNearbyIfClose(rideId: string, distanceMeters: 
 }
 
 // -----------------------------------------------------------------------------
-// 5. FINALIZAÇÃO DA CORRIDA E LIQUIDAÇÃO (COM MULTI-BROADCAST E SUPORTE À FILA)
+// 5. FINALIZAÇÃO DA CORRIDA E LIQUIDAÇÃO (COM MULTI-BROADCAST E PUSH)
 // -----------------------------------------------------------------------------
 export async function finalizeRideAndCharge(
   rideId: string, 
@@ -978,22 +1023,33 @@ export async function finalizeRideAndCharge(
     distanceKm
   };
 
-  safeSocketEmit(ride.id, 'ride:completed', completedPayload);
-  safeSocketEmit(ride.passengerId, 'ride:completed', completedPayload);
-  safeSocketEmit(`passenger_${ride.passengerId}`, 'ride:completed', completedPayload);
+  // 📣 MULTI-BROADCAST DUPLO (EVENTOS: 'ride:completed' E 'ride:finished')
+  const passengerRooms = [
+    ride.id,
+    ride.passengerId,
+    `passenger_${ride.passengerId}`,
+    `passenger:${ride.passengerId}`,
+    `user_${ride.passengerId}`
+  ];
 
+  passengerRooms.forEach(room => {
+    safeSocketEmit(room, 'ride:completed', completedPayload);
+    safeSocketEmit(room, 'ride:finished', completedPayload);
+  });
+
+  // 🔔 PUSH NOTIFICATION DE FINALIZAÇÃO
   if (ride.passenger?.deviceToken) {
     sendPushNotification(
       ride.passenger.deviceToken,
       '🏁 Viagem Concluída!',
       `Você chegou ao seu destino. Valor total: ${calculatedFare} XOF. Avalie seu motorista!`,
-      { type: 'RIDE_COMPLETED', rideId: ride.id, priceXof: calculatedFare },
+      { type: 'RIDE_COMPLETED', rideId: ride.id, priceXof: calculatedFare, fareXOF: calculatedFare, status: 'COMPLETED' },
       PUSH_CHANNELS.RIDE_UPDATE
     ).catch(err => console.error('❌ Erro no Push de finalização:', err));
   }
 
   if (queuedRideToPromote) {
-    console.log(`🔄 [RIDE LOG - QUEUE] Motorista possui próxima corrida agendada na fila ID: ${queuedRideToPromote.id}`);
+    console.log(`🔄 [RIDE LOG - QUEUE] Promovendo próxima corrida da fila ID: ${queuedRideToPromote.id}`);
 
     const queuedPayload = {
       rideId: queuedRideToPromote.id,
@@ -1010,9 +1066,17 @@ export async function finalizeRideAndCharge(
       message: 'Seu motorista concluiu a corrida anterior e já está a caminho!'
     };
 
-    safeSocketEmit(queuedRideToPromote.id, 'ride:driver_en_route', enRoutePayload);
-    safeSocketEmit(queuedRideToPromote.passengerId, 'ride:driver_en_route', enRoutePayload);
-    safeSocketEmit(`passenger_${queuedRideToPromote.passengerId}`, 'ride:driver_en_route', enRoutePayload);
+    const queuedPassengerRooms = [
+      queuedRideToPromote.id,
+      queuedRideToPromote.passengerId,
+      `passenger_${queuedRideToPromote.passengerId}`,
+      `passenger:${queuedRideToPromote.passengerId}`
+    ];
+
+    queuedPassengerRooms.forEach(room => {
+      safeSocketEmit(room, 'ride:driver_en_route', enRoutePayload);
+      safeSocketEmit(room, 'ride:accepted', enRoutePayload);
+    });
 
     const queuedPassenger = await prisma.passenger.findUnique({
       where: { id: queuedRideToPromote.passengerId },
@@ -1298,6 +1362,8 @@ export async function cancelRideLogic(
 // -----------------------------------------------------------------------------
 // 7. NOTIFICAÇÕES DE CHAT E AVALIAÇÕES
 // -----------------------------------------------------------------------------
+// ARQUIVO: src/services/rideService.ts
+
 export async function notifyNewChatMessage(data: {
   rideId: string;
   senderId: string;
@@ -1319,36 +1385,50 @@ export async function notifyNewChatMessage(data: {
     if (!ride) return;
 
     const isPassenger = senderType === 'PASSENGER';
-    const targetRoom = isPassenger ? `driver_${ride.driverId}` : `passenger_${ride.passengerId}`;
+    const targetUserId = isPassenger ? ride.driverId : ride.passengerId;
     const targetToken = isPassenger ? ride.driver?.deviceToken : ride.passenger?.deviceToken;
 
-    console.log(`💬 [CHAT LOG] Nova mensagem na corrida ${rideId} de ${senderName} (${senderType}): "${message}"`);
-
     const chatPayload = {
+      id: `msg-${Date.now()}`,
       rideId,
       senderId,
+      sender: isPassenger ? 'passenger' : 'driver',
       senderType,
       senderName,
       message,
+      text: message,
       createdAt: new Date().toISOString()
     };
 
-    safeSocketEmit(targetRoom, 'chat:new_message', chatPayload);
+    // 📣 MULTI-BROADCAST SOCKET
+    const targetRooms = [
+      rideId,
+      targetUserId,
+      `passenger_${ride.passengerId}`,
+      `passenger:${ride.passengerId}`,
+      `driver_${ride.driverId}`,
+      `driver:${ride.driverId}`
+    ].filter(Boolean) as string[];
 
+    targetRooms.forEach(room => {
+      safeSocketEmit(room, 'chat:receive_message', chatPayload);
+      safeSocketEmit(room, 'chat:new_message', chatPayload);
+    });
+
+    // 🔔 DISPARO DE PUSH NOTIFICATION
     if (targetToken) {
       sendPushNotification(
         targetToken,
         `💬 ${senderName}`,
         message,
-        { type: 'CHAT_MESSAGE', rideId, senderId },
+        { type: 'CHAT_MESSAGE', rideId, sender: isPassenger ? 'passenger' : 'driver' },
         PUSH_CHANNELS.CHAT
-      ).catch(err => console.warn('⚠️ [PUSH CHAT ERR]:', err?.message || err));
+      ).catch(err => console.warn('⚠️ [PUSH CHAT ERR]:', err?.message));
     }
   } catch (err) {
     console.error('💥 [CHAT NOTIFY ERROR]:', err);
   }
 }
-
 export async function submitRatingLogic(data: {
   rideId: string;
   reviewerId: string;

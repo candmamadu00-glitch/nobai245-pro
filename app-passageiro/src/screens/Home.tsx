@@ -26,7 +26,7 @@ import { CancelModal } from '../components/CancelModal';
 import { RatingModal } from '../components/RatingModal';
 import { api } from '../services/api';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-
+import { registerAndSendPushToken } from '../services/notifications';
 // Token Mapbox
 const MAPBOX_ACCESS_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_KEY || 'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZTRyc3NmMDBzMTJ5cTA1anJvYjFsOSJ9.pUAoGXwZS8FtYNr85VD1TA';
 if (MAPBOX_ACCESS_TOKEN) {
@@ -1149,8 +1149,8 @@ export function Home() {
   }, []);
 
   useEffect(() => {
+  // 1️⃣ Restaura o estado da corrida do AsyncStorage, busca o GPS e sincroniza com o servidor
   async function initAppAndPermissions() {
-    // 1️⃣ Restaura o estado salvo localmente de forma instantânea
     try {
       const savedState = await AsyncStorage.getItem(STORAGE_RIDE_KEY);
       if (savedState && isMountedRef.current) {
@@ -1177,114 +1177,120 @@ export function Home() {
       console.error('Erro ao recuperar corrida salva localmente:', err);
     }
 
-    // 2️⃣ Obtém GPS e sincroniza os dados mais recentes com o servidor em segundo plano
     await getCurrentLocationWithFallback();
     await syncPassengerActiveRide();
   }
 
   initAppAndPermissions();
+
+  if (!user?.id) return;
+
+  // 2️⃣ Conecta o Socket do passageiro e envia o Push Token para o servidor
   connectPassengerSocket();
-    const handleConnect = () => {
-      if (isMountedRef.current) setIsConnected(true);
-      
-      if (socket && socket.connected) {
-        socket.emit('passenger:request_state');
-        
-        // ✅ Reingressar na sala da corrida se houver uma ativa
-        if (activeRideIdRef.current) {
-          socket.emit('passenger:rejoin_ride', { rideId: activeRideIdRef.current });
-          console.log(`📡 [RECONEXÃO] Passageiro reingressou na sala: ${activeRideIdRef.current}`);
-        }
+  registerAndSendPushToken();
+
+  if (activeRideIdRef.current) {
+    socket.emit('passenger:rejoin_ride', { rideId: activeRideIdRef.current });
+  }
+
+  const handleConnect = () => {
+    if (isMountedRef.current) setIsConnected(true);
+    if (socket && socket.connected) {
+      socket.emit('passenger:request_state');
+      if (activeRideIdRef.current) {
+        socket.emit('passenger:rejoin_ride', { rideId: activeRideIdRef.current });
       }
-    };
+    }
+  };
 
-    const handleDisconnect = () => {
-      if (isMountedRef.current) setIsConnected(false);
-    };
+  const handleDisconnect = () => {
+    if (isMountedRef.current) setIsConnected(false);
+  };
 
-    // 🟢 RECURSÃO DE ESTADO RECUPERADO COM PARADAS
-    const handleStateRecovered = async (data: any) => {
-      if (!isMountedRef.current || !data) return;
-      try {
-        if (!data?.hasActiveRide) {
-          setRideStatus((currentStatus) => {
-            if (['accepted', 'arrived', 'in_progress', 'searching'].includes(currentStatus)) {
-              return currentStatus;
-            }
-            return 'idle';
+  const handleStateRecovered = async (data: any) => {
+    if (!isMountedRef.current || !data) return;
+    try {
+      if (!data?.hasActiveRide) {
+        setRideStatus((currentStatus) => {
+          if (['accepted', 'arrived', 'in_progress', 'searching'].includes(currentStatus)) {
+            return currentStatus;
+          }
+          return 'idle';
+        });
+        return;
+      }
+
+      if (data?.hasActiveRide && data?.ride) {
+        if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+        setActiveRideId(data.ride.id);
+        activeRideIdRef.current = data.ride.id;
+
+        if (typeof data.ride.originLat === 'number' && typeof data.ride.originLng === 'number') {
+          const lat = Number(data.ride.originLat);
+          const lng = Number(data.ride.originLng);
+          if (!isNaN(lat) && !isNaN(lng)) setPickupCoords({ latitude: lat, longitude: lng });
+          if (data.ride.originAddress) setPickupAddress(data.ride.originAddress);
+        }
+
+        if (Array.isArray(data.ride.stops) && data.ride.stops.length > 0) {
+          const firstStop = data.ride.stops[0];
+          const stopLat = Number(firstStop.lat || firstStop.latitude);
+          const stopLng = Number(firstStop.lng || firstStop.longitude);
+          if (!isNaN(stopLat) && !isNaN(stopLng)) {
+            setExtraStopCoords({ latitude: stopLat, longitude: stopLng });
+            setExtraStopAddress(firstStop.address || 'Parada Intermediária');
+            setShowExtraStop(true);
+          }
+        } else if (data.ride.extraStopLat && data.ride.extraStopLng) {
+          const lat = Number(data.ride.extraStopLat);
+          const lng = Number(data.ride.extraStopLng);
+          if (!isNaN(lat) && !isNaN(lng)) {
+            setExtraStopCoords({ latitude: lat, longitude: lng });
+            if (data.ride.extraStopAddress) setExtraStopAddress(data.ride.extraStopAddress);
+            setShowExtraStop(true);
+          }
+        }
+
+        if (typeof data.ride.destinationLat === 'number' && typeof data.ride.destinationLng === 'number') {
+          const lat = Number(data.ride.destinationLat);
+          const lng = Number(data.ride.destinationLng);
+          if (!isNaN(lat) && !isNaN(lng)) setDropoffCoords({ latitude: lat, longitude: lng });
+          if (data.ride.destinationAddress) setDropoffAddress(data.ride.destinationAddress);
+        }
+
+        if (data.ride.driverId) {
+          const otpCode = String(data.ride.startOtp || data.ride.otpPin || data.ride.pin || '');
+          setStartOtp(otpCode);
+          setDriverInfo({ 
+            id: data.ride.driverId, 
+            name: data.ride.driverName || 'Motorista',
+            photoUrl: formatPhotoUrl(data.ride.driverPhoto), 
+            profilePicture: formatPhotoUrl(data.ride.driverPhoto),
+            carModel: data.ride.carModel || data.ride.vehicleModel || 'Veículo Padrão',
+            carColor: data.ride.carColor || data.ride.vehicleColor || data.ride.color || 'BRANCO', 
+            vehicleType: data.ride.vehicleType || data.ride.vehicle_type || 'PARTICULAR',
+            licensePlate: data.ride.licensePlate || data.plate,
+            rating: data.ride.driverRating || 5.0,
+            phone: data.ride.driverPhone,
+            startOtp: otpCode,
           });
-          return;
         }
-
-        if (data?.hasActiveRide && data?.ride) {
-          if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-          setActiveRideId(data.ride.id);
-          activeRideIdRef.current = data.ride.id;
-
-          if (typeof data.ride.originLat === 'number' && typeof data.ride.originLng === 'number') {
-            const lat = Number(data.ride.originLat);
-            const lng = Number(data.ride.originLng);
-            if (!isNaN(lat) && !isNaN(lng)) setPickupCoords({ latitude: lat, longitude: lng });
-            if (data.ride.originAddress) setPickupAddress(data.ride.originAddress);
-          }
-
-          // 🟢 RECUPERAÇÃO DAS PARADAS INTERMEDIÁRIAS NO SOCKET STATE
-          if (Array.isArray(data.ride.stops) && data.ride.stops.length > 0) {
-            const firstStop = data.ride.stops[0];
-            const stopLat = Number(firstStop.lat || firstStop.latitude);
-            const stopLng = Number(firstStop.lng || firstStop.longitude);
-            if (!isNaN(stopLat) && !isNaN(stopLng)) {
-              setExtraStopCoords({ latitude: stopLat, longitude: stopLng });
-              setExtraStopAddress(firstStop.address || 'Parada Intermediária');
-              setShowExtraStop(true);
-            }
-          } else if (data.ride.extraStopLat && data.ride.extraStopLng) {
-            const lat = Number(data.ride.extraStopLat);
-            const lng = Number(data.ride.extraStopLng);
-            if (!isNaN(lat) && !isNaN(lng)) {
-              setExtraStopCoords({ latitude: lat, longitude: lng });
-              if (data.ride.extraStopAddress) setExtraStopAddress(data.ride.extraStopAddress);
-              setShowExtraStop(true);
-            }
-          }
-
-          if (typeof data.ride.destinationLat === 'number' && typeof data.ride.destinationLng === 'number') {
-            const lat = Number(data.ride.destinationLat);
-            const lng = Number(data.ride.destinationLng);
-            if (!isNaN(lat) && !isNaN(lng)) setDropoffCoords({ latitude: lat, longitude: lng });
-            if (data.ride.destinationAddress) setDropoffAddress(data.ride.destinationAddress);
-          }
-
-          if (data.ride.driverId) {
-            const otpCode = String(data.ride.startOtp || data.ride.otpPin || data.ride.pin || '');
-            setStartOtp(otpCode);
-            setDriverInfo({ 
-              id: data.ride.driverId, 
-              name: data.ride.driverName || 'Motorista',
-              photoUrl: formatPhotoUrl(data.ride.driverPhoto), 
-              profilePicture: formatPhotoUrl(data.ride.driverPhoto),
-              carModel: data.ride.carModel || data.ride.vehicleModel || 'Veículo Padrão',
-              carColor: data.ride.carColor || data.ride.vehicleColor || data.ride.color || 'BRANCO', 
-              vehicleType: data.ride.vehicleType || data.ride.vehicle_type || 'PARTICULAR',
-              licensePlate: data.ride.licensePlate || data.ride.plate,
-              rating: data.ride.driverRating || 5.0,
-              phone: data.ride.driverPhone,
-              startOtp: otpCode,
-            });
-          }
-        }
-      } catch (err) {
-        console.error('Erro ao processar estado recuperado:', err);
       }
-    };
+    } catch (err) {
+      console.error('Erro ao processar estado recuperado:', err);
+    }
+  };
 
-    const handleRideAccepted = (data: any) => {
-      if (!isMountedRef.current || !data) return;
-      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+  const handleRideAccepted = (data: any) => {
+    if (!isMountedRef.current || !data) return;
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
-      const otpCode = String(data.startOtp || data.otpPin || data.pin || '');
-      setStartOtp(otpCode); 
-      setActiveRideId(data.rideId);
+    const otpCode = String(data.startOtp || data.otpPin || data.pin || '');
+    setStartOtp(otpCode); 
+    setActiveRideId(data.rideId);
+    activeRideIdRef.current = data.rideId;
+
+    if (data.driverId) {
       setDriverInfo({ 
         id: data.driverId, 
         name: data.driverName || 'Motorista',
@@ -1298,134 +1304,136 @@ export function Home() {
         phone: data.driverPhone,
         startOtp: otpCode,
       });
-      setAcceptedAt(new Date());
-      setRideStatus('accepted');
-      persistRideState(data.rideId, 'accepted');
+    }
 
-      Alert.alert(
-        t('ride_accepted_title', 'Corrida Aceita! 🚗'), 
-        `${data.driverName || 'O motorista'} ${t('ride_accepted_msg', 'aceitou sua viagem e está a caminho.')}`
-      );
-    };
+    setAcceptedAt(new Date());
+    setRideStatus(data.isQueuedRide ? 'queued' : 'accepted');
+    persistRideState(data.rideId, data.isQueuedRide ? 'queued' : 'accepted');
 
-    const handleDriverArrived = () => {
-      if (!isMountedRef.current) return;
-      setRideStatus('arrived');
-      if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'arrived');
-      Alert.alert(t('driver_arrived_title', 'Motorista no Local! 📍'), t('driver_arrived_alert_msg', 'Seu motorista chegou ao ponto de partida e está te aguardando.'));
-    };
+    Alert.alert(
+      t('ride_accepted_title', 'Corrida Aceita! 🚗'), 
+      `${data.driverName || 'O motorista'} ${t('ride_accepted_msg', 'aceitou sua viagem e está a caminho.')}`
+    );
+  };
 
-    const handleRideStarted = () => { 
-      if (!isMountedRef.current) return;
-      setRideStatus('in_progress'); 
-      setIsChatVisible(false); 
-      if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'in_progress');
-    };
+  const handleDriverArrived = (data: any) => {
+    if (!isMountedRef.current) return;
+    setRideStatus('arrived');
+    if (data?.startOtp) setStartOtp(data.startOtp);
+    if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'arrived');
+    
+    Alert.alert(
+      t('driver_arrived_title', 'Motorista no Local! 📍'), 
+      t('driver_arrived_alert_msg', 'Seu motorista chegou ao ponto de partida e está te aguardando.')
+    );
+  };
 
-    const handleRideFinished = () => { 
-      if (!isMountedRef.current) return;
-      setRideStatus('completed');
-      setShowRatingModal(true); 
-    };
+  const handleRideStarted = () => { 
+    if (!isMountedRef.current) return;
+    setRideStatus('in_progress'); 
+    setIsChatVisible(false); 
+    if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'in_progress');
+  };
 
-    const handleRideCancelled = (data: any) => {
-      if (!isMountedRef.current) return;
-      
-      if (data?.cancelledBy === 'DRIVER') {
-        Alert.alert(t('warning_title', 'Aviso ⚠️'), t('driver_cancelled_msg', 'O motorista cancelou a corrida. Por favor, solicite um novo veículo.'));
-      } else {
-        Alert.alert(t('cancelled_title', 'Cancelado'), data?.appliedPenalty ? `${t('cancellation_fee', 'Taxa de cancelamento:')} ${data.penaltyAmount} XOF.` : t('ride_cancelled_msg', 'Sua corrida foi cancelada.'));
-      }
-      
-      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-      persistRideState(null, 'idle');
-      setActiveRideId(null);
-      setRideStatus('idle');
-      setDriverInfo(null);
-      setDriverLocation(null);
-      setStartOtp('');
-      
-      if (activeRideIdRef.current) activeRideIdRef.current = null;
-      resetRideState();
-    };
+  const handleRideFinished = () => { 
+    if (!isMountedRef.current) return;
+    setRideStatus('completed');
+    setShowRatingModal(true); 
+    persistRideState(null, 'idle');
+  };
 
-    const handleReceiveMessage = (messageData: any) => {
-      if (!isMountedRef.current || !messageData?.text) return;
-      setMessages(prev => {
-        const messageId = messageData.id || `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-        if (prev.some(msg => msg.id === messageId)) return prev;
-        return [...prev, { id: messageId, sender: 'driver', text: String(messageData.text) }];
+  const handleRideCancelled = (data: any) => {
+    if (!isMountedRef.current) return;
+    
+    if (data?.cancelledBy === 'DRIVER') {
+      Alert.alert(t('warning_title', 'Aviso ⚠️'), t('driver_cancelled_msg', 'O motorista cancelou a corrida. Por favor, solicite um novo veículo.'));
+    } else {
+      Alert.alert(t('cancelled_title', 'Cancelado'), data?.appliedPenalty ? `${t('cancellation_fee', 'Taxa de cancelamento:')} ${data.penaltyAmount} XOF.` : t('ride_cancelled_msg', 'Sua corrida foi cancelada.'));
+    }
+    
+    resetRideState();
+  };
+
+  const handleNoDriversFound = () => {
+    if (!isMountedRef.current) return;
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    Alert.alert(t('search_ended_title', 'Busca Encerrada'), t('no_drivers_found_msg', 'Não encontramos motoristas disponíveis na sua região. Tente novamente.'));
+    resetRideState();
+  };
+
+  const handlePriceCalculated = (data: any) => {
+    if (!isMountedRef.current || !data) return;
+    if (typeof data.price === 'number') setEstimatedPrice(data.price);
+    if (typeof data.distance === 'number') setEstimatedDistance(data.distance);
+  };
+
+  const handleDriverPosition = (data: any) => {
+    if (!isMountedRef.current || !data) return;
+    const lat = Number(data.latitude ?? data.lat);
+    const lng = Number(data.longitude ?? data.lng);
+
+    if (!isNaN(lat) && !isNaN(lng)) {
+      setDriverLocation({
+        latitude: lat,
+        longitude: lng,
+        heading: typeof data.heading === 'number' ? data.heading : 0,
       });
-    };
+    }
+  };
 
-    const handleNoDriversFound = () => {
-      if (!isMountedRef.current) return;
-      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-      Alert.alert(t('search_ended_title', 'Busca Encerrada'), t('no_drivers_found_msg', 'Não encontramos motoristas disponíveis na sua região. Tente novamente.'));
-      resetRideState();
-    };
+  // 3️⃣ REGISTRO DOS EVENTOS DO SOCKET E CHAT
+  socket.on('connect', handleConnect);
+  socket.on('disconnect', handleDisconnect);
+  socket.on('passenger:state_recovered', handleStateRecovered);
+  socket.on('driver:position', handleDriverPosition);
+  
+  // Status da Corrida
+  socket.on('ride:accepted', handleRideAccepted);
+  socket.on('ride:arrived', handleDriverArrived);
+  socket.on('ride:driver_arrived', handleDriverArrived);
+  socket.on('ride:started', handleRideStarted);
+  socket.on('ride:finished', handleRideFinished);
+  socket.on('ride:completed', handleRideFinished);
+  socket.on('ride:cancelled', handleRideCancelled);
+  
+  // Chat em Tempo Real
+  socket.on('chat:receive_message', handleIncomingChatMessage);
+  socket.on('chat:message', handleIncomingChatMessage);
+  socket.on('chat:new_message', handleIncomingChatMessage);
+  
+  socket.on('ride:no_drivers_found', handleNoDriversFound);
+  socket.on('ride:price_calculated', handlePriceCalculated);
+  socket.on('ride:inaccessible_location', handleInaccessibleLocationAlert);
 
-    const handlePriceCalculated = (data: any) => {
-      if (!isMountedRef.current || !data) return;
-      if (typeof data.price === 'number') setEstimatedPrice(data.price);
-      if (typeof data.distance === 'number') setEstimatedDistance(data.distance);
-    };
-
-    const handleDriverPosition = (data: any) => {
-      if (!isMountedRef.current || !data) return;
-      const lat = Number(data.latitude ?? data.lat);
-      const lng = Number(data.longitude ?? data.lng);
-
-      if (!isNaN(lat) && !isNaN(lng)) {
-        setDriverLocation({
-          latitude: lat,
-          longitude: lng,
-          heading: typeof data.heading === 'number' ? data.heading : 0,
-        });
-      }
-    };
-
-    socket.on('connect', handleConnect);
-    socket.on('disconnect', handleDisconnect);
-    socket.on('passenger:state_recovered', handleStateRecovered);
-    socket.on('driver:position', handleDriverPosition);
-    socket.on('ride:accepted', handleRideAccepted);
-    socket.on('ride:driver_arrived', handleDriverArrived);
-    socket.on('ride:started', handleRideStarted);
-    socket.on('ride:finished', handleRideFinished);
-    socket.on('ride:cancelled', handleRideCancelled);
-    
-    // 🟢 ENTRA AQUI
-    socket.on('chat:receive_message', handleIncomingChatMessage);
-    socket.on('chat:message', handleIncomingChatMessage);
-    socket.on('chat:new_message', handleIncomingChatMessage);
-    
-    socket.on('ride:no_drivers_found', handleNoDriversFound);
-    socket.on('ride:price_calculated', handlePriceCalculated);
-    socket.on('ride:inaccessible_location', handleInaccessibleLocationAlert);
-
-    return () => {
-      socket.off('connect', handleConnect);
-      socket.off('disconnect', handleDisconnect);
-      socket.off('passenger:state_recovered', handleStateRecovered);
-      socket.off('driver:position', handleDriverPosition);
-      socket.off('ride:accepted', handleRideAccepted);
-      socket.off('ride:driver_arrived', handleDriverArrived);
-      socket.off('ride:started', handleRideStarted);
-      socket.off('ride:finished', handleRideFinished);
-      socket.off('ride:cancelled', handleRideCancelled);
-      
-      // 🟢 ENTRA AQUI TAMBÉM
-      socket.off('chat:receive_message', handleIncomingChatMessage);
-      socket.off('chat:message', handleIncomingChatMessage);
-      socket.off('chat:new_message', handleIncomingChatMessage);
-      
-      socket.off('ride:no_drivers_found', handleNoDriversFound);
-      socket.off('ride:price_calculated', handlePriceCalculated);
-      socket.off('ride:inaccessible_location', handleInaccessibleLocationAlert);
-      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    };
-  }, [getCurrentLocationWithFallback, handleInaccessibleLocationAlert, resetRideState, syncPassengerActiveRide, t]);
+  return () => {
+    socket.off('connect', handleConnect);
+    socket.off('disconnect', handleDisconnect);
+    socket.off('passenger:state_recovered', handleStateRecovered);
+    socket.off('driver:position', handleDriverPosition);
+    socket.off('ride:accepted', handleRideAccepted);
+    socket.off('ride:arrived', handleDriverArrived);
+    socket.off('ride:driver_arrived', handleDriverArrived);
+    socket.off('ride:started', handleRideStarted);
+    socket.off('ride:finished', handleRideFinished);
+    socket.off('ride:completed', handleRideFinished);
+    socket.off('ride:cancelled', handleRideCancelled);
+    socket.off('chat:receive_message', handleIncomingChatMessage);
+    socket.off('chat:message', handleIncomingChatMessage);
+    socket.off('chat:new_message', handleIncomingChatMessage);
+    socket.off('ride:no_drivers_found', handleNoDriversFound);
+    socket.off('ride:price_calculated', handlePriceCalculated);
+    socket.off('ride:inaccessible_location', handleInaccessibleLocationAlert);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+  };
+}, [
+  user?.id, 
+  getCurrentLocationWithFallback, 
+  handleInaccessibleLocationAlert, 
+  handleIncomingChatMessage, 
+  resetRideState, 
+  syncPassengerActiveRide, 
+  t
+]);
 
   useEffect(() => {
     let origin = pickupCoords;
@@ -1597,7 +1605,7 @@ function executeRideRequest() {
 
     setRideStatus('searching');
     
-    // Mapeamento estrito para os Enums do Schema V3.0
+    // Mapeamento estrito para os Enums do Backend
     const mappedServiceType = serviceType === 'viagem' ? 'RIDE' : serviceType === 'entrega' ? 'DELIVERY' : 'RENTAL';
     const mappedVehicleType = 
       vehicleType === 'particular' ? 'PARTICULAR' : 
@@ -1625,8 +1633,7 @@ function executeRideRequest() {
       priceXof: estimatedPrice,
       guestName: isForAnotherPerson ? guestName : undefined,
       guestPhone: isForAnotherPerson ? guestPhone : undefined,
-
-      // 🟢 GARANTE TODOS OS FORMATOS DE CHAVE PARA O MOTORISTA LER SEM FALHAS
+      // 🟢 PARADAS INTERMEDIÁRIAS COMPATÍVEIS COM O MOTORISTA
       stops: (extraStopCoords?.latitude && extraStopCoords?.longitude) ? [
         {
           address: extraStopAddress || 'Parada Intermediária',
@@ -1637,7 +1644,6 @@ function executeRideRequest() {
           status: 'PENDING'
         }
       ] : [],
-
       extraStopLat: extraStopCoords?.latitude,
       extraStopLng: extraStopCoords?.longitude,
       extraStopAddress: extraStopAddress || undefined,
@@ -1848,21 +1854,54 @@ const handleSosPress = () => {
     { cancelable: true }
   );
 };
-if (!passengerLocation || (locationError && !passengerLocation)) {
+// 🛡️ COORDENADA SEGURA DA CÂMERA (Garante que o mapa NUNCA vá para o Oceano [0,0])
+const safeCenterCoordinate = React.useMemo(() => {
+  if (
+    driverLocation?.latitude && 
+    driverLocation?.longitude && 
+    !isNaN(Number(driverLocation.latitude)) && 
+    Number(driverLocation.latitude) !== 0
+  ) {
+    return [Number(driverLocation.longitude), Number(driverLocation.latitude)];
+  }
+
+  if (
+    pickupCoords?.latitude && 
+    pickupCoords?.longitude && 
+    !isNaN(Number(pickupCoords.latitude)) && 
+    Number(pickupCoords.latitude) !== 0
+  ) {
+    return [Number(pickupCoords.longitude), Number(pickupCoords.latitude)];
+  }
+
+  if (
+    passengerLocation?.coords?.latitude && 
+    passengerLocation?.coords?.longitude && 
+    !isNaN(Number(passengerLocation.coords.latitude)) && 
+    Number(passengerLocation.coords.latitude) !== 0
+  ) {
+    return [Number(passengerLocation.coords.longitude), Number(passengerLocation.coords.latitude)];
+  }
+
+  return [BISSAU_CENTER.longitude, BISSAU_CENTER.latitude];
+}, [driverLocation, pickupCoords, passengerLocation]);
+
+// 🛡️ TRAVA DE SEGURANÇA (Se houver corrida restaurada, exibe a tela imediatamente)
+const hasActiveRestoredRide = rideStatus !== 'idle' && Boolean(activeRideId);
+
+if (!passengerLocation && !hasActiveRestoredRide && locationError) {
   return (
     <View style={[styles.loadingContainer, { paddingTop: Math.max(insets?.top || 0, 40), paddingBottom: Math.max(insets?.bottom || 0, 20) }]}>
       <StatusBar barStyle="light-content" backgroundColor="#0F172A" translucent />
       <MaterialCommunityIcons name="map-marker-radius" size={54} color="#EAB308" />
       <Text style={styles.loadingText}>{locationError || t('getting_location', 'Obtendo localização exata...')}</Text>
-      {locationError && (
-        <TouchableOpacity 
-          style={styles.retryLocationBtn} 
-          onPress={getCurrentLocationWithFallback}
-          activeOpacity={0.8}
-        >
-          <Text style={{ color: '#0F172A', fontWeight: 'bold' }}>{t('try_again', 'Tentar Novamente')}</Text>
-        </TouchableOpacity>
-      )}
+      <TouchableOpacity 
+        style={styles.retryLocationBtn} 
+        onPress={getCurrentLocationWithFallback}
+        activeOpacity={0.8}
+      >
+        <Text style={{ color: '#0F172A', fontWeight: 'bold' }}>{t('try_again', 'Tentar Novamente')}</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -1928,15 +1967,12 @@ return (
       <Mapbox.Camera
         ref={cameraRef}
         zoomLevel={14}
-        centerCoordinate={[
-          passengerLocation?.coords?.longitude || BISSAU_CENTER.longitude,
-          passengerLocation?.coords?.latitude || BISSAU_CENTER.latitude,
-        ]}
+        centerCoordinate={safeCenterCoordinate}
         animationMode="flyTo"
         animationDuration={1000}
       />
 
-      {/* ROTA MAPBOX (Desenhada passando por origem, parada extra e destino) */}
+      {/* ROTA MAPBOX */}
       {routeGeometry?.type === 'Feature' && routeGeometry?.geometry?.coordinates && (
         <Mapbox.ShapeSource id="routeSource" shape={routeGeometry}>
           <Mapbox.LineLayer
@@ -1951,35 +1987,34 @@ return (
         </Mapbox.ShapeSource>
       )}
 
-      {/* 🚗 MARCADORES DOS MOTORISTAS ONLINE PRÓXIMOS (LIVRES) */}
-      {nearbyDrivers && nearbyDrivers.map((driver: any) => (
-        <Mapbox.PointAnnotation
-          key={`online-driver-${driver.id}`}
-          id={`online-driver-${driver.id}`}
-          coordinate={[Number(driver.lng), Number(driver.lat)]}
-          anchor={{ x: 0.5, y: 0.5 }}
-        >
-          <View style={styles.driverMarkerWrapper}>
-            <View style={{ transform: [{ rotate: `${driver.heading || 0}deg` }] }}>
-              <Image
-                source={getVehicle3DIconAsset(driver.vehicleType || 'TAXI', driver.carColor || 'AMARELO')}
-                style={styles.driverMarkerImage}
-                fadeDuration={0}
-                resizeMode="contain"
-              />
+      {/* 🚗 MOTORISTAS ONLINE PRÓXIMOS */}
+      {nearbyDrivers && nearbyDrivers
+        .filter((d: any) => d.lat && d.lng && Number(d.lat) !== 0 && Number(d.lng) !== 0)
+        .map((driver: any) => (
+          <Mapbox.PointAnnotation
+            key={`online-driver-${driver.id}`}
+            id={`online-driver-${driver.id}`}
+            coordinate={[Number(driver.lng), Number(driver.lat)]}
+            anchor={{ x: 0.5, y: 0.5 }}
+          >
+            <View style={styles.driverMarkerWrapper}>
+              <View style={{ transform: [{ rotate: `${driver.heading || 0}deg` }] }}>
+                <Image
+                  source={getVehicle3DIconAsset(driver.vehicleType || 'TAXI', driver.carColor || 'AMARELO')}
+                  style={styles.driverMarkerImage}
+                  fadeDuration={0}
+                  resizeMode="contain"
+                />
+              </View>
             </View>
-          </View>
-        </Mapbox.PointAnnotation>
-      ))}
+          </Mapbox.PointAnnotation>
+        ))}
 
       {/* 📍 PONTO DE EMBARQUE */}
-      {(pickupCoords?.latitude != null && pickupCoords?.longitude != null && !isNaN(Number(pickupCoords.longitude)) && !isNaN(Number(pickupCoords.latitude))) && (
+      {pickupCoords?.latitude != null && pickupCoords?.longitude != null && !isNaN(Number(pickupCoords.longitude)) && Number(pickupCoords.latitude) !== 0 && (
         <Mapbox.PointAnnotation 
           id="pickupPoint" 
-          coordinate={[
-            Number(pickupCoords.longitude), 
-            Number(pickupCoords.latitude)
-          ]}
+          coordinate={[Number(pickupCoords.longitude), Number(pickupCoords.latitude)]}
         >
           <View style={styles.pickupMarker}>
             <Ionicons name="pin" size={22} color="#EAB308" />
@@ -1987,8 +2022,8 @@ return (
         </Mapbox.PointAnnotation>
       )}
 
-      {/* 🔵 PARADA EXTRA (INTERMEDIÁRIA) */}
-      {extraStopCoords?.latitude != null && extraStopCoords?.longitude != null && !isNaN(Number(extraStopCoords.longitude)) && !isNaN(Number(extraStopCoords.latitude)) && (
+      {/* 🔵 PARADA EXTRA */}
+      {extraStopCoords?.latitude != null && extraStopCoords?.longitude != null && !isNaN(Number(extraStopCoords.longitude)) && Number(extraStopCoords.latitude) !== 0 && (
         <Mapbox.PointAnnotation
           id="extraStopMarker"
           coordinate={[Number(extraStopCoords.longitude), Number(extraStopCoords.latitude)]}
@@ -2000,7 +2035,7 @@ return (
       )}
 
       {/* 🚩 DESTINO FINAL */}
-      {dropoffCoords?.latitude != null && dropoffCoords?.longitude != null && !isNaN(Number(dropoffCoords.longitude)) && !isNaN(Number(dropoffCoords.latitude)) && (
+      {dropoffCoords?.latitude != null && dropoffCoords?.longitude != null && !isNaN(Number(dropoffCoords.longitude)) && Number(dropoffCoords.latitude) !== 0 && (
         <Mapbox.PointAnnotation
           id="dropoffMarker"
           coordinate={[Number(dropoffCoords.longitude), Number(dropoffCoords.latitude)]}
@@ -2011,8 +2046,8 @@ return (
         </Mapbox.PointAnnotation>
       )}
 
-      {/* 🏎️ MOTORISTA EM MOVIMENTO VISTO PELO PASSAGEIRO */}
-      {driverLocation?.latitude != null && driverLocation?.longitude != null && !isNaN(Number(driverLocation.longitude)) && !isNaN(Number(driverLocation.latitude)) && (
+      {/* 🏎️ MOTORISTA EM MOVIMENTO */}
+      {driverLocation?.latitude != null && driverLocation?.longitude != null && !isNaN(Number(driverLocation.longitude)) && Number(driverLocation.latitude) !== 0 && (
         <Mapbox.PointAnnotation
           id="driverMarker"
           coordinate={[Number(driverLocation.longitude), Number(driverLocation.latitude)]}
@@ -2050,9 +2085,9 @@ return (
       style={[styles.recenterButton, { bottom: Math.max((insets?.bottom || 0) + 260, 270) }]} 
       activeOpacity={0.85}
       onPress={() => {
-        if (passengerLocation?.coords && cameraRef.current) {
+        if (cameraRef.current) {
           cameraRef.current.setCamera({
-            centerCoordinate: [passengerLocation.coords.longitude, passengerLocation.coords.latitude],
+            centerCoordinate: safeCenterCoordinate,
             zoomLevel: 15,
             animationDuration: 800,
           });
@@ -2178,7 +2213,6 @@ return (
           {/* SERVIÇO E VEÍCULO */}
           {rideStatus === 'idle' && bookingStep === 'SERVICE_AND_PRICE' && (
             <View style={{ width: '100%' }}>
-              {/* RESUMO DO ITINERÁRIO (MÚLTIPLAS PARADAS) */}
               <View style={{ backgroundColor: '#1E293B', padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: '#334155' }}>
                 <Text style={{ color: '#94A3B8', fontSize: 11, fontWeight: 'bold', marginBottom: 6 }}>RESUMO DO PERCURSO</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
@@ -2410,7 +2444,6 @@ return (
                 </TouchableOpacity>
               </View>
 
-              {/* BOTÕES DE AÇÃO */}
               <View style={styles.actionRow}>
                 <TouchableOpacity 
                   style={styles.cancelButtonOutline} 
@@ -2428,661 +2461,655 @@ return (
               </View>
             </View>
           )}
-       
-            {/* 🔑 PIN DE EMBARQUE DE SEGURANÇA */}
-            {(rideStatus === 'accepted' || rideStatus === 'arrived') && Boolean(activeOtpPin) && (
-              <View style={styles.pinCardContainer}>
-                <View style={styles.pinHeader}>
-                  <Ionicons name="shield-checkmark-sharp" size={18} color="#10B981" />
-                  <Text style={styles.pinTitle}>{t('boarding_pin_title', 'PIN DE EMBARQUE')}</Text>
-                </View>
-                <Text style={styles.pinSubtitle}>{t('tell_pin_to_driver_msg', 'Fale este código ao motorista para iniciar a corrida')}</Text>
-                <View style={styles.pinDigitsRow}>
-                  {activeOtpPin.split('').map((digit, index) => (
-                    <View key={`pin-digit-${index}`} style={styles.pinDigitBox}>
-                      <Text style={styles.pinDigitText}>{digit}</Text>
-                    </View>
-                  ))}
-                </View>
+
+          {/* 🔑 PIN DE EMBARQUE DE SEGURANÇA */}
+          {(rideStatus === 'accepted' || rideStatus === 'arrived') && Boolean(activeOtpPin) && (
+            <View style={styles.pinCardContainer}>
+              <View style={styles.pinHeader}>
+                <Ionicons name="shield-checkmark-sharp" size={18} color="#10B981" />
+                <Text style={styles.pinTitle}>{t('boarding_pin_title', 'PIN DE EMBARQUE')}</Text>
               </View>
-            )}
-
-            {/* 📡 STATUS DE BUSCA DE MOTORISTAS */}
-            {rideStatus === 'searching' && (
-              <View style={styles.statusBox}>
-                <ActivityIndicator size="large" color="#EAB308" style={{ marginBottom: 12 }} />
-                <Text style={styles.statusTitle}>{t('searching_drivers_title', 'Buscando motoristas...')}</Text>
-                <Text style={styles.statusSub}>{t('locating_nearest_vehicle', 'Localizando o veículo mais próximo de você.')}</Text>
-                <TouchableOpacity 
-                  style={[styles.cancelButtonOutline, { marginTop: 16 }]} 
-                  onPress={() => setShowCancelModal(true)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.cancelButtonOutlineText}>{t('cancel_search_btn', 'Cancelar Busca')}</Text>
-                </TouchableOpacity>
+              <Text style={styles.pinSubtitle}>{t('tell_pin_to_driver_msg', 'Fale este código ao motorista para iniciar a corrida')}</Text>
+              <View style={styles.pinDigitsRow}>
+                {activeOtpPin.split('').map((digit, index) => (
+                  <View key={`pin-digit-${index}`} style={styles.pinDigitBox}>
+                    <Text style={styles.pinDigitText}>{digit}</Text>
+                  </View>
+                ))}
               </View>
-            )}
-
-            {/* 🚘 CARD DO MOTORISTA E VEÍCULO */}
-            {driverInfo && rideStatus !== 'searching' && (
-              <View style={styles.driverCardContainer}>
-                <View style={styles.driverMainInfo}>
-                  {driverInfo?.photoUrl || driverInfo?.profilePicture ? (
-                    <Image source={{ uri: driverInfo.photoUrl || driverInfo.profilePicture }} style={styles.driverAvatarProfile} />
-                  ) : (
-                    <View style={styles.driverAvatarProfile}>
-                      <Ionicons name="person" size={24} color="#94A3B8" />
-                    </View>
-                  )}
-                  
-                  <View style={styles.driverDetails}>
-                    <Text style={styles.driverName}>{driverInfo?.name || 'Motorista'}</Text>
-                    <View style={styles.driverRatingBadge}>
-                      <Ionicons name="star" size={14} color="#EAB308" />
-                      <Text style={styles.driverRatingText}>{driverInfo?.rating || 5.0}</Text>
-                    </View>
-                  </View>
-                </View>
-
-                <View style={styles.dividerLight} />
-
-                <View style={styles.vehicleShowcase}>
-                  <Image 
-                    source={getVehicleImage(driverInfo?.vehicleType || vehicleType)} 
-                    style={styles.showcaseVehicleImg} 
-                    resizeMode="contain" 
-                  />
-                  
-                  <View style={styles.vehicleDetailsCol}>
-                    <Text style={styles.vehicleModelText} numberOfLines={1}>
-                      {driverInfo?.carModel || t('standard_vehicle', 'Veículo Padrão')}
-                    </Text>
-                    
-                    <View style={styles.colorAndPlateRow}>
-                      <View style={[styles.modernColorChip, { backgroundColor: getVehicleColorHex(driverInfo?.carColor) }]} />
-                      <Text style={styles.vehicleColorText}>{driverInfo?.carColor || t('color_not_specified', 'Cor não informada')}</Text>
-                      
-                      <View style={styles.dotSeparator} />
-                      
-                      <View style={styles.modernPlateBadge}>
-                        <Text style={styles.modernPlateText}>{driverInfo?.licensePlate?.toUpperCase() || t('no_license_plate', 'SEM PLACA')}</Text>
-                      </View>
-                    </View>
-                  </View>
-                </View>
-              </View>
-            )}
-
-            {/* 📊 BANNER DE STATUS E CONTROLES EM ANDAMENTO */}
-            {['accepted', 'arrived', 'in_progress'].includes(rideStatus) && driverInfo && (
-              <View style={{ width: '100%' }}>
-                <View style={styles.statusBanner}>
-                  <Text style={styles.statusBannerText}>
-                    {rideStatus === 'accepted' 
-                      ? (driverEta ? `${t('arriving_in', 'Chegando em')} ${driverEta} min` : t('driver_on_way', 'Motorista a caminho')) :
-                     rideStatus === 'arrived' 
-                      ? t('driver_arrived', 'O motorista chegou!') : 
-                     (driverEta ? `${t('destination_in', 'Destino em')} ${driverEta} min` : t('ride_in_progress', 'Viagem em andamento'))}
-                  </Text>
-                  <TouchableOpacity onPress={handleShareTrip} style={styles.shareButton} activeOpacity={0.8}>
-                    <Ionicons name="share-social-outline" size={18} color="#0F172A" />
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.actionRow}>
-                  <TouchableOpacity 
-                    style={[styles.iconCircleButton, styles.sosButton]} 
-                    onPress={handleSosPress}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="shield-checkmark" size={18} color="#EF4444" />
-                  </TouchableOpacity>
-
-                  <TouchableOpacity style={styles.iconCircleButton} onPress={handleCallDriver} activeOpacity={0.8}>
-                    <Ionicons name="call" size={18} color="#EAB308" />
-                  </TouchableOpacity>
-
-                  <TouchableOpacity style={styles.cancelButtonOutline} onPress={() => setShowCancelModal(true)} activeOpacity={0.8}>
-                    <Text style={styles.cancelButtonOutlineText}>{t('cancel_ride', 'Cancelar')}</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity style={[styles.requestButton, { flex: 1, marginLeft: 6 }]} onPress={() => setIsChatVisible(true)} activeOpacity={0.85}>
-                    <Ionicons name="chatbubble-ellipses" size={16} color="#0F172A" style={{ marginRight: 6 }} />
-                    <Text style={styles.requestButtonText}>Chat</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-          </ScrollView>
-        </Animated.View>
-      </KeyboardAvoidingView>
-
-      {/* 4. MODAIS DO SISTEMA */}
-
-      {/* MODAL DE IDIOMAS */}
-      <Modal visible={langModalVisible} transparent animationType="slide" onRequestClose={() => setLangModalVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
-          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-            <View style={styles.modalOverlayInner}>
-              <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
-                <View style={[styles.modalContainer, { paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
-                  <Text style={styles.modalTitle}>{t('select_language', 'Selecione o Idioma')}</Text>
-                  {LANGUAGES.map((lang) => (
-                    <TouchableOpacity
-                      key={lang.code}
-                      style={styles.langOption}
-                      onPress={() => changeLanguage(lang.code)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.langOptionText}>{lang.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                  <TouchableOpacity 
-                    style={styles.closeButton} 
-                    onPress={() => setLangModalVisible(false)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={{ color: '#EF4444', fontWeight: 'bold' }}>{t('back_btn', 'Fechar')}</Text>
-                  </TouchableOpacity>
-                </View>
-              </TouchableWithoutFeedback>
             </View>
-          </TouchableWithoutFeedback>
-        </KeyboardAvoidingView>
-      </Modal>
+          )}
 
-      {/* MODAL DE PERMISSÃO DE GPS */}
-      <Modal visible={isLocationSettingsVisible} animationType="slide" transparent onRequestClose={() => setIsLocationSettingsVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
-          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-            <View style={styles.modalOverlayInner}>
-              <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
-                <View style={[styles.locationModalCard, { paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
-                  <View style={styles.locationIconBg}>
-                    <Ionicons name="location" size={32} color="#EAB308" />
-                  </View>
-                  <Text style={styles.locationModalTitle}>{t('location_needed_title', 'Localização Necessária')}</Text>
-                  <Text style={styles.locationModalText}>
-                    {locationError || t('location_needed_desc', 'Para encontrar motoristas rapidamente e garantir sua segurança, precisamos que ative o GPS e permita o acesso no seu celular.')}
-                  </Text>
-                  
-                  <TouchableOpacity 
-                    style={[styles.requestButton, { width: '100%', marginBottom: 12 }]} 
-                    onPress={() => Linking.openSettings()}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.requestButtonText}>{t('open_settings', 'Abrir Configurações')}</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity 
-                    style={styles.cancelButtonOutline} 
-                    onPress={getCurrentLocationWithFallback}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.cancelButtonOutlineText}>{t('try_again', 'Já ativei / Tentar novamente')}</Text>
-                  </TouchableOpacity>
-                </View>
-              </TouchableWithoutFeedback>
-            </View>
-          </TouchableWithoutFeedback>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* MODAL DE PAGAMENTO MOBILE MONEY */}
-      <Modal 
-        visible={isPaymentModalVisible} 
-        transparent 
-        animationType="fade" 
-        onRequestClose={() => !isProcessingPayment && setIsPaymentModalVisible(false)}
-      >
-        <KeyboardAvoidingView 
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
-          style={{ flex: 1 }}
-        >
-          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-            <View style={styles.modalOverlay}>
-              <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
-                <View style={[styles.paymentModalCard, { paddingBottom: Math.max((insets?.bottom || 0) + 20, 24) }]}>
-                  
-                  <View style={[
-                    styles.operatorHeader, 
-                    { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#004F9F' }
-                  ]}>
-                    <View style={styles.operatorHeaderContent}>
-                      <Ionicons 
-                        name={paymentMethod === 'ORANGE_MONEY' ? "wallet-outline" : "card-outline"} 
-                        size={26} 
-                        color="#FFFFFF" 
-                      />
-                      <Text style={styles.operatorTitle}>
-                        {paymentMethod === 'ORANGE_MONEY' ? 'Orange Money' : 'MTN Mobile Money'}
-                      </Text>
-                    </View>
-                    <TouchableOpacity 
-                      onPress={() => !isProcessingPayment && setIsPaymentModalVisible(false)}
-                      disabled={isProcessingPayment}
-                      activeOpacity={0.7}
-                    >
-                      <Ionicons name="close-circle" size={26} color="rgba(255,255,255,0.8)" />
-                    </TouchableOpacity>
-                  </View>
-
-                  <ScrollView 
-                    style={styles.paymentModalBody} 
-                    contentContainerStyle={{ flexGrow: 1, paddingTop: 16, paddingBottom: 12 }} 
-                    showsVerticalScrollIndicator={false} 
-                    keyboardShouldPersistTaps="always"
-                  >
-                    <Text style={styles.paymentModalSubtitle}>
-                      {t('ussd_push_instruction', 'Confirme o seu número. Receberá uma notificação segura no telemóvel para digitar o seu PIN.')}
-                    </Text>
-
-                    <View style={styles.amountBadgeContainer}>
-                      <Text style={styles.amountTextLabel}>{t('total_amount', 'VALOR A PAGAR')}</Text>
-                      <Text style={styles.amountValue}>
-                        {estimatedPrice ? `${estimatedPrice.toLocaleString('pt-GW')} XOF` : t('calculating', 'Calculando...')}
-                      </Text>
-                    </View>
-
-                    <Text style={styles.inputLabel}>{t('mobile_money_account', 'Número de Telefone da Conta')}</Text>
-                    <View style={styles.phoneInputContainer}>
-                      <Ionicons name="call-outline" size={20} color="#64748B" style={{ marginLeft: 12 }} />
-                      <TextInput
-                        style={styles.phoneInput}
-                        value={paymentPhone}
-                        onChangeText={(text) => setPaymentPhone(text.replace(/[^0-9]/g, ''))}
-                        keyboardType="number-pad"
-                        autoCorrect={false}
-                        maxLength={12}
-                        editable={!isProcessingPayment}
-                        placeholder={t('phone_number_placeholder', 'Ex: 955000000')}
-                        placeholderTextColor="#94A3B8"
-                      />
-                    </View>
-
-                    <View style={styles.modalActionsRow}>
-                      <TouchableOpacity 
-                        style={styles.cancelModalBtn} 
-                        disabled={isProcessingPayment} 
-                        onPress={() => setIsPaymentModalVisible(false)} 
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.cancelModalBtnText}>{t('back_btn', 'Cancelar')}</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity 
-                        style={[
-                          styles.confirmModalBtn, 
-                          { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#004F9F' },
-                          isProcessingPayment && { opacity: 0.7 }
-                        ]}
-                        disabled={isProcessingPayment}
-                        onPress={confirmPaymentAndRide}
-                        activeOpacity={0.85}
-                      >
-                        {isProcessingPayment ? (
-                          <ActivityIndicator color="#FFFFFF" size="small" />
-                        ) : (
-                          <Text style={styles.confirmModalBtnText}>{t('confirm_payment_btn', 'Confirmar e Pagar')}</Text>
-                        )}
-                      </TouchableOpacity>
-                    </View>
-                  </ScrollView>
-                </View>
-              </TouchableWithoutFeedback>
-            </View>
-          </TouchableWithoutFeedback>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* MENU LATERAL DRAWER */}
-      <Modal visible={isMenuVisible} animationType="fade" transparent onRequestClose={() => setIsMenuVisible(false)}>
-        <TouchableOpacity style={styles.menuOverlay} activeOpacity={1} onPress={() => setIsMenuVisible(false)}>
-          <View style={[styles.menuDrawer, { paddingTop: Math.max((insets?.top || 0) + 16, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 20), paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
-            <View style={styles.menuHeader}>
-              <View style={styles.avatarPlaceholderLarge}>
-                {user?.profilePicture ? (
-                  <Image source={{ uri: formatPhotoUrl(user.profilePicture) }} style={{ width: '100%', height: '100%', borderRadius: 30 }} />
-                ) : (
-                  <Ionicons name="person" size={32} color="#0F172A" />
-                )}
-              </View>
-              <Text style={styles.menuUserName}>{user?.fullName || t('passenger', 'Passageiro')}</Text>
-              <Text style={styles.menuUserPhone}>{user?.phone || ''}</Text>
-            </View>
-
-            <View style={styles.menuItems}>
-              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('Profile'); }} activeOpacity={0.7}>
-                <Ionicons name="person-outline" size={20} color="#0F172A" />
-                <Text style={styles.menuItemText}>{t('my_profile', 'Meu Perfil')}</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('RideHistory'); }} activeOpacity={0.7}>
-                <Ionicons name="time-outline" size={20} color="#0F172A" />
-                <Text style={styles.menuItemText}>{t('my_rides', 'Minhas Corridas')}</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('EmergencyContacts'); }} activeOpacity={0.7}>
-                <Ionicons name="shield-checkmark-outline" size={20} color="#0F172A" />
-                <Text style={styles.menuItemText}>{t('emergency_contacts', 'Contatos de Emergência')}</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('HelpCenter'); }} activeOpacity={0.7}>
-                <Ionicons name="help-buoy-outline" size={20} color="#0F172A" />
-                <Text style={styles.menuItemText}>{t('help_center', 'Central de Ajuda')}</Text>
-              </TouchableOpacity>
-
-              <View style={styles.menuDivider} />
-
-              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); signOut(); }} activeOpacity={0.7}>
-                <Ionicons name="log-out-outline" size={20} color="#EF4444" />
-                <Text style={[styles.menuItemText, { color: '#EF4444' }]}>{t('logout', 'Sair da Conta')}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </TouchableOpacity>
-      </Modal>
-
-      {/* CHAT INTERNO */}
-      <Modal 
-        visible={isChatVisible} 
-        animationType="slide" 
-        transparent 
-        statusBarTranslucent
-        onRequestClose={() => setIsChatVisible(false)}
-      >
-        <KeyboardAvoidingView 
-          style={styles.chatOverlay} 
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          <View style={[styles.chatContainer, { paddingTop: Math.max((insets?.top || 0) + 10, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 16) }]}>
-            <View style={styles.chatHeader}>
-              <View style={styles.chatHeaderUserInfo}>
-                {driverInfo?.photoUrl || driverInfo?.profilePicture ? (
-                  <Image source={{ uri: formatPhotoUrl(driverInfo.photoUrl || driverInfo.profilePicture) }} style={styles.headerAvatar} />
-                ) : (
-                  <View style={styles.headerAvatarPlaceholder}>
-                    <Ionicons name="person" size={18} color="#64748B" />
-                  </View>
-                )}
-                <Text style={styles.chatTitle}>
-                  {t('chat_with', 'Chat com')} {driverInfo?.name || 'Motorista'}
-                </Text>
-              </View>
-
-              <TouchableOpacity onPress={() => setIsChatVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} activeOpacity={0.8}>
-                <Ionicons name="close" size={22} color="#FFFFFF" />
-              </TouchableOpacity>
-            </View>
-
-            <FlatList
-              ref={chatFlatListRef}
-              data={messages}
-              keyExtractor={(item, index) => item.id || `msg-${index}`}
-              contentContainerStyle={styles.chatList}
-              keyboardShouldPersistTaps="handled"
-              onContentSizeChange={() => chatFlatListRef.current?.scrollToEnd({ animated: true })}
-              renderItem={({ item }) => {
-                const isPassenger = item.sender === 'passenger';
-                const photoUrl = formatPhotoUrl(item.senderPhoto || (isPassenger ? user?.profilePicture : driverInfo?.profilePicture));
-
-                return (
-                  <View style={[styles.messageRow, isPassenger ? styles.rowPassenger : styles.rowDriver]}>
-                    {!isPassenger && (
-                      photoUrl ? (
-                        <Image source={{ uri: photoUrl }} style={styles.chatBubbleAvatar} />
-                      ) : (
-                        <View style={styles.chatBubbleAvatarPlaceholder}>
-                          <Ionicons name="person" size={12} color="#64748B" />
-                        </View>
-                      )
-                    )}
-
-                    <View style={[styles.messageBubble, isPassenger ? styles.messagePassenger : styles.messageDriver]}>
-                      <Text style={[styles.messageText, isPassenger ? styles.textPassenger : styles.textDriver]}>
-                        {item.text}
-                      </Text>
-                    </View>
-
-                    {isPassenger && (
-                      photoUrl ? (
-                        <Image source={{ uri: photoUrl }} style={styles.chatBubbleAvatar} />
-                      ) : (
-                        <View style={styles.chatBubbleAvatarPlaceholder}>
-                          <Ionicons name="person" size={12} color="#64748B" />
-                        </View>
-                      )
-                    )}
-                  </View>
-                );
-              }}
-            />
-
-            <View style={[styles.chatInputContainer, { paddingBottom: Math.max((insets?.bottom || 0) + 8, 12) }]}>
-              <TextInput
-                style={styles.chatInput}
-                value={inputText}
-                onChangeText={setInputText}
-                placeholder={t('type_something', 'Escreva algo...')}
-                placeholderTextColor="#94A3B8"
-                multiline
-                maxLength={250}
-              />
-              <TouchableOpacity style={styles.chatSendButton} onPress={sendMessage} activeOpacity={0.85}>
-                <Ionicons name="send" size={16} color="#0F172A" />
-              </TouchableOpacity>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* MODAL DE BUSCA DE ENDEREÇO MAPBOX */}
-      <Modal 
-        visible={isSearchModalVisible} 
-        animationType="slide" 
-        transparent={false} 
-        onRequestClose={() => setIsSearchModalVisible(false)}
-      >
-        <SafeAreaView style={styles.searchModalContainer}>
-          <KeyboardAvoidingView 
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
-            style={{ flex: 1 }}
-          >
-            {/* CABEÇALHO */}
-            <View style={styles.searchHeader}>
+          {/* 📡 STATUS DE BUSCA DE MOTORISTAS */}
+          {rideStatus === 'searching' && (
+            <View style={styles.statusBox}>
+              <ActivityIndicator size="large" color="#EAB308" style={{ marginBottom: 12 }} />
+              <Text style={styles.statusTitle}>{t('searching_drivers_title', 'Buscando motoristas...')}</Text>
+              <Text style={styles.statusSub}>{t('locating_nearest_vehicle', 'Localizando o veículo mais próximo de você.')}</Text>
               <TouchableOpacity 
-                onPress={() => setIsSearchModalVisible(false)} 
-                style={styles.backButton} 
-                activeOpacity={0.7}
-              >
-                <Ionicons name="arrow-back" size={24} color="#F8FAFC" />
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.passengerSelector} 
-                onPress={() => setIsGuestModalVisible(true)} 
+                style={[styles.cancelButtonOutline, { marginTop: 16 }]} 
+                onPress={() => setShowCancelModal(true)}
                 activeOpacity={0.8}
               >
-                <Ionicons name="person" size={13} color="#EAB308" style={{ marginRight: 6 }} />
-                <Text style={styles.passengerSelectorText}>
-                  {isForAnotherPerson ? (guestName || 'Outra Pessoa') : t('for_me', 'Para mim')}
-                </Text>
+                <Text style={styles.cancelButtonOutlineText}>{t('cancel_search_btn', 'Cancelar Busca')}</Text>
               </TouchableOpacity>
-
-              <View style={{ width: 40 }} />
             </View>
+          )}
 
-            {/* CORPO DO FORMULÁRIO DE BUSCA */}
-            <View style={styles.modalBody}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15, paddingHorizontal: 4 }}>
+          {/* 🚘 CARD DO MOTORISTA E VEÍCULO */}
+          {driverInfo && rideStatus !== 'searching' && (
+            <View style={styles.driverCardContainer}>
+              <View style={styles.driverMainInfo}>
+                {driverInfo?.photoUrl || driverInfo?.profilePicture ? (
+                  <Image source={{ uri: driverInfo.photoUrl || driverInfo.profilePicture }} style={styles.driverAvatarProfile} />
+                ) : (
+                  <View style={styles.driverAvatarProfile}>
+                    <Ionicons name="person" size={24} color="#94A3B8" />
+                  </View>
+                )}
                 
-                {/* LINHA INDICADORA DE PONTOS NO MAPA */}
-                <View style={{ alignItems: 'center', marginRight: 12 }}>
-                  <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#EAB308' }} />
-                  <View style={{ width: 2, height: showExtraStop ? 42 : 32, backgroundColor: '#334155', marginVertical: 4 }} />
-                  {showExtraStop && (
-                    <>
-                      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#3B82F6' }} />
-                      <View style={{ width: 2, height: 42, backgroundColor: '#334155', marginVertical: 4 }} />
-                    </>
-                  )}
-                  <View style={{ width: 10, height: 10, backgroundColor: '#10B981', borderRadius: 2 }} />
-                </View>
-
-                {/* INPUTS DE ENDEREÇO */}
-                <View style={{ flex: 1 }}>
-                  
-                  {/* 1. LOCAL DE PARTIDA */}
-                  <View style={[
-                    styles.mapboxSearchInputWrapper, 
-                    searchType === 'pickup' ? { borderColor: '#EAB308', borderWidth: 1 } : { marginBottom: 10, borderWidth: 1, borderColor: '#334155' }
-                  ]}>
-                    <TextInput
-                      style={styles.mapboxSearchInput}
-                      placeholder={t('pickup_location', 'Local de Partida')}
-                      placeholderTextColor="#64748B"
-                      value={searchType === 'pickup' ? searchQuery : pickupAddress}
-                      autoCorrect={false}
-                      autoCapitalize="sentences"
-                      onFocus={() => { setSearchType('pickup'); setSearchQuery(pickupAddress); }}
-                      onChangeText={(text) => {
-                        setSearchQuery(text);
-                        handleMapboxSearch(text);
-                      }}
-                    />
-                    {isSearchingMapbox && searchType === 'pickup' ? (
-                      <ActivityIndicator size="small" color="#EAB308" style={{ marginRight: 6 }} />
-                    ) : (searchType === 'pickup' ? searchQuery : pickupAddress) ? (
-                      <TouchableOpacity onPress={() => { setSearchQuery(''); setPickupAddress(''); }}>
-                        <Ionicons name="close-circle" size={18} color="#64748B" />
-                      </TouchableOpacity>
-                    ) : null}
+                <View style={styles.driverDetails}>
+                  <Text style={styles.driverName}>{driverInfo?.name || 'Motorista'}</Text>
+                  <View style={styles.driverRatingBadge}>
+                    <Ionicons name="star" size={14} color="#EAB308" />
+                    <Text style={styles.driverRatingText}>{driverInfo?.rating || 5.0}</Text>
                   </View>
-
-                  {/* 2. PARADA EXTRA (OPCIONAL) */}
-                  {showExtraStop && (
-                    <View style={[
-                      styles.mapboxSearchInputWrapper, 
-                      searchType === 'extraStop' ? { borderColor: '#3B82F6', borderWidth: 1 } : { marginBottom: 10, borderWidth: 1, borderColor: '#334155' }
-                    ]}>
-                      <TextInput
-                        style={styles.mapboxSearchInput}
-                        placeholder="Adicionar parada..."
-                        placeholderTextColor="#64748B"
-                        value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
-                        autoCorrect={false}
-                        autoCapitalize="sentences"
-                        onFocus={() => { setSearchType('extraStop'); setSearchQuery(extraStopAddress); }}
-                        onChangeText={(text) => {
-                          setSearchQuery(text);
-                          handleMapboxSearch(text);
-                        }}
-                      />
-                      <TouchableOpacity 
-                        onPress={() => { setShowExtraStop(false); setExtraStopAddress(''); setExtraStopCoords(null); }}
-                        style={{ padding: 4 }}
-                      >
-                        <Ionicons name="close-circle" size={20} color="#EF4444" />
-                      </TouchableOpacity>
-                    </View>
-                  )}
-
-                  {/* 3. DESTINO */}
-                  <View style={[
-                    styles.mapboxSearchInputWrapper, 
-                    searchType === 'dropoff' ? { borderColor: '#10B981', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
-                  ]}>
-                    <TextInput
-                      style={styles.mapboxSearchInput}
-                      placeholder={t('where_to', 'Para onde vamos?')}
-                      placeholderTextColor="#64748B"
-                      value={searchType === 'dropoff' ? searchQuery : dropoffAddress}
-                      autoCorrect={false}
-                      autoCapitalize="sentences"
-                      onFocus={() => { setSearchType('dropoff'); setSearchQuery(dropoffAddress); }}
-                      onChangeText={(text) => {
-                        setSearchQuery(text);
-                        handleMapboxSearch(text);
-                      }}
-                      autoFocus
-                    />
-                    {isSearchingMapbox && searchType === 'dropoff' ? (
-                      <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 6 }} />
-                    ) : (searchType === 'dropoff' ? searchQuery : dropoffAddress) ? (
-                      <TouchableOpacity onPress={() => { setSearchQuery(''); setDropoffAddress(''); }}>
-                        <Ionicons name="close-circle" size={18} color="#64748B" />
-                      </TouchableOpacity>
-                    ) : null}
-                  </View>
-
-                  {/* BOTÃO ADICIONAR PARADA */}
-                  {!showExtraStop && (
-                    <TouchableOpacity 
-                      style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center' }} 
-                      onPress={() => { setShowExtraStop(true); setSearchType('extraStop'); setSearchQuery(''); }}
-                    >
-                      <Ionicons name="add-circle-outline" size={18} color="#3B82F6" />
-                      <Text style={{ color: '#3B82F6', fontWeight: '700', marginLeft: 6, fontSize: 13 }}>
-                        Adicionar parada
-                      </Text>
-                    </TouchableOpacity>
-                  )}
                 </View>
               </View>
 
-              {/* LISTA DE RESULTADOS DA BUSCA */}
-              <FlatList
-                data={searchResults}
-                keyExtractor={(item) => item.id}
-                keyboardShouldPersistTaps="always"
-                showsVerticalScrollIndicator={false}
-                style={{ marginTop: 8 }}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={styles.searchResultItem}
-                    activeOpacity={0.7}
-                    onPress={() => {
-                      if (searchType === 'pickup') {
-                        isManualPickupRef.current = true;
-                        setPickupAddress(item.description);
-                        setPickupCoords({ latitude: item.latitude, longitude: item.longitude });
-                        if (cameraRef.current) {
-                          cameraRef.current.setCamera({
-                            centerCoordinate: [item.longitude, item.latitude],
-                            zoomLevel: 15,
-                            animationDuration: 800,
-                          });
-                        }
-                        setSearchType(showExtraStop && !extraStopCoords ? 'extraStop' : 'dropoff');
-                        setSearchQuery('');
-                        setSearchResults([]);
-                      } else if (searchType === 'extraStop') {
-                        setExtraStopAddress(item.description);
-                        setExtraStopCoords({ latitude: item.latitude, longitude: item.longitude });
-                        setSearchType('dropoff');
-                        setSearchQuery('');
-                        setSearchResults([]);
-                      } else {
-                        setDropoffAddress(item.description);
-                        setDropoffCoords({ latitude: item.latitude, longitude: item.longitude });
-                        setIsSearchModalVisible(false);
-                        setBookingStep('SERVICE_AND_PRICE');
-                      }
-                    }}
-                  >
-                    <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#1E293B', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
-                      <Ionicons name="location" size={18} color="#EAB308" />
+              <View style={styles.dividerLight} />
+
+              <View style={styles.vehicleShowcase}>
+                <Image 
+                  source={getVehicleImage(driverInfo?.vehicleType || vehicleType)} 
+                  style={styles.showcaseVehicleImg} 
+                  resizeMode="contain" 
+                />
+                
+                <View style={styles.vehicleDetailsCol}>
+                  <Text style={styles.vehicleModelText} numberOfLines={1}>
+                    {driverInfo?.carModel || t('standard_vehicle', 'Veículo Padrão')}
+                  </Text>
+                  
+                  <View style={styles.colorAndPlateRow}>
+                    <View style={[styles.modernColorChip, { backgroundColor: getVehicleColorHex(driverInfo?.carColor) }]} />
+                    <Text style={styles.vehicleColorText}>{driverInfo?.carColor || t('color_not_specified', 'Cor não informada')}</Text>
+                    
+                    <View style={styles.dotSeparator} />
+                    
+                    <View style={styles.modernPlateBadge}>
+                      <Text style={styles.modernPlateText}>{driverInfo?.licensePlate?.toUpperCase() || t('no_license_plate', 'SEM PLACA')}</Text>
                     </View>
-                    <Text style={[styles.searchResultText, { color: '#F8FAFC' }]}>{item.description}</Text>
+                  </View>
+                </View>
+              </View>
+            </View>
+          )}
+
+          {/* 📊 BANNER DE STATUS E CONTROLES EM ANDAMENTO */}
+          {['accepted', 'arrived', 'in_progress'].includes(rideStatus) && driverInfo && (
+            <View style={{ width: '100%' }}>
+              <View style={styles.statusBanner}>
+                <Text style={styles.statusBannerText}>
+                  {rideStatus === 'accepted' 
+                    ? (driverEta ? `${t('arriving_in', 'Chegando em')} ${driverEta} min` : t('driver_on_way', 'Motorista a caminho')) :
+                   rideStatus === 'arrived' 
+                    ? t('driver_arrived', 'O motorista chegou!') : 
+                   (driverEta ? `${t('destination_in', 'Destino em')} ${driverEta} min` : t('ride_in_progress', 'Viagem em andamento'))}
+                </Text>
+                <TouchableOpacity onPress={handleShareTrip} style={styles.shareButton} activeOpacity={0.8}>
+                  <Ionicons name="share-social-outline" size={18} color="#0F172A" />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.actionRow}>
+                <TouchableOpacity 
+                  style={[styles.iconCircleButton, styles.sosButton]} 
+                  onPress={handleSosPress}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="shield-checkmark" size={18} color="#EF4444" />
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.iconCircleButton} onPress={handleCallDriver} activeOpacity={0.8}>
+                  <Ionicons name="call" size={18} color="#EAB308" />
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.cancelButtonOutline} onPress={() => setShowCancelModal(true)} activeOpacity={0.8}>
+                  <Text style={styles.cancelButtonOutlineText}>{t('cancel_ride', 'Cancelar')}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={[styles.requestButton, { flex: 1, marginLeft: 6 }]} onPress={() => setIsChatVisible(true)} activeOpacity={0.85}>
+                  <Ionicons name="chatbubble-ellipses" size={16} color="#0F172A" style={{ marginRight: 6 }} />
+                  <Text style={styles.requestButtonText}>Chat</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+        </ScrollView>
+      </Animated.View>
+    </KeyboardAvoidingView>
+
+    {/* 4. MODAIS DO SISTEMA */}
+
+    {/* MODAL DE IDIOMAS */}
+    <Modal visible={langModalVisible} transparent animationType="slide" onRequestClose={() => setLangModalVisible(false)}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View style={styles.modalOverlayInner}>
+            <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+              <View style={[styles.modalContainer, { paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
+                <Text style={styles.modalTitle}>{t('select_language', 'Selecione o Idioma')}</Text>
+                {LANGUAGES.map((lang) => (
+                  <TouchableOpacity
+                    key={lang.code}
+                    style={styles.langOption}
+                    onPress={() => changeLanguage(lang.code)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.langOptionText}>{lang.label}</Text>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity 
+                  style={styles.closeButton} 
+                  onPress={() => setLangModalVisible(false)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={{ color: '#EF4444', fontWeight: 'bold' }}>{t('back_btn', 'Fechar')}</Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
+    </Modal>
+
+    {/* MODAL DE PERMISSÃO DE GPS */}
+    <Modal visible={isLocationSettingsVisible} animationType="slide" transparent onRequestClose={() => setIsLocationSettingsVisible(false)}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View style={styles.modalOverlayInner}>
+            <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+              <View style={[styles.locationModalCard, { paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
+                <View style={styles.locationIconBg}>
+                  <Ionicons name="location" size={32} color="#EAB308" />
+                </View>
+                <Text style={styles.locationModalTitle}>{t('location_needed_title', 'Localização Necessária')}</Text>
+                <Text style={styles.locationModalText}>
+                  {locationError || t('location_needed_desc', 'Para encontrar motoristas rapidamente e garantir sua segurança, precisamos que ative o GPS e permita o acesso no seu celular.')}
+                </Text>
+                
+                <TouchableOpacity 
+                  style={[styles.requestButton, { width: '100%', marginBottom: 12 }]} 
+                  onPress={() => Linking.openSettings()}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.requestButtonText}>{t('open_settings', 'Abrir Configurações')}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={styles.cancelButtonOutline} 
+                  onPress={getCurrentLocationWithFallback}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.cancelButtonOutlineText}>{t('try_again', 'Já ativei / Tentar novamente')}</Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
+    </Modal>
+
+    {/* MODAL DE PAGAMENTO MOBILE MONEY */}
+    <Modal 
+      visible={isPaymentModalVisible} 
+      transparent 
+      animationType="fade" 
+      onRequestClose={() => !isProcessingPayment && setIsPaymentModalVisible(false)}
+    >
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+        style={{ flex: 1 }}
+      >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View style={styles.modalOverlay}>
+            <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+              <View style={[styles.paymentModalCard, { paddingBottom: Math.max((insets?.bottom || 0) + 20, 24) }]}>
+                
+                <View style={[
+                  styles.operatorHeader, 
+                  { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#004F9F' }
+                ]}>
+                  <View style={styles.operatorHeaderContent}>
+                    <Ionicons 
+                      name={paymentMethod === 'ORANGE_MONEY' ? "wallet-outline" : "card-outline"} 
+                      size={26} 
+                      color="#FFFFFF" 
+                    />
+                    <Text style={styles.operatorTitle}>
+                      {paymentMethod === 'ORANGE_MONEY' ? 'Orange Money' : 'MTN Mobile Money'}
+                    </Text>
+                  </View>
+                  <TouchableOpacity 
+                    onPress={() => !isProcessingPayment && setIsPaymentModalVisible(false)}
+                    disabled={isProcessingPayment}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="close-circle" size={26} color="rgba(255,255,255,0.8)" />
+                  </TouchableOpacity>
+                </View>
+
+                <ScrollView 
+                  style={styles.paymentModalBody} 
+                  contentContainerStyle={{ flexGrow: 1, paddingTop: 16, paddingBottom: 12 }} 
+                  showsVerticalScrollIndicator={false} 
+                  keyboardShouldPersistTaps="always"
+                >
+                  <Text style={styles.paymentModalSubtitle}>
+                    {t('ussd_push_instruction', 'Confirme o seu número. Receberá uma notificação segura no telemóvel para digitar o seu PIN.')}
+                  </Text>
+
+                  <View style={styles.amountBadgeContainer}>
+                    <Text style={styles.amountTextLabel}>{t('total_amount', 'VALOR A PAGAR')}</Text>
+                    <Text style={styles.amountValue}>
+                      {estimatedPrice ? `${estimatedPrice.toLocaleString('pt-GW')} XOF` : t('calculating', 'Calculando...')}
+                    </Text>
+                  </View>
+
+                  <Text style={styles.inputLabel}>{t('mobile_money_account', 'Número de Telefone da Conta')}</Text>
+                  <View style={styles.phoneInputContainer}>
+                    <Ionicons name="call-outline" size={20} color="#64748B" style={{ marginLeft: 12 }} />
+                    <TextInput
+                      style={styles.phoneInput}
+                      value={paymentPhone}
+                      onChangeText={(text) => setPaymentPhone(text.replace(/[^0-9]/g, ''))}
+                      keyboardType="number-pad"
+                      autoCorrect={false}
+                      maxLength={12}
+                      editable={!isProcessingPayment}
+                      placeholder={t('phone_number_placeholder', 'Ex: 955000000')}
+                      placeholderTextColor="#94A3B8"
+                    />
+                  </View>
+
+                  <View style={styles.modalActionsRow}>
+                    <TouchableOpacity 
+                      style={styles.cancelModalBtn} 
+                      disabled={isProcessingPayment} 
+                      onPress={() => setIsPaymentModalVisible(false)} 
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.cancelModalBtnText}>{t('back_btn', 'Cancelar')}</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity 
+                      style={[
+                        styles.confirmModalBtn, 
+                        { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#004F9F' },
+                        isProcessingPayment && { opacity: 0.7 }
+                      ]}
+                      disabled={isProcessingPayment}
+                      onPress={confirmPaymentAndRide}
+                      activeOpacity={0.85}
+                    >
+                      {isProcessingPayment ? (
+                        <ActivityIndicator color="#FFFFFF" size="small" />
+                      ) : (
+                        <Text style={styles.confirmModalBtnText}>{t('confirm_payment_btn', 'Confirmar e Pagar')}</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </ScrollView>
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
+    </Modal>
+
+    {/* MENU LATERAL DRAWER */}
+    <Modal visible={isMenuVisible} animationType="fade" transparent onRequestClose={() => setIsMenuVisible(false)}>
+      <TouchableOpacity style={styles.menuOverlay} activeOpacity={1} onPress={() => setIsMenuVisible(false)}>
+        <View style={[styles.menuDrawer, { paddingTop: Math.max((insets?.top || 0) + 16, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 20), paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
+          <View style={styles.menuHeader}>
+            <View style={styles.avatarPlaceholderLarge}>
+              {user?.profilePicture ? (
+                <Image source={{ uri: formatPhotoUrl(user.profilePicture) }} style={{ width: '100%', height: '100%', borderRadius: 30 }} />
+              ) : (
+                <Ionicons name="person" size={32} color="#0F172A" />
+              )}
+            </View>
+            <Text style={styles.menuUserName}>{user?.fullName || t('passenger', 'Passageiro')}</Text>
+            <Text style={styles.menuUserPhone}>{user?.phone || ''}</Text>
+          </View>
+
+          <View style={styles.menuItems}>
+            <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('Profile'); }} activeOpacity={0.7}>
+              <Ionicons name="person-outline" size={20} color="#0F172A" />
+              <Text style={styles.menuItemText}>{t('my_profile', 'Meu Perfil')}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('RideHistory'); }} activeOpacity={0.7}>
+              <Ionicons name="time-outline" size={20} color="#0F172A" />
+              <Text style={styles.menuItemText}>{t('my_rides', 'Minhas Corridas')}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('EmergencyContacts'); }} activeOpacity={0.7}>
+              <Ionicons name="shield-checkmark-outline" size={20} color="#0F172A" />
+              <Text style={styles.menuItemText}>{t('emergency_contacts', 'Contatos de Emergência')}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('HelpCenter'); }} activeOpacity={0.7}>
+              <Ionicons name="help-buoy-outline" size={20} color="#0F172A" />
+              <Text style={styles.menuItemText}>{t('help_center', 'Central de Ajuda')}</Text>
+            </TouchableOpacity>
+
+            <View style={styles.menuDivider} />
+
+            <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); signOut(); }} activeOpacity={0.7}>
+              <Ionicons name="log-out-outline" size={20} color="#EF4444" />
+              <Text style={[styles.menuItemText, { color: '#EF4444' }]}>{t('logout', 'Sair da Conta')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+
+    {/* CHAT INTERNO */}
+    <Modal 
+      visible={isChatVisible} 
+      animationType="slide" 
+      transparent 
+      statusBarTranslucent
+      onRequestClose={() => setIsChatVisible(false)}
+    >
+      <KeyboardAvoidingView 
+        style={styles.chatOverlay} 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <View style={[styles.chatContainer, { paddingTop: Math.max((insets?.top || 0) + 10, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 16) }]}>
+          <View style={styles.chatHeader}>
+            <View style={styles.chatHeaderUserInfo}>
+              {driverInfo?.photoUrl || driverInfo?.profilePicture ? (
+                <Image source={{ uri: formatPhotoUrl(driverInfo.photoUrl || driverInfo.profilePicture) }} style={styles.headerAvatar} />
+              ) : (
+                <View style={styles.headerAvatarPlaceholder}>
+                  <Ionicons name="person" size={18} color="#64748B" />
+                </View>
+              )}
+              <Text style={styles.chatTitle}>
+                {t('chat_with', 'Chat com')} {driverInfo?.name || 'Motorista'}
+              </Text>
+            </View>
+
+            <TouchableOpacity onPress={() => setIsChatVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} activeOpacity={0.8}>
+              <Ionicons name="close" size={22} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
+
+          <FlatList
+            ref={chatFlatListRef}
+            data={messages}
+            keyExtractor={(item, index) => item.id || `msg-${index}`}
+            contentContainerStyle={styles.chatList}
+            keyboardShouldPersistTaps="handled"
+            onContentSizeChange={() => chatFlatListRef.current?.scrollToEnd({ animated: true })}
+            renderItem={({ item }) => {
+              const isPassenger = item.sender === 'passenger';
+              const photoUrl = formatPhotoUrl(item.senderPhoto || (isPassenger ? user?.profilePicture : driverInfo?.profilePicture));
+
+              return (
+                <View style={[styles.messageRow, isPassenger ? styles.rowPassenger : styles.rowDriver]}>
+                  {!isPassenger && (
+                    photoUrl ? (
+                      <Image source={{ uri: photoUrl }} style={styles.chatBubbleAvatar} />
+                    ) : (
+                      <View style={styles.chatBubbleAvatarPlaceholder}>
+                        <Ionicons name="person" size={12} color="#64748B" />
+                      </View>
+                    )
+                  )}
+
+                  <View style={[styles.messageBubble, isPassenger ? styles.messagePassenger : styles.messageDriver]}>
+                    <Text style={[styles.messageText, isPassenger ? styles.textPassenger : styles.textDriver]}>
+                      {item.text}
+                    </Text>
+                  </View>
+
+                  {isPassenger && (
+                    photoUrl ? (
+                      <Image source={{ uri: photoUrl }} style={styles.chatBubbleAvatar} />
+                    ) : (
+                      <View style={styles.chatBubbleAvatarPlaceholder}>
+                        <Ionicons name="person" size={12} color="#64748B" />
+                      </View>
+                    )
+                  )}
+                </View>
+              );
+            }}
+          />
+
+          <View style={[styles.chatInputContainer, { paddingBottom: Math.max((insets?.bottom || 0) + 8, 12) }]}>
+            <TextInput
+              style={styles.chatInput}
+              value={inputText}
+              onChangeText={setInputText}
+              placeholder={t('type_something', 'Escreva algo...')}
+              placeholderTextColor="#94A3B8"
+              multiline
+              maxLength={250}
+            />
+            <TouchableOpacity style={styles.chatSendButton} onPress={sendMessage} activeOpacity={0.85}>
+              <Ionicons name="send" size={16} color="#0F172A" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+
+    {/* MODAL DE BUSCA DE ENDEREÇO MAPBOX */}
+    <Modal 
+      visible={isSearchModalVisible} 
+      animationType="slide" 
+      transparent={false} 
+      onRequestClose={() => setIsSearchModalVisible(false)}
+    >
+      <SafeAreaView style={styles.searchModalContainer}>
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
+          style={{ flex: 1 }}
+        >
+          {/* CABEÇALHO */}
+          <View style={styles.searchHeader}>
+            <TouchableOpacity 
+              onPress={() => setIsSearchModalVisible(false)} 
+              style={styles.backButton} 
+              activeOpacity={0.7}
+            >
+              <Ionicons name="arrow-back" size={24} color="#F8FAFC" />
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.passengerSelector} 
+              onPress={() => setIsGuestModalVisible(true)} 
+              activeOpacity={0.8}
+            >
+              <Ionicons name="person" size={13} color="#EAB308" style={{ marginRight: 6 }} />
+              <Text style={styles.passengerSelectorText}>
+                {isForAnotherPerson ? (guestName || 'Outra Pessoa') : t('for_me', 'Para mim')}
+              </Text>
+            </TouchableOpacity>
+
+            <View style={{ width: 40 }} />
+          </View>
+
+          {/* CORPO DO FORMULÁRIO DE BUSCA */}
+          <View style={styles.modalBody}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15, paddingHorizontal: 4 }}>
+              <View style={{ alignItems: 'center', marginRight: 12 }}>
+                <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#EAB308' }} />
+                <View style={{ width: 2, height: showExtraStop ? 42 : 32, backgroundColor: '#334155', marginVertical: 4 }} />
+                {showExtraStop && (
+                  <>
+                    <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#3B82F6' }} />
+                    <View style={{ width: 2, height: 42, backgroundColor: '#334155', marginVertical: 4 }} />
+                  </>
+                )}
+                <View style={{ width: 10, height: 10, backgroundColor: '#10B981', borderRadius: 2 }} />
+              </View>
+
+              <View style={{ flex: 1 }}>
+                {/* 1. LOCAL DE PARTIDA */}
+                <View style={[
+                  styles.mapboxSearchInputWrapper, 
+                  searchType === 'pickup' ? { borderColor: '#EAB308', borderWidth: 1 } : { marginBottom: 10, borderWidth: 1, borderColor: '#334155' }
+                ]}>
+                  <TextInput
+                    style={styles.mapboxSearchInput}
+                    placeholder={t('pickup_location', 'Local de Partida')}
+                    placeholderTextColor="#64748B"
+                    value={searchType === 'pickup' ? searchQuery : pickupAddress}
+                    autoCorrect={false}
+                    autoCapitalize="sentences"
+                    onFocus={() => { setSearchType('pickup'); setSearchQuery(pickupAddress); }}
+                    onChangeText={(text) => {
+                      setSearchQuery(text);
+                      handleMapboxSearch(text);
+                    }}
+                  />
+                  {isSearchingMapbox && searchType === 'pickup' ? (
+                    <ActivityIndicator size="small" color="#EAB308" style={{ marginRight: 6 }} />
+                  ) : (searchType === 'pickup' ? searchQuery : pickupAddress) ? (
+                    <TouchableOpacity onPress={() => { setSearchQuery(''); setPickupAddress(''); }}>
+                      <Ionicons name="close-circle" size={18} color="#64748B" />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+
+                {/* 2. PARADA EXTRA */}
+                {showExtraStop && (
+                  <View style={[
+                    styles.mapboxSearchInputWrapper, 
+                    searchType === 'extraStop' ? { borderColor: '#3B82F6', borderWidth: 1 } : { marginBottom: 10, borderWidth: 1, borderColor: '#334155' }
+                  ]}>
+                    <TextInput
+                      style={styles.mapboxSearchInput}
+                      placeholder="Adicionar parada..."
+                      placeholderTextColor="#64748B"
+                      value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
+                      autoCorrect={false}
+                      autoCapitalize="sentences"
+                      onFocus={() => { setSearchType('extraStop'); setSearchQuery(extraStopAddress); }}
+                      onChangeText={(text) => {
+                        setSearchQuery(text);
+                        handleMapboxSearch(text);
+                      }}
+                    />
+                    <TouchableOpacity 
+                      onPress={() => { setShowExtraStop(false); setExtraStopAddress(''); setExtraStopCoords(null); }}
+                      style={{ padding: 4 }}
+                    >
+                      <Ionicons name="close-circle" size={20} color="#EF4444" />
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* 3. DESTINO */}
+                <View style={[
+                  styles.mapboxSearchInputWrapper, 
+                  searchType === 'dropoff' ? { borderColor: '#10B981', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
+                ]}>
+                  <TextInput
+                    style={styles.mapboxSearchInput}
+                    placeholder={t('where_to', 'Para onde vamos?')}
+                    placeholderTextColor="#64748B"
+                    value={searchType === 'dropoff' ? searchQuery : dropoffAddress}
+                    autoCorrect={false}
+                    autoCapitalize="sentences"
+                    onFocus={() => { setSearchType('dropoff'); setSearchQuery(dropoffAddress); }}
+                    onChangeText={(text) => {
+                      setSearchQuery(text);
+                      handleMapboxSearch(text);
+                    }}
+                    autoFocus
+                  />
+                  {isSearchingMapbox && searchType === 'dropoff' ? (
+                    <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 6 }} />
+                  ) : (searchType === 'dropoff' ? searchQuery : dropoffAddress) ? (
+                    <TouchableOpacity onPress={() => { setSearchQuery(''); setDropoffAddress(''); }}>
+                      <Ionicons name="close-circle" size={18} color="#64748B" />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+
+                {!showExtraStop && (
+                  <TouchableOpacity 
+                    style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center' }} 
+                    onPress={() => { setShowExtraStop(true); setSearchType('extraStop'); setSearchQuery(''); }}
+                  >
+                    <Ionicons name="add-circle-outline" size={18} color="#3B82F6" />
+                    <Text style={{ color: '#3B82F6', fontWeight: '700', marginLeft: 6, fontSize: 13 }}>
+                      Adicionar parada
+                    </Text>
                   </TouchableOpacity>
                 )}
-              />
+              </View>
             </View>
-          </KeyboardAvoidingView>
-        </SafeAreaView>
-      </Modal>
 
-      {/* MODAL DE CANCELAMENTO */}
+            {/* LISTA DE RESULTADOS DA BUSCA */}
+            <FlatList
+              data={searchResults}
+              keyExtractor={(item) => item.id}
+              keyboardShouldPersistTaps="always"
+              showsVerticalScrollIndicator={false}
+              style={{ marginTop: 8 }}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.searchResultItem}
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    if (searchType === 'pickup') {
+                      isManualPickupRef.current = true;
+                      setPickupAddress(item.description);
+                      setPickupCoords({ latitude: item.latitude, longitude: item.longitude });
+                      if (cameraRef.current) {
+                        cameraRef.current.setCamera({
+                          centerCoordinate: [item.longitude, item.latitude],
+                          zoomLevel: 15,
+                          animationDuration: 800,
+                        });
+                      }
+                      setSearchType(showExtraStop && !extraStopCoords ? 'extraStop' : 'dropoff');
+                      setSearchQuery('');
+                      setSearchResults([]);
+                    } else if (searchType === 'extraStop') {
+                      setExtraStopAddress(item.description);
+                      setExtraStopCoords({ latitude: item.latitude, longitude: item.longitude });
+                      setSearchType('dropoff');
+                      setSearchQuery('');
+                      setSearchResults([]);
+                    } else {
+                      setDropoffAddress(item.description);
+                      setDropoffCoords({ latitude: item.latitude, longitude: item.longitude });
+                      setIsSearchModalVisible(false);
+                      setBookingStep('SERVICE_AND_PRICE');
+                    }
+                  }}
+                >
+                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#1E293B', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
+                    <Ionicons name="location" size={18} color="#EAB308" />
+                  </View>
+                  <Text style={[styles.searchResultText, { color: '#F8FAFC' }]}>{item.description}</Text>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </Modal>
+    {/* MODAL DE CANCELAMENTO */}
       <CancelModal
         visible={showCancelModal}
         userType="PASSENGER"
