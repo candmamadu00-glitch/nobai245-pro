@@ -1,11 +1,11 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { 
   View, Text, TouchableOpacity, StyleSheet, Alert, Modal, 
-  KeyboardAvoidingView, Platform, StatusBar, Dimensions, Image, Vibration, Switch,
-  Animated, PanResponder, Easing, ScrollView, AppState, AppStateStatus
+  KeyboardAvoidingView, Platform, StatusBar, Image, Vibration, Switch,
+  Animated, PanResponder, ScrollView, AppState, AppStateStatus
 } from 'react-native';
 import { useKeepAwake } from 'expo-keep-awake';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import * as Haptics from 'expo-haptics';
@@ -14,7 +14,6 @@ import { Ionicons } from '@expo/vector-icons';
 import Mapbox from '@rnmapbox/maps';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
-import * as Speech from 'expo-speech';
 import * as Notifications from 'expo-notifications';
 import { registerAndSendPushToken as registerForPushNotifications } from '../services/notifications';
 import { ChatModal } from '../components/ChatModal';
@@ -32,15 +31,13 @@ import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { createAudioPlayer } from 'expo-audio';
 import { useBilingualVoice } from '../hooks/useBilingualVoice';
 
-// 🛡️ BLINDAGEM 1: Token do Mapbox via Variável de Ambiente
+// 🛡️ Token Mapbox
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
-if (!MAPBOX_TOKEN) {
-  console.warn('🚨 EXPO_PUBLIC_MAPBOX_TOKEN não configurado no .env!');
-} else {
+if (MAPBOX_TOKEN) {
   Mapbox.setAccessToken(MAPBOX_TOKEN);
 }
 
-// 🛡️ BLINDAGEM 2: URL da API Sanitizada
+// 🛡️ Configuração de URL da API
 const RAW_API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com';
 const CLEAN_BASE_URL = RAW_API_URL.replace(/\/api\/?$/, '').replace(/\/$/, '');
 const API_URL = `${CLEAN_BASE_URL}/api`;
@@ -50,11 +47,9 @@ const STORAGE_ACTIVE_RIDE_ID = '@nobai245:activeRideId';
 const STORAGE_ACTIVE_RIDE_DATA = '@nobai245:activeRideData';
 const STORAGE_ACTIVE_RIDE_STATE = '@nobai245:activeRideState';
 
-// 🛡️ Coordenadas de Bissau (Centro) como fallback padrão
 const BISSAU_CENTER_LNG = -15.5977;
 const BISSAU_CENTER_LAT = 11.8632;
 
-// 🛡️ Zonas de demanda em Bissau
 const demandZonesData = {
   type: 'FeatureCollection',
   features: [
@@ -66,10 +61,8 @@ const demandZonesData = {
   ],
 };
 
-// 🛡️ Helper de tradução para Crioulo da Guiné-Bissau
 function translateToKriol(text: string): string {
   if (!text) return '';
-
   return text
     .replace(/Vire à direita/gi, 'Dobra pa direitu')
     .replace(/Vire à esquerda/gi, 'Dobra pa eskerda')
@@ -80,10 +73,9 @@ function translateToKriol(text: string): string {
     .replace(/Na rotatória/gi, 'Na rotunda')
     .replace(/pegue a (\d+)ª saída/gi, 'pense $1 saída')
     .replace(/Você chegou ao seu destino/gi, 'Bu tchega ja na bu distinu')
-    .replace(/Você está se aproximando do seu destino/gi, 'Bu sta kuazi pa tchega na bu distinu lembranta passageiro de pega se objetos na veiculo tchabe telemovel');
+    .replace(/Você está se aproximando do seu destino/gi, 'Bu sta kuazi pa tchega na bu distinu');
 }
 
-// 🛡️ TASK EM SEGUNDO PLANO
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) => {
   if (error || !data) return;
   const { locations } = data;
@@ -91,11 +83,8 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) =>
 
   if (location?.coords) {
     const isMocked = location.mocked || (location.coords as any)?.mocked;
-    
-    if (isMocked && !__DEV__) {
-      console.warn('🚨 [SECURITY] Coordenada simulada por GPS Fake descartada em produção.');
-      return;
-    }
+    if (isMocked && !__DEV__) return;
+
     try {
       const storedUser = await AsyncStorage.getItem('@nobai245:driverUser');
       const driverId = storedUser ? JSON.parse(storedUser)?.id : null;
@@ -142,9 +131,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) =>
       } else {
         sendFallbackHttp(payload, token);
       }
-    } catch (err) {
-      console.warn('⚠️ [BACKGROUND TASK ERR]:', err);
-    }
+    } catch (err) {}
   }
 });
 
@@ -163,6 +150,7 @@ export interface IncomingRideData {
   destinationLat?: number;
   destinationLng?: number;
   destinationAddress?: string;
+  referencePoint?: string;
   startOtp?: string;
   serviceType?: 'RIDE' | 'DELIVERY' | 'RENTAL';
   vehicleType?: 'PARTICULAR' | 'TAXI' | 'MOTO' | 'MOTO_CARRO' | 'TOCA_TOCA';
@@ -210,48 +198,20 @@ function getVehicle3DIconAsset(vehicleType?: string, vehicleColor?: string) {
   const type = (vehicleType || 'PARTICULAR').toUpperCase().trim();
   const color = (vehicleColor || 'BRANCO').toUpperCase().trim();
 
-  if (type === 'MOTO') {
-    return require('../../assets/images/vehicles/moto.jpg');
-  }
-  if (type === 'TOCA_TOCA' || type === 'VAN') {
-    return require('../../assets/images/vehicles/toca_toca.jpg');
-  }
-  if (type === 'TAXI') {
-    return require('../../assets/images/vehicles/taxi_yellow.jpg');
-  }
+  if (type === 'MOTO') return require('../../assets/images/vehicles/moto.jpg');
+  if (type === 'TOCA_TOCA' || type === 'VAN') return require('../../assets/images/vehicles/toca_toca.jpg');
+  if (type === 'TAXI') return require('../../assets/images/vehicles/taxi_yellow.jpg');
 
   switch (color) {
-    case 'BLACK':
-    case 'PRETO':
-      return require('../../assets/images/vehicles/car_black.jpg');
-    case 'BLUE':
-    case 'AZUL':
-      return require('../../assets/images/vehicles/car_blue.jpg');
-    case 'RED':
-    case 'VERMELHO':
-      return require('../../assets/images/vehicles/car_red.jpg');
-    case 'ORANGE':
-    case 'LARANJA':
-      return require('../../assets/images/vehicles/car_orange.jpg');
-    case 'GREEN':
-    case 'VERDE':
-      return require('../../assets/images/vehicles/car_green.jpg');
-    case 'GRAY':
-    case 'SILVER':
-    case 'CINZA':
-    case 'PRATA':
-      return require('../../assets/images/vehicles/car_gray.jpg');
-    case 'BROWN':
-    case 'CASTANHO':
-    case 'MARROM':
-      return require('../../assets/images/vehicles/car_brown.jpg');
-    case 'YELLOW':
-    case 'AMARELO':
-      return require('../../assets/images/vehicles/car_yellow.jpg');
-    case 'WHITE':
-    case 'BRANCO':
-    default:
-      return require('../../assets/images/vehicles/car_white.jpg');
+    case 'BLACK': case 'PRETO': return require('../../assets/images/vehicles/car_black.jpg');
+    case 'BLUE': case 'AZUL': return require('../../assets/images/vehicles/car_blue.jpg');
+    case 'RED': case 'VERMELHO': return require('../../assets/images/vehicles/car_red.jpg');
+    case 'ORANGE': case 'LARANJA': return require('../../assets/images/vehicles/car_orange.jpg');
+    case 'GREEN': case 'VERDE': return require('../../assets/images/vehicles/car_green.jpg');
+    case 'GRAY': case 'SILVER': case 'CINZA': case 'PRATA': return require('../../assets/images/vehicles/car_gray.jpg');
+    case 'BROWN': case 'CASTANHO': case 'MARROM': return require('../../assets/images/vehicles/car_brown.jpg');
+    case 'YELLOW': case 'AMARELO': return require('../../assets/images/vehicles/car_yellow.jpg');
+    case 'WHITE': case 'BRANCO': default: return require('../../assets/images/vehicles/car_white.jpg');
   }
 }
 
@@ -322,7 +282,6 @@ export function Home() {
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
   const [timeLeft, setTimeLeft] = useState(15);
   
-  // 🟢 SINCRONIZAÇÃO DE REFS
   const rideStateRef = useRef(rideState);
   const incomingRideRef = useRef(incomingRide);
   const queuedOfferDataRef = useRef(queuedOfferData);
@@ -346,9 +305,7 @@ export function Home() {
 
   const maxCollapsedY = Math.max(100, sheetHeight - 90 - Math.max(insets.bottom, 20));
   const maxCollapsedYRef = useRef(maxCollapsedY);
-  useEffect(() => {
-    maxCollapsedYRef.current = maxCollapsedY;
-  }, [maxCollapsedY]);
+  useEffect(() => { maxCollapsedYRef.current = maxCollapsedY; }, [maxCollapsedY]);
 
   const snapToState = useCallback((toExpanded: boolean) => {
     isExpandedRef.current = toExpanded;
@@ -398,12 +355,13 @@ export function Home() {
   const acceptTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastCameraUpdateRef = useRef<number>(0);
 
+  const isRideActive = ['accepted', 'arrived', 'in_progress'].includes(rideState);
+
   const mapStyle = useMemo(() => {
     const hour = new Date().getHours();
     return (hour >= 19 || hour < 6) ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/streets-v12';
   }, []);
 
-  // 🟢 1. DESTINO DE NAVEGAÇÃO DINÂMICO (EMBARQUE vs DESEMBARQUE)
   const navDestination = useMemo(() => {
     if (!incomingRide) return null;
 
@@ -434,9 +392,7 @@ export function Home() {
       if (response?.data && isMountedRef.current) {
         setTodayEarnings(Number(response.data.todayEarned ?? response.data.totalEarned ?? 0));
       }
-    } catch (err) {
-      console.warn('⚠️ Erro ao carregar ganhos diários:', err);
-    }
+    } catch (err) {}
   }, []);
 
   useEffect(() => { fetchTodayEarnings(); }, [fetchTodayEarnings, rideState]);
@@ -464,35 +420,29 @@ export function Home() {
             }
           });
         }
-      } catch (e) { console.warn('⚠️ Falha bateria', e); }
+      } catch (e) {}
     }
     checkBattery();
     return () => { if (sub?.remove) sub.remove(); };
   }, []);
 
-  // 🔔 DISPARAR SOM DE ALERTA QUANDO CHEGA UMA NOVA CORRIDA OU OFERTA EM FILA
   useEffect(() => {
     let activePlayer: any = null;
     const hasActiveOffer = !!queuedOfferData || (rideState === 'idle' && !!incomingRide);
 
     if (hasActiveOffer) {
-      console.log('🔔 [HOME LOG] Nova chamada/oferta em fila recebida! Iniciando vibração e alerta sonoro...');
-
-      Vibration.vibrate([0, 1000, 500, 1000], true);
+      Vibration.vibrate([0, 800, 300, 800], false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
 
       try {
         const player = createAudioPlayer(require('../../assets/sounds/alert.mp3'));
-        player.loop = true;
+        player.loop = false;
         player.play();
         alertPlayerRef.current = player;
         activePlayer = player;
-      } catch (audioErr) {
-        console.warn('⚠️ [HOME LOG] Erro ao carregar alert.mp3:', audioErr);
-      }
+      } catch (audioErr) {}
 
       playBilingualVoice('new_ride', 'Nova viagem encontrada');
-
     } else {
       Vibration.cancel();
       if (alertPlayerRef.current) {
@@ -510,35 +460,6 @@ export function Home() {
   }, [queuedOfferData, incomingRide, rideState, playBilingualVoice]);
 
   useEffect(() => { if (route.params?.openChat) setIsChatVisible(true); }, [route.params]); 
-
-  // 💬 ESCUTA MENSAGENS DO CHAT EM TEMPO REAL
-  useEffect(() => {
-    if (!socket) return;
-
-    const handleNewChatMessage = (data: any) => {
-      const text = data.message || data.text || '';
-      const senderName = data.senderName || 'Passageiro';
-
-      if (!isChatVisible) {
-        Alert.alert(
-          `💬 Mensagem de ${senderName}`,
-          text,
-          [
-            { text: 'Fechar', style: 'cancel' },
-            { text: 'Responder', onPress: () => setIsChatVisible(true) }
-          ]
-        );
-      }
-    };
-
-    socket.on('chat:new_message', handleNewChatMessage);
-    socket.on('chat:receive_message', handleNewChatMessage);
-
-    return () => {
-      socket.off('chat:new_message', handleNewChatMessage);
-      socket.off('chat:receive_message', handleNewChatMessage);
-    };
-  }, [socket, isChatVisible]);
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
@@ -563,17 +484,15 @@ export function Home() {
 
   useEffect(() => {
     let syncInterval: ReturnType<typeof setInterval>;
-    if (['accepted', 'arrived', 'in_progress'].includes(rideState) && activeRideId) {
+    if (isRideActive && activeRideId) {
       syncInterval = setInterval(() => {
         if (socket && socket.connected) {
-          socket.timeout(5000).emit('driver:request_state', (err: any) => {
-            if (err) console.warn('Falha ping socket.');
-          }); 
+          socket.timeout(5000).emit('driver:request_state', (err: any) => {}); 
         } else if (socket) socket.connect();
       }, 10000);
     }
     return () => clearInterval(syncInterval);
-  }, [rideState, activeRideId]);
+  }, [isRideActive, activeRideId]);
 
   const updateCameraThrottled = useCallback((lng: number, lat: number) => {
     if (!isMapReady || !cameraRef.current) return;
@@ -602,7 +521,7 @@ export function Home() {
       } else {
         await AsyncStorage.multiRemove([STORAGE_ACTIVE_RIDE_ID, STORAGE_ACTIVE_RIDE_DATA, STORAGE_ACTIVE_RIDE_STATE]);
       }
-    } catch (err) { console.error('❌ Erro estado local:', err); }
+    } catch (err) {}
   };
 
   const resetDriverState = useCallback(async () => {
@@ -643,7 +562,6 @@ export function Home() {
     restoreLocalState();
   }, []);
 
-  // 🗺️ ROTA COMPLETA MAPBOX
   const fetchMapboxRoute = async (
     startLng: number, 
     startLat: number, 
@@ -661,17 +579,15 @@ export function Home() {
         .filter((wp): wp is string => wp !== null);
 
       const waypointsString = validWaypoints.length > 0 ? `${validWaypoints.join(';')};` : '';
-
       const token = MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '';
       const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${startLng},${startLat};${waypointsString}${endLng},${endLat}?geometries=geojson&steps=true&voice_instructions=true&banner_instructions=true&language=pt&access_token=${token}`;
       
       const response = await fetch(url);
-      if (!response.ok) throw new Error(`Falha requisição rota Mapbox: ${response.status}`);
+      if (!response.ok) throw new Error(`Falha rota Mapbox: ${response.status}`);
       const data = await response.json();
 
       if (data.routes && data.routes.length > 0 && isMountedRef.current) {
         const route = data.routes[0];
-        
         setRouteCoordinates(route.geometry.coordinates);
         
         const eta = Math.ceil(route.duration / 60);
@@ -701,7 +617,6 @@ export function Home() {
         }
       }
     } catch (err) {
-      console.warn('⚠️ Erro ao buscar rota no Mapbox, aplicando rota direta fallback:', err);
       if (isMountedRef.current) {
         setRouteCoordinates([[startLng, startLat], [endLng, endLat]]);
         const distKm = calculateDirectDistance(startLat, startLng, endLat, endLng);
@@ -724,9 +639,7 @@ export function Home() {
       stepLng
     );
 
-    const distMeters = distToStepKm * 1000;
-
-    if (distMeters <= 40) {
+    if (distToStepKm * 1000 <= 40) {
       const nextIndex = currentStepIndex + 1;
       if (nextIndex < routeSteps.length) {
         setCurrentStepIndex(nextIndex);
@@ -740,7 +653,6 @@ export function Home() {
     }
   }, [location?.coords, routeSteps, currentStepIndex, playBilingualVoice]);
 
-  // 🟢 2. GERENCIADOR DE ROTAS EM TEMPO REAL (TROCA AUTOMÁTICA DE TRAJETO)
   useEffect(() => {
     if (!location?.coords || !incomingRide) return;
 
@@ -752,14 +664,11 @@ export function Home() {
     const dLat = Number(incomingRide.destinationLat);
     const dLng = Number(incomingRide.destinationLng);
 
-    // 📍 ETAPA 1: INDO BUSCAR O PASSAGEIRO (ACCEPTED ou ARRIVED)
     if (rideState === 'accepted' || rideState === 'arrived') {
       if (!isNaN(pLat) && !isNaN(pLng) && pLat !== 0 && pLng !== 0) {
         fetchMapboxRoute(driverLng, driverLat, pLng, pLat);
       }
-    } 
-    // 🚖 ETAPA 2: VIAGEM EM ANDAMENTO - LEVANDO AO DESTINO (IN_PROGRESS)
-    else if (rideState === 'in_progress') {
+    } else if (rideState === 'in_progress') {
       if (!isNaN(dLat) && !isNaN(dLng) && dLat !== 0 && dLng !== 0) {
         let rawStops = incomingRide.stops;
         if (typeof rawStops === 'string') {
@@ -773,19 +682,10 @@ export function Home() {
             const lng = Number(s.lng ?? s.longitude);
             return s.status !== 'COMPLETED' && !isNaN(lat) && !isNaN(lng) && lat !== 0;
           });
-        } else if (incomingRide.extraStopLat && incomingRide.extraStopLng) {
-          const eLat = Number(incomingRide.extraStopLat);
-          const eLng = Number(incomingRide.extraStopLng);
-          if (!isNaN(eLat) && !isNaN(eLng)) {
-            pendingStops = [{ lat: eLat, lng: eLng }];
-          }
         }
-
         fetchMapboxRoute(driverLng, driverLat, dLng, dLat, pendingStops);
       }
-    } 
-    // 🔍 ETAPA 3: VISUALIZAR PRÉVIA DA CORRIDA QUANDO CHEGAR UMA OFERTA
-    else if (rideState === 'idle' && incomingRide) {
+    } else if (rideState === 'idle' && incomingRide) {
       if (!isNaN(pLat) && !isNaN(pLng) && !isNaN(dLat) && !isNaN(dLng)) {
         fetchMapboxRoute(pLng, pLat, dLng, dLat);
       }
@@ -796,81 +696,76 @@ export function Home() {
     persistActiveRideState(incomingRide, rideState, activeRideId);
   }, [rideState, activeRideId, location?.coords?.latitude, location?.coords?.longitude, incomingRide]);
 
-  // 🟢 1. HANDLER DE NOVA SOLICITAÇÃO (BLOQUEIA CORRIDA ATUAL REPETIDA)
-const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean; rideId?: string }) => {
-  if (!isMountedRef.current) return;
+  const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean; rideId?: string }) => {
+    if (!isMountedRef.current) return;
 
-  const currentRideId = activeRideIdRef.current || activeRideId;
-  const currentRideState = rideStateRef.current || rideState;
-  const newRideId = data.rideId || (data as any).id;
+    const currentRideId = activeRideIdRef.current || activeRideId;
+    const currentRideState = rideStateRef.current || rideState;
+    const newRideId = data.rideId || (data as any).id;
 
-  // 🛑 TRAVA 1: Se o ID for igual à corrida ativa ou ao incomingRide já aceito, IGNORA COMPLETAMENTE
-  if (currentRideId && currentRideId === newRideId) return;
-  if (incomingRideRef.current?.rideId === newRideId && currentRideState !== 'idle') return;
+    if (currentRideId && currentRideId === newRideId) return;
+    if (incomingRideRef.current?.rideId === newRideId && currentRideState !== 'idle') return;
 
-  setShowReceiptModal(false);
-  setShowRatingModal(false);
+    setShowReceiptModal(false);
+    setShowRatingModal(false);
 
-  const rawType = (data.serviceType || 'RIDE').toString().toUpperCase();
-  let normalizedService: 'RIDE' | 'DELIVERY' | 'RENTAL' = 'RIDE';
-  if (['ENTREGA', 'DELIVERY'].includes(rawType)) normalizedService = 'DELIVERY';
-  if (['ALUGUEL', 'RENTAL'].includes(rawType)) normalizedService = 'RENTAL';
+    const rawType = (data.serviceType || 'RIDE').toString().toUpperCase();
+    let normalizedService: 'RIDE' | 'DELIVERY' | 'RENTAL' = 'RIDE';
+    if (['ENTREGA', 'DELIVERY'].includes(rawType)) normalizedService = 'DELIVERY';
+    if (['ALUGUEL', 'RENTAL'].includes(rawType)) normalizedService = 'RENTAL';
 
-  if (serviceFiltersRef.current && serviceFiltersRef.current[normalizedService] === false) return;
+    if (serviceFiltersRef.current && serviceFiltersRef.current[normalizedService] === false) return;
 
-  const rawPrice = (data as any).fareXOF ?? data.priceXof ?? 0;
+    const rawPrice = (data as any).fareXOF ?? data.priceXof ?? 0;
+    let rawStops = data.stops;
+    if (typeof rawStops === 'string') {
+      try { rawStops = JSON.parse(rawStops); } catch { rawStops = []; }
+    }
 
-  let rawStops = data.stops;
-  if (typeof rawStops === 'string') {
-    try { rawStops = JSON.parse(rawStops); } catch { rawStops = []; }
-  }
+    let stopsArray: any[] = [];
+    if (Array.isArray(rawStops) && rawStops.length > 0) {
+      stopsArray = rawStops.map((s: any, index: number) => ({
+        ...s,
+        id: s.id || `stop_${index}`,
+        lat: Number(s.lat ?? s.latitude),
+        lng: Number(s.lng ?? s.longitude),
+        address: s.address || s.name || `Parada ${index + 1}`,
+        status: s.status || 'PENDING'
+      }));
+    }
 
-  let stopsArray: any[] = [];
-  if (Array.isArray(rawStops) && rawStops.length > 0) {
-    stopsArray = rawStops.map((s: any, index: number) => ({
-      ...s,
-      id: s.id || `stop_${index}`,
-      lat: Number(s.lat ?? s.latitude),
-      lng: Number(s.lng ?? s.longitude),
-      address: s.address || s.name || `Parada ${index + 1}`,
-      status: s.status || 'PENDING'
-    }));
-  }
+    const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
 
-  const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
+    const formattedOffer = {
+      ...data,
+      rideId: newRideId,
+      referencePoint: (data as any).referencePoint || (data as any).reference_point || '',
+      isQueuedOffer: isCurrentlyInRide,
+      passengerName: data.passengerName || 'Passageiro',
+      passengerRating: data.passengerRating || 5.0,
+      serviceType: normalizedService,
+      paymentMethod: data.paymentMethod || 'CASH',
+      priceXof: typeof rawPrice === 'string' ? parseFloat(rawPrice) : Number(rawPrice),
+      pickupLat: Number(data.pickupLat ?? (data as any).originLat),
+      pickupLng: Number(data.pickupLng ?? (data as any).originLng),
+      destinationLat: Number(data.destinationLat),
+      destinationLng: Number(data.destinationLng),
+      stops: stopsArray,
+    };
 
-  const formattedOffer = {
-    ...data,
-    rideId: newRideId,
-    referencePoint: (data as any).referencePoint || (data as any).reference_point || '',
-    isQueuedOffer: isCurrentlyInRide,
-    passengerName: data.passengerName || 'Passageiro',
-    passengerRating: data.passengerRating || 5.0,
-    serviceType: normalizedService,
-    paymentMethod: data.paymentMethod || 'CASH',
-    priceXof: typeof rawPrice === 'string' ? parseFloat(rawPrice) : Number(rawPrice),
-    pickupLat: Number(data.pickupLat ?? (data as any).originLat),
-    pickupLng: Number(data.pickupLng ?? (data as any).originLng),
-    destinationLat: Number(data.destinationLat),
-    destinationLng: Number(data.destinationLng),
-    stops: stopsArray,
+    setTimeLeft(15);
+
+    if (isCurrentlyInRide) {
+      setQueuedOfferData(formattedOffer);
+    } else {
+      setQueuedOfferData(null);
+      setIncomingRide(formattedOffer);
+    }
+
+    snapToState(true);
+    Vibration.vibrate([0, 500, 200, 500], false);
   };
 
-  setTimeLeft(15);
-
-  if (isCurrentlyInRide) {
-    // 🟢 SÓ PREENCHE A FILA SE FOR UMA CORRIDA REALMENTE DIFERENTE
-    setQueuedOfferData(formattedOffer);
-  } else {
-    setQueuedOfferData(null);
-    setIncomingRide(formattedOffer);
-  }
-
-  snapToState(true);
-  Vibration.vibrate([0, 500, 200, 500], true);
-};
-
-  // 🟢 2. HANDLERS DOS EVENTOS DE CORRIDA VIA SOCKET
   const handleRideAccepted = async (data: any) => {
     Vibration.cancel();
     if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
@@ -899,14 +794,10 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
           persistActiveRideState(incomingRideRef.current, 'accepted', data.rideId);
         }
         snapToState(true);
-      } else {
-        setQueuedOfferData(null);
-        Alert.alert('Fila Confirmada 🔄', 'Nova corrida adicionada à sua fila com sucesso!');
       }
     } else {
       setQueuedOfferData(null);
       setIncomingRide(null);
-      Alert.alert('Corrida Indisponível', 'Outro motorista aceitou esta corrida.');
     }
   };
 
@@ -924,7 +815,6 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
   const syncActiveRideWithServer = useCallback(async () => {
     try {
       if (!api || typeof api.get !== 'function') return;
-      
       const response = await api.get('/drivers/active-ride').catch(() => null);
       if (response?.data?.ride && isMountedRef.current) {
         const activeRide = response.data.ride;
@@ -954,29 +844,27 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
           setActiveRideId(activeRide.id);
           setRideState(mappedState);
           setIncomingRide({
-  rideId: activeRide.id,
-  referencePoint: (activeRide as any)?.referencePoint || (activeRide as any)?.reference_point || '',
-  passengerId: activeRide.passengerId,
-  passengerName: activeRide.passenger?.fullName || 'Passageiro',
-  passengerPhone: activeRide.passenger?.phone,
-  passengerPhoto: activeRide.passenger?.profilePicture,
-  passengerRating: activeRide.passenger?.ratingAverage || 5.0,
-  pickupLat: Number(activeRide.originLat),
-  pickupLng: Number(activeRide.originLng),
-  originAddress: activeRide.originAddress,
-  destinationLat: Number(activeRide.destinationLat),
-  destinationLng: Number(activeRide.destinationLng),
-  destinationAddress: activeRide.destinationAddress,
-  priceXof: Number(activeRide.priceXof),
-  paymentMethod: activeRide.paymentMethod,
-  stops: stopsArray,
-} as any);
+            rideId: activeRide.id,
+            referencePoint: (activeRide as any)?.referencePoint || (activeRide as any)?.reference_point || '',
+            passengerId: activeRide.passengerId,
+            passengerName: activeRide.passenger?.fullName || 'Passageiro',
+            passengerPhone: activeRide.passenger?.phone,
+            passengerPhoto: activeRide.passenger?.profilePicture,
+            passengerRating: activeRide.passenger?.ratingAverage || 5.0,
+            pickupLat: Number(activeRide.originLat),
+            pickupLng: Number(activeRide.originLng),
+            originAddress: activeRide.originAddress,
+            destinationLat: Number(activeRide.destinationLat),
+            destinationLng: Number(activeRide.destinationLng),
+            destinationAddress: activeRide.destinationAddress,
+            priceXof: Number(activeRide.priceXof),
+            paymentMethod: activeRide.paymentMethod,
+            stops: stopsArray,
+          } as any);
           persistActiveRideState(activeRide, mappedState, activeRide.id);
         }
       }
-    } catch (err) {
-      console.warn('⚠️ Erro ao sincronizar corrida ativa com servidor:', err);
-    }
+    } catch (err) {}
   }, []);
 
   const handleRideFinished = async (data: any) => {
@@ -985,7 +873,6 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
     setCompletedInfo({ fareXOF: data.fareXOF, distanceKm: data.distanceKm, transactionId: data.transactionId });
 
     if (data.hasQueuedRide && data.nextRideId) {
-      Alert.alert('Viagem Concluída! 🏁', 'Direcionando você para a próxima corrida que estava na fila.');
       setActiveRideId(data.nextRideId);
       setRideState('accepted');
       setShowReceiptModal(false);
@@ -1009,7 +896,6 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
     setRideState('accepted');
     snapToState(true);
     await syncActiveRideWithServer();
-    Alert.alert('Próxima Corrida Ativa 🚀', 'Seu novo passageiro já foi notificado de que você está a caminho!');
   };
 
   const handleRideCancelled = (data: { cancelledBy?: string; rideId?: string }) => {
@@ -1018,15 +904,11 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
 
     if (data.rideId && queuedOfferDataRef.current && data.rideId === queuedOfferDataRef.current.rideId) {
       setQueuedOfferData(null);
-      Alert.alert('Oferta Cancelada', 'A solicitação em fila foi cancelada pelo passageiro.');
       return;
     }
-
-    if (data.cancelledBy === 'PASSENGER') Alert.alert('Corrida Cancelada ⚠️', 'O passageiro cancelou a viagem.');
     resetDriverState();
   };
 
-  // 🟢 3. ESCUTA DOS EVENTOS DO SOCKET
   useEffect(() => {
     const handleConnect = async () => {
       if (driver?.id) {
@@ -1067,7 +949,6 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
     };
   }, [driver?.id, resetDriverState, snapToState, syncActiveRideWithServer]);
 
-  // 🟢 4. CONTROLE DO TIMER DE EXPIRAÇÃO DA OFERTA (15s)
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
     const currentOffer = queuedOfferData || (rideState === 'idle' ? incomingRide : null);
@@ -1088,45 +969,6 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
     }
     return () => clearInterval(timer);
   }, [queuedOfferData, incomingRide, timeLeft, rideState]);
-
-  // 🟢 FALLBACK DE PUSH NOTIFICATIONS
-  useEffect(() => {
-    const subscription = Notifications.addNotificationReceivedListener(async (notification) => {
-      const data = notification.request.content.data;
-      if (data && (data.type === 'NEW_RIDE_REQUEST' || data.type === 'NEW_RIDE_ALARM' || data.rideId)) {
-        try {
-          const response = await api.get('/drivers/active-ride');
-          if (response?.data?.ride && isMountedRef.current) {
-            const ride = response.data.ride;
-            setTimeLeft(15);
-            setIncomingRide({
-              rideId: ride.id,
-              
-              passengerId: ride.passengerId,
-              passengerName: ride.passenger?.fullName || 'Passageiro',
-              passengerRating: Number(ride.passenger?.ratingAverage || 5.0),
-              pickupLat: Number(ride.originLat),
-              pickupLng: Number(ride.originLng),
-              originAddress: ride.originAddress,
-              destinationLat: Number(ride.destinationLat),
-              destinationLng: Number(ride.destinationLng),
-              destinationAddress: ride.destinationAddress,
-              priceXof: Number(ride.priceXof),
-              paymentMethod: ride.paymentMethod || 'CASH',
-              serviceType: ride.serviceType || 'RIDE',
-              stops: ride.stops || [],
-            });
-            snapToState(true);
-            Vibration.vibrate([0, 500, 200, 500], true);
-          }
-        } catch (err) {
-          console.warn('⚠️ Erro ao carregar corrida via Push fallback:', err);
-        }
-      }
-    });
-
-    return () => { subscription.remove(); };
-  }, [snapToState]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', async (nextAppState: AppStateStatus) => {
@@ -1153,35 +995,35 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
       locationWatcherRef.current = null; 
     }
 
-    const isActiveRide = ['accepted', 'arrived', 'in_progress'].includes(currentState);
+    const isActive = ['accepted', 'arrived', 'in_progress'].includes(currentState);
     
-    let timeInterval = isActiveRide ? 2000 : 6000;
-    let distanceInterval = isActiveRide ? 3 : 10;
+    let timeInterval = isActive ? 2000 : 6000;
+    let distanceInterval = isActive ? 3 : 10;
 
     if (isLowBattery) {
-      timeInterval = isActiveRide ? 5000 : 12000;
-      distanceInterval = isActiveRide ? 8 : 20;
+      timeInterval = isActive ? 5000 : 12000;
+      distanceInterval = isActive ? 8 : 20;
     }
 
     try {
       const hasStartedBg = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
       if (!hasStartedBg) {
         await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-          accuracy: isActiveRide ? Location.Accuracy.BestForNavigation : Location.Accuracy.Balanced,
+          accuracy: isActive ? Location.Accuracy.BestForNavigation : Location.Accuracy.Balanced,
           timeInterval,
           distanceInterval,
           showsBackgroundLocationIndicator: true,
           foregroundService: {
             notificationTitle: 'Nô Bai 245 Motorista',
-            notificationBody: isActiveRide ? 'Navegação de corrida ativa em segundo plano' : 'Você está online e visível para novos chamados',
+            notificationBody: isActive ? 'Navegação de corrida ativa' : 'Você está online e visível',
             notificationColor: '#0E243C',
           },
-        }).catch(err => console.warn('⚠️ Erro ao iniciar background service:', err));
+        }).catch(() => {});
       }
 
       locationWatcherRef.current = await Location.watchPositionAsync(
         { 
-          accuracy: isActiveRide ? Location.Accuracy.BestForNavigation : Location.Accuracy.Balanced, 
+          accuracy: isActive ? Location.Accuracy.BestForNavigation : Location.Accuracy.Balanced, 
           timeInterval, 
           distanceInterval 
         },
@@ -1232,38 +1074,29 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
           }
         }
       );
-    } catch (e) {
-      console.warn('⚠️ Erro startTrackingForState:', e);
-    }
+    } catch (e) {}
   };
 
   async function startTracking() {
     if (driver?.status !== 'APPROVED') {
-      return Alert.alert('Conta em Análise', 'Aguarde aprovação de documentos.');
+      return Alert.alert('Conta em Análise', 'Aguarde a aprovação dos documentos.');
     }
 
     const foreground = await Location.requestForegroundPermissionsAsync();
     if (foreground.status !== 'granted') {
-      return Alert.alert('Permissão Necessária', 'Permita o acesso à localização para ficar online.');
+      return Alert.alert('Permissão Necessária', 'Permita acesso à localização.');
     }
 
     try {
-      const currentLoc = await Location.getCurrentPositionAsync({ 
-        accuracy: Location.Accuracy.High 
-      });
-
+      const currentLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
       
       if (isMocked && !__DEV__) {
         if (isMountedRef.current) setIsOnline(false);
-        return Alert.alert(
-          'GPS Simulado Detectado',
-          'Desative o aplicativo de GPS Falso no seu dispositivo para conseguir ficar online e receber corridas.'
-        );
+        return Alert.alert('GPS Simulado Detectado', 'Desative o aplicativo de GPS Falso.');
       }
 
       setIsOnline(true);
-      
       const activeSocket = await connectDriverSocket();
 
       if (isMountedRef.current) {
@@ -1293,19 +1126,14 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
       }
 
       await startTrackingForState(rideState);
-
     } catch (e) {
-      console.error('❌ Erro ao iniciar rastreamento:', e);
-      Alert.alert('Erro de Localização', 'Verifique se o GPS do seu dispositivo está ativado.');
       if (isMountedRef.current) setIsOnline(false);
     }
   }
 
   function stopTracking() {
     if (driver?.id && socket && socket.connected) {
-      socket.timeout(2000).emit('driver:offline', { driverId: driver.id }, (err: any) => {
-        if (err) console.log('Offline forçado (Rede instável)');
-      });
+      socket.timeout(2000).emit('driver:offline', { driverId: driver.id });
     }
     setIsOnline(false);
     if (locationWatcherRef.current) { 
@@ -1317,43 +1145,42 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
 
   useEffect(() => { if (isOnline) startTrackingForState(rideState); }, [rideState, isOnline, isLowBattery]);
 
- function acceptRide(rideId: string, driverId: string, currentLat: number, currentLng: number) {
-  Vibration.cancel();
-  setIsLoading(true);
+  function acceptRide(rideId: string, driverId: string, currentLat: number, currentLng: number) {
+    Vibration.cancel();
+    setIsLoading(true);
 
-  // 🟢 TRAVA 2: Atualiza a memória de referência instantaneamente antes do Socket responder
-  activeRideIdRef.current = rideId;
-  rideStateRef.current = 'accepted';
-  setQueuedOfferData(null);
-
-  if (!socket || !socket.connected) {
-    setIsLoading(false);
-    return Alert.alert('Sem Conexão', 'Sinal de internet insuficiente.');
-  }
-
-  socket.timeout(8000).emit('driver:accept_ride', { 
-    rideId, driverId, driverLat: currentLat, driverLng: currentLng 
-  }, (err: any, response: any) => {
-    if (!isMountedRef.current) return;
-    setIsLoading(false);
-
-    if (err) return Alert.alert('Sinal Fraco 📡', 'Não foi possível confirmar a corrida a tempo.');
-    
-    if (response?.error) {
-      setQueuedOfferData(null); 
-      return Alert.alert('Aviso', response.message);
-    }
-
-    setActiveRideId(rideId);
-    setRideState('accepted');
-    if (queuedOfferDataRef.current) {
-      setIncomingRide(queuedOfferDataRef.current);
-      persistActiveRideState(queuedOfferDataRef.current, 'accepted', rideId);
-    }
+    activeRideIdRef.current = rideId;
+    rideStateRef.current = 'accepted';
     setQueuedOfferData(null);
-    snapToState(true);
-  });
-}
+
+    if (!socket || !socket.connected) {
+      setIsLoading(false);
+      return Alert.alert('Sem Conexão', 'Sinal de internet insuficiente.');
+    }
+
+    socket.timeout(8000).emit('driver:accept_ride', { 
+      rideId, driverId, driverLat: currentLat, driverLng: currentLng 
+    }, (err: any, response: any) => {
+      if (!isMountedRef.current) return;
+      setIsLoading(false);
+
+      if (err) return Alert.alert('Sinal Fraco 📡', 'Não foi possível confirmar a tempo.');
+      
+      if (response?.error) {
+        setQueuedOfferData(null); 
+        return Alert.alert('Aviso', response.message);
+      }
+
+      setActiveRideId(rideId);
+      setRideState('accepted');
+      if (queuedOfferDataRef.current) {
+        setIncomingRide(queuedOfferDataRef.current);
+        persistActiveRideState(queuedOfferDataRef.current, 'accepted', rideId);
+      }
+      setQueuedOfferData(null);
+      snapToState(true);
+    });
+  }
 
   async function handleArrived() {
     if (!activeRideId) return;
@@ -1363,7 +1190,6 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
     const processOffline = async () => {
       await saveActionToQueue('driver:arrived', payload);
       if (isMountedRef.current) {
-        Alert.alert('Modo Offline', 'Sua chegada foi registrada e será sincronizada assim que a rede voltar.');
         setRideState('arrived');
         if (incomingRide) persistActiveRideState(incomingRide, 'arrived', activeRideId);
         setDriverEta(null);
@@ -1399,7 +1225,6 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
       });
     } else {
       saveActionToQueue('ride:cancel', { rideId: activeRideId, userId: driver?.id, userType: 'DRIVER', reason });
-      Alert.alert('Aviso de Rede', 'Conexão fraca. O cancelamento será sincronizado em breve.');
     }
   }
 
@@ -1414,7 +1239,6 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
         setRideState('in_progress');
         setShowOtpModal(false);
         if (incomingRide) persistActiveRideState(incomingRide, 'in_progress', activeRideId);
-        Alert.alert('Modo Offline', 'Início de viagem gravado no aparelho.');
         setIsLoading(false);
       }
     };
@@ -1442,37 +1266,22 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
   async function handleFinishRide() {
     if (!activeRideId) return;
     setIsLoading(true);
+
     const fallbackLat = Number(location?.coords?.latitude || incomingRide?.destinationLat || BISSAU_CENTER_LAT);
     const fallbackLng = Number(location?.coords?.longitude || incomingRide?.destinationLng || BISSAU_CENTER_LNG);
     const payload = { rideId: activeRideId, dropoffLat: fallbackLat, dropoffLng: fallbackLng };
 
-    const processOfflineFinish = async () => {
-      await saveActionToQueue('driver:finish_ride', payload);
-      if (isMountedRef.current) {
-        Alert.alert('Corrida Salva Offline 💾', 'Finalizada com sucesso no aparelho. A cobrança e recibo serão sincronizados assim que a rede voltar.');
-        setFinishedRideId(activeRideId);
-        setFinishedTargetName(displayPassengerName);
-        setShowRatingModal(true);
-        setIsLoading(false);
-      }
-    };
+    setFinishedRideId(activeRideId);
+    setFinishedTargetName(displayPassengerName);
 
     if (socket && socket.connected) {
-      socket.timeout(5000).emit('driver:finish_ride', payload, async (err: any, response: any) => {
-        if (!isMountedRef.current) return;
-        if (err) {
-          await processOfflineFinish();
-        } else if (response?.error) {
-          Alert.alert('Erro', response.message || 'Não foi possível finalizar a corrida no servidor.');
-          setIsLoading(false);
-        } else {
-          setFinishedRideId(activeRideId);
-          setFinishedTargetName(displayPassengerName);
-          setIsLoading(false);
-        }
-      });
+      socket.emit('driver:finish_ride', payload);
+      setIsLoading(false);
+      setShowReceiptModal(true);
     } else {
-      await processOfflineFinish();
+      await saveActionToQueue('driver:finish_ride', payload);
+      setIsLoading(false);
+      setShowReceiptModal(true);
     }
   }
 
@@ -1506,18 +1315,7 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
   }
 
   function handleCallPassenger() {
-    Alert.alert('Contato Protegido 🔒', 'Por motivos de segurança e privacidade, a comunicação deve ser feita exclusivamente pelo Chat.');
     setIsChatVisible(true);
-  }
-
-  function handleInaccessibleLocation() {
-    if (!activeRideId || !socket || !socket.connected) return Alert.alert('Erro de Rede', 'Verifique sua conexão.');
-    socket.emit('driver:alert_inaccessible_location', { 
-      rideId: activeRideId, 
-      title: 'Atenção do Motorista ⚠️', 
-      message: 'O motorista informou que o local exato é de difícil acesso. Por favor, aproxime-se do ponto indicado no mapa.' 
-    });
-    Alert.alert('Alerta Enviado! 📢', 'O passageiro foi notificado.');
   }
 
   const handleRecenterMap = () => {
@@ -1530,27 +1328,20 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
     }
   };
 
-  // 🟢 GRAVAÇÃO DE ÁUDIO PROTEGIDA (SEM DEPENDER DE AudioModule GLOBAL)
   const toggleAudioRecording = async () => {
     try {
       if ((audioRecorder as any)?.isRecording) {
         if (typeof (audioRecorder as any)?.stopRecording === 'function') {
           await (audioRecorder as any).stopRecording();
-        } else if (typeof (audioRecorder as any)?.stop === 'function') {
-          await (audioRecorder as any).stop();
         }
-        Alert.alert('Gravação Encerrada', 'O áudio de segurança foi gravado e salvo localmente.');
+        Alert.alert('Gravação Encerrada', 'O áudio de segurança foi gravado localmente.');
       } else {
         if (typeof (audioRecorder as any)?.startRecording === 'function') {
           await (audioRecorder as any).startRecording();
-        } else if (typeof (audioRecorder as any)?.record === 'function') {
-          await (audioRecorder as any).record();
         }
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       }
-    } catch (err: any) {
-      console.warn('⚠️ [GRAVAÇÃO LOG] Erro ao alternar gravador:', err);
-    }
+    } catch (err) {}
   };
 
   const topHeaderInset = Math.max((insets?.top || 0) + 10, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 16);
@@ -1560,11 +1351,7 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
     if (!incomingRide?.stops) return [];
     let raw = incomingRide.stops;
     if (typeof raw === 'string') {
-      try {
-        raw = JSON.parse(raw);
-      } catch {
-        raw = [];
-      }
+      try { raw = JSON.parse(raw); } catch { raw = []; }
     }
     if (!Array.isArray(raw)) return [];
     return raw.map((s: any, idx: number) => ({
@@ -1606,9 +1393,9 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
           animationMode="flyTo"
           animationDuration={1000}
         />
-       
+
         {/* 🔴 ZONAS DE ALTA DEMANDA */}
-        {isOnline && (
+        {isOnline && !isRideActive && (
           <Mapbox.ShapeSource id="demandZonesSource" shape={demandZonesData as any}>
             <Mapbox.CircleLayer 
               id="demandZonesLayer" 
@@ -1633,26 +1420,28 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
             ]}
             anchor={{ x: 0.5, y: 0.5 }}
           >
-            <View style={{ backgroundColor: 'transparent', width: 44, height: 44, justifyContent: 'center', alignItems: 'center' }}>
+            <View style={styles.vehicle3DContainer}>
               <View 
-                style={{ 
-                  backgroundColor: 'transparent',
-                  transform: [
-                    { 
-                      rotate: `${Math.round(
-                        Number(lastDriverCoordsRef.current?.heading) || 
-                        Number(location.coords.heading) || 0
-                      )}deg` 
-                    }
-                  ]
-                }}
+                style={[
+                  styles.vehicle3DRotator,
+                  { 
+                    transform: [
+                      { 
+                        rotate: `${Math.round(
+                          Number(lastDriverCoordsRef.current?.heading) || 
+                          Number(location.coords.heading) || 0
+                        )}deg` 
+                      }
+                    ]
+                  }
+                ]}
               >
                 <Image
                   source={getVehicle3DIconAsset(
                     (driver as any)?.vehicleType || incomingRide?.vehicleType || 'PARTICULAR',
                     (driver as any)?.carColor || 'BRANCO'
                   )}
-                  style={{ width: 40, height: 40, backgroundColor: 'transparent' }}
+                  style={styles.vehicle3DImage}
                   fadeDuration={0}
                   resizeMode="contain"
                 />
@@ -1664,13 +1453,13 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
         {/* 🛣️ LINHA DA ROTA */}
         {routeCoordinates && routeCoordinates.length > 0 && (
           <Mapbox.ShapeSource 
-  id="routeSource" 
-  shape={{ 
-    type: 'Feature', 
-    properties: {}, 
-    geometry: { type: 'LineString', coordinates: routeCoordinates } 
-  }}
->
+            id="routeSource" 
+            shape={{ 
+              type: 'Feature', 
+              properties: {}, 
+              geometry: { type: 'LineString', coordinates: routeCoordinates } 
+            }}
+          >
             <Mapbox.LineLayer 
               id="routeLine" 
               style={{ 
@@ -1683,20 +1472,20 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
           </Mapbox.ShapeSource>
         )}
 
-        {/* 📍 PARADAS INTERMEDIÁRIAS NO MAPA */}
+        {/* 📍 PARADAS INTERMEDIÁRIAS */}
         {formattedStops.length > 0 && formattedStops.map((stop: any, index: number) => {
           if (!stop.lng || !stop.lat) return null;
           const isPassed = index < currentStopIndex;
           return (
             <Mapbox.PointAnnotation key={`stop-${stop.id || index}`} id={`stop-${stop.id || index}`} coordinate={[stop.lng, stop.lat]}>
-              <View style={[styles.carMarkerContainer, { backgroundColor: isPassed ? '#64748B' : '#3B82F6', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 2, borderColor: '#FFFFFF' }]}>
+              <View style={[styles.carMarkerContainer, { backgroundColor: isPassed ? '#64748B' : '#3B82F6' }]}>
                 <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '900' }}>P{index + 1}</Text>
               </View>
             </Mapbox.PointAnnotation>
           );
         })}
 
-        {/* 🏁 PONTO DE DESEMBARQUE (DESTINO FINAL) */}
+        {/* 🏁 PONTO DE DESEMBARQUE */}
         {incomingRide?.destinationLng != null && incomingRide?.destinationLat != null && !isNaN(Number(incomingRide.destinationLng)) && !isNaN(Number(incomingRide.destinationLat)) && (
           <Mapbox.PointAnnotation id="dropoffMarker" coordinate={[Number(incomingRide.destinationLng), Number(incomingRide.destinationLat)]}>
             <View style={styles.markerDestination}>
@@ -1706,7 +1495,7 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
         )}
       </Mapbox.MapView>
 
-      {/* 📊 HEADER SUPERIOR FLUTUANTE DE GANHOS E STATUS */}
+      {/* 📊 HEADER SUPERIOR FLUTUANTE */}
       <View style={[styles.headerContainer, { top: topHeaderInset }]} pointerEvents="box-none">
         <View style={styles.headerRow}>
           <TouchableOpacity 
@@ -1739,7 +1528,7 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
           </TouchableOpacity>
         </View>
 
-        {isLowBattery && (
+        {isLowBattery && !isRideActive && (
           <View style={styles.lowBatteryBanner}>
             <Ionicons name="battery-dead" size={13} color="#FFFFFF" />
             <Text style={styles.lowBatteryText}>
@@ -1749,7 +1538,7 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
         )}
       </View>
 
-      {/* 🎛️ BOTÕES FLUTUANTES SOBRE O MAPA */}
+      {/* 🎛️ BOTÕES FLUTUANTES */}
       <View style={styles.floatingButtonsWrapper} pointerEvents="box-none">
         <TouchableOpacity style={styles.recenterButton} onPress={handleRecenterMap} activeOpacity={0.85}>
           <Ionicons name="locate" size={20} color="#EAB308" />
@@ -1777,7 +1566,7 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
       <DriverSOSModal visible={showSosModal} onClose={() => setShowSosModal(false)} currentRideId={activeRideId} />
       <RatingModal visible={showRatingModal} targetName={finishedTargetName} isDriverEvaluating={true} onClose={() => setShowRatingModal(false)} onSubmit={handleSubmitRating} />
 
-      {/* 📋 PAINEL FLUTUANTE INFERIOR (BOTTOM SHEET) */}
+      {/* 📋 PAINEL INFERIOR (BOTTOM SHEET) */}
       <KeyboardAvoidingView 
         style={styles.bottomSheetWrapper} 
         behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
@@ -1800,26 +1589,17 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
         >
           <TouchableOpacity 
             activeOpacity={0.8}
-            onPress={() => {
-              if (typeof snapToState === 'function') {
-                snapToState(!isExpandedRef.current);
-              }
-            }}
+            onPress={() => snapToState(!isExpandedRef.current)}
             style={styles.dragHandleArea} 
             {...panResponder.panHandlers}
           >
             <View style={styles.dragHandle} />
             <Text style={styles.dragHintText}>
-              {isExpandedRef.current ? '▼ Arraste para recolher' : '▲ Toque ou arraste para expandir'}
+              {isExpandedRef.current ? '▼ Arraste para recolher' : '▲ Toque para expandir'}
             </Text>
           </TouchableOpacity>
 
-          <ScrollView 
-            nestedScrollEnabled 
-            showsVerticalScrollIndicator={false} 
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={{ flexGrow: 1, paddingBottom: 10 }}
-          >
+          <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ flexGrow: 1, paddingBottom: 10 }}>
             {rideState === 'idle' && (
               <View style={styles.idleContainer}>
                 <Text style={styles.idleTitle}>{isOnline ? 'Buscando solicitações...' : 'Pronto para dirigir?'}</Text>
@@ -1834,7 +1614,7 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
               </View>
             )}
 
-            {['accepted', 'arrived', 'in_progress'].includes(rideState) && incomingRide && (
+            {isRideActive && incomingRide && (
               <View style={styles.activeRideContainer}>
                 
                 <View style={styles.compactHeaderRow}>
@@ -1907,35 +1687,34 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
 
                 <View style={styles.routeAddressesContainer}>
                   {/* ORIGEM */}
-<View style={styles.addressItem}>
-  <Ionicons name="location" size={16} color="#10B981" />
-  <View style={styles.addressTextWrapper}>
-    <Text style={styles.addressLabel}>Buscar em:</Text>
-    <Text style={styles.addressValue} numberOfLines={1}>
-      {incomingRide?.originAddress || 'Endereço de origem'}
-    </Text>
+                  <View style={styles.addressItem}>
+                    <Ionicons name="location" size={16} color="#10B981" />
+                    <View style={styles.addressTextWrapper}>
+                      <Text style={styles.addressLabel}>Buscar em:</Text>
+                      <Text style={styles.addressValue} numberOfLines={1}>
+                        {incomingRide?.originAddress || 'Endereço de origem'}
+                      </Text>
 
-    {/* 💡 PONTO DE REFERÊNCIA EM DESTAQUE NA CORRIDA ATIVA */}
-    {Boolean((incomingRide as any)?.referencePoint) && (
-  <View style={{
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(234, 179, 8, 0.15)',
-    borderWidth: 1,
-    borderColor: '#EAB308',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    marginTop: 4
-  }}>
-    <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
-    <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
-      Ref: {(incomingRide as any).referencePoint}
-    </Text>
-  </View>
-)}
-  </View>
-</View>
+                      {Boolean((incomingRide as any)?.referencePoint) && (
+                        <View style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          backgroundColor: 'rgba(234, 179, 8, 0.15)',
+                          borderWidth: 1,
+                          borderColor: '#EAB308',
+                          paddingHorizontal: 8,
+                          paddingVertical: 4,
+                          borderRadius: 6,
+                          marginTop: 4
+                        }}>
+                          <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
+                          <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
+                            Ref: {(incomingRide as any).referencePoint}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
 
                   {/* PARADAS INTERMEDIÁRIAS */}
                   {formattedStops.length > 0 && formattedStops.map((stop: any, idx: number) => (
@@ -2031,15 +1810,12 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
         </Animated.View>
       </KeyboardAvoidingView>
 
-      {/* ⚙️ MODAL PREFERÊNCIAS DE SERVIÇOS */}
+      {/* ⚙️ MODAL DE FILTROS */}
       <Modal visible={showFilterModal} transparent animationType="slide">
         <View style={styles.filterModalOverlay}>
-          <View style={[
-            styles.filterModalCard,
-            { paddingBottom: Math.max((insets?.bottom || 0) + 24, Platform.OS === 'android' ? 36 : 20) }
-          ]}>
+          <View style={[styles.filterModalCard, { paddingBottom: Math.max((insets?.bottom || 0) + 24, Platform.OS === 'android' ? 36 : 20) }]}>
             <Text style={styles.filterModalTitle}>Preferências de Chamada</Text>
-            <Text style={styles.filterModalSub}>Selecione os serviços que você deseja receber:</Text>
+            <Text style={styles.filterModalSub}>Selecione os serviços que deseja receber:</Text>
             
             <View style={styles.filterRow}>
               <View style={styles.filterLabelContainer}>
@@ -2070,7 +1846,7 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
         </View>
       </Modal>
 
-      {/* 🧭 NAVEGAÇÃO GUIA PASSO A PASSO */}
+      {/* 🧭 NAVEGAÇÃO TURBYTURN */}
       <TurnByTurnSheet 
         visible={showNavSheet} 
         onClose={() => setShowNavSheet(false)} 
@@ -2079,16 +1855,11 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
         onConfirmStop={() => setCurrentStopIndex(prev => prev + 1)} 
       />
 
-      {/* 🔔 MODAL DE OFERTA DE CORRIDA / FILA */}
-      <Modal 
-        visible={!!activeOffer} 
-        transparent 
-        animationType="fade"
-      >
+      {/* 🔔 MODAL DE OFERTA DE CORRIDA */}
+      <Modal visible={!!activeOffer} transparent animationType="fade">
         <View style={styles.newRequestOverlay}>
           <View style={styles.newRequestCard}>
-            
-            {['accepted', 'arrived', 'in_progress'].includes(rideState) && (
+            {isRideActive && (
               <View style={{ backgroundColor: '#3B82F6', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Ionicons name="layers-outline" size={16} color="#FFFFFF" />
                 <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 12 }}>
@@ -2101,13 +1872,11 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Ionicons name={activeOffer?.serviceType === 'DELIVERY' ? 'cube' : 'car-sport'} size={18} color="#EAB308" />
                 <Text style={styles.newRequestTitle}>
-                  {['accepted', 'arrived', 'in_progress'].includes(rideState) ? 'Nova Oferta em Fila!' : 'Nova Corrida!'}
+                  {isRideActive ? 'Nova Oferta em Fila!' : 'Nova Corrida!'}
                 </Text>
               </View>
               <View style={styles.newRequestPriceBadge}>
-                <Text style={styles.newRequestPriceText}>
-                  {formatCurrency(activeOffer?.priceXof)} XOF
-                </Text>
+                <Text style={styles.newRequestPriceText}>{formatCurrency(activeOffer?.priceXof)} XOF</Text>
               </View>
             </View>
 
@@ -2119,7 +1888,7 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
             <View style={styles.modalPassengerRow}>
               <View style={styles.passengerPhotoContainerSm}>
                 {activeOffer?.passengerPhoto ? (
-                  <Image source={{ uri: formatImageUrl(activeOffer.passengerPhoto) }} style={{ width: '100%', height: '100%', borderRadius: 16 }} />
+                  <Image source={{ uri: formatImageUrl(activeOffer.passengerPhoto) }} style={{ width: '100%', height: '100%', borderRadius: 18 }} />
                 ) : (
                   <Ionicons name="person" size={16} color="#94A3B8" />
                 )}
@@ -2134,36 +1903,35 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
             </View>
 
             <View style={styles.routeTimelineContainer}>
-              {/* EMBARQUE / ORIGEM */}
-<View style={styles.timelineRow}>
-  <Ionicons name="location" size={16} color="#10B981" />
-  <View style={styles.timelineTextContainer}>
-    <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
-    <Text style={styles.timelineAddress} numberOfLines={2}>
-      {activeOffer?.originAddress || 'Local de origem'}
-    </Text>
+              {/* EMBARQUE */}
+              <View style={styles.timelineRow}>
+                <Ionicons name="location" size={16} color="#10B981" />
+                <View style={styles.timelineTextContainer}>
+                  <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
+                  <Text style={styles.timelineAddress} numberOfLines={2}>
+                    {activeOffer?.originAddress || 'Local de origem'}
+                  </Text>
 
-    {/* 💡 PONTO DE REFERÊNCIA EM DESTAQUE NA OFERTA */}
-{Boolean((activeOffer as any)?.referencePoint) && (
-  <View style={{
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(234, 179, 8, 0.15)',
-    borderWidth: 1,
-    borderColor: '#EAB308',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    marginTop: 4
-  }}>
-    <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
-    <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
-      Ref: {(activeOffer as any)?.referencePoint}
-    </Text>
-  </View>
-)}
-  </View>
-</View>
+                  {Boolean((activeOffer as any)?.referencePoint) && (
+                    <View style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: 'rgba(234, 179, 8, 0.15)',
+                      borderWidth: 1,
+                      borderColor: '#EAB308',
+                      paddingHorizontal: 8,
+                      paddingVertical: 4,
+                      borderRadius: 6,
+                      marginTop: 4
+                    }}>
+                      <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
+                      <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
+                        Ref: {(activeOffer as any)?.referencePoint}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </View>
 
               {/* DESTINO */}
               <View style={styles.timelineRow}>
@@ -2201,7 +1969,7 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
                 }}
               >
                 <Text style={styles.acceptText}>
-                  {isLoading ? 'Aceitando...' : (['accepted', 'arrived', 'in_progress'].includes(rideState) ? 'Adicionar à Fila 🔄' : 'Aceitar Chamada')}
+                  {isLoading ? 'Aceitando...' : (isRideActive ? 'Adicionar à Fila 🔄' : 'Aceitar Chamada')}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -2224,17 +1992,12 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
       {/* 🧾 MODAL RECIBO */}
       <Modal visible={showReceiptModal} transparent animationType="slide">
         <View style={styles.receiptOverlay}>
-          <View style={[
-            styles.receiptCard,
-            { paddingBottom: Math.max((insets?.bottom || 0) + 20, Platform.OS === 'android' ? 32 : 20) }
-          ]}>
+          <View style={[styles.receiptCard, { paddingBottom: Math.max((insets?.bottom || 0) + 20, Platform.OS === 'android' ? 32 : 20) }]}>
             <Text style={styles.receiptHeader}>✅ Serviço Concluído</Text>
             <Text style={styles.receiptSub}>Obrigado por mais um serviço finalizado com sucesso.</Text>
             <View style={styles.divider} />
             <Text style={styles.receiptLabel}>Total Ganho:</Text>
-            <Text style={styles.receiptAmount}>
-              {formatCurrency(completedInfo?.fareXOF)} XOF
-            </Text>
+            <Text style={styles.receiptAmount}>{formatCurrency(completedInfo?.fareXOF)} XOF</Text>
             <Text style={styles.receiptDist}>ID da Transação: {completedInfo?.transactionId || 'N/A'}</Text>
             
             <View style={{ width: '100%', gap: 10, marginTop: 15 }}>
@@ -2269,6 +2032,10 @@ const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean
     </View>
   );
 }
+
+// ---------------------------------------------------------------------------
+// ESTILOS UNIFICADOS
+// ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -2311,7 +2078,7 @@ const styles = StyleSheet.create({
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justify: 'space-between',
     gap: 8,
   },
   statusPill: {
