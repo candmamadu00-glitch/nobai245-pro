@@ -32,6 +32,7 @@
         "CAMERA",
         "RECORD_AUDIO",
         "VIBRATE",
+        "SYSTEM_ALERT_WINDOW",
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_BACKGROUND_LOCATION",

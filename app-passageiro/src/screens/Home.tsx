@@ -356,6 +356,9 @@ export function Home() {
   const [routeGeometry, setRouteGeometry] = useState<any>(null);
   const [nearbyDrivers, setNearbyDrivers] = useState<Array<{ id: string; lat: number; lng: number; heading?: number }>>([]);
   const [isSearchingRide, setIsSearchingRide] = useState(false);
+  // 🇬🇼 ESTADOS E ANIMAÇÃO DO BOTÃO FLUTUANTE GUINÉ-BISSAU
+  const [isAppInBackground, setIsAppInBackground] = useState(false);
+  const floatingPan = useRef(new Animated.ValueXY({ x: Dimensions.get('window').width - 70, y: 180 })).current;
 
   const VEHICLE_OPTIONS = [
     { id: 'moto' as VehicleType, title: 'Moto', subtitle: t('moto_subtitle', 'Rápido e econômico'), image: require('../assets/vehicles/moto.png') },
@@ -372,7 +375,18 @@ export function Home() {
     BAFATA: { price: null, label: 'Bafatá / Gabú', description: t('on_request', 'Preço sob consulta prévia') },
     GABU: { price: null, label: 'Bafatá / Gabú', description: t('on_request', 'Preço sob consulta prévia') },
   };
-
+ const panResponderFloating = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderMove: Animated.event([null, { dx: floatingPan.x, dy: floatingPan.y }], { useNativeDriver: false }),
+      onPanResponderRelease: (_, gestureState) => {
+        const screenWidth = Dimensions.get('window').width;
+        const snapX = gestureState.moveX > screenWidth / 2 ? screenWidth - 75 : 10;
+        Animated.spring(floatingPan.x, { toValue: snapX, useNativeDriver: false }).start();
+      },
+    })
+  ).current;
   const changeLanguage = useCallback((code: string) => {
     i18n.changeLanguage(code);
     setLangModalVisible(false);
@@ -1075,9 +1089,12 @@ export function Home() {
   }
 }, []);
 
-  // 📱 Monitora mudança de plano do aplicativo
+  // 📱 Monitora mudança de estado do app (1º Plano vs 2º Plano)
   useEffect(() => {
     const subscription = AppState.addEventListener('change', async (nextAppState) => {
+      const isBg = nextAppState.match(/inactive|background/);
+      setIsAppInBackground(Boolean(isBg));
+
       if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
         console.log('📱 [PASSENGER APP RESUME] Passageiro voltou para o aplicativo!');
         getCurrentLocationWithFallback();
@@ -1099,7 +1116,6 @@ export function Home() {
 
     return () => subscription.remove();
   }, [getCurrentLocationWithFallback, syncPassengerActiveRide]);
-
   useEffect(() => {
     const currentLat = pickupCoords?.latitude || passengerLocation?.coords?.latitude;
     const currentLng = pickupCoords?.longitude || passengerLocation?.coords?.longitude;
@@ -2544,53 +2560,138 @@ return (
               </View>
             </View>
           )}
-
-          {/* 📊 BANNER DE STATUS E CONTROLES EM ANDAMENTO */}
+{/* 📊 PAINEL PROFISSIONAL DE ACOMPANHAMENTO DA CORRIDA */}
           {['accepted', 'arrived', 'in_progress'].includes(rideStatus) && driverInfo && (
-            <View style={{ width: '100%' }}>
-              <View style={styles.statusBanner}>
-                <Text style={styles.statusBannerText}>
-                  {rideStatus === 'accepted' 
-                    ? (driverEta ? `${t('arriving_in', 'Chegando em')} ${driverEta} min` : t('driver_on_way', 'Motorista a caminho')) :
-                   rideStatus === 'arrived' 
-                    ? t('driver_arrived', 'O motorista chegou!') : 
-                   (driverEta ? `${t('destination_in', 'Destino em')} ${driverEta} min` : t('ride_in_progress', 'Viagem em andamento'))}
-                </Text>
-                <TouchableOpacity onPress={handleShareTrip} style={styles.shareButton} activeOpacity={0.8}>
-                  <Ionicons name="share-social-outline" size={18} color="#0F172A" />
-                </TouchableOpacity>
+            <View style={styles.activeRideContainer}>
+              
+              {/* STATUS & TEMPO DE CHEGADA COM HEADER GUINÉ-BISSAU */}
+              <View style={styles.activeRideHeader}>
+                <View style={styles.statusPulseBox}>
+                  <View style={styles.statusPulseDot} />
+                  <Text style={styles.activeRideStatusTitle}>
+                    {rideStatus === 'accepted' 
+                      ? (driverEta ? `Motorista a caminho (${driverEta} min)` : 'Motorista a caminho') :
+                     rideStatus === 'arrived' 
+                      ? '📍 O motorista chegou ao local!' : 
+                     (driverEta ? `Em Viagem • Chegada em ${driverEta} min` : 'Viagem em Andamento')}
+                  </Text>
+                </View>
+
+                {/* VALOR EM DESTAQUE */}
+                <View style={styles.priceBadgeHeader}>
+                  <Text style={styles.priceBadgeLabel}>VALOR</Text>
+                  <Text style={styles.priceBadgeValue}>
+                    {estimatedPrice ? `${estimatedPrice.toLocaleString('pt-GW')} XOF` : 'A calcular'}
+                  </Text>
+                </View>
               </View>
 
-              <View style={styles.actionRow}>
-                <TouchableOpacity 
-                  style={[styles.iconCircleButton, styles.sosButton]} 
-                  onPress={handleSosPress}
-                  activeOpacity={0.8}
-                >
+              {/* TIMELINE COMPLETA DA ROTA (ORIGEM -> PARADAS -> DESTINO) */}
+              <View style={styles.routeTimelineContainer}>
+                <Text style={styles.routeTimelineHeaderTitle}>ITINERÁRIO DA VIAGEM</Text>
+                
+                {/* ORIGEM */}
+                <View style={styles.timelineItem}>
+                  <View style={[styles.timelineIconBg, { backgroundColor: '#10B981' }]}>
+                    <Ionicons name="location" size={14} color="#FFF" />
+                  </View>
+                  <View style={styles.timelineTextWrapper}>
+                    <Text style={styles.timelineLabel}>Origem</Text>
+                    <Text style={styles.timelineValue} numberOfLines={1}>{pickupAddress}</Text>
+                  </View>
+                </View>
+
+                {/* PARADA INTERMEDIÁRIA (SE HOUVER) */}
+                {extraStopCoords && (
+                  <View style={styles.timelineItem}>
+                    <View style={[styles.timelineIconBg, { backgroundColor: '#3B82F6' }]}>
+                      <Ionicons name="location-sharp" size={14} color="#FFF" />
+                    </View>
+                    <View style={styles.timelineTextWrapper}>
+                      <Text style={[styles.timelineLabel, { color: '#60A5FA' }]}>Parada Intermediária</Text>
+                      <Text style={styles.timelineValue} numberOfLines={1}>{extraStopAddress || 'Parada 1'}</Text>
+                    </View>
+                  </View>
+                )}
+
+                {/* DESTINO FINAL */}
+                <View style={styles.timelineItem}>
+                  <View style={[styles.timelineIconBg, { backgroundColor: '#EF4444' }]}>
+                    <Ionicons name="flag" size={14} color="#FFF" />
+                  </View>
+                  <View style={styles.timelineTextWrapper}>
+                    <Text style={styles.timelineLabel}>Destino Final</Text>
+                    <Text style={styles.timelineValue} numberOfLines={1}>{dropoffAddress}</Text>
+                  </View>
+                </View>
+
+                {/* FORMA DE PAGAMENTO */}
+                <View style={styles.paymentMethodChip}>
+                  <Ionicons 
+                    name={paymentMethod === 'ORANGE_MONEY' ? 'phone-portrait' : paymentMethod === 'MTN_MOMO' ? 'wallet' : 'cash'} 
+                    size={14} 
+                    color="#EAB308" 
+                  />
+                  <Text style={styles.paymentMethodChipText}>
+                    Pagamento: {paymentMethod === 'ORANGE_MONEY' ? 'Orange Money' : paymentMethod === 'MTN_MOMO' ? 'MTN MoMo' : 'Dinheiro em Espécie'}
+                  </Text>
+                </View>
+              </View>
+
+              {/* DADOS DO MOTORISTA E VEÍCULO */}
+              <View style={styles.driverCardCompact}>
+                <Image 
+                  source={{ uri: driverInfo.photoUrl || driverInfo.profilePicture || 'https://via.placeholder.com/100' }} 
+                  style={styles.driverAvatarCompact} 
+                />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.driverNameCompact}>{driverInfo.name}</Text>
+                  <Text style={styles.vehicleModelCompact}>
+                    {driverInfo.carModel || 'Veículo'} • {driverInfo.carColor || ''}
+                  </Text>
+                  <View style={styles.plateBadgeCompact}>
+                    <Text style={styles.plateTextCompact}>{driverInfo.licensePlate?.toUpperCase() || 'SEM PLACA'}</Text>
+                  </View>
+                </View>
+                <Image 
+                  source={getVehicle3DIconAsset(driverInfo.vehicleType, driverInfo.carColor)} 
+                  style={{ width: 48, height: 48 }} 
+                  resizeMode="contain" 
+                />
+              </View>
+
+              {/* BOTÕES DE AÇÃO RÁPIDA */}
+              <View style={styles.actionRowGrid}>
+                <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleSosPress} activeOpacity={0.8}>
                   <Ionicons name="shield-checkmark" size={18} color="#EF4444" />
+                  <Text style={[styles.actionBtnText, { color: '#EF4444' }]}>SOS</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.iconCircleButton} onPress={handleCallDriver} activeOpacity={0.8}>
+                <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleCallDriver} activeOpacity={0.8}>
                   <Ionicons name="call" size={18} color="#EAB308" />
+                  <Text style={[styles.actionBtnText, { color: '#EAB308' }]}>Ligar</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.cancelButtonOutline} onPress={() => setShowCancelModal(true)} activeOpacity={0.8}>
-                  <Text style={styles.cancelButtonOutlineText}>{t('cancel_ride', 'Cancelar')}</Text>
+                <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleShareTrip} activeOpacity={0.8}>
+                  <Ionicons name="share-social" size={18} color="#3B82F6" />
+                  <Text style={[styles.actionBtnText, { color: '#3B82F6' }]}>Partilhar</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={[styles.requestButton, { flex: 1, marginLeft: 6 }]} onPress={() => setIsChatVisible(true)} activeOpacity={0.85}>
-                  <Ionicons name="chatbubble-ellipses" size={16} color="#0F172A" style={{ marginRight: 6 }} />
-                  <Text style={styles.requestButtonText}>Chat</Text>
+                <TouchableOpacity style={styles.actionBtnPrimary} onPress={() => setIsChatVisible(true)} activeOpacity={0.85}>
+                  <Ionicons name="chatbubble-ellipses" size={18} color="#0F172A" />
+                  <Text style={styles.actionBtnPrimaryText}>Chat</Text>
                 </TouchableOpacity>
               </View>
+
+              <TouchableOpacity style={styles.cancelRideLink} onPress={() => setShowCancelModal(true)} activeOpacity={0.7}>
+                <Text style={styles.cancelRideLinkText}>Cancelar Corrida</Text>
+              </TouchableOpacity>
             </View>
           )}
+
         </ScrollView>
       </Animated.View>
     </KeyboardAvoidingView>
-
-    {/* 4. MODAIS DO SISTEMA */}
-
     {/* MODAL DE IDIOMAS */}
     <Modal visible={langModalVisible} transparent animationType="slide" onRequestClose={() => setLangModalVisible(false)}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
@@ -2766,7 +2867,59 @@ return (
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
     </Modal>
+  {/* 🇬🇼 BOTÃO FLUTUANTE GUINÉ-BISSAU (Exibido em Segundo Plano ou Minimizado) */}
+    {['accepted', 'arrived', 'in_progress'].includes(rideStatus) && (
+      <Animated.View
+        {...panResponderFloating.panHandlers}
+        style={[
+          styles.gbFloatingWidgetContainer,
+          {
+            transform: [
+              { translateX: floatingPan.x },
+              { translateY: floatingPan.y }
+            ]
+          }
+        ]}
+      >
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPress={() => {
+            setIsAppInBackground(false);
+            if (cameraRef.current) {
+              cameraRef.current.setCamera({
+                centerCoordinate: safeCenterCoordinate,
+                zoomLevel: 15,
+                animationDuration: 800,
+              });
+            }
+          }}
+          style={styles.gbFloatingWidgetInner}
+        >
+          {/* TRICOLOR GUINÉ-BISSAU */}
+          <View style={styles.gbFlagBorder}>
+            <View style={styles.gbFlagRed}>
+              <Ionicons name="star" size={12} color="#000000" />
+            </View>
+            <View style={styles.gbFlagRightCol}>
+              <View style={styles.gbFlagYellow} />
+              <View style={styles.gbFlagGreen} />
+            </View>
+          </View>
 
+          {/* DADOS DA CORRIDA NO BOTÃO FLUTUANTE */}
+          <View style={styles.gbWidgetInfo}>
+            <Text style={styles.gbWidgetStatusTitle} numberOfLines={1}>
+              {rideStatus === 'accepted' ? 'Motorista a caminho' : rideStatus === 'arrived' ? 'Motorista chegou!' : 'Em Viagem'}
+            </Text>
+            <Text style={styles.gbWidgetPriceText}>
+              {estimatedPrice ? `${estimatedPrice} XOF` : 'Nobai245'}
+            </Text>
+          </View>
+
+          <Ionicons name="chevron-up-circle" size={22} color="#EAB308" />
+        </TouchableOpacity>
+      </Animated.View>
+    )}
     {/* MENU LATERAL DRAWER */}
     <Modal visible={isMenuVisible} animationType="fade" transparent onRequestClose={() => setIsMenuVisible(false)}>
       <TouchableOpacity style={styles.menuOverlay} activeOpacity={1} onPress={() => setIsMenuVisible(false)}>
@@ -4191,5 +4344,259 @@ const styles = StyleSheet.create({
     borderColor: '#EAB308',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+
+  // 🇬🇼 ESTILOS DO BOTÃO FLUTUANTE GUINÉ-BISSAU
+  gbFloatingWidgetContainer: {
+    position: 'absolute',
+    zIndex: 9999,
+    elevation: 12,
+  },
+  gbFloatingWidgetInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    borderRadius: 25,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderWidth: 1.5,
+    borderColor: '#EAB308',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    elevation: 10,
+    gap: 8,
+  },
+  gbFlagBorder: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    overflow: 'hidden',
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: '#FFF',
+  },
+  gbFlagRed: {
+    width: '40%',
+    backgroundColor: '#DC2626',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  gbFlagRightCol: {
+    width: '60%',
+    height: '100%',
+  },
+  gbFlagYellow: {
+    height: '50%',
+    backgroundColor: '#EAB308',
+  },
+  gbFlagGreen: {
+    height: '50%',
+    backgroundColor: '#16A34A',
+  },
+  gbWidgetInfo: {
+    justifyContent: 'center',
+  },
+  gbWidgetStatusTitle: {
+    color: '#F8FAFC',
+    fontSize: 11,
+    fontWeight: '800',
+    maxWidth: 110,
+  },
+  gbWidgetPriceText: {
+    color: '#EAB308',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+
+  // 📊 ESTILOS DA TELA PROFISSIONAL DE CORRIDA ATIVA
+  activeRideContainer: {
+    width: '100%',
+    paddingTop: 4,
+  },
+  activeRideHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#1E293B',
+    padding: 12,
+    borderRadius: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  statusPulseBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  statusPulseDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#10B981',
+    marginRight: 8,
+  },
+  activeRideStatusTitle: {
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '800',
+    flex: 1,
+  },
+  priceBadgeHeader: {
+    alignItems: 'flex-end',
+  },
+  priceBadgeLabel: {
+    color: '#94A3B8',
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  priceBadgeValue: {
+    color: '#EAB308',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  routeTimelineContainer: {
+    backgroundColor: '#1E293B',
+    padding: 14,
+    borderRadius: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  routeTimelineHeaderTitle: {
+    color: '#64748B',
+    fontSize: 10,
+    fontWeight: '900',
+    marginBottom: 10,
+    letterSpacing: 0.5,
+  },
+  timelineItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  timelineIconBg: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  timelineTextWrapper: {
+    flex: 1,
+  },
+  timelineLabel: {
+    color: '#94A3B8',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  timelineValue: {
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  paymentMethodChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginTop: 4,
+    gap: 6,
+  },
+  paymentMethodChipText: {
+    color: '#EAB308',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  driverCardCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    padding: 12,
+    borderRadius: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  driverAvatarCompact: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 1.5,
+    borderColor: '#EAB308',
+  },
+  driverNameCompact: {
+    color: '#F8FAFC',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  vehicleModelCompact: {
+    color: '#94A3B8',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  plateBadgeCompact: {
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  plateTextCompact: {
+    color: '#EAB308',
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  actionRowGrid: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  actionBtnSecondary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1E293B',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+    gap: 6,
+  },
+  actionBtnPrimary: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EAB308',
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  actionBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  actionBtnPrimaryText: {
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  cancelRideLink: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  cancelRideLinkText: {
+    color: '#EF4444',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });
