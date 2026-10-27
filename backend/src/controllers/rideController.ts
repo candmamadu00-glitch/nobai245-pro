@@ -145,7 +145,7 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
       pickupLat, pickupLng, dropoffLat, dropoffLng, 
       vehicleType, serviceType = 'RIDE', paymentMethod = 'ORANGE_MONEY',
       originAddress, destinationAddress, rentalRegion = 'BISSAU',
-      idempotencyKey, stops = [], estimatedPrice
+      idempotencyKey, stops = []
     } = req.body;
 
     const cleanIdempotencyKey = sanitizeText(idempotencyKey, 100);
@@ -585,7 +585,7 @@ export const cancelRide = async (req: Request, res: Response): Promise<void> => 
     const cancelResult = await cancelRideLogic(currentRide.id, userId, userRole as any, cleanReason);
     
     // 2. 💸 DISPARO DO ESTORNO AUTOMÁTICO SE HOUVER FUNDOS EM CAUÇÃO (MOBILE MONEY)
-    const refundResult = await refundPassengerOnCancellation(currentRide.id, cleanReason).catch((refundErr) => {
+    const refundResult = await refundPassengerOnCancellation(currentRide.id, cleanReason).catch((refundErr: any) => {
       console.error(`❌ [ESTORNO AUTOMÁTICO] Erro ao devolver dinheiro ao passageiro:`, refundErr?.message || refundErr);
       return null;
     });

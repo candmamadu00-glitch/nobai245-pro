@@ -496,7 +496,10 @@ export async function payoutToDriverMobileMoney(params: DisbursementParams) {
 export async function refundPassengerMobileMoney(params: DisbursementParams) {
   return await executeRideDisbursement(params);
 }
-
+ // Alias para compatibilidade com o rideController
+export async function refundPassengerOnCancellation(params: DisbursementParams) {
+  return await executeRideDisbursement(params);
+}
 // -----------------------------------------------------------------------------
 // 5. PROCESSAMENTO DE WEBHOOK
 // -----------------------------------------------------------------------------
