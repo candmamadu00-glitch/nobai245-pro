@@ -58,36 +58,65 @@ export function ChatModal({
   const [inputText, setInputText] = useState('');
   const flatListRef = useRef<FlatList>(null);
 
-  // 1. Escuta novas mensagens via Socket
+  // 1. Escuta mensagens do Socket com DEDUPLICAÇÃO RIGOROSA
   useEffect(() => {
     if (!socket || !visible) return;
 
     const handleReceiveMessage = (msg: any) => {
+      if (!msg) return;
+
       const formattedMsg: ChatMessage = {
-        id: msg.id || String(Date.now()),
+        id: String(msg.id || Date.now()),
         sender: msg.sender === 'passenger' || msg.senderType === 'PASSENGER' ? 'passenger' : 'driver',
         text: msg.text || msg.message || msg.content || '',
         senderPhoto: msg.senderPhoto,
         createdAt: msg.createdAt || new Date().toISOString(),
       };
-      setMessages((prev) => [...prev, formattedMsg]);
+
+      setMessages((prev) => {
+        // 🟢 TRAVA ANTI-DUPLICADOS: Evita adicionar se o ID ou (texto + remetente recente) já existirem
+        const isDuplicate = prev.some((item) => {
+          if (item.id === formattedMsg.id) return true;
+          
+          const sameSender = item.sender === formattedMsg.sender;
+          const sameText = item.text.trim() === formattedMsg.text.trim();
+          
+          const timeA = new Date(item.createdAt || 0).getTime();
+          const timeB = new Date(formattedMsg.createdAt || 0).getTime();
+          const isRecent = Math.abs(timeA - timeB) < 3000; // 3 segundos de janela
+
+          return sameSender && sameText && isRecent;
+        });
+
+        if (isDuplicate) return prev;
+        return [...prev, formattedMsg];
+      });
     };
 
+    // Remove ouvintes antigos para evitar acúmulo
+    socket.off('chat:receive_message');
+    socket.off('chat:message');
+    socket.off('chat:new_message');
+
+    // Assina os eventos
     socket.on('chat:receive_message', handleReceiveMessage);
+    socket.on('chat:message', handleReceiveMessage);
+    socket.on('chat:new_message', handleReceiveMessage);
 
     return () => {
       socket.off('chat:receive_message', handleReceiveMessage);
+      socket.off('chat:message', handleReceiveMessage);
+      socket.off('chat:new_message', handleReceiveMessage);
     };
   }, [socket, visible]);
 
-  // 2. Busca histórico HTTP de forma ULTRA SEGURA (Evita TypeError)
+  // 2. Busca histórico HTTP
   useEffect(() => {
     if (visible && rideId) {
       api.get(`/rides/${rideId}/chat`)
         .then(response => {
           const data = response?.data;
           
-          // 🛡️ Garante que extrai um Array independente do formato retornado pelo backend
           const rawList = Array.isArray(data) 
             ? data 
             : Array.isArray(data?.messages) 
@@ -107,27 +136,33 @@ export function ChatModal({
         })
         .catch(error => {
           console.warn("⚠️ Erro ao carregar histórico do chat:", error?.response?.data || error?.message);
-          setMessages([]); // Mantém array vazio sem quebrar o app
+          setMessages([]);
         });
     } else if (!visible) {
       setMessages([]);
     }
   }, [visible, rideId]);
 
+  // 3. Envio de mensagem seguro
   const sendMessage = () => {
     if (!inputText.trim() || !socket) return;
 
     const text = inputText.trim();
+    const uniqueId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+
     const newMsg: ChatMessage = {
-      id: String(Date.now()),
+      id: uniqueId,
       sender: currentRole,
       text,
       senderPhoto: currentUserPhoto,
       createdAt: new Date().toISOString(),
     };
 
+    // Adiciona localmente apenas 1 vez
     setMessages((prev) => [...prev, newMsg]);
-    socket.emit('chat:send_message', { rideId, text });
+
+    // Emite via socket para o outro usuário
+    socket.emit('chat:send_message', { rideId, text, id: uniqueId });
     setInputText('');
   };
 
@@ -142,7 +177,6 @@ export function ChatModal({
     );
   };
 
-  // Cálculo dinâmico para elevação do rodapé contra botões do Android/iOS
   const dynamicBottomPadding = Math.max(insets.bottom + 8, Platform.OS === 'android' ? 20 : 16);
 
   return (
@@ -240,7 +274,7 @@ export function ChatModal({
 const styles = StyleSheet.create({
   chatOverlay: {
     flex: 1,
-    justifyContent: 'flex-end',
+    justify: 'flex-end',
   },
   backdrop: {
     ...StyleSheet.absoluteFill,
@@ -394,4 +428,4 @@ const styles = StyleSheet.create({
   sendIcon: {
     marginLeft: 2, 
   },
-}); 
+});

@@ -23,38 +23,42 @@ if (!isExpoGo) {
 
 export async function registerAndSendPushToken(accessToken?: string): Promise<string | null> {
   if (isExpoGo || !Device.isDevice) {
+    console.warn('⚠️ [PUSH PASSAGEIRO] Notificações remotas requerem um dispositivo físico (fora do Expo Go).');
     return null;
   }
 
   try {
     const userStored = await AsyncStorage.getItem('@bai245:user');
     if (!userStored && !accessToken) {
+      console.warn('⚠️ [PUSH PASSAGEIRO] Usuário não autenticado no storage local.');
       return null;
     }
 
+    // 1️⃣ Configuração dos Canais para Android
     if (Platform.OS === 'android') {
-  await Notifications.setNotificationChannelAsync('default', {
-    name: 'Geral',
-    importance: Notifications.AndroidImportance.DEFAULT,
-    sound: 'default',
-  });
+      await Notifications.setNotificationChannelAsync('default', {
+        name: 'Geral',
+        importance: Notifications.AndroidImportance.DEFAULT,
+        sound: 'default',
+      });
 
-  await Notifications.setNotificationChannelAsync('ride-updates', {
-    name: 'Atualizações da Viagem',
-    importance: Notifications.AndroidImportance.MAX,
-    vibrationPattern: [0, 250, 250, 250],
-    lightColor: '#EAB308',
-    sound: 'default',
-  });
+      await Notifications.setNotificationChannelAsync('ride-updates', {
+        name: 'Atualizações da Viagem',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#EAB308',
+        sound: 'default',
+      });
 
-  await Notifications.setNotificationChannelAsync('chat-messages', {
-    name: 'Mensagens do Chat',
-    importance: Notifications.AndroidImportance.HIGH,
-    vibrationPattern: [0, 150, 150, 150],
-    sound: 'default',
-  });
-}
+      await Notifications.setNotificationChannelAsync('chat-messages', {
+        name: 'Mensagens do Chat',
+        importance: Notifications.AndroidImportance.HIGH,
+        vibrationPattern: [0, 150, 150, 150],
+        sound: 'default',
+      });
+    }
 
+    // 2️⃣ Solicitação de Permissão
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
 
@@ -63,8 +67,12 @@ export async function registerAndSendPushToken(accessToken?: string): Promise<st
       finalStatus = status;
     }
 
-    if (finalStatus !== 'granted') return null;
+    if (finalStatus !== 'granted') {
+      console.warn('⚠️ [PUSH PASSAGEIRO] Permissão de notificação negada pelo usuário.');
+      return null;
+    }
 
+    // 3️⃣ Obtenção do Expo Push Token
     const projectId =
       Constants.expoConfig?.extra?.eas?.projectId ||
       Constants.easConfig?.projectId;
@@ -77,20 +85,42 @@ export async function registerAndSendPushToken(accessToken?: string): Promise<st
     const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
     const pushToken = tokenData?.data;
 
-    if (pushToken) {
-      await api.put('/passengers/device-token', { deviceToken: pushToken }).catch(() => null);
-
-      if (socket && socket.connected) {
-        socket.emit('passenger:update_device_token', { deviceToken: pushToken });
-      }
-
-      console.log('✅ [PUSH PASSAGEIRO] Token registrado com sucesso!');
-      return pushToken;
+    if (!pushToken) {
+      console.warn('⚠️ [PUSH PASSAGEIRO] Não foi possível gerar o token da Expo.');
+      return null;
     }
 
-    return null;
+    console.log('📱 [PUSH PASSAGEIRO TOKEN GENERATED]:', pushToken);
+
+    // 4️⃣ Envio via HTTP REST (Com tratamento explícito de log)
+    try {
+      await api.put('/passengers/device-token', { deviceToken: pushToken });
+      console.log('✅ [PUSH PASSAGEIRO DB] Token salvo via HTTP com sucesso no banco!');
+    } catch (httpErr: any) {
+      console.error(
+        '❌ [PUSH PASSAGEIRO HTTP ERR] Erro ao salvar token via HTTP:',
+        httpErr?.response?.status,
+        httpErr?.response?.data || httpErr?.message
+      );
+    }
+
+    // 5️⃣ Envio via Socket (Com tratamento para Socket desconectado/handshake)
+    const emitSocketToken = () => {
+      if (socket && socket.connected) {
+        socket.emit('passenger:update_device_token', { deviceToken: pushToken });
+        console.log('⚡ [PUSH PASSAGEIRO SOCKET] Token emitido via Socket!');
+      }
+    };
+
+    if (socket && socket.connected) {
+      emitSocketToken();
+    } else if (socket) {
+      socket.once('connect', emitSocketToken);
+    }
+
+    return pushToken;
   } catch (error) {
-    console.warn('⚠️ [PUSH PASSAGEIRO] Erro ao registrar token de notificação:', error);
+    console.error('❌ [PUSH PASSAGEIRO] Erro inesperado ao registrar token:', error);
     return null;
   }
 }
@@ -120,7 +150,7 @@ export function setupNotificationListeners(
         subResponse.remove();
       }
     } catch (e) {
-      // Ignora falhas na desativação dos escutadores
+      // Ignora falhas na desativação
     }
   };
 }

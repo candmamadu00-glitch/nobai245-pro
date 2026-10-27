@@ -268,6 +268,7 @@ export function Home() {
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [finishedRideId, setFinishedRideId] = useState<string | null>(null);
   const [finishedTargetName, setFinishedTargetName] = useState<string>('');
+  const [finishedRideSummary, setFinishedRideSummary] = useState<any>(null);
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [showSosModal, setShowSosModal] = useState(false);
@@ -534,6 +535,7 @@ export function Home() {
     setIncomingRide(null); 
     setQueuedOfferData(null);
     setCompletedInfo(null);
+    setFinishedRideSummary(null);
     setDriverEta(null);
     setRouteCoordinates(null);
     setShowCancelModal(false);
@@ -561,7 +563,30 @@ export function Home() {
     }
     restoreLocalState();
   }, []);
+// 🟢 ADICIONE O SEU USEEFFECT AQUI:
+  useEffect(() => {
+    if (!socket) return;
 
+    const handleRideFinishedConfirm = (data: any) => {
+      if (data) {
+        setFinishedRideSummary((prev: any) => ({
+          rideId: data.rideId || prev?.rideId,
+          passengerName: prev?.passengerName || 'Passageiro',
+          totalAmount: Number(data.priceXof || data.totalAmount || data.amount || prev?.totalAmount || 0),
+          paymentMethod: data.paymentMethod || prev?.paymentMethod || 'CASH',
+          transactionId: data.transactionId || data.paymentId || prev?.transactionId || `TRX-${Date.now().toString().slice(-6)}`,
+        }));
+      }
+    };
+
+    socket.on('ride:finished', handleRideFinishedConfirm);
+    socket.on('driver:ride_finished_confirm', handleRideFinishedConfirm);
+
+    return () => {
+      socket.off('ride:finished', handleRideFinishedConfirm);
+      socket.off('driver:ride_finished_confirm', handleRideFinishedConfirm);
+    };
+  }, [socket]);
   const fetchMapboxRoute = async (
     startLng: number, 
     startLat: number, 
@@ -1264,26 +1289,39 @@ export function Home() {
   }
 
   async function handleFinishRide() {
-    if (!activeRideId) return;
-    setIsLoading(true);
+  if (!activeRideId) return;
+  setIsLoading(true);
 
-    const fallbackLat = Number(location?.coords?.latitude || incomingRide?.destinationLat || BISSAU_CENTER_LAT);
-    const fallbackLng = Number(location?.coords?.longitude || incomingRide?.destinationLng || BISSAU_CENTER_LNG);
-    const payload = { rideId: activeRideId, dropoffLat: fallbackLat, dropoffLng: fallbackLng };
+  const fallbackLat = Number(location?.coords?.latitude || incomingRide?.destinationLat || BISSAU_CENTER_LAT);
+  const fallbackLng = Number(location?.coords?.longitude || incomingRide?.destinationLng || BISSAU_CENTER_LNG);
+  const payload = { rideId: activeRideId, dropoffLat: fallbackLat, dropoffLng: fallbackLng };
 
-    setFinishedRideId(activeRideId);
-    setFinishedTargetName(displayPassengerName);
+  // 🟢 Captura o valor final e a forma de pagamento do objeto de corrida
+  const finalPrice = Number(incomingRide?.priceXof || incomingRide?.estimatedPrice || 0);
+  const paymentMethod = incomingRide?.paymentMethod || 'CASH';
+  const transactionId = incomingRide?.transactionId || `TRX-${Date.now().toString().slice(-6)}`;
 
-    if (socket && socket.connected) {
-      socket.emit('driver:finish_ride', payload);
-      setIsLoading(false);
-      setShowReceiptModal(true);
-    } else {
-      await saveActionToQueue('driver:finish_ride', payload);
-      setIsLoading(false);
-      setShowReceiptModal(true);
-    }
+  // 🟢 Preenche o estado do recibo antes de abrir o modal
+  setFinishedRideSummary({
+    rideId: activeRideId,
+    passengerName: displayPassengerName,
+    totalAmount: finalPrice,
+    paymentMethod: paymentMethod,
+    transactionId: transactionId,
+  });
+
+  setFinishedRideId(activeRideId);
+  setFinishedTargetName(displayPassengerName);
+
+  if (socket && socket.connected) {
+    socket.emit('driver:finish_ride', payload);
+  } else {
+    await saveActionToQueue('driver:finish_ride', payload);
   }
+
+  setIsLoading(false);
+  setShowReceiptModal(true);
+}
 
   function handleNoShowCancel() {
     Alert.alert(
@@ -1652,7 +1690,23 @@ export function Home() {
                       ? 'Aguardando Cliente' 
                       : (driverEta ? `Chegando ao destino em ${driverEta} min` : 'Viagem em Andamento')}
                   </Text>
-
+                                   {/* 🟢 BADGE DE DISTÂNCIA EM KM */}
+  {(incomingRide as any)?.distance || estimatedDistance ? (
+    <View style={{
+      backgroundColor: 'rgba(59, 130, 246, 0.15)',
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: '#3B82F6',
+      alignSelf: 'flex-start',
+      marginTop: 6
+    }}>
+      <Text style={{ color: '#60A5FA', fontSize: 13, fontWeight: '700' }}>
+        📏 Distância: {((incomingRide as any)?.distance || estimatedDistance || 0).toFixed(1)} km
+      </Text>
+    </View>
+  ) : null} 
                   {rideState === 'arrived' && (
                     <View style={styles.waitTimerBox}>
                       <Ionicons name="timer-outline" size={14} color={canCancelNoShow ? '#EF4444' : '#EAB308'} />
@@ -1809,7 +1863,96 @@ export function Home() {
           </ScrollView>
         </Animated.View>
       </KeyboardAvoidingView>
+{/* 🧾 MODAL DE CONCLUSÃO DE SERVIÇO E RECIBO */}
+<Modal 
+  visible={showReceiptModal} 
+  transparent 
+  animationType="slide"
+  onRequestClose={() => {
+    setShowReceiptModal(false);
+    resetDriverState();
+  }}
+>
+  <View style={styles.receiptOverlay}>
+    <View style={styles.receiptContainer}>
+      
+      {/* ÍCONE DE SUCESSO */}
+      <View style={styles.receiptHeaderIcon}>
+        <Ionicons name="checkmark-circle" size={60} color="#10B981" />
+      </View>
 
+      <Text style={styles.receiptTitle}>Serviço Concluído!</Text>
+      <Text style={styles.receiptSubtitle}>
+        Corrida finalizada com sucesso. Confira os detalhes abaixo:
+      </Text>
+
+      {/* 💳 CARD CONDICIONAL DE FORMA DE PAGAMENTO */}
+      {finishedRideSummary?.paymentMethod === 'ORANGE_MONEY' || finishedRideSummary?.paymentMethod === 'MTN_MOMO' ? (
+        <View style={styles.paidOnlineBox}>
+          <Ionicons name="shield-checkmark-sharp" size={22} color="#FF6600" />
+          <View style={{ flex: 1, marginLeft: 10 }}>
+            <Text style={styles.paidOnlineTitle}>
+              PAGO VIA {finishedRideSummary?.paymentMethod === 'ORANGE_MONEY' ? 'ORANGE MONEY' : 'MTN MOMO'}
+            </Text>
+            <Text style={styles.paidOnlineSub}>
+              O valor foi debitado digitalmente. <Text style={{ fontWeight: 'bold', color: '#EF4444' }}>NÃO cobre dinheiro em espécie!</Text>
+            </Text>
+          </View>
+        </View>
+      ) : (
+        <View style={styles.collectCashBox}>
+          <Ionicons name="cash-outline" size={22} color="#10B981" />
+          <View style={{ flex: 1, marginLeft: 10 }}>
+            <Text style={styles.collectCashTitle}>COBRAR EM DINHEIRO 💵</Text>
+            <Text style={styles.collectCashSub}>
+              Cobre o valor exato abaixo diretamente do passageiro.
+            </Text>
+          </View>
+        </View>
+      )}
+
+      {/* DETALHES DE VALOR E ID DA TRANSAÇÃO */}
+      <View style={styles.receiptValueContainer}>
+        <Text style={styles.receiptValueLabel}>Total Ganho:</Text>
+        <Text style={styles.receiptValueText}>
+          {finishedRideSummary?.totalAmount 
+            ? `${Number(finishedRideSummary.totalAmount).toLocaleString('pt-GW')} XOF` 
+            : '0 XOF'}
+        </Text>
+        <Text style={styles.receiptTrxId}>
+          ID da Transação: {finishedRideSummary?.transactionId || 'N/A'}
+        </Text>
+      </View>
+
+      {/* BOTÕES DE AÇÃO */}
+      <View style={styles.receiptActionButtons}>
+        <TouchableOpacity 
+          style={styles.ratePassengerBtn} 
+          activeOpacity={0.85}
+          onPress={() => {
+            setShowReceiptModal(false);
+            setShowRatingModal(true);
+          }}
+        >
+          <Ionicons name="star" size={18} color="#0F172A" style={{ marginRight: 6 }} />
+          <Text style={styles.ratePassengerBtnText}>Avaliar Cliente</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={styles.closeReceiptBtn} 
+          activeOpacity={0.8}
+          onPress={() => {
+            setShowReceiptModal(false);
+            resetDriverState();
+          }}
+        >
+          <Text style={styles.closeReceiptBtnText}>Concluir e Voltar ao Mapa</Text>
+        </TouchableOpacity>
+      </View>
+
+    </View>
+  </View>
+</Modal>
       {/* ⚙️ MODAL DE FILTROS */}
       <Modal visible={showFilterModal} transparent animationType="slide">
         <View style={styles.filterModalOverlay}>
@@ -2809,5 +2952,136 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     fontWeight: '900',
     fontSize: 15,
+  },
+  // 🧾 ESTILOS DO MODAL DE RECIBO
+  receiptOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  receiptContainer: {
+    width: '100%',
+    backgroundColor: '#0F172A',
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#334155',
+    padding: 20,
+    alignItems: 'center',
+  },
+  receiptHeaderIcon: {
+    marginBottom: 10,
+  },
+  receiptTitle: {
+    color: '#F8FAFC',
+    fontSize: 22,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  receiptSubtitle: {
+    color: '#94A3B8',
+    fontSize: 13,
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 18,
+  },
+  paidOnlineBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 102, 0, 0.12)',
+    borderWidth: 1,
+    borderColor: '#FF6600',
+    padding: 14,
+    borderRadius: 16,
+    width: '100%',
+    marginBottom: 18,
+  },
+  paidOnlineTitle: {
+    color: '#FF6600',
+    fontWeight: '900',
+    fontSize: 13,
+  },
+  paidOnlineSub: {
+    color: '#F8FAFC',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  collectCashBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    borderWidth: 1,
+    borderColor: '#10B981',
+    padding: 14,
+    borderRadius: 16,
+    width: '100%',
+    marginBottom: 18,
+  },
+  collectCashTitle: {
+    color: '#10B981',
+    fontWeight: '900',
+    fontSize: 13,
+  },
+  collectCashSub: {
+    color: '#F8FAFC',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  receiptValueContainer: {
+    width: '100%',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderRadius: 16,
+    marginBottom: 20,
+  },
+  receiptValueLabel: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+  },
+  receiptValueText: {
+    color: '#EAB308',
+    fontSize: 28,
+    fontWeight: '900',
+    marginVertical: 4,
+  },
+  receiptTrxId: {
+    color: '#64748B',
+    fontSize: 11,
+  },
+  receiptActionButtons: {
+    width: '100%',
+    gap: 10,
+  },
+  ratePassengerBtn: {
+    backgroundColor: '#EAB308',
+    height: 48,
+    borderRadius: 14,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  ratePassengerBtnText: {
+    color: '#0F172A',
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  closeReceiptBtn: {
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#334155',
+    height: 48,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeReceiptBtnText: {
+    color: '#94A3B8',
+    fontWeight: '700',
+    fontSize: 14,
   },
 });

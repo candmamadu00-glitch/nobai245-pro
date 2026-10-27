@@ -293,6 +293,7 @@ export function Home() {
   const isInaccessibleAlertShowingRef = useRef(false);
   const isManualPickupRef = useRef(false);
   const route = useRoute<any>();
+  const radarAnim = useRef(new Animated.Value(0)).current;
   const appStateRef = useRef(AppState.currentState);
   const [bookingStep, setBookingStep] = useState<BookingStep>('ADDRESS');
   const [rideStatus, setRideStatus] = useState<RideStatus>('idle');
@@ -359,7 +360,12 @@ export function Home() {
   // 🇬🇼 ESTADOS E ANIMAÇÃO DO BOTÃO FLUTUANTE GUINÉ-BISSAU
   const [isAppInBackground, setIsAppInBackground] = useState(false);
   const floatingPan = useRef(new Animated.ValueXY({ x: Dimensions.get('window').width - 70, y: 180 })).current;
+// Interpolações para criar 2 ondas de radar escalonadas
+const radarScale1 = radarAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 3.2] });
+const radarOpacity1 = radarAnim.interpolate({ inputRange: [0, 0.6, 1], outputRange: [0.6, 0.25, 0] });
 
+const radarScale2 = radarAnim.interpolate({ inputRange: [0, 0.4, 1], outputRange: [0.8, 1.8, 3.2] });
+const radarOpacity2 = radarAnim.interpolate({ inputRange: [0, 0.4, 0.8, 1], outputRange: [0, 0.5, 0.2, 0] });
   const VEHICLE_OPTIONS = [
     { id: 'moto' as VehicleType, title: 'Moto', subtitle: t('moto_subtitle', 'Rápido e econômico'), image: require('../assets/vehicles/moto.png') },
     { id: 'particular' as VehicleType, title: t('standard_vehicle', 'Particular'), subtitle: t('particular_subtitle', 'Viagem exclusiva'), image: require('../assets/vehicles/carro_white.png') },
@@ -455,6 +461,33 @@ useEffect(() => {
     setIsFloatingBadgeVisible(true);
   }
 }, [rideStatus]);
+// 📡 EFFECT QUE INICIA E REPETE A ANIMAÇÃO DO RADAR DURANTE A BUSCA
+useEffect(() => {
+  if (rideStatus === 'searching') {
+    Animated.loop(
+      Animated.timing(radarAnim, {
+        toValue: 1,
+        duration: 2200,
+        useNativeDriver: true,
+      })
+    ).start();
+  } else {
+    radarAnim.setValue(0);
+  }
+}, [rideStatus, radarAnim]);
+useEffect(() => {
+  if (['accepted', 'arrived', 'in_progress'].includes(rideStatus)) {
+    updateOngoingRideNotification({
+      title: rideStatus === 'accepted' ? 'Motorista a caminho' : 'Viagem em andamento',
+      body: `A caminho de: ${dropoffAddress || 'Seu destino'}`,
+      vehiclePlate: driverInfo?.licensePlate,
+      vehicleModel: driverInfo?.carModel,
+      etaMinutes: driverEta,
+    });
+  } else {
+    dismissOngoingRideNotification();
+  }
+}, [rideStatus, driverEta, driverInfo, dropoffAddress]);
  // 🟢 HANDLER UNIFICADO DE RECEBIMENTO DE MENSAGENS DO CHAT
   const handleIncomingChatMessage = useCallback((data: any) => {
     if (!isMountedRef.current || !data) return;
@@ -981,101 +1014,116 @@ useEffect(() => {
     return () => backHandlerSubscription.remove();
   }, [isMenuVisible, isChatVisible, isSearchModalVisible, showCancelModal, showRatingModal, bookingStep, rideStatus]);
 
-  // 🟢 SINCRONIZAÇÃO SEGURA DA CORRIDA ATIVA (SEM LIMPAR DADOS EM FALHAS DE REDE)
-  const syncPassengerActiveRide = useCallback(async () => {
-    try {
-      if (!api || typeof api.get !== 'function') return;
+  // 🟢 EXTRATOR UNIFICADO PARA EVITAR driverInfo NULL (SUPORTA NESTED E FLAT)
+const extractDriverInfo = (source: any, otpFallback?: string): DriverInfo | null => {
+  if (!source) return null;
+  const d = source.driver || source;
+  const id = d.id || source.driverId || source.driver_id;
+  if (!id) return null;
 
-      let response = await api.get('/passengers/active-ride').catch(() => null);
-      if (!response?.data?.ride) {
-        response = await api.get('/rides/active').catch(() => null);
-      }
-      
-      if (response?.data?.ride && isMountedRef.current) {
-        const ride = response.data.ride;
-        const mappedStatus: RideStatus = 
-          ride.status === 'SEARCHING' || ride.status === 'QUEUED' || ride.status === 'PENDING' ? 'searching' :
-          ride.status === 'ACCEPTED' ? 'accepted' :
-          ride.status === 'ARRIVED' ? 'arrived' :
-          ride.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
+  const otpCode = String(source.startOtp || source.otpPin || source.pin || d.startOtp || otpFallback || '');
 
-        if (mappedStatus !== 'idle') {
-          setActiveRideId(ride.id);
-          activeRideIdRef.current = ride.id;
-          setRideStatus(mappedStatus);
+  return {
+    id: String(id),
+    name: d.fullName || d.name || source.driverName || 'Motorista',
+    photoUrl: formatPhotoUrl(d.profilePicture || d.photoUrl || source.driverPhoto),
+    profilePicture: formatPhotoUrl(d.profilePicture || d.photoUrl || source.driverPhoto),
+    carModel: d.vehicleModel || d.vehicleBrand || source.carModel || source.vehicleModel || 'Veículo Padrão',
+    carColor: d.vehicleColor || source.carColor || source.vehicleColor || source.color || 'BRANCO',
+    vehicleType: d.vehicleType || source.vehicleType || source.vehicle_type || 'PARTICULAR',
+    licensePlate: d.vehiclePlate || source.licensePlate || source.plate || 'SEM PLACA',
+    rating: Number(d.ratingAverage || d.rating || source.driverRating || 5.0),
+    phone: d.phone || source.driverPhone,
+    startOtp: otpCode,
+  };
+};
 
-          const otpCode = String(ride.startOtp || ride.otpPin || ride.pin || '');
-          if (otpCode) setStartOtp(otpCode);
+// 🟢 SINCRONIZAÇÃO SEGURA DE CORRIDA ATIVA
+const syncPassengerActiveRide = useCallback(async () => {
+  try {
+    if (!api || typeof api.get !== 'function') return;
 
-          let parsedDriverInfo: DriverInfo | null = null;
-          if (ride.driver) {
-            parsedDriverInfo = {
-              id: ride.driver.id,
-              name: ride.driver.fullName || 'Motorista',
-              photoUrl: formatPhotoUrl(ride.driver.profilePicture),
-              profilePicture: formatPhotoUrl(ride.driver.profilePicture),
-              carModel: ride.driver.vehicleModel || ride.driver.vehicleBrand,
-              carColor: ride.driver.vehicleColor,
-              licensePlate: ride.driver.vehiclePlate,
-              rating: Number(ride.driver.ratingAverage || 5.0),
-              phone: ride.driver.phone,
-              startOtp: otpCode,
-            };
-            setDriverInfo(parsedDriverInfo);
+    let response = await api.get('/passengers/active-ride').catch(() => null);
+    if (!response?.data?.ride) {
+      response = await api.get('/rides/active').catch(() => null);
+    }
+    
+    if (response?.data?.ride && isMountedRef.current) {
+      const ride = response.data.ride;
+      const mappedStatus: RideStatus = 
+        ride.status === 'SEARCHING' || ride.status === 'QUEUED' || ride.status === 'PENDING' ? 'searching' :
+        ride.status === 'ACCEPTED' ? 'accepted' :
+        ride.status === 'ARRIVED' ? 'arrived' :
+        ride.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
 
-            if (ride.driver.currentLat && ride.driver.currentLng) {
-              setDriverLocation({
-                latitude: Number(ride.driver.currentLat),
-                longitude: Number(ride.driver.currentLng),
-                heading: Number(ride.driver.heading || 0),
-              });
-            }
-          }
+      if (mappedStatus !== 'idle') {
+        setActiveRideId(ride.id);
+        activeRideIdRef.current = ride.id;
+        setRideStatus(mappedStatus);
 
-          if (ride.originLat && ride.originLng) {
-            setPickupCoords({ latitude: Number(ride.originLat), longitude: Number(ride.originLng) });
-            if (ride.originAddress) setPickupAddress(ride.originAddress);
-          }
+        const otpCode = String(ride.startOtp || ride.otpPin || ride.pin || '');
+        if (otpCode) setStartOtp(otpCode);
 
-          if (Array.isArray(ride.stops) && ride.stops.length > 0) {
-            const firstStop = ride.stops[0];
-            const stopLat = Number(firstStop.lat || firstStop.latitude);
-            const stopLng = Number(firstStop.lng || firstStop.longitude);
-            if (!isNaN(stopLat) && !isNaN(stopLng)) {
-              setExtraStopCoords({ latitude: stopLat, longitude: stopLng });
-              setExtraStopAddress(firstStop.address || 'Parada Intermediária');
-              setShowExtraStop(true);
-            }
-          }
+        const parsedDriver = extractDriverInfo(ride, otpCode);
+        if (parsedDriver) {
+          setDriverInfo(parsedDriver);
+        }
 
-          if (ride.destinationLat && ride.destinationLng) {
-            setDropoffCoords({ latitude: Number(ride.destinationLat), longitude: Number(ride.destinationLng) });
-            if (ride.destinationAddress) setDropoffAddress(ride.destinationAddress);
-          }
-
-          if (ride.priceXof) setEstimatedPrice(Number(ride.priceXof));
-
-          activateKeepAwakeAsync('PASSENGER_RIDE_KEEP_AWAKE').catch(() => {});
-
-          await persistRideState(ride.id, mappedStatus, {
-            driverInfo: parsedDriverInfo,
-            pickupCoords: ride.originLat ? { latitude: Number(ride.originLat), longitude: Number(ride.originLng) } : null,
-            pickupAddress: ride.originAddress,
-            dropoffCoords: ride.destinationLat ? { latitude: Number(ride.destinationLat), longitude: Number(ride.destinationLng) } : null,
-            dropoffAddress: ride.destinationAddress,
-            startOtp: otpCode,
-            estimatedPrice: ride.priceXof ? Number(ride.priceXof) : null
+        const dObj = ride.driver || {};
+        const lat = Number(dObj.currentLat || ride.driverLat || ride.currentLat);
+        const lng = Number(dObj.currentLng || ride.driverLng || ride.currentLng);
+        if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
+          setDriverLocation({
+            latitude: lat,
+            longitude: lng,
+            heading: Number(dObj.heading || ride.heading || 0),
           });
+        }
 
-          if (socket && socket.connected) {
-            socket.emit('passenger:rejoin_ride', { rideId: ride.id });
+        if (ride.originLat && ride.originLng) {
+          setPickupCoords({ latitude: Number(ride.originLat), longitude: Number(ride.originLng) });
+          if (ride.originAddress) setPickupAddress(ride.originAddress);
+        }
+
+        if (Array.isArray(ride.stops) && ride.stops.length > 0) {
+          const firstStop = ride.stops[0];
+          const stopLat = Number(firstStop.lat || firstStop.latitude);
+          const stopLng = Number(firstStop.lng || firstStop.longitude);
+          if (!isNaN(stopLat) && !isNaN(stopLng)) {
+            setExtraStopCoords({ latitude: stopLat, longitude: stopLng });
+            setExtraStopAddress(firstStop.address || 'Parada Intermediária');
+            setShowExtraStop(true);
           }
         }
+
+        if (ride.destinationLat && ride.destinationLng) {
+          setDropoffCoords({ latitude: Number(ride.destinationLat), longitude: Number(ride.destinationLng) });
+          if (ride.destinationAddress) setDropoffAddress(ride.destinationAddress);
+        }
+
+        if (ride.priceXof) setEstimatedPrice(Number(ride.priceXof));
+
+        activateKeepAwakeAsync('PASSENGER_RIDE_KEEP_AWAKE').catch(() => {});
+
+        await persistRideState(ride.id, mappedStatus, {
+          driverInfo: parsedDriver,
+          pickupCoords: ride.originLat ? { latitude: Number(ride.originLat), longitude: Number(ride.originLng) } : null,
+          pickupAddress: ride.originAddress,
+          dropoffCoords: ride.destinationLat ? { latitude: Number(ride.destinationLat), longitude: Number(ride.destinationLng) } : null,
+          dropoffAddress: ride.destinationAddress,
+          startOtp: otpCode,
+          estimatedPrice: ride.priceXof ? Number(ride.priceXof) : null
+        });
+
+        if (socket && socket.connected) {
+          socket.emit('passenger:rejoin_ride', { rideId: ride.id });
+        }
       }
-    } catch (err) {
-      console.warn('⚠️ [PASSENGER] Erro na rede - mantendo cache local:', err);
     }
-  }, []);
+  } catch (err) {
+    console.warn('⚠️ [PASSENGER] Erro na rede - mantendo cache local:', err);
+  }
+}, []);
   // 📱 Monitora mudança de estado do app (1º Plano vs 2º Plano)
   useEffect(() => {
     const subscription = AppState.addEventListener('change', async (nextAppState) => {
@@ -1211,113 +1259,77 @@ useEffect(() => {
   };
 
   const handleStateRecovered = async (data: any) => {
-    if (!isMountedRef.current || !data) return;
-    try {
-      if (!data?.hasActiveRide) {
-        setRideStatus((currentStatus) => {
-          if (['accepted', 'arrived', 'in_progress', 'searching'].includes(currentStatus)) {
-            return currentStatus;
-          }
-          return 'idle';
-        });
-        return;
-      }
-
-      if (data?.hasActiveRide && data?.ride) {
-        if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-        setActiveRideId(data.ride.id);
-        activeRideIdRef.current = data.ride.id;
-
-        if (typeof data.ride.originLat === 'number' && typeof data.ride.originLng === 'number') {
-          const lat = Number(data.ride.originLat);
-          const lng = Number(data.ride.originLng);
-          if (!isNaN(lat) && !isNaN(lng)) setPickupCoords({ latitude: lat, longitude: lng });
-          if (data.ride.originAddress) setPickupAddress(data.ride.originAddress);
+  if (!isMountedRef.current || !data) return;
+  try {
+    if (!data?.hasActiveRide) {
+      setRideStatus((currentStatus) => {
+        if (['accepted', 'arrived', 'in_progress', 'searching'].includes(currentStatus)) {
+          return currentStatus;
         }
-
-        if (Array.isArray(data.ride.stops) && data.ride.stops.length > 0) {
-          const firstStop = data.ride.stops[0];
-          const stopLat = Number(firstStop.lat || firstStop.latitude);
-          const stopLng = Number(firstStop.lng || firstStop.longitude);
-          if (!isNaN(stopLat) && !isNaN(stopLng)) {
-            setExtraStopCoords({ latitude: stopLat, longitude: stopLng });
-            setExtraStopAddress(firstStop.address || 'Parada Intermediária');
-            setShowExtraStop(true);
-          }
-        } else if (data.ride.extraStopLat && data.ride.extraStopLng) {
-          const lat = Number(data.ride.extraStopLat);
-          const lng = Number(data.ride.extraStopLng);
-          if (!isNaN(lat) && !isNaN(lng)) {
-            setExtraStopCoords({ latitude: lat, longitude: lng });
-            if (data.ride.extraStopAddress) setExtraStopAddress(data.ride.extraStopAddress);
-            setShowExtraStop(true);
-          }
-        }
-
-        if (typeof data.ride.destinationLat === 'number' && typeof data.ride.destinationLng === 'number') {
-          const lat = Number(data.ride.destinationLat);
-          const lng = Number(data.ride.destinationLng);
-          if (!isNaN(lat) && !isNaN(lng)) setDropoffCoords({ latitude: lat, longitude: lng });
-          if (data.ride.destinationAddress) setDropoffAddress(data.ride.destinationAddress);
-        }
-
-        if (data.ride.driverId) {
-          const otpCode = String(data.ride.startOtp || data.ride.otpPin || data.ride.pin || '');
-          setStartOtp(otpCode);
-          setDriverInfo({ 
-            id: data.ride.driverId, 
-            name: data.ride.driverName || 'Motorista',
-            photoUrl: formatPhotoUrl(data.ride.driverPhoto), 
-            profilePicture: formatPhotoUrl(data.ride.driverPhoto),
-            carModel: data.ride.carModel || data.ride.vehicleModel || 'Veículo Padrão',
-            carColor: data.ride.carColor || data.ride.vehicleColor || data.ride.color || 'BRANCO', 
-            vehicleType: data.ride.vehicleType || data.ride.vehicle_type || 'PARTICULAR',
-            licensePlate: data.ride.licensePlate || data.plate,
-            rating: data.ride.driverRating || 5.0,
-            phone: data.ride.driverPhone,
-            startOtp: otpCode,
-          });
-        }
-      }
-    } catch (err) {
-      console.error('Erro ao processar estado recuperado:', err);
-    }
-  };
-
-  const handleRideAccepted = (data: any) => {
-    if (!isMountedRef.current || !data) return;
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-
-    const otpCode = String(data.startOtp || data.otpPin || data.pin || '');
-    setStartOtp(otpCode); 
-    setActiveRideId(data.rideId);
-    activeRideIdRef.current = data.rideId;
-
-    if (data.driverId) {
-      setDriverInfo({ 
-        id: data.driverId, 
-        name: data.driverName || 'Motorista',
-        photoUrl: formatPhotoUrl(data.driverPhoto), 
-        profilePicture: formatPhotoUrl(data.driverPhoto),
-        carModel: data.carModel || data.vehicleModel || t('standard_vehicle', 'Veículo Padrão'),
-        carColor: data.carColor || data.vehicleColor || data.color || 'BRANCO', 
-        vehicleType: data.vehicleType || data.vehicle_type || 'PARTICULAR',
-        licensePlate: data.licensePlate || data.plate,
-        rating: data.driverRating || 5.0,
-        phone: data.driverPhone,
-        startOtp: otpCode,
+        return 'idle';
       });
+      return;
     }
 
-    setAcceptedAt(new Date());
-    setRideStatus(data.isQueuedRide ? 'queued' : 'accepted');
-    persistRideState(data.rideId, data.isQueuedRide ? 'queued' : 'accepted');
+    if (data?.hasActiveRide && data?.ride) {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      const ride = data.ride;
+      setActiveRideId(ride.id);
+      activeRideIdRef.current = ride.id;
 
-    Alert.alert(
-      t('ride_accepted_title', 'Corrida Aceita! 🚗'), 
-      `${data.driverName || 'O motorista'} ${t('ride_accepted_msg', 'aceitou sua viagem e está a caminho.')}`
-    );
-  };
+      if (typeof ride.originLat === 'number' && typeof ride.originLng === 'number') {
+        const lat = Number(ride.originLat);
+        const lng = Number(ride.originLng);
+        if (!isNaN(lat) && !isNaN(lng)) setPickupCoords({ latitude: lat, longitude: lng });
+        if (ride.originAddress) setPickupAddress(ride.originAddress);
+      }
+
+      if (typeof ride.destinationLat === 'number' && typeof ride.destinationLng === 'number') {
+        const lat = Number(ride.destinationLat);
+        const lng = Number(ride.destinationLng);
+        if (!isNaN(lat) && !isNaN(lng)) setDropoffCoords({ latitude: lat, longitude: lng });
+        if (ride.destinationAddress) setDropoffAddress(ride.destinationAddress);
+      }
+
+      const otpCode = String(ride.startOtp || ride.otpPin || ride.pin || '');
+      if (otpCode) setStartOtp(otpCode);
+
+      const parsedDriver = extractDriverInfo(ride, otpCode);
+      if (parsedDriver) {
+        setDriverInfo(parsedDriver);
+      }
+    }
+  } catch (err) {
+    console.error('Erro ao processar estado recuperado:', err);
+  }
+};
+
+const handleRideAccepted = (data: any) => {
+  if (!isMountedRef.current || !data) return;
+  if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+
+  const otpCode = String(data.startOtp || data.otpPin || data.pin || '');
+  setStartOtp(otpCode); 
+  setActiveRideId(data.rideId || data.id);
+  activeRideIdRef.current = data.rideId || data.id;
+
+  const parsedDriver = extractDriverInfo(data, otpCode);
+  if (parsedDriver) {
+    setDriverInfo(parsedDriver);
+  }
+
+  setAcceptedAt(new Date());
+  setRideStatus(data.isQueuedRide ? 'queued' : 'accepted');
+  persistRideState(data.rideId || data.id, data.isQueuedRide ? 'queued' : 'accepted', {
+    driverInfo: parsedDriver,
+    startOtp: otpCode,
+  });
+
+  Alert.alert(
+    t('ride_accepted_title', 'Corrida Aceita! 🚗'), 
+    `${parsedDriver?.name || 'O motorista'} ${t('ride_accepted_msg', 'aceitou sua viagem e está a caminho.')}`
+  );
+};
 
   const handleDriverArrived = (data: any) => {
     if (!isMountedRef.current) return;
@@ -1492,7 +1504,30 @@ useEffect(() => {
       deactivateKeepAwake('passenger_ride_tag').catch(() => {});
     };
   }, [rideStatus]);
+// 📱 DISPARO DE NOTIFICAÇÃO FIXA AO MINIMIZAR O APP DURANTE A CORRIDA
+useEffect(() => {
+  const subscription = AppState.addEventListener('change', async (nextAppState) => {
+    const isRideActive = ['accepted', 'arrived', 'in_progress'].includes(rideStatus);
 
+    // Quando o passageiro sai do app (vai para a tela inicial - Foto 2)
+    if (nextAppState.match(/inactive|background/) && isRideActive) {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "🇬🇼 Nobai245 • Corrida em Andamento",
+          body: driverInfo ? `${driverInfo.name} (${driverInfo.carModel}) • Toque para abrir` : "Sua corrida está ativa. Toque para voltar ao app.",
+          data: { screen: 'Home', activeRideId },
+          sticky: true, // Notificação fixa
+          priority: Notifications.AndroidNotificationPriority.HIGH,
+        },
+        trigger: null, // Dispara imediatamente
+      });
+    }
+
+    appStateRef.current = nextAppState;
+  });
+
+  return () => subscription.remove();
+}, [rideStatus, driverInfo, activeRideId]);
   async function handleInitialRequestRide() {
     const needsDropoff = serviceType !== 'aluguel';
     if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
@@ -1988,7 +2023,35 @@ return (
           />
         </Mapbox.ShapeSource>
       )}
-
+      {/* 📡 ONDAS DE RADAR NO MAPA DURANTE A BUSCA */}
+{rideStatus === 'searching' && pickupCoords?.latitude != null && pickupCoords?.longitude != null && (
+  <Mapbox.PointAnnotation
+    id="searchingRadarMarker"
+    coordinate={[Number(pickupCoords.longitude), Number(pickupCoords.latitude)]}
+    anchor={{ x: 0.5, y: 0.5 }}
+  >
+    <View style={{ width: 160, height: 160, justifyContent: 'center', alignItems: 'center' }}>
+      {/* Onda 1 */}
+      <Animated.View
+        style={[
+          styles.radarWaveCircle,
+          { transform: [{ scale: radarScale1 }], opacity: radarOpacity1 }
+        ]}
+      />
+      {/* Onda 2 */}
+      <Animated.View
+        style={[
+          styles.radarWaveCircle,
+          { transform: [{ scale: radarScale2 }], opacity: radarOpacity2 }
+        ]}
+      />
+      {/* Centro do Pino */}
+      <View style={styles.radarCenterPin}>
+        <Ionicons name="location" size={22} color="#EAB308" />
+      </View>
+    </View>
+  </Mapbox.PointAnnotation>
+)}
       {/* 🚗 MOTORISTAS ONLINE PRÓXIMOS */}
       {nearbyDrivers && nearbyDrivers
         .filter((d: any) => d.lat && d.lng && Number(d.lat) !== 0 && Number(d.lng) !== 0)
@@ -2519,47 +2582,74 @@ return (
             </View>
           )}
 
-          {/* 📡 STATUS DE BUSCA DE MOTORISTAS */}
-          {rideStatus === 'searching' && (
-            <View style={styles.statusBox}>
-              <ActivityIndicator size="large" color="#EAB308" style={{ marginBottom: 12 }} />
-              <Text style={styles.statusTitle}>{t('searching_drivers_title', 'Buscando motoristas...')}</Text>
-              <Text style={styles.statusSub}>{t('locating_nearest_vehicle', 'Localizando o veículo mais próximo de você.')}</Text>
-              <TouchableOpacity 
-                style={[styles.cancelButtonOutline, { marginTop: 16 }]} 
-                onPress={() => setShowCancelModal(true)}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.cancelButtonOutlineText}>{t('cancel_search_btn', 'Cancelar Busca')}</Text>
-              </TouchableOpacity>
-            </View>
-          )}
+          {/* 📡 STATUS DE BUSCA COM RADAR MODERNO */}
+{rideStatus === 'searching' && (
+  <View style={styles.statusBox}>
+    <View style={{ height: 90, justifyContent: 'center', alignItems: 'center', marginBottom: 12 }}>
+      <Animated.View
+        style={[
+          styles.radarWaveCircle,
+          { width: 70, height: 70, borderRadius: 35, transform: [{ scale: radarScale1 }], opacity: radarOpacity1 }
+        ]}
+      />
+      <Animated.View
+        style={[
+          styles.radarWaveCircle,
+          { width: 70, height: 70, borderRadius: 35, transform: [{ scale: radarScale2 }], opacity: radarOpacity2 }
+        ]}
+      />
+      <View style={styles.radarCenterPin}>
+        <Ionicons name="car-sport" size={24} color="#EAB308" />
+      </View>
+    </View>
+
+    <Text style={styles.statusTitle}>{t('searching_drivers_title', 'Procurando motoristas próximos...')}</Text>
+    <Text style={styles.statusSub}>{t('locating_nearest_vehicle', 'Conectando ao veículo mais rápido de Guiné-Bissau.')}</Text>
+    
+    <TouchableOpacity 
+      style={[styles.cancelButtonOutline, { marginTop: 18 }]} 
+      onPress={() => setShowCancelModal(true)}
+      activeOpacity={0.8}
+    >
+      <Text style={styles.cancelButtonOutlineText}>{t('cancel_search_btn', 'Cancelar Busca')}</Text>
+    </TouchableOpacity>
+  </View>
+)}
 
           {/* 📊 PAINEL PROFISSIONAL DE ACOMPANHAMENTO DA CORRIDA (CARD ÚNICO E ORGANIZADO) */}
-          {['accepted', 'arrived', 'in_progress'].includes(rideStatus) && driverInfo && (
-            <View style={styles.activeRideContainer}>
-              
-              {/* STATUS & TEMPO DE CHEGADA */}
-              <View style={styles.activeRideHeader}>
-                <View style={styles.statusPulseBox}>
-                  <View style={styles.statusPulseDot} />
-                  <Text style={styles.activeRideStatusTitle}>
-                    {rideStatus === 'accepted' 
-                      ? (driverEta ? `Motorista a caminho (${driverEta} min)` : 'Motorista a caminho') :
-                     rideStatus === 'arrived' 
-                      ? '📍 O motorista chegou ao local!' : 
-                     (driverEta ? `Em Viagem • Chegada em ${driverEta} min` : 'Viagem em Andamento')}
-                  </Text>
-                </View>
+{['accepted', 'arrived', 'in_progress'].includes(rideStatus) && driverInfo && (
+  <View style={styles.activeRideContainer}>
+    
+    {/* STATUS & TEMPO DE CHEGADA */}
+    <View style={styles.activeRideHeader}>
+      <View style={styles.statusPulseBox}>
+        <View style={styles.statusPulseDot} />
+        <Text style={styles.activeRideStatusTitle}>
+          {rideStatus === 'accepted' 
+            ? (driverEta ? `Motorista a caminho (${driverEta} min)` : 'Motorista a caminho') :
+           rideStatus === 'arrived' 
+            ? '📍 O motorista chegou ao local!' : 
+           (driverEta ? `Em Viagem • Chegada em ${driverEta} min` : 'Viagem em Andamento')}
+        </Text>
 
-                {/* VALOR EM DESTAQUE */}
-                <View style={styles.priceBadgeHeader}>
-                  <Text style={styles.priceBadgeLabel}>VALOR</Text>
-                  <Text style={styles.priceBadgeValue}>
-                    {estimatedPrice ? `${estimatedPrice.toLocaleString('pt-GW')} XOF` : 'A calcular'}
-                  </Text>
-                </View>
-              </View>
+        {/* 🟢 DISTÂNCIA EM KM PARA O PASSAGEIRO */}
+        {estimatedDistance ? (
+          <View style={{ backgroundColor: '#1E293B', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, marginTop: 4, alignSelf: 'flex-start' }}>
+            <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: 'bold' }}>
+              📍 {estimatedDistance.toFixed(1)} km
+            </Text>
+          </View>
+        ) : null}
+      </View>
+
+      {/* VALOR EM DESTAQUE */}
+      <View style={styles.priceBadgeHeader}>
+        <Text style={styles.priceBadgeLabel}>VALOR</Text>
+        <Text style={styles.priceBadgeValue}>
+          {estimatedPrice ? `${estimatedPrice.toLocaleString('pt-GW')} XOF` : 'A calcular'}
+        </Text>
+      </View>
+    </View>
 
               {/* ITINERÁRIO */}
               <View style={styles.routeTimelineContainer}>
@@ -2838,72 +2928,7 @@ return (
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
     </Modal>
-  {/* 🇬🇼 BOTÃO FLUTUANTE GUINÉ-BISSAU (Com opção de fechar no 'X') */}
-{['accepted', 'arrived', 'in_progress'].includes(rideStatus) && isFloatingBadgeVisible && (
-  <Animated.View
-    {...panResponderFloating.panHandlers}
-    style={[
-      styles.gbFloatingWidgetContainer,
-      {
-        transform: [
-          { translateX: floatingPan.x },
-          { translateY: floatingPan.y }
-        ]
-      }
-    ]}
-  >
-    <TouchableOpacity
-      activeOpacity={0.9}
-      onPress={() => {
-        // 1. Expande o painel inferior de volta para cima
-        Animated.spring(translateY, { toValue: 0, useNativeDriver: true }).start();
-
-        // 2. Centraliza o mapa no motorista / trajeto
-        if (cameraRef.current) {
-          cameraRef.current.setCamera({
-            centerCoordinate: safeCenterCoordinate,
-            zoomLevel: 15,
-            animationDuration: 800,
-          });
-        }
-      }}
-      style={styles.gbFloatingWidgetInner}
-    >
-      {/* TRICOLOR GUINÉ-BISSAU */}
-      <View style={styles.gbFlagBorder}>
-        <View style={styles.gbFlagRed}>
-          <Ionicons name="star" size={12} color="#000000" />
-        </View>
-        <View style={styles.gbFlagRightCol}>
-          <View style={styles.gbFlagYellow} />
-          <View style={styles.gbFlagGreen} />
-        </View>
-      </View>
-
-      {/* DADOS DA CORRIDA NO BOTÃO FLUTUANTE */}
-      <View style={styles.gbWidgetInfo}>
-        <Text style={styles.gbWidgetStatusTitle} numberOfLines={1}>
-          {rideStatus === 'accepted' ? 'Motorista a caminho' : rideStatus === 'arrived' ? 'Motorista chegou!' : 'Em Viagem'}
-        </Text>
-        <Text style={styles.gbWidgetPriceText}>
-          {estimatedPrice ? `${estimatedPrice.toLocaleString('pt-GW')} XOF` : 'Nobai245'}
-        </Text>
-      </View>
-
-      {/* ❌ BOTÃO 'X' PARA REMOVER O BOTÃO FLUTUANTE DA TELA */}
-      <TouchableOpacity
-        style={{ padding: 4, marginLeft: 6 }}
-        onPress={(e) => {
-          e.stopPropagation(); // Impede que o clique no X acione a abertura do painel
-          setIsFloatingBadgeVisible(false);
-        }}
-        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-      >
-        <Ionicons name="close-circle" size={20} color="#94A3B8" />
-      </TouchableOpacity>
-    </TouchableOpacity>
-  </Animated.View>
-)}
+  
     {/* MENU LATERAL DRAWER */}
     <Modal visible={isMenuVisible} animationType="fade" transparent onRequestClose={() => setIsMenuVisible(false)}>
       <TouchableOpacity style={styles.menuOverlay} activeOpacity={1} onPress={() => setIsMenuVisible(false)}>
@@ -4629,5 +4654,31 @@ const styles = StyleSheet.create({
   closeFloatingBadgeBtn: {
     padding: 2,
     marginLeft: 4,
+  },
+  // 📡 ESTILOS DO RADAR DE BUSCA
+  radarWaveCircle: {
+    position: 'absolute',
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: 'rgba(234, 179, 8, 0.25)',
+    borderWidth: 1.5,
+    borderColor: '#EAB308',
+  },
+  radarCenterPin: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#0F172A',
+    borderWidth: 2,
+    borderColor: '#EAB308',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+    elevation: 6,
+    shadowColor: '#EAB308',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
   },
 });

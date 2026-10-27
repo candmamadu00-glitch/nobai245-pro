@@ -16,6 +16,7 @@ export interface PushNotificationPayload {
   body: string;
   data?: Record<string, any>;
   channelId?: string;
+  imageUrl?: string;
 }
 
 export async function sendPushNotification(
@@ -25,7 +26,6 @@ export async function sendPushNotification(
   data: Record<string, any> = {},
   channelId: string = PUSH_CHANNELS.RIDE_UPDATE
 ): Promise<void> {
-  // Trata chamada com objeto único { to, title, body, data } ou Array de objetos
   if (typeof tokenOrPayload === 'object' && tokenOrPayload !== null) {
     if (Array.isArray(tokenOrPayload)) {
       for (const item of tokenOrPayload) {
@@ -45,42 +45,41 @@ export async function sendPushNotification(
   }
 
   const pushToken = tokenOrPayload;
-  console.log(`\n🔔 [PUSH ATTEMPT] Tentando enviar notificação...`);
-  console.log(`   - Destination Token: "${pushToken}"`);
-  console.log(`   - Canal: "${channelId}"`);
-  console.log(`   - Título: "${title}"`);
+  console.log(`\n🔔 [PUSH ATTEMPT] Enviando notificação para: "${pushToken}" | Canal: "${channelId}"`);
 
   if (!pushToken || typeof pushToken !== 'string' || !Expo.isExpoPushToken(pushToken)) {
-    console.error(`❌ [PUSH REJECTED] Token inválido, nulo ou fora do formato Expo: "${pushToken}"`);
+    console.error(`❌ [PUSH REJECTED] Token inválido: "${pushToken}"`);
     return;
   }
 
-  const messages = [
-    {
-      to: pushToken,
-      sound: 'default' as const,
-      title: title || '',
-      body: body || '',
-      data: { ...data, channelId },
-      priority: 'high' as const,
-      channelId,
-    },
-  ];
+  const message: any = {
+    to: pushToken,
+    sound: 'default',
+    title: title || '',
+    body: body || '',
+    data: { ...data, channelId },
+    priority: 'high',
+    channelId,
+    _displayInForeground: true,
+  };
+
+  if (data?.imageUrl) {
+    message.attachments = [{ url: data.imageUrl }];
+  }
 
   try {
-    const chunks = expo.chunkPushNotifications(messages);
+    const chunks = expo.chunkPushNotifications([message]);
     for (const chunk of chunks) {
       const ticketChunk = await expo.sendPushNotificationsAsync(chunk);
-
       ticketChunk.forEach((ticket: any) => {
         if (ticket.status === 'ok') {
-          console.log(`✅ [PUSH EXPO SUCCESS] Notificação entregue! Ticket ID: ${ticket.id}`);
+          console.log(`✅ [PUSH EXPO SUCCESS] Ticket ID: ${ticket.id}`);
         } else {
-          console.error(`❌ [PUSH EXPO ERROR] Recusado pelo Expo:`, ticket.message, ticket.details);
+          console.error(`❌ [PUSH EXPO ERROR]:`, ticket.message, ticket.details);
         }
       });
     }
   } catch (error) {
-    console.error('💥 [PUSH FATAL ERROR] Erro na conexão com API do Expo:', error);
+    console.error('💥 [PUSH FATAL ERROR]:', error);
   }
 }
