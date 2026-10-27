@@ -792,39 +792,53 @@ export function Home() {
   };
 
   const handleRideAccepted = async (data: any) => {
-    Vibration.cancel();
-    if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
-    if (!isMountedRef.current) return;
-    setIsLoading(false);
+  Vibration.cancel();
+  if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
+  if (!isMountedRef.current) return;
+  setIsLoading(false);
 
-    const currentRideState = rideStateRef.current || rideState;
-    const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
+  const currentRideState = rideStateRef.current || rideState;
+  const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
 
-    if (data.driverId === driver?.id || data.rideId) {
-      if (!isCurrentlyInRide || activeRideIdRef.current === data.rideId) {
-        setActiveRideId(data.rideId);
-        setRideState('accepted');
-        setIncomingRide((prev) => ({
+  const targetRideId = data.rideId || data.id;
+
+  if (data.driverId === driver?.id || targetRideId) {
+    if (!isCurrentlyInRide || activeRideIdRef.current === targetRideId) {
+      setActiveRideId(targetRideId);
+      setRideState('accepted');
+
+      setIncomingRide((prev) => {
+        const updatedRide: IncomingRideData = {
           ...prev,
           ...data,
-          rideId: data.rideId,
-          passengerName: data.passengerName || prev?.passengerName || 'Passageiro',
-          pickupLat: Number(data.pickupLat || prev?.pickupLat || 0),
-          pickupLng: Number(data.pickupLng || prev?.pickupLng || 0),
-          destinationLat: Number(data.destinationLat || prev?.destinationLat || 0),
-          destinationLng: Number(data.destinationLng || prev?.destinationLng || 0),
-          priceXof: Number(data.priceXof || prev?.priceXof || 0),
-        }));
-        if (incomingRideRef.current) {
-          persistActiveRideState(incomingRideRef.current, 'accepted', data.rideId);
-        }
-        snapToState(true);
-      }
-    } else {
+          rideId: targetRideId,
+          passengerName: data.passengerName || data.passenger?.fullName || prev?.passengerName || 'Passageiro',
+          passengerPhone: data.passengerPhone || data.passenger?.phone || prev?.passengerPhone,
+          passengerPhoto: data.passengerPhoto || data.passenger?.profilePicture || prev?.passengerPhoto,
+          passengerRating: Number(data.passengerRating || data.passenger?.ratingAverage || prev?.passengerRating || 5.0),
+          pickupLat: Number(data.pickupLat ?? data.originLat ?? prev?.pickupLat ?? BISSAU_CENTER_LAT),
+          pickupLng: Number(data.pickupLng ?? data.originLng ?? prev?.pickupLng ?? BISSAU_CENTER_LNG),
+          originAddress: data.originAddress || prev?.originAddress || 'Local de Embarque',
+          destinationLat: Number(data.destinationLat ?? prev?.destinationLat ?? BISSAU_CENTER_LAT),
+          destinationLng: Number(data.destinationLng ?? prev?.destinationLng ?? BISSAU_CENTER_LNG),
+          destinationAddress: data.destinationAddress || prev?.destinationAddress || 'Destino Final',
+          priceXof: Number(data.priceXof ?? data.fareXOF ?? prev?.priceXof ?? 0),
+          paymentMethod: data.paymentMethod || prev?.paymentMethod || 'CASH',
+        };
+
+        // Salva com os dados perfeitamente atualizados
+        persistActiveRideState(updatedRide, 'accepted', targetRideId);
+        return updatedRide;
+      });
+
       setQueuedOfferData(null);
-      setIncomingRide(null);
+      snapToState(true);
     }
-  };
+  } else {
+    setQueuedOfferData(null);
+    setIncomingRide(null);
+  }
+};
 
   const handleRideStarted = () => {
     if (!isMountedRef.current) return;
@@ -1171,41 +1185,45 @@ export function Home() {
   useEffect(() => { if (isOnline) startTrackingForState(rideState); }, [rideState, isOnline, isLowBattery]);
 
   function acceptRide(rideId: string, driverId: string, currentLat: number, currentLng: number) {
-    Vibration.cancel();
-    setIsLoading(true);
+  Vibration.cancel();
+  setIsLoading(true);
 
-    activeRideIdRef.current = rideId;
-    rideStateRef.current = 'accepted';
-    setQueuedOfferData(null);
+  activeRideIdRef.current = rideId;
+  rideStateRef.current = 'accepted';
 
-    if (!socket || !socket.connected) {
-      setIsLoading(false);
-      return Alert.alert('Sem Conexão', 'Sinal de internet insuficiente.');
+  if (!socket || !socket.connected) {
+    setIsLoading(false);
+    return Alert.alert('Sem Conexão', 'Sinal de internet insuficiente.');
+  }
+
+  socket.timeout(8000).emit('driver:accept_ride', { 
+    rideId, driverId, driverLat: currentLat, driverLng: currentLng 
+  }, (err: any, response: any) => {
+    if (!isMountedRef.current) return;
+    setIsLoading(false);
+
+    if (err) return Alert.alert('Sinal Fraco 📡', 'Não foi possível confirmar a tempo.');
+    
+    if (response?.error) {
+      setQueuedOfferData(null); 
+      setRideState('idle');
+      return Alert.alert('Aviso', response.message || 'Corrida não disponível.');
     }
 
-    socket.timeout(8000).emit('driver:accept_ride', { 
-      rideId, driverId, driverLat: currentLat, driverLng: currentLng 
-    }, (err: any, response: any) => {
-      if (!isMountedRef.current) return;
-      setIsLoading(false);
+    setActiveRideId(rideId);
+    setRideState('accepted');
 
-      if (err) return Alert.alert('Sinal Fraco 📡', 'Não foi possível confirmar a tempo.');
-      
-      if (response?.error) {
-        setQueuedOfferData(null); 
-        return Alert.alert('Aviso', response.message);
-      }
+    const offerToUse = queuedOfferDataRef.current || incomingRideRef.current;
+    if (offerToUse) {
+      const activeData = { ...offerToUse, rideId };
+      setIncomingRide(activeData);
+      persistActiveRideState(activeData, 'accepted', rideId);
+    }
 
-      setActiveRideId(rideId);
-      setRideState('accepted');
-      if (queuedOfferDataRef.current) {
-        setIncomingRide(queuedOfferDataRef.current);
-        persistActiveRideState(queuedOfferDataRef.current, 'accepted', rideId);
-      }
-      setQueuedOfferData(null);
-      snapToState(true);
-    });
-  }
+    setQueuedOfferData(null);
+    snapToState(true);
+  });
+}
 
   async function handleArrived() {
     if (!activeRideId) return;
@@ -1802,30 +1820,52 @@ export function Home() {
                 )}
 
                 {rideState !== 'in_progress' && (
-                  <View style={styles.actionRow}>
-                    <TouchableOpacity style={styles.actionButtonSecondary} onPress={() => setIsChatVisible(true)}>
-                      <Ionicons name="chatbubbles-outline" size={16} color="#EAB308" />
-                      <Text style={styles.actionButtonSecondaryText}>Chat</Text>
-                    </TouchableOpacity>
+  <View style={styles.actionRow}>
+    {/* 💬 CHAT */}
+    <TouchableOpacity style={styles.actionButtonSecondary} onPress={() => setIsChatVisible(true)}>
+      <Ionicons name="chatbubbles-outline" size={16} color="#EAB308" />
+      <Text style={styles.actionButtonSecondaryText}>Chat</Text>
+    </TouchableOpacity>
 
-                    <TouchableOpacity style={styles.actionButtonSecondary} onPress={handleCallPassenger}>
-                      <Ionicons name="call-outline" size={16} color="#10B981" />
-                      <Text style={[styles.actionButtonSecondaryText, { color: '#10B981' }]}>Ligar</Text>
-                    </TouchableOpacity>
+    {/* 📞 LIGAR */}
+    <TouchableOpacity style={styles.actionButtonSecondary} onPress={handleCallPassenger}>
+      <Ionicons name="call-outline" size={16} color="#10B981" />
+      <Text style={[styles.actionButtonSecondaryText, { color: '#10B981' }]}>Ligar</Text>
+    </TouchableOpacity>
 
-                    {canCancelNoShow ? (
-                      <TouchableOpacity style={styles.noShowBtnDanger} onPress={handleNoShowCancel}>
-                        <Ionicons name="alert-circle" size={16} color="#FFFFFF" />
-                        <Text style={styles.noShowBtnText}>No-Show</Text>
-                      </TouchableOpacity>
-                    ) : (
-                      <TouchableOpacity style={styles.cancelButtonDanger} onPress={() => setShowCancelModal(true)} activeOpacity={0.85}>
-                        <Ionicons name="close-circle-outline" size={16} color="#EF4444" />
-                        <Text style={styles.cancelButtonText}>Cancelar</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                )}
+    {/* ⚠️ ALERTA DE RUA DE DIFÍCIL ACESSO (MENSAGEM RÁPIDA) */}
+    {rideState === 'accepted' && (
+      <TouchableOpacity 
+        style={[styles.actionButtonSecondary, { borderColor: '#EAB308' }]} 
+        onPress={() => {
+          if (socket && socket.connected && activeRideId) {
+            socket.emit('ride:chat_message', {
+              rideId: activeRideId,
+              text: '⚠️ O motorista está aguardando na via principal próxima devido ao difícil acesso na rua.'
+            });
+            Alert.alert('Aviso Enviado 📢', 'Notificamos o passageiro que você está aguardando na via principal.');
+          }
+        }}
+      >
+        <Ionicons name="alert-triangle-outline" size={16} color="#EAB308" />
+        <Text style={[styles.actionButtonSecondaryText, { color: '#EAB308' }]}>Acesso</Text>
+      </TouchableOpacity>
+    )}
+
+    {/* 🔴 CANCELAR OU NO-SHOW */}
+    {canCancelNoShow ? (
+      <TouchableOpacity style={styles.noShowBtnDanger} onPress={handleNoShowCancel}>
+        <Ionicons name="alert-circle" size={16} color="#FFFFFF" />
+        <Text style={styles.noShowBtnText}>No-Show</Text>
+      </TouchableOpacity>
+    ) : (
+      <TouchableOpacity style={styles.cancelButtonDanger} onPress={() => setShowCancelModal(true)} activeOpacity={0.85}>
+        <Ionicons name="close-circle-outline" size={16} color="#EF4444" />
+        <Text style={styles.cancelButtonText}>Cancelar</Text>
+      </TouchableOpacity>
+    )}
+  </View>
+)}
 
                 {rideState === 'accepted' && (
                   <TouchableOpacity 
