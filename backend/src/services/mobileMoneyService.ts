@@ -496,9 +496,29 @@ export async function payoutToDriverMobileMoney(params: DisbursementParams) {
 export async function refundPassengerMobileMoney(params: DisbursementParams) {
   return await executeRideDisbursement(params);
 }
- // Alias para compatibilidade com o rideController
-export async function refundPassengerOnCancellation(params: DisbursementParams) {
-  return await executeRideDisbursement(params);
+export async function refundPassengerOnCancellation(
+  rideIdOrParams: string | DisbursementParams,
+  reason?: string
+): Promise<{ success: boolean; providerRef?: string; error?: string; details?: string }> {
+  if (typeof rideIdOrParams === 'string') {
+    const ride = await prisma.ride.findUnique({
+      where: { id: rideIdOrParams },
+      include: { passenger: true }
+    });
+    
+    if (!ride || !ride.passenger) {
+      return { success: false, error: 'RIDE_NOT_FOUND', details: 'Corrida ou passageiro não localizado.' };
+    }
+
+    return await executeRideDisbursement({
+      rideId: ride.id,
+      passengerId: ride.passengerId,
+      amount: Number(ride.priceXof || 0),
+      phone: ride.passenger.phone,
+      provider: ride.paymentMethod || 'ORANGE_MONEY'
+    });
+  }
+  return await executeRideDisbursement(rideIdOrParams);
 }
 // -----------------------------------------------------------------------------
 // 5. PROCESSAMENTO DE WEBHOOK
