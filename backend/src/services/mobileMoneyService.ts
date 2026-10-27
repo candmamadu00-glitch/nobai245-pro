@@ -46,9 +46,6 @@ const tokenPromises: Record<string, Promise<string> | null> = {
   mtnDisbursement: null
 };
 
-/**
- * Formata o número de telefone para o padrão internacional E.164 da Guiné-Bissau (+245)
- */
 export function formatPhoneNumber(phone: string): string {
   if (!phone) return '';
   let cleanPhone = phone.replace(/\D/g, '');
@@ -62,9 +59,6 @@ export function formatPhoneNumber(phone: string): string {
   return `+245${cleanPhone}`;
 }
 
-/**
- * Valida se o número pertence às operadoras da Guiné-Bissau (5, 6, 7, 9)
- */
 export function isValidBissauPhone(phone: string): boolean {
   const formatted = formatPhoneNumber(phone).replace(/^\+/, '');
   return /^245[5679]\d{6,8}$/.test(formatted);
@@ -90,7 +84,7 @@ function isUuid(str?: string): boolean {
 }
 
 // -----------------------------------------------------------------------------
-// 1. CACHE E GERENCIAMENTO DE TOKENS OAUTH
+// 1. TOKENS OAUTH
 // -----------------------------------------------------------------------------
 
 export async function getOrangeAccessToken(): Promise<string> {
@@ -104,7 +98,6 @@ export async function getOrangeAccessToken(): Promise<string> {
   tokenPromises.orange = (async () => {
     try {
       if (!ORANGE_CLIENT_ID || !ORANGE_CLIENT_SECRET) {
-        console.error('❌ [CONFIG ERRO ORANGE]: Client ID/Secret vazios.');
         throw new Error('MISSING_CONFIG: Credenciais Orange Money não configuradas.');
       }
 
@@ -120,15 +113,10 @@ export async function getOrangeAccessToken(): Promise<string> {
       });
 
       const token = response.data?.access_token;
-      if (!token) {
-        throw new Error('INVALID_TOKEN_RESPONSE: Resposta da Orange não contém access_token.');
-      }
+      if (!token) throw new Error('INVALID_TOKEN_RESPONSE: Resposta sem access_token.');
 
       const expiresInSeconds = Number(response.data?.expires_in) || 3600;
-      tokenCache.orange = { 
-        token, 
-        expiresAt: Date.now() + expiresInSeconds * 1000 
-      };
+      tokenCache.orange = { token, expiresAt: Date.now() + expiresInSeconds * 1000 };
       return tokenCache.orange.token;
     } catch (error: any) {
       console.error('[CRITICAL] Falha ao obter token da Orange Money:', error?.response?.data || error.message);
@@ -159,7 +147,7 @@ export async function getMtnToken(type: 'COLLECTION' | 'DISBURSEMENT'): Promise<
       const urlPath = type === 'COLLECTION' ? 'collection' : 'disbursement';
 
       if (!apiUser || !apiKey || !subKey) {
-        throw new Error(`MISSING_CONFIG: Credenciais do MTN MoMo (${type}) incompletas.`);
+        throw new Error(`MISSING_CONFIG: Credenciais MTN MoMo (${type}) incompletas.`);
       }
 
       const authHeader = Buffer.from(`${apiUser}:${apiKey}`).toString('base64');
@@ -171,15 +159,10 @@ export async function getMtnToken(type: 'COLLECTION' | 'DISBURSEMENT'): Promise<
       });
 
       const token = response.data?.access_token;
-      if (!token) {
-        throw new Error(`INVALID_TOKEN_RESPONSE: Resposta do MTN (${type}) não contém access_token.`);
-      }
+      if (!token) throw new Error(`INVALID_TOKEN_RESPONSE: Resposta sem access_token.`);
 
       const expiresInSeconds = Number(response.data?.expires_in) || 3600;
-      tokenCache[cacheKey] = { 
-        token, 
-        expiresAt: Date.now() + expiresInSeconds * 1000 
-      };
+      tokenCache[cacheKey] = { token, expiresAt: Date.now() + expiresInSeconds * 1000 };
       return tokenCache[cacheKey].token;
     } catch (error: any) {
       console.error(`[CRITICAL] Falha ao obter token MTN ${type}:`, error?.response?.data || error.message);
@@ -193,7 +176,7 @@ export async function getMtnToken(type: 'COLLECTION' | 'DISBURSEMENT'): Promise<
 }
 
 // -----------------------------------------------------------------------------
-// 2. COBRANÇA DO PASSAGEIRO (PRÉ-PAGAMENTO AUTOMÁTICO)
+// 2. COBRANÇA
 // -----------------------------------------------------------------------------
 
 export interface ChargeParams {
@@ -224,9 +207,7 @@ export async function chargePassengerMobileMoney(
   }
 
   let cleanMsisdn = formattedPhone.replace(/^\+/, '');
-  while (cleanMsisdn.startsWith('245245')) {
-    cleanMsisdn = cleanMsisdn.substring(3);
-  }
+  while (cleanMsisdn.startsWith('245245')) cleanMsisdn = cleanMsisdn.substring(3);
 
   const cleanAmount = Math.round(Number(params.amount));
   if (isNaN(cleanAmount) || cleanAmount <= 0) {
@@ -346,7 +327,81 @@ export async function chargePassengerMobileMoney(
 }
 
 // -----------------------------------------------------------------------------
-// 3. MOTOR DE DESEMBOLSO / TRANSFERÊNCIA B2C (PAYOUT E REFUND)
+// 3. RECONCILIAÇÃO E VERIFICAÇÃO DE TRANSAÇÃO (REQUERIDA PELO PAYOUT QUEUE / RECONCILIATION)
+// -----------------------------------------------------------------------------
+
+export async function verifyTransactionStatus(transactionId: string): Promise<{ 
+  status: 'SUCCESS' | 'FAILED' | 'PENDING'; 
+  ref?: string; 
+}> {
+  if (IS_MOCK_MODE || transactionId.startsWith('MOCK-')) {
+    return { status: 'SUCCESS', ref: `MOCK-CONFIRMED-${transactionId}` };
+  }
+
+  const transaction = await prisma.transaction.findFirst({
+    where: {
+      OR: [
+        { id: isUuid(transactionId) ? transactionId : undefined },
+        { reference: transactionId },
+        { externalRef: transactionId }
+      ]
+    }
+  });
+
+  if (!transaction) throw new Error('NOT_FOUND: Transação não localizada no banco de dados.');
+
+  const provider = (transaction.paymentMethod || 'ORANGE_MONEY').toString().toUpperCase();
+
+  try {
+    if (provider.includes('ORANGE')) {
+      const accessToken = await getOrangeAccessToken();
+      const response = await apiClient.post(`${ORANGE_BASE_URL}/orange-money-webpay/gw/v1/transactionstatus`, 
+        { 
+          order_id: transaction.reference || transactionId, 
+          amount: Math.round(Number(transaction.amount)), 
+          merchant_key: ORANGE_MERCHANT_KEY 
+        },
+        { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } }
+      );
+      
+      const status = (response.data?.status || response.data?.txstat || '').toString().toUpperCase();
+      if (['SUCCESS', 'COMPLETED', 'SUCCESSFUL'].includes(status)) {
+        return { status: 'SUCCESS', ref: response.data?.txnid || transactionId };
+      }
+      if (['FAILED', 'CANCELLED', 'EXPIRED', 'REFUSED'].includes(status)) {
+        return { status: 'FAILED' };
+      }
+      return { status: 'PENDING' };
+    }
+
+    if (provider.includes('MTN')) {
+      const token = await getMtnToken('COLLECTION');
+      const mtnLookupId = toDeterministicUuid(transaction.reference || transactionId);
+
+      const response = await apiClient.get(`${MTN_BASE_URL}/collection/v1_0/requesttopay/${mtnLookupId}`, 
+        { 
+          headers: { 
+            Authorization: `Bearer ${token}`, 
+            'X-Target-Environment': MTN_TARGET_ENV, 
+            'Ocp-Apim-Subscription-Key': MTN_SUBSCRIPTION_KEY 
+          } 
+        }
+      );
+
+      const status = (response.data?.status || '').toString().toUpperCase();
+      if (status === 'SUCCESSFUL') return { status: 'SUCCESS', ref: response.data?.financialTransactionId };
+      if (['FAILED', 'REJECTED', 'EXPIRED'].includes(status)) return { status: 'FAILED' };
+      return { status: 'PENDING' };
+    }
+
+    throw new Error(`UNSUPPORTED_PROVIDER: Provedor ${provider} não reconhecido.`);
+  } catch (error: any) {
+    return { status: 'PENDING' };
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 4. DESEMBOLSO / TRANSFERÊNCIA B2C
 // -----------------------------------------------------------------------------
 
 export interface DisbursementParams {
@@ -443,164 +498,7 @@ export async function refundPassengerMobileMoney(params: DisbursementParams) {
 }
 
 // -----------------------------------------------------------------------------
-// 4. CONCLUSÃO DA CORRIDA, SPLIT E REPASSE INSTANTÂNEO AO MOTORISTA
-// -----------------------------------------------------------------------------
-
-export async function releaseFundsAndPayout(rideId: string, totalAmount: number, platformFee: number, driverEarnings: number) {
-  return await prisma.$transaction(async (tx) => {
-    // 1. Localiza a transação retida em caução (Escrow)
-    const heldTransaction = await tx.transaction.findFirst({
-      where: { rideId, status: TransactionStatus.HELD_IN_ESCROW }
-    });
-
-    if (!heldTransaction) {
-      throw new Error('NO_HELD_ESCROW_FOUND: Nenhum pagamento retido em caução para esta corrida.');
-    }
-
-    // 2. Busca dados da corrida e do motorista
-    const ride = await tx.ride.findUnique({ 
-      where: { id: rideId }, 
-      include: { driver: true } 
-    });
-
-    if (!ride || !ride.driver || !ride.driverId) {
-      throw new Error('INVALID_RIDE_DATA: Dados da corrida ou motorista não encontrados.');
-    }
-
-    // 3. Atualiza a transação em caução para COMPLETED
-    await tx.transaction.update({
-      where: { id: heldTransaction.id },
-      data: { status: TransactionStatus.COMPLETED }
-    });
-
-    // 4. Credita a comissão da empresa na carteira corporativa (CompanyWallet)
-    await tx.companyWallet.upsert({
-      where: { id: 'bai245-main-wallet' },
-      update: { 
-        balance: { increment: platformFee }, 
-        totalCollected: { increment: totalAmount }, 
-        version: { increment: 1 } 
-      },
-      create: { 
-        id: 'bai245-main-wallet', 
-        balance: platformFee, 
-        totalCollected: totalAmount, 
-        version: 1 
-      }
-    });
-
-    // 5. Registra a transação de Repasse do Motorista
-    const payoutTx = await tx.transaction.create({
-      data: {
-        rideId,
-        driverId: ride.driverId,
-        type: TransactionType.DRIVER_PAYOUT,
-        amount: driverEarnings,
-        status: TransactionStatus.PENDING,
-        reference: `EARN-${rideId.slice(0, 8)}-${Date.now()}`,
-        paymentMethod: heldTransaction.paymentMethod || PaymentMethod.ORANGE_MONEY
-      }
-    });
-
-    // 6. 🚀 EXECUÇÃO INSTANTÂNEA E AUTOMÁTICA DO REPASSE AO MOTORISTA
-    const driverPhone = ride.driver.phone;
-    const provider = heldTransaction.paymentMethod || PaymentMethod.ORANGE_MONEY;
-
-    const payoutResult = await payoutToDriverMobileMoney({
-      rideId,
-      driverId: ride.driverId,
-      payoutId: payoutTx.id,
-      amount: driverEarnings,
-      phone: driverPhone,
-      provider
-    });
-
-    if (payoutResult.success) {
-      await tx.transaction.update({
-        where: { id: payoutTx.id },
-        data: { 
-          status: TransactionStatus.COMPLETED, 
-          externalRef: payoutResult.providerRef 
-        }
-      });
-      console.log(`✅ [REPASSE AUTOMÁTICO SUCESSO]: Enviado ${driverEarnings} XOF para o motorista (${driverPhone})`);
-    } else {
-      console.error(`⚠️ [FALHA NO REPASSE AUTOMÁTICO]: Ficou pendente para tentativa posterior:`, payoutResult.details);
-    }
-
-    return { success: true, payoutId: payoutTx.id, instantPayout: payoutResult.success };
-  });
-}
-
-// -----------------------------------------------------------------------------
-// 5. ESTORNO AUTOMÁTICO AO PASSAGEIRO CASO O MOTORISTA CANCELE
-// -----------------------------------------------------------------------------
-
-export async function refundPassengerOnCancellation(rideId: string, cancellationReason: string = 'Cancelado pelo motorista') {
-  return await prisma.$transaction(async (tx) => {
-    const heldTransaction = await tx.transaction.findFirst({
-      where: { rideId, status: TransactionStatus.HELD_IN_ESCROW }
-    });
-
-    if (!heldTransaction) {
-      console.log(`ℹ️ [ESTORNO]: Nenhuma transação caucionada encontrada para cancelar na corrida ${rideId}.`);
-      return { success: false, reason: 'NO_HELD_ESCROW' };
-    }
-
-    const ride = await tx.ride.findUnique({
-      where: { id: rideId },
-      include: { passenger: true }
-    });
-
-    if (!ride || !ride.passenger) {
-      throw new Error('INVALID_RIDE_PASSENGER: Passageiro não localizado para efetuar estorno.');
-    }
-
-    // Registra transação de estorno
-    const refundTx = await tx.transaction.create({
-      data: {
-        rideId,
-        passengerId: ride.passengerId,
-        type: TransactionType.REFUND,
-        amount: heldTransaction.amount,
-        status: TransactionStatus.PENDING,
-        reference: `REFUND-${rideId.slice(0, 8)}-${Date.now()}`,
-        paymentMethod: heldTransaction.paymentMethod
-      }
-    });
-
-    // 🚀 EXECUTA O ENVIAR DO DINHEIRO DE VOLTA PARA O MOBILE MONEY DO PASSAGEIRO
-    const refundResult = await refundPassengerMobileMoney({
-      rideId,
-      passengerId: ride.passengerId,
-      refundId: refundTx.id,
-      amount: Number(heldTransaction.amount),
-      phone: ride.passenger.phone,
-      provider: heldTransaction.paymentMethod || PaymentMethod.ORANGE_MONEY
-    });
-
-    if (refundResult.success) {
-      await tx.transaction.update({
-        where: { id: heldTransaction.id },
-        data: { status: TransactionStatus.CANCELLED }
-      });
-
-      await tx.transaction.update({
-        where: { id: refundTx.id },
-        data: { status: TransactionStatus.COMPLETED, externalRef: refundResult.providerRef }
-      });
-
-      console.log(`💸 [ESTORNO AUTOMÁTICO CONCLUÍDO]: Devolvido ${heldTransaction.amount} XOF para o passageiro (${ride.passenger.phone})`);
-      return { success: true, refundId: refundTx.id };
-    } else {
-      console.error(`❌ [FALHA NO ESTORNO AUTOMÁTICO]:`, refundResult.details);
-      return { success: false, error: refundResult.details };
-    }
-  });
-}
-
-// -----------------------------------------------------------------------------
-// 6. PROCESSAMENTO DE WEBHOOK E CONFIRMAÇÃO DA ENTRADA DO DINHEIRO
+// 5. PROCESSAMENTO DE WEBHOOK
 // -----------------------------------------------------------------------------
 
 export async function processWebhookConfirmation(

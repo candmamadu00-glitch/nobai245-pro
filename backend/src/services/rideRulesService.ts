@@ -13,7 +13,7 @@ import { payoutToDriverMobileMoney } from './mobileMoneyService';
 
 const CANCELLATION_FEE_XOF = 500;
 const FREE_CANCELLATION_MINUTES = 2;
-const DRIVER_PENALTY_SHARE = 0.7; // 70% da penalidade vai para o motorista (350 XOF)
+const DRIVER_PENALTY_SHARE = 0.7;
 
 const DEFAULT_TARIFFS: Record<
   VehicleType,
@@ -26,9 +26,6 @@ const DEFAULT_TARIFFS: Record<
   TOCA_TOCA: { baseFare: 500, perKmFare: 200, perMinuteFare: 30, minimumFare: 1000 },
 };
 
-// -----------------------------------------------------------------------------
-// 1. VALIDAÇÃO E CÁLCULO GEOGRÁFICO
-// -----------------------------------------------------------------------------
 export function isValidCoordinate(lat: unknown, lng: unknown): boolean {
   if (lat === null || lng === null || typeof lat === 'boolean' || typeof lng === 'boolean') {
     return false;
@@ -40,7 +37,7 @@ export function isValidCoordinate(lat: unknown, lng: unknown): boolean {
 
 export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   if (!isValidCoordinate(lat1, lon1) || !isValidCoordinate(lat2, lon2)) {
-    return 0.5; // Distância mínima de segurança em KM
+    return 0.5;
   }
 
   const R = 6371;
@@ -65,14 +62,10 @@ export async function calculateRouteAndDistance(
   dLng: number
 ): Promise<{ distanceKm: number; durationMin: number }> {
   const distanceKm = calculateDistance(pLat, pLng, dLat, dLng);
-  // Estimativa base de velocidade urbana na Guiné-Bissau (~25 km/h)
   const durationMin = Math.max(3, Math.ceil((distanceKm / 25) * 60));
   return { distanceKm, durationMin };
 }
 
-// -----------------------------------------------------------------------------
-// 2. CÁLCULO DE TARIFA BLINDADO POR ÍNDICE COMPOSTO
-// -----------------------------------------------------------------------------
 export async function calculateRidePrice(
   distanceKm: number,
   durationMin: number,
@@ -100,7 +93,7 @@ export async function calculateRidePrice(
   let totalPrice = baseFare + safeDist * perKmFare + safeDur * perMinuteFare;
 
   if (serviceType === ServiceType.DELIVERY) {
-    totalPrice *= 1.2; // 20% adicional para entregas
+    totalPrice *= 1.2;
   }
 
   if (totalPrice < minimumFare) {
@@ -110,9 +103,6 @@ export async function calculateRidePrice(
   return Math.max(100, Math.round(totalPrice));
 }
 
-// -----------------------------------------------------------------------------
-// 3. CRIAÇÃO DE CORRIDA E RETENÇÃO DE ESCROW
-// -----------------------------------------------------------------------------
 export async function createRideAndInitiateEscrow(
   passengerId: string,
   data: {
@@ -186,9 +176,6 @@ export async function createRideAndInitiateEscrow(
   });
 }
 
-// -----------------------------------------------------------------------------
-// 4. ACEITE DE CORRIDA ATÔMICO
-// -----------------------------------------------------------------------------
 export async function acceptRideLogic(rideId: string, driverId: string) {
   return await prisma.$transaction(async (tx) => {
     const driver = await tx.driver.findUnique({
@@ -244,9 +231,6 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
   });
 }
 
-// -----------------------------------------------------------------------------
-// 5. NOTIFICAÇÃO DE CHEGADA E INÍCIO DE CORRIDA
-// -----------------------------------------------------------------------------
 export async function driverArrivedLogic(rideId: string, driverId: string) {
   return await prisma.$transaction(async (tx) => {
     const updatedRideCount = await tx.ride.updateMany({
@@ -293,9 +277,6 @@ export async function startRideLogic(rideId: string, driverId: string, otpInput:
   });
 }
 
-// -----------------------------------------------------------------------------
-// 6. FINALIZAÇÃO, CRÉDITO DIRETO E TRANSIÇÃO DE FILA
-// -----------------------------------------------------------------------------
 export async function finalizeRideAndCharge(rideId: string, finalLat: number, finalLng: number) {
   if (!isValidCoordinate(finalLat, finalLng)) {
     throw new Error('INVALID_COORDINATES: Coordenadas finais de destino inválidas.');
@@ -333,7 +314,6 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
   );
 
   const result = await prisma.$transaction(async (tx) => {
-    // 1. Finaliza a corrida atomicamente
     const updateCount = await tx.ride.updateMany({
       where: { id: ride.id, status: { in: ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] } },
       data: {
@@ -351,16 +331,13 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
       throw new Error('CONCURRENCY_ERROR: A corrida já foi finalizada por outra operação.');
     }
 
-    // 2. Libera o passageiro
     await tx.passenger.update({ where: { id: ride.passengerId }, data: { currentRideId: null } });
 
-    // 3. Verifica se o motorista possui uma próxima corrida em fila
     const queuedRide = await tx.ride.findFirst({
       where: { driverId: ride.driverId!, status: 'ACCEPTED' },
       orderBy: { createdAt: 'asc' },
     });
 
-    // 4. Se houver corrida em fila, vincula ao motorista; caso contrário, libera para novas buscas
     await tx.driver.update({
       where: { id: ride.driverId! },
       data: {
@@ -369,20 +346,17 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
       },
     });
 
-    // 5. Converte a retenção de Escrow (HELD_IN_ESCROW) em Liquidada (COMPLETED)
     await tx.transaction.updateMany({
       where: { rideId: ride.id, status: TransactionStatus.HELD_IN_ESCROW },
       data: { status: TransactionStatus.COMPLETED },
     });
 
-    // 6. Registra o ganho da empresa na Wallet Geral
     await tx.companyWallet.upsert({
       where: { id: 'bai245-main-wallet' },
       update: { balance: { increment: platformFee }, totalCollected: { increment: calculatedFare } },
       create: { id: 'bai245-main-wallet', balance: platformFee, totalCollected: calculatedFare },
     });
 
-    // 7. Registra a comissão da empresa
     await tx.transaction.create({
       data: {
         rideId: ride.id,
@@ -396,7 +370,6 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
       },
     });
 
-    // 8. Registra o histórico de pagamento do motorista
     const payoutTx = await tx.transaction.create({
       data: {
         rideId: ride.id,
@@ -418,9 +391,8 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
     };
   });
 
-  // 🚀 9. ENVIAR REPASSE AUTOMÁTICO DIRECTAMENTE PARA A CONTA ORANGE / MTN DO MOTORISTA
   if (ride.paymentMethod !== PaymentMethod.CASH && ride.driver.phone) {
-    const payoutResult = await payoutToDriverMobileMoney({
+    const payoutResult: any = await payoutToDriverMobileMoney({
       rideId: ride.id,
       driverId: ride.driverId!,
       payoutId: result.payoutTxId,
@@ -429,10 +401,10 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
       provider: ride.paymentMethod,
     }).catch((err) => {
       console.error('❌ [REPASSE ERRO]:', err?.message || err);
-      return { success: false, details: err?.message };
+      return { success: false, details: err?.message, providerRef: undefined };
     });
 
-    if (payoutResult?.success) {
+    if (payoutResult?.success && payoutResult?.providerRef) {
       await prisma.transaction.update({
         where: { id: result.payoutTxId },
         data: { status: TransactionStatus.COMPLETED, externalRef: payoutResult.providerRef },
@@ -454,9 +426,6 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
   };
 }
 
-// -----------------------------------------------------------------------------
-// 7. CANCELAMENTO SEGURO VIA ESCROW
-// -----------------------------------------------------------------------------
 export async function cancelRideLogic(
   rideId: string,
   userId: string,
