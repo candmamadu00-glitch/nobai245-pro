@@ -1677,7 +1677,10 @@ async function confirmPaymentAndRide() {
 
 function executeRideRequest() {
   if (!user?.id || !pickupCoords) {
-    Alert.alert(t('warning_title', 'Aviso ⚠️'), t('missing_data_msg', 'Dados insuficientes para iniciar a corrida. Verifique sua localização.'));
+    Alert.alert(
+      t('warning_title', 'Aviso ⚠️'), 
+      t('missing_data_msg', 'Dados insuficientes para iniciar a corrida. Verifique sua localização.')
+    );
     return;
   }
 
@@ -1695,75 +1698,55 @@ function executeRideRequest() {
       vehicleType.toUpperCase();
     const regionLabel = RENTAL_PRICES[selectedRegion]?.label || selectedRegion;
 
-// 🟢 MONTAGEM SEGURA DE PARADAS (Sem disparar ReferenceError)
-let stopsListPayload: any[] = [];
+    // 🟢 MONTAGEM SEGURA DE PARADAS
+    let stopsListPayload: any[] = [];
 
-try {
-  // 1. Verifica se existe lista estendida de paradas no estado
-  if (typeof (globalThis as any).stopsList !== 'undefined' && Array.isArray((globalThis as any).stopsList)) {
-    stopsListPayload = (globalThis as any).stopsList.map((s: any, idx: number) => ({
-      address: s.address || s.name || `Parada ${idx + 1}`,
-      lat: Number(s.latitude ?? s.lat),
-      lng: Number(s.longitude ?? s.lng),
-      latitude: Number(s.latitude ?? s.lat),
-      longitude: Number(s.longitude ?? s.lng),
-      status: 'PENDING'
-    }));
-  } 
-  // 2. Caso contrário, usa a parada extra selecionada
-  else if (extraStopCoords?.latitude && extraStopCoords?.longitude) {
-    stopsListPayload = [{
-      address: extraStopAddress || 'Parada Intermediária',
-      lat: Number(extraStopCoords.latitude),
-      lng: Number(extraStopCoords.longitude),
-      latitude: Number(extraStopCoords.latitude),
-      longitude: Number(extraStopCoords.longitude),
-      status: 'PENDING'
-    }];
-  }
-
-  emitRequestRide({
-    passengerId: user.id,
-    passengerName: (user as any)?.name || user.fullName,
-    passengerRating: Number((user as any)?.rating || user.ratingAverage || 5.0),
-    pickupLat: pickupCoords.latitude,
-    pickupLng: pickupCoords.longitude,
-    originAddress: pickupAddress,
-    destinationLat: dropoffCoords?.latitude || pickupCoords.latitude,
-    destinationLng: dropoffCoords?.longitude || pickupCoords.longitude,
-    destinationAddress: serviceType === 'aluguel' ? `Aluguel Toca-Toca (${regionLabel})` : dropoffAddress,
-    referencePoint: referencePoint.trim(),
-    serviceType: mappedServiceType,
-    vehicleType: mappedVehicleType,
-    paymentMethod: paymentMethod,
-    estimatedPrice: estimatedPrice,
-    priceXof: estimatedPrice,
-    guestName: isForAnotherPerson ? guestName : undefined,
-    guestPhone: isForAnotherPerson ? guestPhone : undefined,
-    stops: stopsListPayload,
-    extraStopLat: extraStopCoords?.latitude,
-    extraStopLng: extraStopCoords?.longitude,
-    extraStopAddress: extraStopAddress || undefined,
-  });
-
-  if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-  searchTimeoutRef.current = setTimeout(() => {
-    if (isMountedRef.current) {
-      Alert.alert(
-        t('no_response_title', 'Sem resposta'), 
-        t('no_driver_accepted_msg', 'Nenhum motorista aceitou no momento. Tente novamente.')
-      );
-      resetRideState();
+    // 1. Verifica se existe lista estendida de paradas no estado
+    if (typeof (globalThis as any).stopsList !== 'undefined' && Array.isArray((globalThis as any).stopsList)) {
+      stopsListPayload = (globalThis as any).stopsList.map((s: any, idx: number) => ({
+        address: s.address || s.name || `Parada ${idx + 1}`,
+        lat: Number(s.latitude ?? s.lat),
+        lng: Number(s.longitude ?? s.lng),
+        latitude: Number(s.latitude ?? s.lat),
+        longitude: Number(s.longitude ?? s.lng),
+        status: 'PENDING'
+      }));
+    } 
+    // 2. Caso contrário, usa a parada extra selecionada
+    else if (extraStopCoords?.latitude && extraStopCoords?.longitude) {
+      stopsListPayload = [{
+        address: extraStopAddress || 'Parada Intermediária',
+        lat: Number(extraStopCoords.latitude),
+        lng: Number(extraStopCoords.longitude),
+        latitude: Number(extraStopCoords.latitude),
+        longitude: Number(extraStopCoords.longitude),
+        status: 'PENDING'
+      }];
     }
-  }, 60000);
 
-} catch (error) {
-  console.error('❌ Erro ao solicitar corrida:', error);
-  Alert.alert(
-    t('error_title', 'Erro'), 
-    t('server_error_msg', 'Ocorreu um problema ao comunicar com os servidores.')
-  );
-}
+    emitRequestRide({
+      passengerId: user.id,
+      passengerName: (user as any)?.name || user.fullName,
+      passengerRating: Number((user as any)?.rating || user.ratingAverage || 5.0),
+      pickupLat: pickupCoords.latitude,
+      pickupLng: pickupCoords.longitude,
+      originAddress: pickupAddress,
+      destinationLat: dropoffCoords?.latitude || pickupCoords.latitude,
+      destinationLng: dropoffCoords?.longitude || pickupCoords.longitude,
+      destinationAddress: serviceType === 'aluguel' ? `Aluguel Toca-Toca (${regionLabel})` : dropoffAddress,
+      referencePoint: referencePoint.trim(),
+      serviceType: mappedServiceType,
+      vehicleType: mappedVehicleType,
+      paymentMethod: paymentMethod,
+      estimatedPrice: estimatedPrice,
+      priceXof: estimatedPrice,
+      guestName: isForAnotherPerson ? guestName : undefined,
+      guestPhone: isForAnotherPerson ? guestPhone : undefined,
+      stops: stopsListPayload,
+      extraStopLat: extraStopCoords?.latitude,
+      extraStopLng: extraStopCoords?.longitude,
+      extraStopAddress: extraStopAddress || undefined,
+    });
 
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     searchTimeoutRef.current = setTimeout(() => {
@@ -1777,6 +1760,7 @@ try {
     }, 60000);
 
   } catch (error) {
+    console.error('❌ Erro ao solicitar corrida:', error);
     Alert.alert(
       t('error_title', 'Erro'), 
       t('server_error_msg', 'Ocorreu um problema ao comunicar com os servidores.')
