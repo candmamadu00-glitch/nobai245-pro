@@ -1654,39 +1654,50 @@ function executeRideRequest() {
       
     const regionLabel = RENTAL_PRICES[selectedRegion]?.label || selectedRegion;
 
-    emitRequestRide({
-      passengerId: user.id,
-      passengerName: (user as any)?.name || user.fullName,
-      passengerRating: Number((user as any)?.rating || user.ratingAverage || 5.0),
-      pickupLat: pickupCoords.latitude,
-      pickupLng: pickupCoords.longitude,
-      originAddress: pickupAddress,
-      destinationLat: dropoffCoords?.latitude || pickupCoords.latitude,
-      destinationLng: dropoffCoords?.longitude || pickupCoords.longitude,
-      destinationAddress: serviceType === 'aluguel' ? `Aluguel Toca-Toca (${regionLabel})` : dropoffAddress,
-      referencePoint: referencePoint.trim(),
-      serviceType: mappedServiceType,
-      vehicleType: mappedVehicleType,
-      paymentMethod: paymentMethod,
-      estimatedPrice: estimatedPrice,
-      priceXof: estimatedPrice,
-      guestName: isForAnotherPerson ? guestName : undefined,
-      guestPhone: isForAnotherPerson ? guestPhone : undefined,
-      // 🟢 PARADAS INTERMEDIÁRIAS COMPATÍVEIS COM O MOTORISTA
-      stops: (extraStopCoords?.latitude && extraStopCoords?.longitude) ? [
-        {
-          address: extraStopAddress || 'Parada Intermediária',
-          lat: extraStopCoords.latitude,
-          lng: extraStopCoords.longitude,
-          latitude: extraStopCoords.latitude,
-          longitude: extraStopCoords.longitude,
-          status: 'PENDING'
-        }
-      ] : [],
-      extraStopLat: extraStopCoords?.latitude,
-      extraStopLng: extraStopCoords?.longitude,
-      extraStopAddress: extraStopAddress || undefined,
-    });
+// 🟢 MONTAGEM DE MÚLTIPLAS PARADAS
+const stopsListPayload = Array.isArray(stopsList) && stopsList.length > 0
+  ? stopsList.map((s: any, idx: number) => ({
+      address: s.address || s.name || `Parada ${idx + 1}`,
+      lat: Number(s.latitude ?? s.lat),
+      lng: Number(s.longitude ?? s.lng),
+      latitude: Number(s.latitude ?? s.lat),
+      longitude: Number(s.longitude ?? s.lng),
+      status: 'PENDING'
+    }))
+  : (extraStopCoords?.latitude && extraStopCoords?.longitude)
+  ? [{
+      address: extraStopAddress || 'Parada Intermediária',
+      lat: extraStopCoords.latitude,
+      lng: extraStopCoords.longitude,
+      latitude: extraStopCoords.latitude,
+      longitude: extraStopCoords.longitude,
+      status: 'PENDING'
+    }]
+  : [];
+
+emitRequestRide({
+  passengerId: user.id,
+  passengerName: (user as any)?.name || user.fullName,
+  passengerRating: Number((user as any)?.rating || user.ratingAverage || 5.0),
+  pickupLat: pickupCoords.latitude,
+  pickupLng: pickupCoords.longitude,
+  originAddress: pickupAddress,
+  destinationLat: dropoffCoords?.latitude || pickupCoords.latitude,
+  destinationLng: dropoffCoords?.longitude || pickupCoords.longitude,
+  destinationAddress: serviceType === 'aluguel' ? `Aluguel Toca-Toca (${regionLabel})` : dropoffAddress,
+  referencePoint: referencePoint.trim(),
+  serviceType: mappedServiceType,
+  vehicleType: mappedVehicleType,
+  paymentMethod: paymentMethod,
+  estimatedPrice: estimatedPrice,
+  priceXof: estimatedPrice,
+  guestName: isForAnotherPerson ? guestName : undefined,
+  guestPhone: isForAnotherPerson ? guestPhone : undefined,
+  stops: stopsListPayload,
+  extraStopLat: extraStopCoords?.latitude,
+  extraStopLng: extraStopCoords?.longitude,
+  extraStopAddress: extraStopAddress || undefined,
+});
 
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     searchTimeoutRef.current = setTimeout(() => {

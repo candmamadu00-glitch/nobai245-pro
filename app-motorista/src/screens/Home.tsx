@@ -1427,129 +1427,141 @@ export function Home() {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       
-      {/* 🗺️ MAPA DE NAVEGAÇÃO MAPBOX */}
-      <Mapbox.MapView 
-        style={StyleSheet.absoluteFill} 
-        styleURL={mapStyle}
-        logoEnabled={false}
-        compassEnabled={false}
-        scaleBarEnabled={false}
-        attributionEnabled={false}
-        onDidFinishLoadingMap={() => setIsMapReady(true)}
+      {/* 🗺️ MAPA DE NAVEGAÇÃO MAPBOX BLINDADO */}
+<Mapbox.MapView 
+  style={StyleSheet.absoluteFill} 
+  styleURL={mapStyle}
+  logoEnabled={false}
+  compassEnabled={false}
+  scaleBarEnabled={false}
+  attributionEnabled={false}
+  onDidFinishLoadingMap={() => setIsMapReady(true)}
+>
+  <Mapbox.Camera
+    ref={cameraRef}
+    defaultSettings={{
+      centerCoordinate: [
+        Number(location?.coords.longitude || BISSAU_CENTER_LNG), 
+        Number(location?.coords.latitude || BISSAU_CENTER_LAT)
+      ],
+      zoomLevel: 16,
+    }}
+    animationMode="flyTo"
+    animationDuration={1000}
+  />
+
+  {/* 🔴 ZONAS DE ALTA DEMANDA */}
+  {isOnline && !isRideActive && (
+    <Mapbox.ShapeSource id="demandZonesSource" shape={demandZonesData as any}>
+      <Mapbox.CircleLayer 
+        id="demandZonesLayer" 
+        style={{ 
+          circleRadius: 40, 
+          circleColor: '#FF3300', 
+          circleOpacity: 0.2, 
+          circleBlur: 0.6 
+        }} 
+      />
+    </Mapbox.ShapeSource>
+  )}
+
+  {/* 🏎️ MARCADOR VEICULAR 3D */}
+  {isOnline && location?.coords && !isNaN(Number(location.coords.longitude)) && !isNaN(Number(location.coords.latitude)) && (
+    <Mapbox.PointAnnotation 
+      key={`driver-car-${driver?.id || 'active'}-${lastDriverCoordsRef.current?.heading || 0}`}
+      id="car-location" 
+      coordinate={[
+        Number(location.coords.longitude), 
+        Number(location.coords.latitude)
+      ]}
+      anchor={{ x: 0.5, y: 0.5 }}
+    >
+      <View style={styles.vehicle3DContainer}>
+        <View 
+          style={[
+            styles.vehicle3DRotator,
+            { 
+              transform: [
+                { 
+                  rotate: `${Math.round(
+                    Number(lastDriverCoordsRef.current?.heading) || 
+                    Number(location.coords.heading) || 0
+                  )}deg` 
+                }
+              ]
+            }
+          ]}
+        >
+          <Image
+            source={getVehicle3DIconAsset(
+              (driver as any)?.vehicleType || incomingRide?.vehicleType || 'PARTICULAR',
+              (driver as any)?.carColor || 'BRANCO'
+            )}
+            style={styles.vehicle3DImage}
+            fadeDuration={0}
+            resizeMode="contain"
+          />
+        </View>
+      </View>
+    </Mapbox.PointAnnotation>
+  )}
+
+  {/* 🛣️ LINHA DA ROTA */}
+  {routeCoordinates && routeCoordinates.length > 0 && (
+    <Mapbox.ShapeSource 
+      id="routeSource" 
+      shape={{ 
+        type: 'Feature', 
+        properties: {}, 
+        geometry: { type: 'LineString', coordinates: routeCoordinates } 
+      }}
+    >
+      <Mapbox.LineLayer 
+        id="routeLine" 
+        style={{ 
+          lineColor: rideState === 'in_progress' ? '#3B82F6' : '#EAB308', 
+          lineWidth: 5, 
+          lineCap: 'round', 
+          lineJoin: 'round' 
+        }} 
+      />
+    </Mapbox.ShapeSource>
+  )}
+
+  {/* 📍 PARADAS INTERMEDIÁRIAS COM KEY ÚNICA E VALIDAÇÃO */}
+  {formattedStops.length > 0 && formattedStops.map((stop: any, index: number) => {
+    const lat = Number(stop.lat ?? stop.latitude);
+    const lng = Number(stop.lng ?? stop.longitude);
+    if (isNaN(lat) || isNaN(lng) || lat === 0 || lng === 0) return null;
+    const isPassed = index < currentStopIndex;
+    return (
+      <Mapbox.PointAnnotation 
+        key={`stop-annotation-${stop.id || index}-${lat}-${lng}`} 
+        id={`stop-annotation-${stop.id || index}`} 
+        coordinate={[lng, lat]}
       >
-        <Mapbox.Camera
-          ref={cameraRef}
-          defaultSettings={{
-            centerCoordinate: [
-              Number(location?.coords.longitude || BISSAU_CENTER_LNG), 
-              Number(location?.coords.latitude || BISSAU_CENTER_LAT)
-            ],
-            zoomLevel: 16,
-          }}
-          animationMode="flyTo"
-          animationDuration={1000}
-        />
+        <View style={[styles.carMarkerContainer, { backgroundColor: isPassed ? '#64748B' : '#3B82F6' }]}>
+          <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '900' }}>P{index + 1}</Text>
+        </View>
+      </Mapbox.PointAnnotation>
+    );
+  })}
 
-        {/* 🔴 ZONAS DE ALTA DEMANDA */}
-        {isOnline && !isRideActive && (
-          <Mapbox.ShapeSource id="demandZonesSource" shape={demandZonesData as any}>
-            <Mapbox.CircleLayer 
-              id="demandZonesLayer" 
-              style={{ 
-                circleRadius: 40, 
-                circleColor: '#FF3300', 
-                circleOpacity: 0.2, 
-                circleBlur: 0.6 
-              }} 
-            />
-          </Mapbox.ShapeSource>
-        )}
-
-        {/* 🏎️ MARCADOR VEICULAR 3D */}
-        {isOnline && location?.coords && (
-          <Mapbox.PointAnnotation 
-            key={`driver-car-${driver?.id || 'active'}`}
-            id="car-location" 
-            coordinate={[
-              Number(location.coords.longitude || 0), 
-              Number(location.coords.latitude || 0)
-            ]}
-            anchor={{ x: 0.5, y: 0.5 }}
-          >
-            <View style={styles.vehicle3DContainer}>
-              <View 
-                style={[
-                  styles.vehicle3DRotator,
-                  { 
-                    transform: [
-                      { 
-                        rotate: `${Math.round(
-                          Number(lastDriverCoordsRef.current?.heading) || 
-                          Number(location.coords.heading) || 0
-                        )}deg` 
-                      }
-                    ]
-                  }
-                ]}
-              >
-                <Image
-                  source={getVehicle3DIconAsset(
-                    (driver as any)?.vehicleType || incomingRide?.vehicleType || 'PARTICULAR',
-                    (driver as any)?.carColor || 'BRANCO'
-                  )}
-                  style={styles.vehicle3DImage}
-                  fadeDuration={0}
-                  resizeMode="contain"
-                />
-              </View>
-            </View>
-          </Mapbox.PointAnnotation>
-        )}
-
-        {/* 🛣️ LINHA DA ROTA */}
-        {routeCoordinates && routeCoordinates.length > 0 && (
-          <Mapbox.ShapeSource 
-            id="routeSource" 
-            shape={{ 
-              type: 'Feature', 
-              properties: {}, 
-              geometry: { type: 'LineString', coordinates: routeCoordinates } 
-            }}
-          >
-            <Mapbox.LineLayer 
-              id="routeLine" 
-              style={{ 
-                lineColor: rideState === 'in_progress' ? '#3B82F6' : '#EAB308', 
-                lineWidth: 5, 
-                lineCap: 'round', 
-                lineJoin: 'round' 
-              }} 
-            />
-          </Mapbox.ShapeSource>
-        )}
-
-        {/* 📍 PARADAS INTERMEDIÁRIAS */}
-        {formattedStops.length > 0 && formattedStops.map((stop: any, index: number) => {
-          if (!stop.lng || !stop.lat) return null;
-          const isPassed = index < currentStopIndex;
-          return (
-            <Mapbox.PointAnnotation key={`stop-${stop.id || index}`} id={`stop-${stop.id || index}`} coordinate={[stop.lng, stop.lat]}>
-              <View style={[styles.carMarkerContainer, { backgroundColor: isPassed ? '#64748B' : '#3B82F6' }]}>
-                <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '900' }}>P{index + 1}</Text>
-              </View>
-            </Mapbox.PointAnnotation>
-          );
-        })}
-
-        {/* 🏁 PONTO DE DESEMBARQUE */}
-        {incomingRide?.destinationLng != null && incomingRide?.destinationLat != null && !isNaN(Number(incomingRide.destinationLng)) && !isNaN(Number(incomingRide.destinationLat)) && (
-          <Mapbox.PointAnnotation id="dropoffMarker" coordinate={[Number(incomingRide.destinationLng), Number(incomingRide.destinationLat)]}>
-            <View style={styles.markerDestination}>
-              <Ionicons name="flag" size={18} color="#FFFFFF" />
-            </View>
-          </Mapbox.PointAnnotation>
-        )}
-      </Mapbox.MapView>
+  {/* 🏁 PONTO DE DESEMBARQUE COM KEY PROTEGIDA */}
+  {incomingRide?.destinationLng != null && incomingRide?.destinationLat != null && 
+   !isNaN(Number(incomingRide.destinationLng)) && !isNaN(Number(incomingRide.destinationLat)) && 
+   Number(incomingRide.destinationLat) !== 0 && (
+    <Mapbox.PointAnnotation 
+      key={`dropoff-marker-${incomingRide.rideId || 'active'}-${incomingRide.destinationLat}`}
+      id="dropoffMarker" 
+      coordinate={[Number(incomingRide.destinationLng), Number(incomingRide.destinationLat)]}
+    >
+      <View style={styles.markerDestination}>
+        <Ionicons name="flag" size={18} color="#FFFFFF" />
+      </View>
+    </Mapbox.PointAnnotation>
+  )}
+</Mapbox.MapView>
 
       {/* 📊 HEADER SUPERIOR FLUTUANTE */}
       <View style={[styles.headerContainer, { top: topHeaderInset }]} pointerEvents="box-none">
