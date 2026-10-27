@@ -27,6 +27,7 @@ import { RatingModal } from '../components/RatingModal';
 import { api } from '../services/api';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { registerAndSendPushToken } from '../services/notifications';
+import { updateOngoingRideNotification, dismissOngoingRideNotification } from '../services/ongoingNotification';
 // Token Mapbox
 const MAPBOX_ACCESS_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_KEY || 'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZTRyc3NmMDBzMTJ5cTA1anJvYjFsOSJ9.pUAoGXwZS8FtYNr85VD1TA';
 if (MAPBOX_ACCESS_TOKEN) {

@@ -30,7 +30,7 @@ import { DriverSOSModal } from '../components/DriverSOSModal';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { createAudioPlayer } from 'expo-audio';
 import { useBilingualVoice } from '../hooks/useBilingualVoice';
-
+import { updateOngoingRideNotification, dismissOngoingRideNotification } from '../services/ongoingNotification';
 // 🛡️ Token Mapbox
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
 if (MAPBOX_TOKEN) {
