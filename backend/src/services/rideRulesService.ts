@@ -9,6 +9,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import { prisma } from '../config/prisma';
+import { payoutToDriverMobileMoney } from './mobileMoneyService';
 
 const CANCELLATION_FEE_XOF = 500;
 const FREE_CANCELLATION_MINUTES = 2;
@@ -81,7 +82,6 @@ export async function calculateRidePrice(
   const safeDist = Math.max(0, Number.isFinite(Number(distanceKm)) ? Number(distanceKm) : 0);
   const safeDur = Math.max(0, Number.isFinite(Number(durationMin)) ? Number(durationMin) : 0);
 
-  // Busca ultra-rápida utilizando a chave única composta
   const tariff = await prisma.tariffConfig
     .findUnique({
       where: {
@@ -187,7 +187,7 @@ export async function createRideAndInitiateEscrow(
 }
 
 // -----------------------------------------------------------------------------
-// 4. ACEITE DE CORRIDA ATÔMICO (COM SUPORTE A FILA DE CORRIDAS)
+// 4. ACEITE DE CORRIDA ATÔMICO
 // -----------------------------------------------------------------------------
 export async function acceptRideLogic(rideId: string, driverId: string) {
   return await prisma.$transaction(async (tx) => {
@@ -202,7 +202,6 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
 
     const startOtp = Math.floor(1000 + Math.random() * 9000).toString();
 
-    // 1. Tenta atribuir a corrida atomicamente se ela ainda estiver SEARCHING
     const updatedRideCount = await tx.ride.updateMany({
       where: { id: rideId, status: 'SEARCHING' },
       data: {
@@ -217,8 +216,6 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
       throw new Error('CORRIDA_NAO_DISPONIVEL');
     }
 
-    // 2. Se o motorista não tem corrida ativa, define esta como a corrida principal
-    // Se já tiver uma corrida ativa, mantém a principal e apenas fecha a disponibilidade (Fila cheia)
     if (!driver.currentRideId) {
       await tx.driver.update({
         where: { id: driverId },
@@ -335,7 +332,7 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
     Number(finalLng)
   );
 
-  return await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     // 1. Finaliza a corrida atomicamente
     const updateCount = await tx.ride.updateMany({
       where: { id: ride.id, status: { in: ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] } },
@@ -369,7 +366,6 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
       data: {
         currentRideId: queuedRide ? queuedRide.id : null,
         isAvailable: queuedRide ? false : true,
-        walletBalance: { increment: driverEarnings }, // Creditado na hora na carteira do motorista
       },
     });
 
@@ -406,24 +402,56 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
         rideId: ride.id,
         driverId: ride.driverId,
         type: TransactionType.DRIVER_PAYOUT,
-        status: TransactionStatus.COMPLETED,
+        status: TransactionStatus.PENDING,
         amount: driverEarnings,
         reference: `EARN-${ride.id.slice(0, 8)}-${Date.now()}`,
-        description: 'Repasse de corrida creditado na carteira digital do motorista',
+        description: 'Repasse automático enviado para a conta Mobile Money do motorista',
       },
     });
 
     const completedRide = await tx.ride.findUnique({ where: { id: ride.id } });
     return {
-      success: true,
       ride: completedRide,
-      fareXOF: calculatedFare,
-      distanceKm,
-      payoutTransactionId: payoutTx.id,
-      driverEarnings,
-      platformFee,
+      payoutTxId: payoutTx.id,
+      hasQueuedRide: !!queuedRide,
+      nextRideId: queuedRide?.id || null,
     };
   });
+
+  // 🚀 9. ENVIAR REPASSE AUTOMÁTICO DIRECTAMENTE PARA A CONTA ORANGE / MTN DO MOTORISTA
+  if (ride.paymentMethod !== PaymentMethod.CASH && ride.driver.phone) {
+    const payoutResult = await payoutToDriverMobileMoney({
+      rideId: ride.id,
+      driverId: ride.driverId!,
+      payoutId: result.payoutTxId,
+      amount: driverEarnings,
+      phone: ride.driver.phone,
+      provider: ride.paymentMethod,
+    }).catch((err) => {
+      console.error('❌ [REPASSE ERRO]:', err?.message || err);
+      return { success: false, details: err?.message };
+    });
+
+    if (payoutResult?.success) {
+      await prisma.transaction.update({
+        where: { id: result.payoutTxId },
+        data: { status: TransactionStatus.COMPLETED, externalRef: payoutResult.providerRef },
+      });
+      console.log(`💸 [REPASSE AUTOMÁTICO REALIZADO]: ${driverEarnings} XOF enviados para ${ride.driver.phone}`);
+    }
+  }
+
+  return {
+    success: true,
+    ride: result.ride,
+    fareXOF: calculatedFare,
+    distanceKm,
+    payoutTransactionId: result.payoutTxId,
+    driverEarnings,
+    platformFee,
+    hasQueuedRide: result.hasQueuedRide,
+    nextRideId: result.nextRideId,
+  };
 }
 
 // -----------------------------------------------------------------------------
@@ -447,7 +475,6 @@ export async function cancelRideLogic(
 
   let applyPenalty = false;
 
-  // Avalia penalidade de cancelamento tardio
   if (
     userType === UserType.PASSENGER &&
     (ride.status === 'ARRIVED' || (ride.status === 'ACCEPTED' && ride.acceptedAt))
@@ -467,7 +494,6 @@ export async function cancelRideLogic(
   const refundToPassenger = Math.max(0, ridePrice - penaltyAmount);
 
   return await prisma.$transaction(async (tx) => {
-    // 1. Atualiza status da corrida para CANCELLED
     const updatedRide = await tx.ride.updateMany({
       where: { id: rideId, status: { notIn: ['COMPLETED', 'CANCELLED'] } },
       data: {
@@ -483,13 +509,11 @@ export async function cancelRideLogic(
       throw new Error('STATE_CONFLICT: A corrida já foi alterada por outra transação.');
     }
 
-    // 2. Libera o passageiro
     await tx.passenger.update({
       where: { id: ride.passengerId },
       data: { currentRideId: null },
     });
 
-    // 3. Libera o motorista ou promove corrida em fila se houver
     if (ride.driverId) {
       const queuedRide = await tx.ride.findFirst({
         where: { driverId: ride.driverId, status: 'ACCEPTED', id: { not: rideId } },
@@ -506,7 +530,6 @@ export async function cancelRideLogic(
       });
     }
 
-    // 4. Trata a retenção do Escrow
     const escrowTx = await tx.transaction.findFirst({
       where: { rideId: ride.id, status: TransactionStatus.HELD_IN_ESCROW },
     });
@@ -525,7 +548,7 @@ export async function cancelRideLogic(
             type: TransactionType.REFUND,
             paymentMethod: ride.paymentMethod,
             amount: refundToPassenger,
-            status: TransactionStatus.COMPLETED,
+            status: TransactionStatus.PENDING,
             reference: `REFUND-${ride.id.slice(0, 8)}-${Date.now()}`,
             description: 'Estorno do Escrow de corrida cancelada',
           },

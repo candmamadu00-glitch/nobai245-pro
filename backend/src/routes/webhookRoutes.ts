@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { prisma } from '../config/prisma';
 import { getIo } from '../server';
 import { processWebhookConfirmation } from '../services/mobileMoneyService';
+import { notifyDriversNewRide } from '../services/rideService';
 
 const router = Router();
 
@@ -47,11 +48,10 @@ function secureCompare(a: string, b: string): boolean {
 }
 
 /**
- * 🛡️ Emissão de eventos via Socket.io com transição atômica de estado da corrida
+ * 🛡️ Emissão de eventos via Socket.io e disparo de Push Alarme para motoristas
  */
 async function emitSuccessSockets(rideId?: string | null, passengerId?: string | null) {
   const io = getIo();
-  if (!io) return;
 
   if (rideId) {
     const updateResult = await prisma.ride.updateMany({
@@ -60,40 +60,21 @@ async function emitSuccessSockets(rideId?: string | null, passengerId?: string |
     });
 
     if (updateResult.count > 0) {
-      const ride = await prisma.ride.findUnique({
-        where: { id: rideId },
-        include: { passenger: { select: { fullName: true, ratingAverage: true, profilePicture: true } } }
-      });
-
-      if (ride) {
-        io.to(ride.id).emit('payment:confirmed', {
-          rideId: ride.id,
+      if (io) {
+        io.to(rideId).emit('payment:confirmed', {
+          rideId,
           message: 'Pagamento confirmado! Buscando motoristas próximos...'
         });
-
-        const requestPayload = {
-          rideId: ride.id,
-          passengerId: ride.passengerId,
-          passengerName: ride.passenger?.fullName || 'Passageiro',
-          passengerRating: Number(ride.passenger?.ratingAverage || 5.0),
-          passengerPhoto: ride.passenger?.profilePicture || null,
-          pickupLat: Number(ride.originLat),
-          pickupLng: Number(ride.originLng),
-          originAddress: ride.originAddress,
-          destinationLat: Number(ride.destinationLat),
-          destinationLng: Number(ride.destinationLng),
-          destinationAddress: ride.destinationAddress,
-          fareXOF: Number(ride.priceXof),
-          vehicleType: ride.requestedVehicleType
-        };
-
-        io.to('available_drivers').emit('ride:new_request', requestPayload);
-        io.emit('ride:new_request', requestPayload);
       }
+
+      // 🔔 Notifica motoristas próximos via Socket e PUSH Alarme
+      await notifyDriversNewRide(rideId).catch((err) => {
+        console.warn('⚠️ [WEBHOOK] Falha ao despachar notificação para motoristas:', err?.message || err);
+      });
     }
   } else if (passengerId) {
     const passenger = await prisma.passenger.findUnique({ where: { id: passengerId } });
-    if (passenger) {
+    if (passenger && io) {
       io.to(passengerId).to(`passenger_${passengerId}`).emit('wallet:updated', {
         message: 'Recarga realizada com sucesso!',
         walletBalance: Number(passenger.walletBalance)
@@ -102,6 +83,9 @@ async function emitSuccessSockets(rideId?: string | null, passengerId?: string |
   }
 }
 
+// -----------------------------------------------------------------------------
+// WEBHOOK ORANGE MONEY
+// -----------------------------------------------------------------------------
 router.post('/orange', ipWhitelistMiddleware, async (req: Request, res: Response): Promise<any> => {
   try {
     const requestSecret = (req.query.secret || req.headers['x-webhook-secret']) as string;
@@ -151,6 +135,9 @@ router.post('/orange', ipWhitelistMiddleware, async (req: Request, res: Response
   }
 });
 
+// -----------------------------------------------------------------------------
+// WEBHOOK MTN MOMO
+// -----------------------------------------------------------------------------
 router.post('/mtn', ipWhitelistMiddleware, async (req: Request, res: Response): Promise<any> => {
   try {
     const requestSecret = (req.query.secret || req.headers['x-webhook-secret']) as string;

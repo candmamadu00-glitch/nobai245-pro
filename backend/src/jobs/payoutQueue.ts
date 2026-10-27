@@ -1,5 +1,5 @@
 import { Queue, Worker, Job, ConnectionOptions, UnrecoverableError } from 'bullmq';
-import { prisma } from '../lib/prisma'; 
+import { prisma } from '../config/prisma'; 
 import { getIo } from '../server';
 import { payoutToDriverMobileMoney, refundPassengerMobileMoney, verifyTransactionStatus } from '../services/mobileMoneyService';
 
@@ -55,6 +55,9 @@ export const orangePayoutQueue = new Queue<PayoutJobData>('orange-payout', { con
 export const mtnPayoutQueue = new Queue<PayoutJobData>('mtn-payout', { connection: redisConnection, defaultJobOptions });
 export const refundQueue = new Queue<RefundJobData>('refund-queue', { connection: redisConnection, defaultJobOptions });
 
+// -----------------------------------------------------------------------------
+// 1. PROCESSADOR BLINDADO DE REPASSE (PAYOUT)
+// -----------------------------------------------------------------------------
 const processPayoutBlindado = async (job: Job<PayoutJobData>) => {
   const { transactionId, rideId, driverId, amountXOF, phone, provider } = job.data || {};
 
@@ -87,16 +90,10 @@ const processPayoutBlindado = async (job: Job<PayoutJobData>) => {
       const verification = await verifyTransactionStatus(transactionId);
       
       if (verification.status === 'SUCCESS') {
-        await prisma.$transaction([
-          prisma.transaction.update({
-            where: { id: transactionId },
-            data: { status: 'COMPLETED', externalRef: verification.ref || currentTx.externalRef, failureReason: null },
-          }),
-          prisma.driver.update({
-            where: { id: driverId },
-            data: { pendingBalance: { decrement: amountXOF } }
-          })
-        ]);
+        await prisma.transaction.update({
+          where: { id: transactionId },
+          data: { status: 'COMPLETED', externalRef: verification.ref || currentTx.externalRef, failureReason: null },
+        });
         console.log(`✅ [JOB PAYOUT RECONCILIADO COM SUCESSO]: Tx ${transactionId}`);
         return { success: true, recovered: true, driverId, amountXOF, provider, ref: verification.ref };
       }
@@ -106,17 +103,17 @@ const processPayoutBlindado = async (job: Job<PayoutJobData>) => {
           where: { id: transactionId },
           data: { status: 'PENDING_VERIFICATION' },
         });
-        console.log(`⏳ [JOB PAYOUT RECONCILIÇÃO]: Transação ainda pendente na operadora.`);
+        console.log(`⏳ [JOB PAYOUT RECONCILIAÇÃO]: Transação ainda pendente na operadora.`);
         throw new Error('TIMEOUT_REQUIRES_RECONCILIATION');
       }
 
       if (verification.status === 'FAILED') {
         await prisma.transaction.update({
           where: { id: transactionId },
-          data: { status: 'FAILED_MANUAL_REVIEW', failureReason: 'Transação confirmada como com falha pela operadora' },
+          data: { status: 'FAILED_MANUAL_REVIEW', failureReason: 'Transação confirmada com falha pela operadora' },
         });
         console.error(`❌ [JOB PAYOUT RECONCILIÇÃO FALHOU]: Confirmada falha pela operadora.`);
-        throw new UnrecoverableError('REJEITADO_OPERADORA: Confirmado falha na reconciliação.');
+        throw new UnrecoverableError('REJEITADO_OPERADORA: Confirmada falha na reconciliação.');
       }
     } catch (verifErr: any) {
       if (verifErr instanceof UnrecoverableError || verifErr.message === 'TIMEOUT_REQUIRES_RECONCILIATION') {
@@ -137,7 +134,7 @@ const processPayoutBlindado = async (job: Job<PayoutJobData>) => {
   }
 
   try {
-    console.log(`📡 [JOB PAYOUT ENVIANDO A OPERADORA]: Destino: ${phone} | Valor: ${amountXOF} XOF...`);
+    console.log(`📡 [JOB PAYOUT ENVIANDO À OPERADORA]: Destino: ${phone} | Valor: ${amountXOF} XOF...`);
     const result = await payoutToDriverMobileMoney({ provider, phone, amount: amountXOF, rideId, payoutId: transactionId });
 
     if (!result.success) {
@@ -160,16 +157,10 @@ const processPayoutBlindado = async (job: Job<PayoutJobData>) => {
 
     console.log(`✅ [JOB PAYOUT CONCLUÍDO COM SUCESSO]: Ref Operadora: ${result.providerRef}`);
 
-    await prisma.$transaction([
-      prisma.transaction.update({
-        where: { id: transactionId },
-        data: { status: 'COMPLETED', externalRef: result.providerRef, failureReason: null },
-      }),
-      prisma.driver.update({
-        where: { id: driverId },
-        data: { pendingBalance: { decrement: amountXOF } }
-      })
-    ]);
+    await prisma.transaction.update({
+      where: { id: transactionId },
+      data: { status: 'COMPLETED', externalRef: result.providerRef, failureReason: null },
+    });
 
     return { success: true, driverId, amountXOF, provider, providerRef: result.providerRef };
   } catch (error: any) {
@@ -181,6 +172,9 @@ const processPayoutBlindado = async (job: Job<PayoutJobData>) => {
   }
 };
 
+// -----------------------------------------------------------------------------
+// 2. PROCESSADOR BLINDADO DE ESTORNO (REFUND)
+// -----------------------------------------------------------------------------
 const processRefundBlindado = async (job: Job<RefundJobData>) => {
   const { transactionId, rideId, passengerId, phone, amountXOF, provider } = job.data || {};
 
@@ -220,9 +214,9 @@ const processRefundBlindado = async (job: Job<RefundJobData>) => {
       if (verification.status === 'FAILED') {
         await prisma.transaction.update({
           where: { id: transactionId },
-          data: { status: 'FAILED_MANUAL_REVIEW', failureReason: 'Estorno confirmado como com falha pela operadora' },
+          data: { status: 'FAILED_MANUAL_REVIEW', failureReason: 'Estorno confirmado com falha pela operadora' },
         });
-        throw new UnrecoverableError('ESTORNO_RECUSADO: Confirmado falha na reconciliação.');
+        throw new UnrecoverableError('ESTORNO_RECUSADO: Confirmada falha na reconciliação.');
       }
     } catch (verifErr: any) {
       if (verifErr instanceof UnrecoverableError || verifErr.message === 'TIMEOUT_REQUIRES_RECONCILIATION') {
@@ -281,6 +275,9 @@ const processRefundBlindado = async (job: Job<RefundJobData>) => {
   }
 };
 
+// -----------------------------------------------------------------------------
+// 3. WORKERS E EVENTOS
+// -----------------------------------------------------------------------------
 export const orangePayoutWorker = new Worker<PayoutJobData>('orange-payout', processPayoutBlindado, {
   connection: redisConnection,
   concurrency: 2,

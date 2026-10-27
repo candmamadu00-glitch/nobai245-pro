@@ -568,6 +568,48 @@ useEffect(() => {
     console.error('Erro ao salvar estado local do passageiro:', e);
   }
 };
+// 🟢 1. PADRONIZAÇÃO DO PAYLOAD DE SOLICITAÇÃO
+  const executeRideRequest = (paymentPhoneTarget?: string) => {
+    if (!pickupCoords || !dropoffCoords) return;
+
+    const payload = {
+      passengerId: user?.id,
+      passengerName: isForAnotherPerson && guestName ? guestName : user?.fullName || 'Passageiro',
+      passengerPhone: isForAnotherPerson && guestPhone ? guestPhone : user?.phone,
+      passengerPhoto: user?.profilePicture,
+      passengerRating: user?.ratingAverage || 5.0,
+      
+      // Coordenadas padronizadas (Flat + Objects)
+      pickupLat: pickupCoords.latitude,
+      pickupLng: pickupCoords.longitude,
+      destinationLat: dropoffCoords.latitude,
+      destinationLng: dropoffCoords.longitude,
+      originAddress: pickupAddress,
+      destinationAddress: dropoffAddress,
+      referencePoint: referencePoint || '',
+
+      // Normalização de Paradas Intermediárias em Array
+      stops: showExtraStop && extraStopCoords ? [{
+        id: `stop_0`,
+        lat: extraStopCoords.latitude,
+        lng: extraStopCoords.longitude,
+        address: extraStopAddress || 'Parada Intermediária',
+        status: 'PENDING'
+      }] : [],
+
+      // Detalhes do Serviço e Pagamento
+      serviceType: serviceType === 'aluguel' ? 'RENTAL' : serviceType === 'entrega' ? 'DELIVERY' : 'RIDE',
+      vehicleType: vehicleType.toUpperCase(),
+      paymentMethod,
+      paymentPhone: paymentPhoneTarget || paymentPhone,
+      priceXof: estimatedPrice,
+      guestName: isForAnotherPerson ? guestName : undefined,
+      guestPhone: isForAnotherPerson ? guestPhone : undefined,
+    };
+
+    setRideStatus('searching');
+    socket.emit('ride:request', payload);
+  };
   // 🟢 SINCRONIZAÇÃO COMPLETA DE CORRIDA ATIVA (INCLUINDO SUPORTE A PARADAS)
   const syncActiveRideWithServer = useCallback(async () => {
     try {
@@ -1651,53 +1693,77 @@ function executeRideRequest() {
       vehicleType === 'moto-carro' ? 'MOTO_CARRO' : 
       (vehicleType as string) === 'toca-toca' ? 'TOCA_TOCA' :
       vehicleType.toUpperCase();
-      
     const regionLabel = RENTAL_PRICES[selectedRegion]?.label || selectedRegion;
 
-// 🟢 MONTAGEM DE MÚLTIPLAS PARADAS
-const stopsListPayload = Array.isArray(stopsList) && stopsList.length > 0
-  ? stopsList.map((s: any, idx: number) => ({
+// 🟢 MONTAGEM SEGURA DE PARADAS (Sem disparar ReferenceError)
+let stopsListPayload: any[] = [];
+
+try {
+  // 1. Verifica se existe lista estendida de paradas no estado
+  if (typeof (globalThis as any).stopsList !== 'undefined' && Array.isArray((globalThis as any).stopsList)) {
+    stopsListPayload = (globalThis as any).stopsList.map((s: any, idx: number) => ({
       address: s.address || s.name || `Parada ${idx + 1}`,
       lat: Number(s.latitude ?? s.lat),
       lng: Number(s.longitude ?? s.lng),
       latitude: Number(s.latitude ?? s.lat),
       longitude: Number(s.longitude ?? s.lng),
       status: 'PENDING'
-    }))
-  : (extraStopCoords?.latitude && extraStopCoords?.longitude)
-  ? [{
+    }));
+  } 
+  // 2. Caso contrário, usa a parada extra selecionada
+  else if (extraStopCoords?.latitude && extraStopCoords?.longitude) {
+    stopsListPayload = [{
       address: extraStopAddress || 'Parada Intermediária',
-      lat: extraStopCoords.latitude,
-      lng: extraStopCoords.longitude,
-      latitude: extraStopCoords.latitude,
-      longitude: extraStopCoords.longitude,
+      lat: Number(extraStopCoords.latitude),
+      lng: Number(extraStopCoords.longitude),
+      latitude: Number(extraStopCoords.latitude),
+      longitude: Number(extraStopCoords.longitude),
       status: 'PENDING'
-    }]
-  : [];
+    }];
+  }
 
-emitRequestRide({
-  passengerId: user.id,
-  passengerName: (user as any)?.name || user.fullName,
-  passengerRating: Number((user as any)?.rating || user.ratingAverage || 5.0),
-  pickupLat: pickupCoords.latitude,
-  pickupLng: pickupCoords.longitude,
-  originAddress: pickupAddress,
-  destinationLat: dropoffCoords?.latitude || pickupCoords.latitude,
-  destinationLng: dropoffCoords?.longitude || pickupCoords.longitude,
-  destinationAddress: serviceType === 'aluguel' ? `Aluguel Toca-Toca (${regionLabel})` : dropoffAddress,
-  referencePoint: referencePoint.trim(),
-  serviceType: mappedServiceType,
-  vehicleType: mappedVehicleType,
-  paymentMethod: paymentMethod,
-  estimatedPrice: estimatedPrice,
-  priceXof: estimatedPrice,
-  guestName: isForAnotherPerson ? guestName : undefined,
-  guestPhone: isForAnotherPerson ? guestPhone : undefined,
-  stops: stopsListPayload,
-  extraStopLat: extraStopCoords?.latitude,
-  extraStopLng: extraStopCoords?.longitude,
-  extraStopAddress: extraStopAddress || undefined,
-});
+  emitRequestRide({
+    passengerId: user.id,
+    passengerName: (user as any)?.name || user.fullName,
+    passengerRating: Number((user as any)?.rating || user.ratingAverage || 5.0),
+    pickupLat: pickupCoords.latitude,
+    pickupLng: pickupCoords.longitude,
+    originAddress: pickupAddress,
+    destinationLat: dropoffCoords?.latitude || pickupCoords.latitude,
+    destinationLng: dropoffCoords?.longitude || pickupCoords.longitude,
+    destinationAddress: serviceType === 'aluguel' ? `Aluguel Toca-Toca (${regionLabel})` : dropoffAddress,
+    referencePoint: referencePoint.trim(),
+    serviceType: mappedServiceType,
+    vehicleType: mappedVehicleType,
+    paymentMethod: paymentMethod,
+    estimatedPrice: estimatedPrice,
+    priceXof: estimatedPrice,
+    guestName: isForAnotherPerson ? guestName : undefined,
+    guestPhone: isForAnotherPerson ? guestPhone : undefined,
+    stops: stopsListPayload,
+    extraStopLat: extraStopCoords?.latitude,
+    extraStopLng: extraStopCoords?.longitude,
+    extraStopAddress: extraStopAddress || undefined,
+  });
+
+  if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+  searchTimeoutRef.current = setTimeout(() => {
+    if (isMountedRef.current) {
+      Alert.alert(
+        t('no_response_title', 'Sem resposta'), 
+        t('no_driver_accepted_msg', 'Nenhum motorista aceitou no momento. Tente novamente.')
+      );
+      resetRideState();
+    }
+  }, 60000);
+
+} catch (error) {
+  console.error('❌ Erro ao solicitar corrida:', error);
+  Alert.alert(
+    t('error_title', 'Erro'), 
+    t('server_error_msg', 'Ocorreu um problema ao comunicar com os servidores.')
+  );
+}
 
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     searchTimeoutRef.current = setTimeout(() => {
@@ -2709,6 +2775,27 @@ return (
                     Pagamento: {paymentMethod === 'ORANGE_MONEY' ? 'Orange Money' : paymentMethod === 'MTN_MOMO' ? 'MTN MoMo' : 'Dinheiro em Espécie'}
                   </Text>
                 </View>
+              </View>
+              {/* 🟢 DADOS DO MOTORISTA E VEÍCULO (INSTÂNCIA CORRIGIDA) */}
+              <View style={styles.driverCardCompact}>
+                <Image 
+                  source={{ uri: formatPhotoUrl(driverInfo.photoUrl || driverInfo.profilePicture) || 'https://via.placeholder.com/100' }} 
+                  style={styles.driverAvatarCompact} 
+                />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.driverNameCompact}>{driverInfo.name}</Text>
+                  <Text style={styles.vehicleModelCompact}>
+                    {driverInfo.carModel || 'Veículo'} {driverInfo.carColor ? `• ${driverInfo.carColor}` : ''}
+                  </Text>
+                  <View style={styles.plateBadgeCompact}>
+                    <Text style={styles.plateTextCompact}>{driverInfo.licensePlate?.toUpperCase() || 'SEM PLACA'}</Text>
+                  </View>
+                </View>
+                <Image 
+                  source={getVehicle3DIconAsset(driverInfo.vehicleType, driverInfo.carColor)} 
+                  style={{ width: 48, height: 48 }} 
+                  resizeMode="contain" 
+                />
               </View>
 
               {/* DADOS DO MOTORISTA E VEÍCULO (ÚNICA INSTÂNCIA) */}

@@ -13,6 +13,8 @@ import {
 } from '../services/rideRulesService';
 import { sendPushNotification, PUSH_CHANNELS } from '../services/pushNotifications';
 import { getRouteDistanceAndDuration, submitRatingLogic } from '../services/rideService';
+import { refundPassengerOnCancellation } from '../services/mobileMoneyService';
+
 // -----------------------------------------------------------------------------
 // HELPERS DE VALIDAÇÃO E SANITIZAÇÃO
 // -----------------------------------------------------------------------------
@@ -111,7 +113,6 @@ export const estimateRidePrice = async (req: Request, res: Response): Promise<vo
 
     const estimates = await Promise.all(
       activeTariffs.map(async (tariff) => {
-        // 🟢 Sincronizado: Extrai o valor numérico de totalPrice do retorno { totalPrice, commissionRate }
         const totalPrice = await calculateRidePrice(distanceKm, durationMin, tariff.vehicleType as any, serviceType as any);
         return { 
           vehicleType: tariff.vehicleType, 
@@ -218,9 +219,6 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
       ? sanitizeText(destinationAddress || `Aluguel (${rentalRegion})`, 200) 
       : sanitizeText(destinationAddress, 200);
 
-    const parsedEstPrice = Number(estimatedPrice);
-    const cleanEstimatedPrice = (!isNaN(parsedEstPrice) && parsedEstPrice > 0) ? parsedEstPrice : undefined;
-
     const result = await createRideAndInitiateEscrow(passengerId, {
       originLat: pLat, 
       originLng: pLng, 
@@ -233,7 +231,6 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
       destinationAddress: cleanDestinationAddress,
       stops: sanitizedStops,
       idempotencyKey: cleanIdempotencyKey || undefined,
-      
     });
 
     if (result.ride && result.ride.status === 'SEARCHING') {
@@ -477,7 +474,7 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
 
     const otpInput = finishOtp || otp;
     
-    // 🟢 CAST DE TIPAGEM PARA COMPATIBILIZAR ARGUMENTOS E RETORNO DE FILA
+    // Finaliza a corrida no motor de regras (executa o split e o repasse automático ao motorista)
     const result: any = await (finalizeRideAndCharge as any)(
       currentRide.id, 
       Number(finalLat), 
@@ -485,12 +482,11 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
       otpInput
     );
 
-    // 🟢 LIMPEZA E TRANSIÇÃO INTELIGENTE DE ESTADO NO REDIS
+    // Limpeza no Redis
     await safeRedis.del(`active_ride:${currentRide.id}`).catch(() => null);
 
-    // 🛑 SE HOUVER CORRIDA NA FILA, PROMOVE NO REDIS. SE NÃO HOUVER, LIBERA O MOTORISTA
     if (result?.hasQueuedRide && result?.nextRideId) {
-      console.log(`🔄 [REDIS QUEUE] Atualizando driver_active_ride:${driverId} para o ID da fila: ${result.nextRideId}`);
+      console.log(`🔄 [REDIS QUEUE] Promovendo próxima corrida na fila: ${result.nextRideId}`);
       await safeRedis.set(`driver_active_ride:${driverId}`, result.nextRideId).catch(() => null);
     } else {
       await safeRedis.del(`driver_active_ride:${driverId}`).catch(() => null);
@@ -514,8 +510,6 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
         const driverSockets = await io.in(driverId).fetchSockets();
         for (const s of driverSockets) {
           s.leave(currentRide.id);
-          
-          // 🟢 Só devolve para a sala de disponíveis se NÃO houver corrida em fila!
           if (!result?.hasQueuedRide) {
             s.join('available_drivers');
           } else if (result?.nextRideId) {
@@ -543,6 +537,7 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
     res.status(400).json({ success: false, error: error?.message || 'Falha ao finalizar a corrida.' });
   }
 };
+
 export const cancelRide = async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = (req as any).user?.id;
@@ -585,8 +580,20 @@ export const cancelRide = async (req: Request, res: Response): Promise<void> => 
     }
 
     const cleanReason = sanitizeText(reason || `Cancelado pelo ${userRole === 'DRIVER' ? 'motorista' : 'passageiro'}`, 200);
+    
+    // 1. Atualiza status da corrida no banco de dados
     const cancelResult = await cancelRideLogic(currentRide.id, userId, userRole as any, cleanReason);
     
+    // 2. 💸 DISPARO DO ESTORNO AUTOMÁTICO SE HOUVER FUNDOS EM CAUÇÃO (MOBILE MONEY)
+    const refundResult = await refundPassengerOnCancellation(currentRide.id, cleanReason).catch((refundErr) => {
+      console.error(`❌ [ESTORNO AUTOMÁTICO] Erro ao devolver dinheiro ao passageiro:`, refundErr?.message || refundErr);
+      return null;
+    });
+
+    if (refundResult?.success) {
+      console.log(`💸 [ESTORNO SUCESSO] Valor devolvido com sucesso para o Mobile Money do passageiro!`);
+    }
+
     try {
       const io = getIo();
       if (io) {
@@ -603,7 +610,8 @@ export const cancelRide = async (req: Request, res: Response): Promise<void> => 
     res.json({ 
       success: true, 
       message: 'Corrida cancelada com sucesso.', 
-      penaltyApplied: cancelResult?.appliedPenalty || false 
+      penaltyApplied: cancelResult?.appliedPenalty || false,
+      refundExecuted: refundResult?.success || false
     });
   } catch (error: any) {
     console.error(`❌ [CANCELAR_CORRIDA] Erro: ${error?.message || error}`);
@@ -692,7 +700,6 @@ export const uploadChatAudio = async (req: Request, res: Response): Promise<void
     const audioUrl = `${baseUrl}/uploads/${safeFilename}`;
     const formattedMessage = `[AUDIO]${audioUrl}`;
 
-    // 🟢 Sincronizado Schema V3.0: Adicionado isRead: false
     const chatMessage = await prisma.rideChatMessage.create({
       data: {
         rideId: String(rideId),
@@ -766,7 +773,6 @@ export const rateRide = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // 🟢 Sincronizado Schema V3.0: Utiliza submitRatingLogic para atualizar as médias na tabela Passenger/Driver
     const rating = await submitRatingLogic({
       rideId: String(rideId),
       reviewerId,
