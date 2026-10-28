@@ -569,7 +569,7 @@ useEffect(() => {
     console.error('Erro ao salvar estado local do passageiro:', e);
   }
 };
-// 🟢 1. PADRONIZAÇÃO DO PAYLOAD DE SOLICITAÇÃO (SUPORTE A MÚLTIPLAS PARADAS + FALLBACK)
+// 🟢 2. EXECUÇÃO DA SOLICITAÇÃO DE CORRIDA VIA SOCKET
 const executeRideRequest = (paymentPhoneTarget?: string) => {
   if (!pickupCoords) {
     Alert.alert(
@@ -579,12 +579,10 @@ const executeRideRequest = (paymentPhoneTarget?: string) => {
     return;
   }
 
-  // Garante coordenadas de destino para serviços sem destino fixo (ex: Aluguel)
   const targetDropoff = dropoffCoords || pickupCoords;
 
-  // 🟢 Mapeamento completo de MÚLTIPLAS paradas intermediárias
+  // Montagem do payload de paradas intermediárias
   let stopsListPayload: any[] = [];
-
   if (Array.isArray(stopsList) && stopsList.length > 0) {
     stopsListPayload = stopsList.map((s: any, idx: number) => ({
       id: `stop_${idx}`,
@@ -623,13 +621,13 @@ const executeRideRequest = (paymentPhoneTarget?: string) => {
     destinationAddress: serviceType === 'aluguel' ? `Aluguel Toca-Toca` : dropoffAddress,
     referencePoint: referencePoint || '',
 
-    // Array com TODAS as paradas
+    // Paradas Intermediárias
     stops: stopsListPayload,
     extraStopLat: extraStopCoords?.latitude,
     extraStopLng: extraStopCoords?.longitude,
     extraStopAddress: extraStopAddress || undefined,
 
-    // Detalhes da Corrida
+    // Serviço e Pagamento
     serviceType: serviceType === 'aluguel' ? 'RENTAL' : serviceType === 'entrega' ? 'DELIVERY' : 'RIDE',
     vehicleType: vehicleType.toUpperCase(),
     paymentMethod,
@@ -641,11 +639,20 @@ const executeRideRequest = (paymentPhoneTarget?: string) => {
   };
 
   try {
-    if (socket && !socket.connected) {
-      socket.connect();
-    }
+    // 🟢 Fecha os painéis de seleção para exibir a tela de busca "Procurando Motorista..."
+    setBookingStep('ADDRESS');
     setRideStatus('searching');
-    socket.emit('ride:request', payload);
+
+    // Emite o evento do Socket
+    if (socket) {
+      if (!socket.connected) {
+        socket.connect();
+      }
+      socket.emit('ride:request', payload);
+      console.log('🚀 [PASSENGER] Solicitando corrida via Socket:', payload);
+    } else {
+      console.error('❌ Socket não inicializado no app passageiro.');
+    }
   } catch (err) {
     console.error('❌ Erro ao enviar solicitação via Socket:', err);
   }
@@ -1619,42 +1626,48 @@ useEffect(() => {
 
   return () => subscription.remove();
 }, [rideStatus, driverInfo, activeRideId]);
-  async function handleInitialRequestRide() {
-    const needsDropoff = serviceType !== 'aluguel';
-    if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
+  // 🟢 1. FUNÇÃO DE DISPARO INICIAL (LIBERA GPS FALSO EM MODO DEV + VALIDAÇÕES)
+async function handleInitialRequestRide() {
+  const needsDropoff = serviceType !== 'aluguel';
+  if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
+    Alert.alert(
+      t('warning_title', 'Aviso ⚠️'), 
+      t('select_origin_destination_msg', 'Selecione a origem e o destino antes de solicitar.')
+    );
+    return;
+  }
+
+  // Verificação de GPS Falso (desativada em modo de desenvolvimento __DEV__)
+  try {
+    const currentLoc = await Location.getCurrentPositionAsync({ 
+      accuracy: Location.Accuracy.Balanced 
+    });
+    const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
+
+    if (isMocked && !__DEV__) {
       Alert.alert(
-        t('warning_title', 'Aviso ⚠️'), 
-        t('select_origin_destination_msg', 'Selecione a origem e o destino antes de solicitar.')
+        "🚨 Localização Simulada Detectada",
+        "Por motivos de segurança, não é possível solicitar corridas utilizando aplicativos de GPS falso.",
+        [{ text: "Entendido" }]
       );
       return;
     }
-
-    try {
-      const currentLoc = await Location.getCurrentPositionAsync({ 
-        accuracy: Location.Accuracy.Balanced 
-      });
-      const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
-
-      if (isMocked) {
-        Alert.alert(
-          "🚨 Localização Simulada Detectada",
-          "Por motivos de segurança, não é possível solicitar corridas utilizando aplicativos de GPS falso. Desative a simulação de localização para continuar.",
-          [{ text: "Entendido" }]
-        );
-        return;
-      }
-    } catch (e) {}
-
-    if (paymentMethod === 'CASH') {
-      executeRideRequest();
-      return;
-    }
-
-    if (!paymentPhone && user?.phone) {
-      setPaymentPhone(user.phone);
-    }
-    setIsPaymentModalVisible(true);
+  } catch (e) {
+    console.warn('⚠️ Erro ao verificar precisão de localização:', e);
   }
+
+  // Se o pagamento for em dinheiro, dispara direto
+  if (paymentMethod === 'CASH') {
+    executeRideRequest();
+    return;
+  }
+
+  // Preenche telefone para pagamento digital
+  if (!paymentPhone && user?.phone) {
+    setPaymentPhone(user.phone);
+  }
+  setIsPaymentModalVisible(true);
+}
 
 async function confirmPaymentAndRide() {
   if (!user?.id) {
