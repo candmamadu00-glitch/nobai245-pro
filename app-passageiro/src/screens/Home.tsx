@@ -569,9 +569,9 @@ useEffect(() => {
     console.error('Erro ao salvar estado local do passageiro:', e);
   }
 };
-// 🟢 2. EXECUÇÃO DA SOLICITAÇÃO DE CORRIDA VIA SOCKET
-const executeRideRequest = (paymentPhoneTarget?: string) => {
-  if (!pickupCoords) {
+// 🟢 2. EXECUÇÃO DA SOLICITAÇÃO COM GARANTIA DE RECONEXÃO DE SOCKET + FALLBACK HTTP
+const executeRideRequest = async (paymentPhoneTarget?: string) => {
+  if (!pickupCoords || !user?.id) {
     Alert.alert(
       t('warning_title', 'Aviso ⚠️'),
       t('missing_pickup_msg', 'Por favor, defina o local de partida.')
@@ -606,11 +606,11 @@ const executeRideRequest = (paymentPhoneTarget?: string) => {
   }
 
   const payload = {
-    passengerId: user?.id,
-    passengerName: isForAnotherPerson && guestName ? guestName : user?.fullName || 'Passageiro',
-    passengerPhone: isForAnotherPerson && guestPhone ? guestPhone : user?.phone,
-    passengerPhoto: user?.profilePicture,
-    passengerRating: Number(user?.ratingAverage || 5.0),
+    passengerId: user.id,
+    passengerName: isForAnotherPerson && guestName ? guestName : user.fullName || 'Passageiro',
+    passengerPhone: isForAnotherPerson && guestPhone ? guestPhone : user.phone,
+    passengerPhoto: user.profilePicture,
+    passengerRating: Number(user.ratingAverage || 5.0),
     
     // Coordenadas
     pickupLat: pickupCoords.latitude,
@@ -638,23 +638,36 @@ const executeRideRequest = (paymentPhoneTarget?: string) => {
     guestPhone: isForAnotherPerson ? guestPhone : undefined,
   };
 
-  try {
-    // 🟢 Fecha os painéis de seleção para exibir a tela de busca "Procurando Motorista..."
-    setBookingStep('ADDRESS');
-    setRideStatus('searching');
+  // Atualiza interface imediatamente para "Procurando Motorista..."
+  setIsSearchModalVisible(false);
+  setBookingStep('ADDRESS');
+  setRideStatus('searching');
 
-    // Emite o evento do Socket
-    if (socket) {
-      if (!socket.connected) {
+  try {
+    // Garante que a conexão do socket esteja ativa antes de emitir
+    connectPassengerSocket();
+
+    if (!socket.connected) {
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => resolve(), 2000);
+        socket.once('connect', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
         socket.connect();
-      }
-      socket.emit('ride:request', payload);
-      console.log('🚀 [PASSENGER] Solicitando corrida via Socket:', payload);
-    } else {
-      console.error('❌ Socket não inicializado no app passageiro.');
+      });
+    }
+
+    // Emite o evento no socket
+    socket.emit('ride:request', payload);
+    console.log('🚀 [PASSENGER] Evento ride:request emitido:', payload);
+
+    // Backup HTTP via API REST caso o socket falhe na entrega
+    if (api && typeof api.post === 'function') {
+      api.post('/rides/request', payload).catch(() => {});
     }
   } catch (err) {
-    console.error('❌ Erro ao enviar solicitação via Socket:', err);
+    console.error('❌ Erro ao enviar solicitação de corrida:', err);
   }
 };
   // 🟢 SINCRONIZAÇÃO COMPLETA DE CORRIDA ATIVA (INCLUINDO SUPORTE A PARADAS)
@@ -1626,7 +1639,7 @@ useEffect(() => {
 
   return () => subscription.remove();
 }, [rideStatus, driverInfo, activeRideId]);
-  // 🟢 1. FUNÇÃO DE DISPARO INICIAL (LIBERA GPS FALSO EM MODO DEV + VALIDAÇÕES)
+  // 🟢 1. FUNÇÃO DE DISPARO INICIAL (COM TIMEOUT NO GPS PARA NÃO TRAVAR A CHAMADA)
 async function handleInitialRequestRide() {
   const needsDropoff = serviceType !== 'aluguel';
   if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
@@ -1637,32 +1650,34 @@ async function handleInitialRequestRide() {
     return;
   }
 
-  // Verificação de GPS Falso (desativada em modo de desenvolvimento __DEV__)
+  // Verificação rápida de GPS Falso sem travar o botão (Timeout de 1.5s)
   try {
-    const currentLoc = await Location.getCurrentPositionAsync({ 
-      accuracy: Location.Accuracy.Balanced 
-    });
-    const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
-
-    if (isMocked && !__DEV__) {
-      Alert.alert(
-        "🚨 Localização Simulada Detectada",
-        "Por motivos de segurança, não é possível solicitar corridas utilizando aplicativos de GPS falso.",
-        [{ text: "Entendido" }]
-      );
-      return;
+    const locPromise = Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low });
+    const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(null), 1500));
+    
+    const currentLoc: any = await Promise.race([locPromise, timeoutPromise]);
+    if (currentLoc) {
+      const isMocked = currentLoc.mocked || currentLoc.coords?.mocked;
+      if (isMocked && !__DEV__) {
+        Alert.alert(
+          "🚨 Localização Simulada Detectada",
+          "Desative aplicativos de GPS falso para continuar.",
+          [{ text: "Entendido" }]
+        );
+        return;
+      }
     }
   } catch (e) {
-    console.warn('⚠️ Erro ao verificar precisão de localização:', e);
+    console.warn('⚠️ Ignorando checagem de GPS falso por timeout/erro:', e);
   }
 
-  // Se o pagamento for em dinheiro, dispara direto
+  // Se for em dinheiro, dispara imediatamente a solicitação
   if (paymentMethod === 'CASH') {
     executeRideRequest();
     return;
   }
 
-  // Preenche telefone para pagamento digital
+  // Pagamento via Mobile Money
   if (!paymentPhone && user?.phone) {
     setPaymentPhone(user.phone);
   }
