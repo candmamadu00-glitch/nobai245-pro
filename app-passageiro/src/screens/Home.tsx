@@ -569,7 +569,7 @@ useEffect(() => {
     console.error('Erro ao salvar estado local do passageiro:', e);
   }
 };
-// 🟢 2. EXECUÇÃO DA SOLICITAÇÃO COM GARANTIA DE RECONEXÃO DE SOCKET + FALLBACK HTTP
+// 🟢 EXECUÇÃO DA SOLICITAÇÃO VIA HTTP REST (POST /api/rides/request)
 const executeRideRequest = async (paymentPhoneTarget?: string) => {
   if (!pickupCoords || !user?.id) {
     Alert.alert(
@@ -605,69 +605,57 @@ const executeRideRequest = async (paymentPhoneTarget?: string) => {
     }];
   }
 
+  // Payload formatado de acordo com a API do Backend (rideController.ts)
   const payload = {
-    passengerId: user.id,
-    passengerName: isForAnotherPerson && guestName ? guestName : user.fullName || 'Passageiro',
-    passengerPhone: isForAnotherPerson && guestPhone ? guestPhone : user.phone,
-    passengerPhoto: user.profilePicture,
-    passengerRating: Number(user.ratingAverage || 5.0),
-    
-    // Coordenadas
-    pickupLat: pickupCoords.latitude,
-    pickupLng: pickupCoords.longitude,
-    destinationLat: targetDropoff.latitude,
-    destinationLng: targetDropoff.longitude,
-    originAddress: pickupAddress,
-    destinationAddress: serviceType === 'aluguel' ? `Aluguel Toca-Toca` : dropoffAddress,
-    referencePoint: referencePoint || '',
-
-    // Paradas Intermediárias
-    stops: stopsListPayload,
-    extraStopLat: extraStopCoords?.latitude,
-    extraStopLng: extraStopCoords?.longitude,
-    extraStopAddress: extraStopAddress || undefined,
-
-    // Serviço e Pagamento
-    serviceType: serviceType === 'aluguel' ? 'RENTAL' : serviceType === 'entrega' ? 'DELIVERY' : 'RIDE',
+    pickupLat: Number(pickupCoords.latitude),
+    pickupLng: Number(pickupCoords.longitude),
+    dropoffLat: Number(targetDropoff.latitude),
+    dropoffLng: Number(targetDropoff.longitude),
     vehicleType: vehicleType.toUpperCase(),
+    serviceType: serviceType === 'aluguel' ? 'RENTAL' : serviceType === 'entrega' ? 'DELIVERY' : 'RIDE',
     paymentMethod,
     paymentPhone: paymentPhoneTarget || paymentPhone,
-    estimatedPrice: estimatedPrice,
-    priceXof: estimatedPrice,
-    guestName: isForAnotherPerson ? guestName : undefined,
-    guestPhone: isForAnotherPerson ? guestPhone : undefined,
+    originAddress: pickupAddress,
+    destinationAddress: serviceType === 'aluguel' ? 'Aluguel Toca-Toca' : dropoffAddress,
+    rentalRegion: selectedRegion || 'BISSAU',
+    referencePoint: referencePoint || '',
+    stops: stopsListPayload,
   };
 
-  // Atualiza interface imediatamente para "Procurando Motorista..."
-  setIsSearchModalVisible(false);
-  setBookingStep('ADDRESS');
-  setRideStatus('searching');
-
   try {
-    // Garante que a conexão do socket esteja ativa antes de emitir
+    // 1. Transita a interface para a tela de busca "Procurando Motorista..."
+    setIsSearchModalVisible(false);
+    setBookingStep('ADDRESS');
+    setRideStatus('searching');
+
+    // 2. Garante que o Socket do passageiro esteja conectado para receber respostas em tempo real
     connectPassengerSocket();
 
-    if (!socket.connected) {
-      await new Promise<void>((resolve) => {
-        const timeout = setTimeout(() => resolve(), 2000);
-        socket.once('connect', () => {
-          clearTimeout(timeout);
-          resolve();
-        });
-        socket.connect();
-      });
-    }
+    // 3. Dispara a requisição HTTP autenticada via Axios/API REST
+    const response = await api.post('/rides/request', payload);
 
-    // Emite o evento no socket
-    socket.emit('ride:request', payload);
-    console.log('🚀 [PASSENGER] Evento ride:request emitido:', payload);
+    if (response?.data?.success && response?.data?.ride) {
+      const createdRide = response.data.ride;
+      setActiveRideId(createdRide.id);
+      activeRideIdRef.current = createdRide.id;
 
-    // Backup HTTP via API REST caso o socket falhe na entrega
-    if (api && typeof api.post === 'function') {
-      api.post('/rides/request', payload).catch(() => {});
+      // Junta-se à sala socket da corrida criada
+      if (socket && socket.connected) {
+        socket.emit('passenger:rejoin_ride', { rideId: createdRide.id });
+      }
+
+      console.log('✅ [PASSENGER] Corrida criada com sucesso ID:', createdRide.id);
+    } else {
+      throw new Error(response?.data?.error || 'Erro ao criar corrida no servidor.');
     }
-  } catch (err) {
-    console.error('❌ Erro ao enviar solicitação de corrida:', err);
+  } catch (err: any) {
+    console.error('❌ Erro ao solicitar corrida na API:', err?.response?.data || err?.message);
+    
+    const errorMessage = err?.response?.data?.error || 'Não foi possível solicitar a corrida. Tente novamente.';
+    Alert.alert(t('error_title', 'Aviso'), errorMessage);
+    
+    // Retorna a interface ao estado inicial em caso de erro
+    setRideStatus('idle');
   }
 };
   // 🟢 SINCRONIZAÇÃO COMPLETA DE CORRIDA ATIVA (INCLUINDO SUPORTE A PARADAS)
