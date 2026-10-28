@@ -163,6 +163,8 @@ export interface IncomingRideData {
   extraStopLat?: number;
   extraStopLng?: number;
   extraStopAddress?: string;
+  estimatedPrice?: number;
+  transactionId?: string;
   stops?: any[]; 
 }
 
@@ -1707,10 +1709,10 @@ export function Home() {
                   📏 Distância: {(
                     (incomingRide as any)?.distance || 
                     calculateDirectDistance(
-                      incomingRide.pickupLat, 
-                      incomingRide.pickupLng, 
-                      incomingRide.destinationLat, 
-                      incomingRide.destinationLng
+                    incomingRide.pickupLat, 
+                    incomingRide.pickupLng, 
+                   incomingRide.destinationLat, 
+                 incomingRide.destinationLng ?? 0
                     )
                   ).toFixed(1)} km
                 </Text>
@@ -2195,7 +2197,7 @@ const styles = StyleSheet.create({
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justify: 'space-between',
+    justifyContent: 'space-between',
     gap: 8,
   },
   statusPill: {
@@ -2928,7 +2930,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   // 🧾 ESTILOS DO MODAL DE RECIBO
-  receiptOverlay: {
+ receiptOverlay: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.85)',
     justifyContent: 'center',
@@ -3052,10 +3054,12 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
+    marginTop: 16,
+    width: '100%',
   },
   closeReceiptBtnText: {
-    color: '#94A3B8',
-    fontWeight: '700',
-    fontSize: 14,
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
   },
 });

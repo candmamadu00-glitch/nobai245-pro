@@ -550,7 +550,7 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
 // -----------------------------------------------------------------------------
 // 5. SERVIDOR WEBSOCKET (SOCKET.IO)
 // -----------------------------------------------------------------------------
-const io = new Server(server, {
+const io = new (Server as any)(server, {
   cors: { origin: allowedOrigins, methods: ['GET', 'POST'] },
   transports: ['polling', 'websocket'],
   pingTimeout: 30000,
@@ -576,8 +576,9 @@ export const getIo = () => {
 
 const disconnectTimers = new Map<string, NodeJS.Timeout>();
 
-io.use((socket, next) => {
+io.use((socket: any, next: any) =>{
   const token = socket.handshake.auth?.token;
+  
   if (!token) return next(new Error('Acesso negado. Token não fornecido.'));
 
   try {
@@ -650,7 +651,7 @@ function handleSocketEvent(socket: Socket, eventName: string, handler: (data?: a
 // -----------------------------------------------------------------------------
 // 6. EVENTOS WEBSOCKET (SOCKET.IO ENGINE)
 // -----------------------------------------------------------------------------
-io.on('connection', (socket) => {
+io.on('connection', (socket: any) => {
   const userId = socket.data.user?.id;
   const userRole = socket.data.user?.role || socket.data.user?.userType;
   console.log(`[+] Cliente conectado: ${socket.id} (ID: ${userId} | Role: ${userRole})`);
@@ -1190,7 +1191,7 @@ handleSocketEvent(socket, 'passenger:rejoin_ride', async (data) => {
         });
       }
 
-      await prisma.rideOffer.updateMany({
+      await (prisma as any).rideOffer.updateMany({
         where: { rideId, driverId },
         data: { status: 'ACCEPTED' }
       }).catch(() => null);

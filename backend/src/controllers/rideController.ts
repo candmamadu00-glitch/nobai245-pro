@@ -166,7 +166,7 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
     const ongoing = await prisma.ride.findFirst({
       where: { 
         passengerId, 
-        status: { in: ['PENDING', 'SEARCHING', 'AWAITING_PAYMENT', 'ACCEPTED', 'QUEUED', 'ARRIVED', 'IN_PROGRESS'] } 
+        status: { in: ['PENDING', 'SEARCHING', 'AWAITING_PAYMENT', 'ACCEPTED', 'QUEUED', 'ARRIVED', 'IN_PROGRESS'] as any[] }
       }
     });
     

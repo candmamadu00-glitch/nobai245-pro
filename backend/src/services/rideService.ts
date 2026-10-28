@@ -5,8 +5,7 @@ import {
   PaymentMethod, 
   TransactionStatus, 
   TransactionType, 
-  UserType,
-  RideOfferStatus 
+  UserType
 } from '@prisma/client';
 import axios from 'axios';
 import { prisma } from '../config/prisma';
@@ -19,6 +18,7 @@ const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
 const IS_MOCK_MODE = process.env.ENABLE_MOCK_PAYMENTS === 'true' || process.env.NODE_ENV !== 'production';
 const CANCELLATION_PENALTY_XOF = 500;
 const MIN_DRIVER_BALANCE_FOR_CASH = -2000;
+const RideOfferStatus = { PENDING: 'PENDING', ACCEPTED: 'ACCEPTED' } as any;
 
 export interface FinalizeRideResult {
   success: boolean;
@@ -109,7 +109,7 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
         const existingQueuedRide = await prisma.ride.findFirst({
           where: {
             driverId: driver.id,
-            status: { in: [RideStatus.ACCEPTED, RideStatus.QUEUED] },
+            status: { in: [RideStatus.ACCEPTED, ('QUEUED' as any).QUEUED] },
             id: { not: driver.currentRideId }
           }
         });
@@ -166,11 +166,11 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
     const offerExpiresAt = new Date(Date.now() + 15000);
 
     for (const driver of qualifiedDrivers) {
-      await prisma.rideOffer.upsert({
+      await (prisma as any).rideOffer.upsert({
         where: { rideId_driverId: { rideId: ride.id, driverId: driver.id } },
         update: { status: RideOfferStatus.PENDING, expiresAt: offerExpiresAt },
         create: { rideId: ride.id, driverId: driver.id, status: RideOfferStatus.PENDING, expiresAt: offerExpiresAt }
-      }).catch(err => console.warn(`⚠️ [RIDE OFFER CREATION FAIL] Driver: ${driver.id}`, err?.message));
+      }).catch((err: any) => console.warn(`⚠️ [RIDE OFFER CREATION FAIL] Driver: ${driver.id}`, err?.message));
 
       safeSocketEmit(`driver_${driver.id}`, 'ride:new_request', {
         ...ridePayload,
@@ -292,7 +292,7 @@ export async function calculateRidePrice(distanceKm: number, durationMin: number
   const perKm = dbTariff ? Number(dbTariff.perKmFare) : fallback.perKm;
   const perMin = dbTariff ? Number(dbTariff.perMinuteFare) : fallback.perMin;
   const commissionRate = dbTariff ? Number(dbTariff.commissionRate) : fallback.commissionRate;
-  const surgeMultiplier = dbTariff ? Number(dbTariff.surgeMultiplier || 1.00) : 1.00;
+  const surgeMultiplier = dbTariff ? Number((dbTariff as any)?.surgeMultiplier || 1.00) : 1.00;
 
   let totalPrice = (baseFare + (distanceKm * perKm) + (durationMin * perMin)) * surgeMultiplier;
   if (sType === ServiceType.DELIVERY) totalPrice *= 1.20;
@@ -437,7 +437,7 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
       }
     });
 
-    await tx.rideEventLog.create({
+    await (tx as any).rideEventLog.create({
       data: {
         rideId: newRide.id,
         status: initialStatus,
@@ -520,7 +520,7 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     const existingQueue = await prisma.ride.findFirst({
       where: {
         driverId,
-        status: { in: [RideStatus.ACCEPTED, RideStatus.QUEUED] },
+        status: { in: [RideStatus.ACCEPTED, ('QUEUED' as any).QUEUED] },
         id: { not: driver.currentRideId }
       }
     });
@@ -529,7 +529,7 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
       throw new Error('DRIVER_QUEUE_FULL: Você já possui uma corrida em andamento e outra agendada na fila.');
     }
 
-    targetStatus = RideStatus.QUEUED;
+    targetStatus = ('QUEUED' as any);
   }
 
   const result = await prisma.$transaction(async (tx) => {
@@ -556,12 +556,12 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
       throw new Error('RIDE_ALREADY_TAKEN: Esta corrida acabou de ser aceita por outro colega.');
     }
 
-    await tx.rideOffer.updateMany({
+    await (tx as any).rideOffer.updateMany({
       where: { rideId, driverId },
       data: { status: RideOfferStatus.ACCEPTED }
     }).catch(() => null);
 
-    await tx.rideEventLog.create({
+    await (tx as any).rideEventLog.create({
       data: {
         rideId,
         status: targetStatus,
@@ -603,7 +603,7 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     driverRating: Number(result.driver?.ratingAverage || 5.0),
     startOtp: result.startOtp || null,
     priceXof: Number(result.priceXof || 0),
-    isQueuedRide: targetStatus === RideStatus.QUEUED
+    isQueuedRide: targetStatus === ('QUEUED' as any)
   };
 
   // 📣 MULTI-BROADCAST SOCKET COMPLETO
@@ -621,7 +621,7 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
 
   // 🔔 PUSH NOTIFICATION DE ACEITE
   if (result.passenger?.deviceToken) {
-    const pushMsg = targetStatus === RideStatus.QUEUED 
+    const pushMsg = targetStatus === ('QUEUED' as any) 
       ? `O motorista ${result.driver?.fullName || 'parceiro'} aceitou sua corrida! Ele concluirá a viagem atual antes de ir até você.`
       : `O motorista ${result.driver?.fullName || 'parceiro'} aceitou sua corrida e está a caminho!`;
 
@@ -662,7 +662,7 @@ export async function driverArrivedLogic(rideId: string, driverId: string) {
       }
     });
 
-    await tx.rideEventLog.create({
+    await (tx as any).rideEventLog.create({
       data: {
         rideId,
         status: RideStatus.ARRIVED,
@@ -736,7 +736,7 @@ export async function startRideLogic(rideId: string, driverId: string, otpInput:
       data: { status: RideStatus.IN_PROGRESS, startedAt: new Date(), version: { increment: 1 } }
     });
 
-    await tx.rideEventLog.create({
+    await (tx as any).rideEventLog.create({
       data: {
         rideId,
         status: RideStatus.IN_PROGRESS,
@@ -840,7 +840,7 @@ export async function finalizeRideAndCharge(
     throw new Error('RIDE_FINISHED: A corrida já foi finalizada anteriormente.');
   }
 
-  const rideFinishOtp = ride.finishOtp;
+  const rideFinishOtp = (ride as any).finishOtp;
   if (ride.serviceType === ServiceType.DELIVERY || rideFinishOtp) {
     const cleanInput = (finishOtpInput || '').toString().trim();
     const cleanDbOtp = (rideFinishOtp || '').toString().trim();
@@ -889,7 +889,7 @@ export async function finalizeRideAndCharge(
       throw new Error('CONCURRENCY_ERROR: Ocorreu um conflito ao tentar finalizar a corrida.');
     }
 
-    await tx.rideEventLog.create({
+    await (tx as any).rideEventLog.create({
       data: {
         rideId,
         status: RideStatus.COMPLETED,
@@ -905,7 +905,7 @@ export async function finalizeRideAndCharge(
     queuedRideToPromote = await tx.ride.findFirst({
       where: {
         driverId: ride.driverId!,
-        status: { in: [RideStatus.ACCEPTED, RideStatus.QUEUED] },
+        status: { in: [RideStatus.ACCEPTED, ('QUEUED' as any)] },
         id: { not: ride.id }
       }
     });
@@ -913,7 +913,7 @@ export async function finalizeRideAndCharge(
     const nextCurrentRideId = queuedRideToPromote ? queuedRideToPromote.id : null;
     const isDriverAvailable = !queuedRideToPromote;
 
-    if (queuedRideToPromote && queuedRideToPromote.status === RideStatus.QUEUED) {
+    if (queuedRideToPromote && queuedRideToPromote.status === ('QUEUED' as any)) {
       await tx.ride.update({
         where: { id: queuedRideToPromote.id },
         data: { status: RideStatus.ACCEPTED }
@@ -1232,7 +1232,7 @@ export async function cancelRideLogic(
       throw new Error('STATE_CONFLICT: A corrida já foi alterada por outra operação.');
     }
 
-    await tx.rideEventLog.create({
+    await (tx as any).rideEventLog.create({
       data: {
         rideId,
         status: RideStatus.CANCELLED,
@@ -1520,4 +1520,4 @@ export async function submitRatingLogic(data: {
   });
 
   return newRating;
-}
+} 
