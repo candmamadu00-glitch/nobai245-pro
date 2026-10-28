@@ -28,7 +28,6 @@ import { api } from '../services/api';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { registerAndSendPushToken } from '../services/notifications';
 import { updateOngoingRideNotification, dismissOngoingRideNotification } from '../services/ongoingNotification';
-import * as Notifications from 'expo-notifications';
 // Token Mapbox
 const MAPBOX_ACCESS_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_KEY || 'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZTRyc3NmMDBzMTJ5cTA1anJvYjFsOSJ9.pUAoGXwZS8FtYNr85VD1TA';
 if (MAPBOX_ACCESS_TOKEN) {
@@ -306,7 +305,7 @@ export function Home() {
   const [passengerLocation, setPassengerLocation] = useState<Location.LocationObject | null>(null);
   const [driverLocation, setDriverLocation] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
   const [driverInfo, setDriverInfo] = useState<DriverInfo | null>(null);
-  const [stopsList, setStopsList] = useState<any[]>([]);
+  
   const [pickupCoords, setPickupCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [pickupAddress, setPickupAddress] = useState(t('pickup_location', 'Local de partida'));
   
@@ -569,95 +568,6 @@ useEffect(() => {
     console.error('Erro ao salvar estado local do passageiro:', e);
   }
 };
-// 🟢 EXECUÇÃO DA SOLICITAÇÃO VIA HTTP REST (POST /api/rides/request)
-const executeRideRequest = async (paymentPhoneTarget?: string) => {
-  if (!pickupCoords || !user?.id) {
-    Alert.alert(
-      t('warning_title', 'Aviso ⚠️'),
-      t('missing_pickup_msg', 'Por favor, defina o local de partida.')
-    );
-    return;
-  }
-
-  const targetDropoff = dropoffCoords || pickupCoords;
-
-  // Montagem do payload de paradas intermediárias
-  let stopsListPayload: any[] = [];
-  if (Array.isArray(stopsList) && stopsList.length > 0) {
-    stopsListPayload = stopsList.map((s: any, idx: number) => ({
-      id: `stop_${idx}`,
-      lat: Number(s.latitude ?? s.lat),
-      lng: Number(s.longitude ?? s.lng),
-      latitude: Number(s.latitude ?? s.lat),
-      longitude: Number(s.longitude ?? s.lng),
-      address: s.address || s.name || `Parada ${idx + 1}`,
-      status: 'PENDING'
-    }));
-  } else if (showExtraStop && extraStopCoords) {
-    stopsListPayload = [{
-      id: 'stop_0',
-      lat: Number(extraStopCoords.latitude),
-      lng: Number(extraStopCoords.longitude),
-      latitude: Number(extraStopCoords.latitude),
-      longitude: Number(extraStopCoords.longitude),
-      address: extraStopAddress || 'Parada Intermediária',
-      status: 'PENDING'
-    }];
-  }
-
-  // Payload formatado de acordo com a API do Backend (rideController.ts)
-  const payload = {
-    pickupLat: Number(pickupCoords.latitude),
-    pickupLng: Number(pickupCoords.longitude),
-    dropoffLat: Number(targetDropoff.latitude),
-    dropoffLng: Number(targetDropoff.longitude),
-    vehicleType: vehicleType.toUpperCase(),
-    serviceType: serviceType === 'aluguel' ? 'RENTAL' : serviceType === 'entrega' ? 'DELIVERY' : 'RIDE',
-    paymentMethod,
-    paymentPhone: paymentPhoneTarget || paymentPhone,
-    originAddress: pickupAddress,
-    destinationAddress: serviceType === 'aluguel' ? 'Aluguel Toca-Toca' : dropoffAddress,
-    rentalRegion: selectedRegion || 'BISSAU',
-    referencePoint: referencePoint || '',
-    stops: stopsListPayload,
-  };
-
-  try {
-    // 1. Transita a interface para a tela de busca "Procurando Motorista..."
-    setIsSearchModalVisible(false);
-    setBookingStep('ADDRESS');
-    setRideStatus('searching');
-
-    // 2. Garante que o Socket do passageiro esteja conectado para receber respostas em tempo real
-    connectPassengerSocket();
-
-    // 3. Dispara a requisição HTTP autenticada via Axios/API REST
-    const response = await api.post('/rides/request', payload);
-
-    if (response?.data?.success && response?.data?.ride) {
-      const createdRide = response.data.ride;
-      setActiveRideId(createdRide.id);
-      activeRideIdRef.current = createdRide.id;
-
-      // Junta-se à sala socket da corrida criada
-      if (socket && socket.connected) {
-        socket.emit('passenger:rejoin_ride', { rideId: createdRide.id });
-      }
-
-      console.log('✅ [PASSENGER] Corrida criada com sucesso ID:', createdRide.id);
-    } else {
-      throw new Error(response?.data?.error || 'Erro ao criar corrida no servidor.');
-    }
-  } catch (err: any) {
-    console.error('❌ Erro ao solicitar corrida na API:', err?.response?.data || err?.message);
-    
-    const errorMessage = err?.response?.data?.error || 'Não foi possível solicitar a corrida. Tente novamente.';
-    Alert.alert(t('error_title', 'Aviso'), errorMessage);
-    
-    // Retorna a interface ao estado inicial em caso de erro
-    setRideStatus('idle');
-  }
-};
   // 🟢 SINCRONIZAÇÃO COMPLETA DE CORRIDA ATIVA (INCLUINDO SUPORTE A PARADAS)
   const syncActiveRideWithServer = useCallback(async () => {
     try {
@@ -706,29 +616,21 @@ const executeRideRequest = async (paymentPhoneTarget?: string) => {
             if (ride.originAddress) setPickupAddress(ride.originAddress);
           }
 
-          // 🟢 RECUPERAÇÃO COMPLETA DE MÚLTIPLAS PARADAS INTERMEDIÁRIAS
-if (Array.isArray(ride.stops) && ride.stops.length > 0) {
-  const parsedStops = ride.stops.map((s: any, idx: number) => ({
-    id: s.id || `stop_${idx}`,
-    latitude: Number(s.lat ?? s.latitude),
-    longitude: Number(s.lng ?? s.longitude),
-    address: s.address || s.name || `Parada ${idx + 1}`,
-  }));
-
-  // Atualiza estado de lista estendida no passageiro
-  if (typeof setStopsList === 'function') {
-    setStopsList(parsedStops);
-  }
-
-  // Preenche a primeira parada para compatibilidade com markers no mapa
-  setExtraStopCoords({ latitude: parsedStops[0].latitude, longitude: parsedStops[0].longitude });
-  setExtraStopAddress(parsedStops[0].address);
-  setShowExtraStop(true);
-} else if (ride.extraStopLat && ride.extraStopLng) {
-  setExtraStopCoords({ latitude: Number(ride.extraStopLat), longitude: Number(ride.extraStopLng) });
-  if (ride.extraStopAddress) setExtraStopAddress(ride.extraStopAddress);
-  setShowExtraStop(true);
-}
+          // 🟢 RECUPERAÇÃO DAS PARADAS INTERMEDIÁRIAS
+          if (Array.isArray(ride.stops) && ride.stops.length > 0) {
+            const firstStop = ride.stops[0];
+            const stopLat = Number(firstStop.lat || firstStop.latitude);
+            const stopLng = Number(firstStop.lng || firstStop.longitude);
+            if (!isNaN(stopLat) && !isNaN(stopLng)) {
+              setExtraStopCoords({ latitude: stopLat, longitude: stopLng });
+              setExtraStopAddress(firstStop.address || 'Parada Intermediária');
+              setShowExtraStop(true);
+            }
+          } else if (ride.extraStopLat && ride.extraStopLng) {
+            setExtraStopCoords({ latitude: Number(ride.extraStopLat), longitude: Number(ride.extraStopLng) });
+            if (ride.extraStopAddress) setExtraStopAddress(ride.extraStopAddress);
+            setShowExtraStop(true);
+          }
 
           if (ride.destinationLat && ride.destinationLng) {
             setDropoffCoords({ latitude: Number(ride.destinationLat), longitude: Number(ride.destinationLng) });
@@ -1627,50 +1529,42 @@ useEffect(() => {
 
   return () => subscription.remove();
 }, [rideStatus, driverInfo, activeRideId]);
-  // 🟢 1. FUNÇÃO DE DISPARO INICIAL (COM TIMEOUT NO GPS PARA NÃO TRAVAR A CHAMADA)
-async function handleInitialRequestRide() {
-  const needsDropoff = serviceType !== 'aluguel';
-  if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
-    Alert.alert(
-      t('warning_title', 'Aviso ⚠️'), 
-      t('select_origin_destination_msg', 'Selecione a origem e o destino antes de solicitar.')
-    );
-    return;
-  }
+  async function handleInitialRequestRide() {
+    const needsDropoff = serviceType !== 'aluguel';
+    if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
+      Alert.alert(
+        t('warning_title', 'Aviso ⚠️'), 
+        t('select_origin_destination_msg', 'Selecione a origem e o destino antes de solicitar.')
+      );
+      return;
+    }
 
-  // Verificação rápida de GPS Falso sem travar o botão (Timeout de 1.5s)
-  try {
-    const locPromise = Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low });
-    const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(null), 1500));
-    
-    const currentLoc: any = await Promise.race([locPromise, timeoutPromise]);
-    if (currentLoc) {
-      const isMocked = currentLoc.mocked || currentLoc.coords?.mocked;
-      if (isMocked && !__DEV__) {
+    try {
+      const currentLoc = await Location.getCurrentPositionAsync({ 
+        accuracy: Location.Accuracy.Balanced 
+      });
+      const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
+
+      if (isMocked) {
         Alert.alert(
           "🚨 Localização Simulada Detectada",
-          "Desative aplicativos de GPS falso para continuar.",
+          "Por motivos de segurança, não é possível solicitar corridas utilizando aplicativos de GPS falso. Desative a simulação de localização para continuar.",
           [{ text: "Entendido" }]
         );
         return;
       }
+    } catch (e) {}
+
+    if (paymentMethod === 'CASH') {
+      executeRideRequest();
+      return;
     }
-  } catch (e) {
-    console.warn('⚠️ Ignorando checagem de GPS falso por timeout/erro:', e);
-  }
 
-  // Se for em dinheiro, dispara imediatamente a solicitação
-  if (paymentMethod === 'CASH') {
-    executeRideRequest();
-    return;
+    if (!paymentPhone && user?.phone) {
+      setPaymentPhone(user.phone);
+    }
+    setIsPaymentModalVisible(true);
   }
-
-  // Pagamento via Mobile Money
-  if (!paymentPhone && user?.phone) {
-    setPaymentPhone(user.phone);
-  }
-  setIsPaymentModalVisible(true);
-}
 
 async function confirmPaymentAndRide() {
   if (!user?.id) {
@@ -1735,6 +1629,80 @@ async function confirmPaymentAndRide() {
       isTimeout 
         ? 'A operadora está demorando para responder. Tente novamente ou use dinheiro.' 
         : err?.response?.data?.message || 'Não foi possível autorizar o débito. Verifique o saldo ou o número e tente novamente.'
+    );
+  }
+}
+
+function executeRideRequest() {
+  if (!user?.id || !pickupCoords) {
+    Alert.alert(t('warning_title', 'Aviso ⚠️'), t('missing_data_msg', 'Dados insuficientes para iniciar a corrida. Verifique sua localização.'));
+    return;
+  }
+
+  try {
+    if (!socket.connected) connectPassengerSocket();
+
+    setRideStatus('searching');
+    
+    // Mapeamento estrito para os Enums do Backend
+    const mappedServiceType = serviceType === 'viagem' ? 'RIDE' : serviceType === 'entrega' ? 'DELIVERY' : 'RENTAL';
+    const mappedVehicleType = 
+      vehicleType === 'particular' ? 'PARTICULAR' : 
+      vehicleType === 'moto-carro' ? 'MOTO_CARRO' : 
+      (vehicleType as string) === 'toca-toca' ? 'TOCA_TOCA' :
+      vehicleType.toUpperCase();
+      
+    const regionLabel = RENTAL_PRICES[selectedRegion]?.label || selectedRegion;
+
+    emitRequestRide({
+      passengerId: user.id,
+      passengerName: (user as any)?.name || user.fullName,
+      passengerRating: Number((user as any)?.rating || user.ratingAverage || 5.0),
+      pickupLat: pickupCoords.latitude,
+      pickupLng: pickupCoords.longitude,
+      originAddress: pickupAddress,
+      destinationLat: dropoffCoords?.latitude || pickupCoords.latitude,
+      destinationLng: dropoffCoords?.longitude || pickupCoords.longitude,
+      destinationAddress: serviceType === 'aluguel' ? `Aluguel Toca-Toca (${regionLabel})` : dropoffAddress,
+      referencePoint: referencePoint.trim(),
+      serviceType: mappedServiceType,
+      vehicleType: mappedVehicleType,
+      paymentMethod: paymentMethod,
+      estimatedPrice: estimatedPrice,
+      priceXof: estimatedPrice,
+      guestName: isForAnotherPerson ? guestName : undefined,
+      guestPhone: isForAnotherPerson ? guestPhone : undefined,
+      // 🟢 PARADAS INTERMEDIÁRIAS COMPATÍVEIS COM O MOTORISTA
+      stops: (extraStopCoords?.latitude && extraStopCoords?.longitude) ? [
+        {
+          address: extraStopAddress || 'Parada Intermediária',
+          lat: extraStopCoords.latitude,
+          lng: extraStopCoords.longitude,
+          latitude: extraStopCoords.latitude,
+          longitude: extraStopCoords.longitude,
+          status: 'PENDING'
+        }
+      ] : [],
+      extraStopLat: extraStopCoords?.latitude,
+      extraStopLng: extraStopCoords?.longitude,
+      extraStopAddress: extraStopAddress || undefined,
+    });
+
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    searchTimeoutRef.current = setTimeout(() => {
+      if (isMountedRef.current) {
+        Alert.alert(
+          t('no_response_title', 'Sem resposta'), 
+          t('no_driver_accepted_msg', 'Nenhum motorista aceitou no momento. Tente novamente.')
+        );
+        resetRideState();
+      }
+    }, 60000);
+
+  } catch (error) {
+    Alert.alert(
+      t('error_title', 'Erro'), 
+      t('server_error_msg', 'Ocorreu um problema ao comunicar com os servidores.')
     );
   }
 }
@@ -2350,122 +2318,113 @@ return (
       </View>
     </View>
 
-    {/* 🟢 ABERTURA DO KEYBOARDAVOIDVIEW */}
-    <KeyboardAvoidingView 
-      style={{ flex: 1 }} 
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16 }}>
-        {/* TIPO DE SERVIÇO */}
-        <Text style={styles.sectionLabel}>{t('service_type', 'Tipo de Serviço')}</Text>
-        <View style={styles.serviceTypesContainer}>
-          <TouchableOpacity 
-            style={[styles.serviceTypeButton, serviceType === 'viagem' && styles.serviceTypeActive]}
-            onPress={() => setServiceType('viagem')}
-          >
-            <Ionicons name="car-outline" size={18} color={serviceType === 'viagem' ? '#0F172A' : '#94A3B8'} />
-            <Text style={[styles.serviceTypeText, serviceType === 'viagem' && styles.serviceTypeTextActive]}>Viagem</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={[styles.serviceTypeButton, serviceType === 'entrega' && styles.serviceTypeActive]}
-            onPress={() => setServiceType('entrega')}
-          >
-            <Ionicons name="cube-outline" size={18} color={serviceType === 'entrega' ? '#0F172A' : '#94A3B8'} />
-            <Text style={[styles.serviceTypeText, serviceType === 'entrega' && styles.serviceTypeTextActive]}>Entrega</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={[styles.serviceTypeButton, serviceType === 'aluguel' && styles.serviceTypeActive]}
-            onPress={() => setServiceType('aluguel')}
-          >
-            <Ionicons name="key-outline" size={18} color={serviceType === 'aluguel' ? '#0F172A' : '#94A3B8'} />
-            <Text style={[styles.serviceTypeText, serviceType === 'aluguel' && styles.serviceTypeTextActive]}>Aluguel</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* VEÍCULOS DISPONÍVEIS */}
-        {serviceType === 'aluguel' ? (
-          <View style={{ marginTop: 12 }}>
-            <Text style={styles.sectionLabel}>{t('select_coverage_region', 'Selecione a Região de Cobertura')}</Text>
-            <TouchableOpacity style={[styles.categoryCard, styles.categoryCardActive, { borderColor: '#EAB308', borderWidth: 2 }]} activeOpacity={0.9}>
-              <View style={{ backgroundColor: '#FEF08A', padding: 8, borderRadius: 8, marginRight: 12 }}>
-                <Ionicons name="map-outline" size={24} color="#0F172A" />
-              </View>
-              <View style={styles.categoryTextWrapper}>
-                <Text style={[styles.categoryTitle, styles.categoryTextActive]}>{RENTAL_PRICES[selectedRegion]?.label || 'Bissau'}</Text>
-                <Text style={styles.categorySubtitle}>{RENTAL_PRICES[selectedRegion]?.description}</Text>
-              </View>
-              <Text style={[styles.categoryPriceText, styles.categoryPriceTextActive, { color: '#10B981' }]}>
-                {RENTAL_PRICES[selectedRegion]?.price ? `${RENTAL_PRICES[selectedRegion].price?.toLocaleString('pt-BR')} XOF` : t('on_request', 'Sob Consulta')}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={{ marginTop: 12 }}>
-            <Text style={styles.sectionLabel}>Veículos Disponíveis</Text>
-            <View style={{ gap: 10, marginBottom: 16 }}>
-              {VEHICLE_OPTIONS.map((item) => {
-                const isSelected = vehicleType === item.id;
-                const price = calculateVehiclePrice(item.id, estimatedDistance);
-                return (
-                  <TouchableOpacity 
-                    key={item.id} 
-                    style={[
-                      styles.categoryCard, 
-                      isSelected && styles.categoryCardActive,
-                      { paddingVertical: 14, paddingHorizontal: 16, borderRadius: 16 }
-                    ]}
-                    activeOpacity={0.85}
-                    onPress={() => setVehicleType(item.id)}
-                  >
-                    <Image source={item.image} style={{ width: 55, height: 40 }} resizeMode="contain" />
-                    <View style={[styles.categoryTextWrapper, { marginLeft: 12 }]}>
-                      <Text style={[styles.categoryTitle, isSelected && styles.categoryTextActive, { fontSize: 15 }]}>{item.title}</Text>
-                      <Text style={styles.categorySubtitle}>{item.subtitle}</Text>
-                    </View>
-                    <Text style={[styles.categoryPriceText, isSelected && styles.categoryPriceTextActive, { fontSize: 15, fontWeight: '900' }]}>
-                      {price ? `${price} XOF` : 'Calculando...'}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        )}
-
-        {/* PONTO DE REFERÊNCIA */}
-        <Text style={styles.sectionLabel}>Ponto de Referência (Opcional)</Text>
-        <View style={[styles.referenceContainer, { marginBottom: 24 }]}>
-          <TextInput
-            style={styles.referenceInput}
-            placeholder="Ex: Próximo à farmácia, casa azul..."
-            placeholderTextColor="#94A3B8"
-            value={referencePoint}
-            onChangeText={setReferencePoint}
-            returnKeyType="done"
-            onSubmitEditing={Keyboard.dismiss}
-            blurOnSubmit={true}
-          />
-        </View>
-      </ScrollView>
-
-      {/* BOTÃO FIXO DE CONFIRMAÇÃO */}
-      <View style={{
-        padding: 16,
-        borderTopWidth: 1,
-        borderTopColor: '#1E293B',
-        backgroundColor: '#0F172A'
-      }}>
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16 }}>
+      {/* TIPO DE SERVIÇO */}
+      <Text style={styles.sectionLabel}>{t('service_type', 'Tipo de Serviço')}</Text>
+      <View style={styles.serviceTypesContainer}>
         <TouchableOpacity 
-          style={[styles.requestButton, { height: 52 }]} 
-          onPress={() => setBookingStep('PAYMENT')}
-          activeOpacity={0.85}
+          style={[styles.serviceTypeButton, serviceType === 'viagem' && styles.serviceTypeActive]}
+          onPress={() => setServiceType('viagem')}
         >
-          <Text style={[styles.requestButtonText, { fontSize: 16 }]}>Continuar para Pagamento ➔</Text>
+          <Ionicons name="car-outline" size={18} color={serviceType === 'viagem' ? '#0F172A' : '#94A3B8'} />
+          <Text style={[styles.serviceTypeText, serviceType === 'viagem' && styles.serviceTypeTextActive]}>Viagem</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.serviceTypeButton, serviceType === 'entrega' && styles.serviceTypeActive]}
+          onPress={() => setServiceType('entrega')}
+        >
+          <Ionicons name="cube-outline" size={18} color={serviceType === 'entrega' ? '#0F172A' : '#94A3B8'} />
+          <Text style={[styles.serviceTypeText, serviceType === 'entrega' && styles.serviceTypeTextActive]}>Entrega</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.serviceTypeButton, serviceType === 'aluguel' && styles.serviceTypeActive]}
+          onPress={() => setServiceType('aluguel')}
+        >
+          <Ionicons name="key-outline" size={18} color={serviceType === 'aluguel' ? '#0F172A' : '#94A3B8'} />
+          <Text style={[styles.serviceTypeText, serviceType === 'aluguel' && styles.serviceTypeTextActive]}>Aluguel</Text>
         </TouchableOpacity>
       </View>
-    </KeyboardAvoidingView>
+
+      {/* VEÍCULOS DISPONÍVEIS */}
+      {serviceType === 'aluguel' ? (
+        <View style={{ marginTop: 12 }}>
+          <Text style={styles.sectionLabel}>{t('select_coverage_region', 'Selecione a Região de Cobertura')}</Text>
+          <TouchableOpacity style={[styles.categoryCard, styles.categoryCardActive, { borderColor: '#EAB308', borderWidth: 2 }]} activeOpacity={0.9}>
+            <View style={{ backgroundColor: '#FEF08A', padding: 8, borderRadius: 8, marginRight: 12 }}>
+              <Ionicons name="map-outline" size={24} color="#0F172A" />
+            </View>
+            <View style={styles.categoryTextWrapper}>
+              <Text style={[styles.categoryTitle, styles.categoryTextActive]}>{RENTAL_PRICES[selectedRegion]?.label || 'Bissau'}</Text>
+              <Text style={styles.categorySubtitle}>{RENTAL_PRICES[selectedRegion]?.description}</Text>
+            </View>
+            <Text style={[styles.categoryPriceText, styles.categoryPriceTextActive, { color: '#10B981' }]}>
+              {RENTAL_PRICES[selectedRegion]?.price ? `${RENTAL_PRICES[selectedRegion].price?.toLocaleString('pt-BR')} XOF` : t('on_request', 'Sob Consulta')}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View style={{ marginTop: 12 }}>
+          <Text style={styles.sectionLabel}>Veículos Disponíveis</Text>
+          <View style={{ gap: 10, marginBottom: 16 }}>
+            {VEHICLE_OPTIONS.map((item) => {
+              const isSelected = vehicleType === item.id;
+              const price = calculateVehiclePrice(item.id, estimatedDistance);
+              return (
+                <TouchableOpacity 
+                  key={item.id} 
+                  style={[
+                    styles.categoryCard, 
+                    isSelected && styles.categoryCardActive,
+                    { paddingVertical: 14, paddingHorizontal: 16, borderRadius: 16 }
+                  ]}
+                  activeOpacity={0.85}
+                  onPress={() => setVehicleType(item.id)}
+                >
+                  <Image source={item.image} style={{ width: 55, height: 40 }} resizeMode="contain" />
+                  <View style={[styles.categoryTextWrapper, { marginLeft: 12 }]}>
+                    <Text style={[styles.categoryTitle, isSelected && styles.categoryTextActive, { fontSize: 15 }]}>{item.title}</Text>
+                    <Text style={styles.categorySubtitle}>{item.subtitle}</Text>
+                  </View>
+                  <Text style={[styles.categoryPriceText, isSelected && styles.categoryPriceTextActive, { fontSize: 15, fontWeight: '900' }]}>
+                    {price ? `${price} XOF` : 'Calculando...'}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+      )}
+
+      {/* PONTO DE REFERÊNCIA */}
+      <Text style={styles.sectionLabel}>Ponto de Referência (Opcional)</Text>
+      <View style={[styles.referenceContainer, { marginBottom: 24 }]}>
+        <TextInput
+          style={styles.referenceInput}
+          placeholder="Ex: Próximo à farmácia, casa azul..."
+          placeholderTextColor="#94A3B8"
+          value={referencePoint}
+          onChangeText={setReferencePoint}
+        />
+      </View>
+    </ScrollView>
+
+    {/* BOTÃO FIXO DE CONFIRMAÇÃO */}
+    <View style={{
+      padding: 16,
+      borderTopWidth: 1,
+      borderTopColor: '#1E293B',
+      backgroundColor: '#0F172A'
+    }}>
+      <TouchableOpacity 
+        style={[styles.requestButton, { height: 52 }]} 
+        onPress={() => setBookingStep('PAYMENT')}
+        activeOpacity={0.85}
+      >
+        <Text style={[styles.requestButtonText, { fontSize: 16 }]}>Continuar para Pagamento ➔</Text>
+      </TouchableOpacity>
+    </View>
   </SafeAreaView>
 </Modal>
 {/* 💳 SELEÇÃO DE FORMA DE PAGAMENTO */}
@@ -2739,27 +2698,6 @@ return (
                     Pagamento: {paymentMethod === 'ORANGE_MONEY' ? 'Orange Money' : paymentMethod === 'MTN_MOMO' ? 'MTN MoMo' : 'Dinheiro em Espécie'}
                   </Text>
                 </View>
-              </View>
-              {/* 🟢 DADOS DO MOTORISTA E VEÍCULO (INSTÂNCIA CORRIGIDA) */}
-              <View style={styles.driverCardCompact}>
-                <Image 
-                  source={{ uri: formatPhotoUrl(driverInfo.photoUrl || driverInfo.profilePicture) || 'https://via.placeholder.com/100' }} 
-                  style={styles.driverAvatarCompact} 
-                />
-                <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text style={styles.driverNameCompact}>{driverInfo.name}</Text>
-                  <Text style={styles.vehicleModelCompact}>
-                    {driverInfo.carModel || 'Veículo'} {driverInfo.carColor ? `• ${driverInfo.carColor}` : ''}
-                  </Text>
-                  <View style={styles.plateBadgeCompact}>
-                    <Text style={styles.plateTextCompact}>{driverInfo.licensePlate?.toUpperCase() || 'SEM PLACA'}</Text>
-                  </View>
-                </View>
-                <Image 
-                  source={getVehicle3DIconAsset(driverInfo.vehicleType, driverInfo.carColor)} 
-                  style={{ width: 48, height: 48 }} 
-                  resizeMode="contain" 
-                />
               </View>
 
               {/* DADOS DO MOTORISTA E VEÍCULO (ÚNICA INSTÂNCIA) */}
