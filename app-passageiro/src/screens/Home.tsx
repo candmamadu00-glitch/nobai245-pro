@@ -306,7 +306,7 @@ export function Home() {
   const [passengerLocation, setPassengerLocation] = useState<Location.LocationObject | null>(null);
   const [driverLocation, setDriverLocation] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
   const [driverInfo, setDriverInfo] = useState<DriverInfo | null>(null);
-  
+  const [stopsList, setStopsList] = useState<any[]>([]);
   const [pickupCoords, setPickupCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [pickupAddress, setPickupAddress] = useState(t('pickup_location', 'Local de partida'));
   
@@ -569,48 +569,87 @@ useEffect(() => {
     console.error('Erro ao salvar estado local do passageiro:', e);
   }
 };
-// 🟢 1. PADRONIZAÇÃO DO PAYLOAD DE SOLICITAÇÃO
-  const executeRideRequest = (paymentPhoneTarget?: string) => {
-    if (!pickupCoords || !dropoffCoords) return;
+// 🟢 1. PADRONIZAÇÃO DO PAYLOAD DE SOLICITAÇÃO (SUPORTE A MÚLTIPLAS PARADAS + FALLBACK)
+const executeRideRequest = (paymentPhoneTarget?: string) => {
+  if (!pickupCoords) {
+    Alert.alert(
+      t('warning_title', 'Aviso ⚠️'),
+      t('missing_pickup_msg', 'Por favor, defina o local de partida.')
+    );
+    return;
+  }
 
-    const payload = {
-      passengerId: user?.id,
-      passengerName: isForAnotherPerson && guestName ? guestName : user?.fullName || 'Passageiro',
-      passengerPhone: isForAnotherPerson && guestPhone ? guestPhone : user?.phone,
-      passengerPhoto: user?.profilePicture,
-      passengerRating: user?.ratingAverage || 5.0,
-      
-      // Coordenadas padronizadas (Flat + Objects)
-      pickupLat: pickupCoords.latitude,
-      pickupLng: pickupCoords.longitude,
-      destinationLat: dropoffCoords.latitude,
-      destinationLng: dropoffCoords.longitude,
-      originAddress: pickupAddress,
-      destinationAddress: dropoffAddress,
-      referencePoint: referencePoint || '',
+  // Garante coordenadas de destino para serviços sem destino fixo (ex: Aluguel)
+  const targetDropoff = dropoffCoords || pickupCoords;
 
-      // Normalização de Paradas Intermediárias em Array
-      stops: showExtraStop && extraStopCoords ? [{
-        id: `stop_0`,
-        lat: extraStopCoords.latitude,
-        lng: extraStopCoords.longitude,
-        address: extraStopAddress || 'Parada Intermediária',
-        status: 'PENDING'
-      }] : [],
+  // 🟢 Mapeamento completo de MÚLTIPLAS paradas intermediárias
+  let stopsListPayload: any[] = [];
 
-      // Detalhes do Serviço e Pagamento
-      serviceType: serviceType === 'aluguel' ? 'RENTAL' : serviceType === 'entrega' ? 'DELIVERY' : 'RIDE',
-      vehicleType: vehicleType.toUpperCase(),
-      paymentMethod,
-      paymentPhone: paymentPhoneTarget || paymentPhone,
-      priceXof: estimatedPrice,
-      guestName: isForAnotherPerson ? guestName : undefined,
-      guestPhone: isForAnotherPerson ? guestPhone : undefined,
-    };
+  if (Array.isArray(stopsList) && stopsList.length > 0) {
+    stopsListPayload = stopsList.map((s: any, idx: number) => ({
+      id: `stop_${idx}`,
+      lat: Number(s.latitude ?? s.lat),
+      lng: Number(s.longitude ?? s.lng),
+      latitude: Number(s.latitude ?? s.lat),
+      longitude: Number(s.longitude ?? s.lng),
+      address: s.address || s.name || `Parada ${idx + 1}`,
+      status: 'PENDING'
+    }));
+  } else if (showExtraStop && extraStopCoords) {
+    stopsListPayload = [{
+      id: 'stop_0',
+      lat: Number(extraStopCoords.latitude),
+      lng: Number(extraStopCoords.longitude),
+      latitude: Number(extraStopCoords.latitude),
+      longitude: Number(extraStopCoords.longitude),
+      address: extraStopAddress || 'Parada Intermediária',
+      status: 'PENDING'
+    }];
+  }
 
+  const payload = {
+    passengerId: user?.id,
+    passengerName: isForAnotherPerson && guestName ? guestName : user?.fullName || 'Passageiro',
+    passengerPhone: isForAnotherPerson && guestPhone ? guestPhone : user?.phone,
+    passengerPhoto: user?.profilePicture,
+    passengerRating: Number(user?.ratingAverage || 5.0),
+    
+    // Coordenadas
+    pickupLat: pickupCoords.latitude,
+    pickupLng: pickupCoords.longitude,
+    destinationLat: targetDropoff.latitude,
+    destinationLng: targetDropoff.longitude,
+    originAddress: pickupAddress,
+    destinationAddress: serviceType === 'aluguel' ? `Aluguel Toca-Toca` : dropoffAddress,
+    referencePoint: referencePoint || '',
+
+    // Array com TODAS as paradas
+    stops: stopsListPayload,
+    extraStopLat: extraStopCoords?.latitude,
+    extraStopLng: extraStopCoords?.longitude,
+    extraStopAddress: extraStopAddress || undefined,
+
+    // Detalhes da Corrida
+    serviceType: serviceType === 'aluguel' ? 'RENTAL' : serviceType === 'entrega' ? 'DELIVERY' : 'RIDE',
+    vehicleType: vehicleType.toUpperCase(),
+    paymentMethod,
+    paymentPhone: paymentPhoneTarget || paymentPhone,
+    estimatedPrice: estimatedPrice,
+    priceXof: estimatedPrice,
+    guestName: isForAnotherPerson ? guestName : undefined,
+    guestPhone: isForAnotherPerson ? guestPhone : undefined,
+  };
+
+  try {
+    if (socket && !socket.connected) {
+      socket.connect();
+    }
     setRideStatus('searching');
     socket.emit('ride:request', payload);
-  };
+  } catch (err) {
+    console.error('❌ Erro ao enviar solicitação via Socket:', err);
+  }
+};
   // 🟢 SINCRONIZAÇÃO COMPLETA DE CORRIDA ATIVA (INCLUINDO SUPORTE A PARADAS)
   const syncActiveRideWithServer = useCallback(async () => {
     try {
@@ -659,21 +698,29 @@ useEffect(() => {
             if (ride.originAddress) setPickupAddress(ride.originAddress);
           }
 
-          // 🟢 RECUPERAÇÃO DAS PARADAS INTERMEDIÁRIAS
-          if (Array.isArray(ride.stops) && ride.stops.length > 0) {
-            const firstStop = ride.stops[0];
-            const stopLat = Number(firstStop.lat || firstStop.latitude);
-            const stopLng = Number(firstStop.lng || firstStop.longitude);
-            if (!isNaN(stopLat) && !isNaN(stopLng)) {
-              setExtraStopCoords({ latitude: stopLat, longitude: stopLng });
-              setExtraStopAddress(firstStop.address || 'Parada Intermediária');
-              setShowExtraStop(true);
-            }
-          } else if (ride.extraStopLat && ride.extraStopLng) {
-            setExtraStopCoords({ latitude: Number(ride.extraStopLat), longitude: Number(ride.extraStopLng) });
-            if (ride.extraStopAddress) setExtraStopAddress(ride.extraStopAddress);
-            setShowExtraStop(true);
-          }
+          // 🟢 RECUPERAÇÃO COMPLETA DE MÚLTIPLAS PARADAS INTERMEDIÁRIAS
+if (Array.isArray(ride.stops) && ride.stops.length > 0) {
+  const parsedStops = ride.stops.map((s: any, idx: number) => ({
+    id: s.id || `stop_${idx}`,
+    latitude: Number(s.lat ?? s.latitude),
+    longitude: Number(s.lng ?? s.longitude),
+    address: s.address || s.name || `Parada ${idx + 1}`,
+  }));
+
+  // Atualiza estado de lista estendida no passageiro
+  if (typeof setStopsList === 'function') {
+    setStopsList(parsedStops);
+  }
+
+  // Preenche a primeira parada para compatibilidade com markers no mapa
+  setExtraStopCoords({ latitude: parsedStops[0].latitude, longitude: parsedStops[0].longitude });
+  setExtraStopAddress(parsedStops[0].address);
+  setShowExtraStop(true);
+} else if (ride.extraStopLat && ride.extraStopLng) {
+  setExtraStopCoords({ latitude: Number(ride.extraStopLat), longitude: Number(ride.extraStopLng) });
+  if (ride.extraStopAddress) setExtraStopAddress(ride.extraStopAddress);
+  setShowExtraStop(true);
+}
 
           if (ride.destinationLat && ride.destinationLng) {
             setDropoffCoords({ latitude: Number(ride.destinationLat), longitude: Number(ride.destinationLng) });
@@ -2287,113 +2334,122 @@ return (
       </View>
     </View>
 
-    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16 }}>
-      {/* TIPO DE SERVIÇO */}
-      <Text style={styles.sectionLabel}>{t('service_type', 'Tipo de Serviço')}</Text>
-      <View style={styles.serviceTypesContainer}>
-        <TouchableOpacity 
-          style={[styles.serviceTypeButton, serviceType === 'viagem' && styles.serviceTypeActive]}
-          onPress={() => setServiceType('viagem')}
-        >
-          <Ionicons name="car-outline" size={18} color={serviceType === 'viagem' ? '#0F172A' : '#94A3B8'} />
-          <Text style={[styles.serviceTypeText, serviceType === 'viagem' && styles.serviceTypeTextActive]}>Viagem</Text>
-        </TouchableOpacity>
+    {/* 🟢 ABERTURA DO KEYBOARDAVOIDVIEW */}
+    <KeyboardAvoidingView 
+      style={{ flex: 1 }} 
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16 }}>
+        {/* TIPO DE SERVIÇO */}
+        <Text style={styles.sectionLabel}>{t('service_type', 'Tipo de Serviço')}</Text>
+        <View style={styles.serviceTypesContainer}>
+          <TouchableOpacity 
+            style={[styles.serviceTypeButton, serviceType === 'viagem' && styles.serviceTypeActive]}
+            onPress={() => setServiceType('viagem')}
+          >
+            <Ionicons name="car-outline" size={18} color={serviceType === 'viagem' ? '#0F172A' : '#94A3B8'} />
+            <Text style={[styles.serviceTypeText, serviceType === 'viagem' && styles.serviceTypeTextActive]}>Viagem</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity 
-          style={[styles.serviceTypeButton, serviceType === 'entrega' && styles.serviceTypeActive]}
-          onPress={() => setServiceType('entrega')}
-        >
-          <Ionicons name="cube-outline" size={18} color={serviceType === 'entrega' ? '#0F172A' : '#94A3B8'} />
-          <Text style={[styles.serviceTypeText, serviceType === 'entrega' && styles.serviceTypeTextActive]}>Entrega</Text>
-        </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.serviceTypeButton, serviceType === 'entrega' && styles.serviceTypeActive]}
+            onPress={() => setServiceType('entrega')}
+          >
+            <Ionicons name="cube-outline" size={18} color={serviceType === 'entrega' ? '#0F172A' : '#94A3B8'} />
+            <Text style={[styles.serviceTypeText, serviceType === 'entrega' && styles.serviceTypeTextActive]}>Entrega</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity 
-          style={[styles.serviceTypeButton, serviceType === 'aluguel' && styles.serviceTypeActive]}
-          onPress={() => setServiceType('aluguel')}
-        >
-          <Ionicons name="key-outline" size={18} color={serviceType === 'aluguel' ? '#0F172A' : '#94A3B8'} />
-          <Text style={[styles.serviceTypeText, serviceType === 'aluguel' && styles.serviceTypeTextActive]}>Aluguel</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* VEÍCULOS DISPONÍVEIS */}
-      {serviceType === 'aluguel' ? (
-        <View style={{ marginTop: 12 }}>
-          <Text style={styles.sectionLabel}>{t('select_coverage_region', 'Selecione a Região de Cobertura')}</Text>
-          <TouchableOpacity style={[styles.categoryCard, styles.categoryCardActive, { borderColor: '#EAB308', borderWidth: 2 }]} activeOpacity={0.9}>
-            <View style={{ backgroundColor: '#FEF08A', padding: 8, borderRadius: 8, marginRight: 12 }}>
-              <Ionicons name="map-outline" size={24} color="#0F172A" />
-            </View>
-            <View style={styles.categoryTextWrapper}>
-              <Text style={[styles.categoryTitle, styles.categoryTextActive]}>{RENTAL_PRICES[selectedRegion]?.label || 'Bissau'}</Text>
-              <Text style={styles.categorySubtitle}>{RENTAL_PRICES[selectedRegion]?.description}</Text>
-            </View>
-            <Text style={[styles.categoryPriceText, styles.categoryPriceTextActive, { color: '#10B981' }]}>
-              {RENTAL_PRICES[selectedRegion]?.price ? `${RENTAL_PRICES[selectedRegion].price?.toLocaleString('pt-BR')} XOF` : t('on_request', 'Sob Consulta')}
-            </Text>
+          <TouchableOpacity 
+            style={[styles.serviceTypeButton, serviceType === 'aluguel' && styles.serviceTypeActive]}
+            onPress={() => setServiceType('aluguel')}
+          >
+            <Ionicons name="key-outline" size={18} color={serviceType === 'aluguel' ? '#0F172A' : '#94A3B8'} />
+            <Text style={[styles.serviceTypeText, serviceType === 'aluguel' && styles.serviceTypeTextActive]}>Aluguel</Text>
           </TouchableOpacity>
         </View>
-      ) : (
-        <View style={{ marginTop: 12 }}>
-          <Text style={styles.sectionLabel}>Veículos Disponíveis</Text>
-          <View style={{ gap: 10, marginBottom: 16 }}>
-            {VEHICLE_OPTIONS.map((item) => {
-              const isSelected = vehicleType === item.id;
-              const price = calculateVehiclePrice(item.id, estimatedDistance);
-              return (
-                <TouchableOpacity 
-                  key={item.id} 
-                  style={[
-                    styles.categoryCard, 
-                    isSelected && styles.categoryCardActive,
-                    { paddingVertical: 14, paddingHorizontal: 16, borderRadius: 16 }
-                  ]}
-                  activeOpacity={0.85}
-                  onPress={() => setVehicleType(item.id)}
-                >
-                  <Image source={item.image} style={{ width: 55, height: 40 }} resizeMode="contain" />
-                  <View style={[styles.categoryTextWrapper, { marginLeft: 12 }]}>
-                    <Text style={[styles.categoryTitle, isSelected && styles.categoryTextActive, { fontSize: 15 }]}>{item.title}</Text>
-                    <Text style={styles.categorySubtitle}>{item.subtitle}</Text>
-                  </View>
-                  <Text style={[styles.categoryPriceText, isSelected && styles.categoryPriceTextActive, { fontSize: 15, fontWeight: '900' }]}>
-                    {price ? `${price} XOF` : 'Calculando...'}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
+
+        {/* VEÍCULOS DISPONÍVEIS */}
+        {serviceType === 'aluguel' ? (
+          <View style={{ marginTop: 12 }}>
+            <Text style={styles.sectionLabel}>{t('select_coverage_region', 'Selecione a Região de Cobertura')}</Text>
+            <TouchableOpacity style={[styles.categoryCard, styles.categoryCardActive, { borderColor: '#EAB308', borderWidth: 2 }]} activeOpacity={0.9}>
+              <View style={{ backgroundColor: '#FEF08A', padding: 8, borderRadius: 8, marginRight: 12 }}>
+                <Ionicons name="map-outline" size={24} color="#0F172A" />
+              </View>
+              <View style={styles.categoryTextWrapper}>
+                <Text style={[styles.categoryTitle, styles.categoryTextActive]}>{RENTAL_PRICES[selectedRegion]?.label || 'Bissau'}</Text>
+                <Text style={styles.categorySubtitle}>{RENTAL_PRICES[selectedRegion]?.description}</Text>
+              </View>
+              <Text style={[styles.categoryPriceText, styles.categoryPriceTextActive, { color: '#10B981' }]}>
+                {RENTAL_PRICES[selectedRegion]?.price ? `${RENTAL_PRICES[selectedRegion].price?.toLocaleString('pt-BR')} XOF` : t('on_request', 'Sob Consulta')}
+              </Text>
+            </TouchableOpacity>
           </View>
+        ) : (
+          <View style={{ marginTop: 12 }}>
+            <Text style={styles.sectionLabel}>Veículos Disponíveis</Text>
+            <View style={{ gap: 10, marginBottom: 16 }}>
+              {VEHICLE_OPTIONS.map((item) => {
+                const isSelected = vehicleType === item.id;
+                const price = calculateVehiclePrice(item.id, estimatedDistance);
+                return (
+                  <TouchableOpacity 
+                    key={item.id} 
+                    style={[
+                      styles.categoryCard, 
+                      isSelected && styles.categoryCardActive,
+                      { paddingVertical: 14, paddingHorizontal: 16, borderRadius: 16 }
+                    ]}
+                    activeOpacity={0.85}
+                    onPress={() => setVehicleType(item.id)}
+                  >
+                    <Image source={item.image} style={{ width: 55, height: 40 }} resizeMode="contain" />
+                    <View style={[styles.categoryTextWrapper, { marginLeft: 12 }]}>
+                      <Text style={[styles.categoryTitle, isSelected && styles.categoryTextActive, { fontSize: 15 }]}>{item.title}</Text>
+                      <Text style={styles.categorySubtitle}>{item.subtitle}</Text>
+                    </View>
+                    <Text style={[styles.categoryPriceText, isSelected && styles.categoryPriceTextActive, { fontSize: 15, fontWeight: '900' }]}>
+                      {price ? `${price} XOF` : 'Calculando...'}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        )}
+
+        {/* PONTO DE REFERÊNCIA */}
+        <Text style={styles.sectionLabel}>Ponto de Referência (Opcional)</Text>
+        <View style={[styles.referenceContainer, { marginBottom: 24 }]}>
+          <TextInput
+            style={styles.referenceInput}
+            placeholder="Ex: Próximo à farmácia, casa azul..."
+            placeholderTextColor="#94A3B8"
+            value={referencePoint}
+            onChangeText={setReferencePoint}
+            returnKeyType="done"
+            onSubmitEditing={Keyboard.dismiss}
+            blurOnSubmit={true}
+          />
         </View>
-      )}
+      </ScrollView>
 
-      {/* PONTO DE REFERÊNCIA */}
-      <Text style={styles.sectionLabel}>Ponto de Referência (Opcional)</Text>
-      <View style={[styles.referenceContainer, { marginBottom: 24 }]}>
-        <TextInput
-          style={styles.referenceInput}
-          placeholder="Ex: Próximo à farmácia, casa azul..."
-          placeholderTextColor="#94A3B8"
-          value={referencePoint}
-          onChangeText={setReferencePoint}
-        />
+      {/* BOTÃO FIXO DE CONFIRMAÇÃO */}
+      <View style={{
+        padding: 16,
+        borderTopWidth: 1,
+        borderTopColor: '#1E293B',
+        backgroundColor: '#0F172A'
+      }}>
+        <TouchableOpacity 
+          style={[styles.requestButton, { height: 52 }]} 
+          onPress={() => setBookingStep('PAYMENT')}
+          activeOpacity={0.85}
+        >
+          <Text style={[styles.requestButtonText, { fontSize: 16 }]}>Continuar para Pagamento ➔</Text>
+        </TouchableOpacity>
       </View>
-    </ScrollView>
-
-    {/* BOTÃO FIXO DE CONFIRMAÇÃO */}
-    <View style={{
-      padding: 16,
-      borderTopWidth: 1,
-      borderTopColor: '#1E293B',
-      backgroundColor: '#0F172A'
-    }}>
-      <TouchableOpacity 
-        style={[styles.requestButton, { height: 52 }]} 
-        onPress={() => setBookingStep('PAYMENT')}
-        activeOpacity={0.85}
-      >
-        <Text style={[styles.requestButtonText, { fontSize: 16 }]}>Continuar para Pagamento ➔</Text>
-      </TouchableOpacity>
-    </View>
+    </KeyboardAvoidingView>
   </SafeAreaView>
 </Modal>
 {/* 💳 SELEÇÃO DE FORMA DE PAGAMENTO */}
