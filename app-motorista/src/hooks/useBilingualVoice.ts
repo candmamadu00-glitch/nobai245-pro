@@ -18,76 +18,75 @@ const CREOLE_AUDIO_MAP: Record<string, any> = {
 
 export function useBilingualVoice() {
   const playerRef = useRef<any>(null);
+  const lastSpokenRef = useRef<{ text: string; time: number }>({ text: '', time: 0 });
 
   const speakInstruction = useCallback(async (
-    actionKey: keyof typeof CREOLE_AUDIO_MAP,
+    actionKey: string,
     ptText: string,
     forcedMode?: VoiceMode
   ) => {
-    console.log(`🚀 [VOZ LOG] Executando speakInstruction para "${actionKey}"...`);
     try {
-      const savedMode = (await AsyncStorage.getItem(STORAGE_VOICE_MODE_KEY)) as VoiceMode;
-      const mode = forcedMode || savedMode || 'BOTH';
-
-      console.log(`🔍 [VOZ LOG] Modo ativo: "${mode}" | Texto PT: "${ptText}"`);
-
-      if (mode === 'OFF') {
-        console.log('🔇 [VOZ LOG] Orientação por voz está DESATIVADA nas configurações.');
+      const now = Date.now();
+      
+      // 🛡️ TRAVA ANTIRREPETIÇÃO: Se for a mesma instrução dita nos últimos 10 segundos, ignora
+      if (lastSpokenRef.current.text === ptText && (now - lastSpokenRef.current.time) < 10000) {
         return;
       }
 
+      const savedMode = (await AsyncStorage.getItem(STORAGE_VOICE_MODE_KEY)) as VoiceMode;
+      const mode = forcedMode || savedMode || 'BOTH';
+
+      if (mode === 'OFF') return;
+
+      // Atualiza o registro do último áudio tocado
+      lastSpokenRef.current = { text: ptText, time: now };
+
+      // Para áudio anterior antes de iniciar o novo
       if (playerRef.current) {
-        console.log('🛑 [VOZ LOG] Parando áudio anterior...');
         try { playerRef.current.pause(); } catch (e) {}
         playerRef.current = null;
       }
 
+      // Garante parada da síntese de voz (TTS) anterior
+      try { Speech.stop(); } catch (e) {}
+
       const playCreoleMp3 = () => {
         const asset = CREOLE_AUDIO_MAP[actionKey];
-        console.log(`🎵 [VOZ LOG] ID do Asset do MP3 "${actionKey}":`, asset);
-
-        if (!asset) {
-          console.error(`💥 [VOZ LOG] ERRO: Ficheiro MP3 para "${actionKey}" não encontrado!`);
-          return;
-        }
+        if (!asset) return;
 
         try {
-          console.log(`▶️ [VOZ LOG] Criando e iniciando AudioPlayer (expo-audio)...`);
           const player = createAudioPlayer(asset);
           playerRef.current = player;
           player.play();
-          console.log('✅ [VOZ LOG] player.play() executado com sucesso!');
         } catch (errMp3) {
           console.error(`💥 [VOZ LOG] ERRO ao tocar MP3 Crioulo:`, errMp3);
         }
       };
 
       if (mode === 'PT') {
-        console.log('🗣️ [VOZ LOG] Falando em Português...');
         Speech.speak(ptText, { language: 'pt-PT', rate: 1.0 });
         return;
       }
 
       if (mode === 'CRI') {
-        console.log('🗣️ [VOZ LOG] Tocando MP3 Crioulo...');
         playCreoleMp3();
         return;
       }
 
       if (mode === 'BOTH') {
-        console.log('🗣️ [VOZ LOG] Falando Português + Crioulo...');
         Speech.speak(ptText, {
           language: 'pt-PT',
           rate: 1.05,
           onDone: () => {
-            console.log('✅ [VOZ LOG] Português concluído. Tocando Crioulo...');
             playCreoleMp3();
           },
-          onError: (e) => console.error('💥 [VOZ LOG] ERRO no TTS:', e),
+          onError: () => {
+            playCreoleMp3();
+          },
         });
       }
     } catch (err) {
-      console.error('💥 [VOZ LOG] Erro crítico:', err);
+      console.error('💥 [VOZ LOG] Erro crítico na voz:', err);
     }
   }, []);
 
