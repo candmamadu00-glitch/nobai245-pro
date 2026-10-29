@@ -315,7 +315,7 @@ export function ChatModal({
       setPlayingAudioId(null);
     }
   };
-
+ 
   const renderAvatar = (photoUrl?: string | null) => {
     if (photoUrl) {
       return <Image source={{ uri: photoUrl }} style={styles.avatarImage} />;
@@ -493,7 +493,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(15, 23, 42, 0.4)', 
   },
   chatContainer: {

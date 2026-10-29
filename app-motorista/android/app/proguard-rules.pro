@@ -12,3 +12,9 @@
 -keep class com.facebook.react.turbomodule.** { *; }
 
 # Add any project specific keep options here:
+
+-keep class expo.modules.kotlin.** { *; }
+-keep class expo.modules.** { *; }
+-dontwarn expo.modules.kotlin.**
+-dontwarn expo.modules.**
+

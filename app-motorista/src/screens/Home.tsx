@@ -463,7 +463,41 @@ export function Home() {
   }, [queuedOfferData, incomingRide, rideState, playBilingualVoice]);
 
   useEffect(() => { if (route.params?.openChat) setIsChatVisible(true); }, [route.params]); 
+// 🟢 CARREGAMENTO INICIAL DE GPS (Garante que o ícone do carro apareça assim que o app abre)
+useEffect(() => {
+  async function loadInitialPosition() {
+    try {
+      const foreground = await Location.requestForegroundPermissionsAsync();
+      if (foreground.status === 'granted') {
+        const currentLoc = await Location.getCurrentPositionAsync({ 
+          accuracy: Location.Accuracy.Balanced 
+        });
 
+        if (currentLoc?.coords && isMountedRef.current) {
+          // Define a localização inicial no estado para renderizar o carro no mapa imediatamente
+          setLocation(currentLoc);
+          lastDriverCoordsRef.current = {
+            latitude: currentLoc.coords.latitude,
+            longitude: currentLoc.coords.longitude,
+            heading: currentLoc.coords.heading || 0,
+          };
+
+          // Centraliza a câmera do mapa na posição inicial do motorista
+          if (cameraRef.current) {
+            cameraRef.current.setCamera({
+              centerCoordinate: [currentLoc.coords.longitude, currentLoc.coords.latitude],
+              zoomLevel: 16,
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ Não foi possível obter posição inicial prévia do motorista:', err);
+    }
+  }
+
+  loadInitialPosition();
+}, []);
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
     if (rideState === 'arrived') {
@@ -2899,66 +2933,8 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
 
-  // MODAL RECIBO
-  receiptOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
-    justifyContent: 'flex-end',
-  },
-  receiptCard: {
-    backgroundColor: '#1E293B',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    padding: 24,
-    alignItems: 'center',
-  },
-  receiptHeader: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#10B981',
-    marginBottom: 4,
-  },
-  receiptSub: {
-    fontSize: 13,
-    color: '#94A3B8',
-    textAlign: 'center',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#334155',
-    width: '100%',
-    marginVertical: 16,
-  },
-  receiptLabel: {
-    color: '#94A3B8',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  receiptAmount: {
-    color: '#EAB308',
-    fontSize: 28,
-    fontWeight: '900',
-    marginVertical: 4,
-  },
-  receiptDist: {
-    color: '#64748B',
-    fontSize: 11,
-    marginBottom: 20,
-  },
-  closeReceiptBtn: {
-    backgroundColor: '#EAB308',
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: 'center',
-    width: '100%',
-  },
-  closeReceiptText: {
-    color: '#0F172A',
-    fontWeight: '900',
-    fontSize: 15,
-  },
   // 🧾 ESTILOS DO MODAL DE RECIBO
- receiptOverlay: {
+  receiptOverlay: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.85)',
     justifyContent: 'center',
