@@ -2,18 +2,21 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, Text, TouchableOpacity, StyleSheet, Modal, 
   KeyboardAvoidingView, Platform, Keyboard,
-  FlatList, TextInput, Image, TouchableWithoutFeedback
+  FlatList, TextInput, Image, TouchableWithoutFeedback, Alert
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Socket } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
+import { Audio } from 'expo-av';
 import { api } from '../services/api';
 
 export interface ChatMessage {
   id: string;
   sender: 'passenger' | 'driver';
-  text: string;
+  text?: string;
+  audioUrl?: string | null;
+  audioDuration?: number;
   senderPhoto?: string | null;
   createdAt?: string;
 }
@@ -56,9 +59,30 @@ export function ChatModal({
   const insets = useSafeAreaInsets();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
-  const flatListRef = useRef<FlatList>(null);
+  
+  // Estados para gravação e reprodução de áudio
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordDuration, setRecordDuration] = useState(0);
+  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const [soundObject, setSoundObject] = useState<Audio.Sound | null>(null);
 
-  // 1. Escuta mensagens do Socket com DEDUPLICAÇÃO RIGOROSA
+  const flatListRef = useRef<FlatList>(null);
+  const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // 1. Limpeza de som ao fechar o modal ou desmontar
+  useEffect(() => {
+    return () => {
+      if (soundObject) {
+        soundObject.unloadAsync();
+      }
+      if (recordTimerRef.current) {
+        clearInterval(recordTimerRef.current);
+      }
+    };
+  }, [soundObject]);
+
+  // 2. Escuta de mensagens via Socket (Texto + Áudio)
   useEffect(() => {
     if (!socket || !visible) return;
 
@@ -68,37 +92,24 @@ export function ChatModal({
       const formattedMsg: ChatMessage = {
         id: String(msg.id || Date.now()),
         sender: msg.sender === 'passenger' || msg.senderType === 'PASSENGER' ? 'passenger' : 'driver',
-        text: msg.text || msg.message || msg.content || '',
+        text: msg.text || msg.message || '',
+        audioUrl: msg.audioUrl || msg.audio || null,
+        audioDuration: msg.audioDuration || 0,
         senderPhoto: msg.senderPhoto,
         createdAt: msg.createdAt || new Date().toISOString(),
       };
 
       setMessages((prev) => {
-        // 🟢 TRAVA ANTI-DUPLICADOS: Evita adicionar se o ID ou (texto + remetente recente) já existirem
-        const isDuplicate = prev.some((item) => {
-          if (item.id === formattedMsg.id) return true;
-          
-          const sameSender = item.sender === formattedMsg.sender;
-          const sameText = item.text.trim() === formattedMsg.text.trim();
-          
-          const timeA = new Date(item.createdAt || 0).getTime();
-          const timeB = new Date(formattedMsg.createdAt || 0).getTime();
-          const isRecent = Math.abs(timeA - timeB) < 3000; // 3 segundos de janela
-
-          return sameSender && sameText && isRecent;
-        });
-
+        const isDuplicate = prev.some((item) => item.id === formattedMsg.id);
         if (isDuplicate) return prev;
         return [...prev, formattedMsg];
       });
     };
 
-    // Remove ouvintes antigos para evitar acúmulo
     socket.off('chat:receive_message');
     socket.off('chat:message');
     socket.off('chat:new_message');
 
-    // Assina os eventos
     socket.on('chat:receive_message', handleReceiveMessage);
     socket.on('chat:message', handleReceiveMessage);
     socket.on('chat:new_message', handleReceiveMessage);
@@ -110,13 +121,12 @@ export function ChatModal({
     };
   }, [socket, visible]);
 
-  // 2. Busca histórico HTTP
+  // 3. Busca histórico HTTP
   useEffect(() => {
     if (visible && rideId) {
       api.get(`/rides/${rideId}/chat`)
         .then(response => {
           const data = response?.data;
-          
           const rawList = Array.isArray(data) 
             ? data 
             : Array.isArray(data?.messages) 
@@ -128,7 +138,9 @@ export function ChatModal({
           const history: ChatMessage[] = rawList.map((msg: any) => ({
             id: String(msg.id || Math.random()),
             sender: (msg.senderType === 'PASSENGER' || msg.sender === 'passenger') ? 'passenger' : 'driver',
-            text: msg.message || msg.text || msg.content || '',
+            text: msg.message || msg.text || '',
+            audioUrl: msg.audioUrl || msg.audio || null,
+            audioDuration: msg.audioDuration || 0,
             createdAt: msg.createdAt,
           }));
 
@@ -140,10 +152,14 @@ export function ChatModal({
         });
     } else if (!visible) {
       setMessages([]);
+      if (soundObject) {
+        soundObject.unloadAsync();
+        setPlayingAudioId(null);
+      }
     }
   }, [visible, rideId]);
 
-  // 3. Envio de mensagem seguro
+  // 4. Envio de mensagem de texto
   const sendMessage = () => {
     if (!inputText.trim() || !socket) return;
 
@@ -158,12 +174,146 @@ export function ChatModal({
       createdAt: new Date().toISOString(),
     };
 
-    // Adiciona localmente apenas 1 vez
     setMessages((prev) => [...prev, newMsg]);
-
-    // Emite via socket para o outro usuário
     socket.emit('chat:send_message', { rideId, text, id: uniqueId });
     setInputText('');
+  };
+
+  // 5. Iniciar gravação de áudio (Máximo 10 segundos)
+  const startRecording = async () => {
+    try {
+      const permission = await Audio.requestPermissionsAsync();
+      if (permission.status !== 'granted') {
+        Alert.alert(t('permission_denied', 'Permissão negada'), t('mic_permission_needed', 'Precisamos de acesso ao microfone para enviar áudios.'));
+        return;
+      }
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+
+      const { recording: newRecording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+
+      setRecording(newRecording);
+      setIsRecording(true);
+      setRecordDuration(0);
+
+      // Cronômetro para limite de 10 segundos
+      recordTimerRef.current = setInterval(() => {
+        setRecordDuration((prev) => {
+          if (prev >= 9) {
+            stopAndSendRecording(newRecording, 10);
+            return 10;
+          }
+          return prev + 1;
+        });
+      }, 1000);
+
+    } catch (err) {
+      console.error('Falha ao iniciar gravação:', err);
+    }
+  };
+
+  // 6. Parar e enviar gravação de áudio
+  const stopAndSendRecording = async (recToStop?: Audio.Recording | null, finalDuration?: number) => {
+    if (recordTimerRef.current) {
+      clearInterval(recordTimerRef.current);
+      recordTimerRef.current = null;
+    }
+
+    const currentRec = recToStop || recording;
+    if (!currentRec) return;
+
+    try {
+      setIsRecording(false);
+      await currentRec.stopAndUnloadAsync();
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+
+      const uri = currentRec.getURI();
+      setRecording(null);
+
+      if (!uri) return;
+
+      const durationSec = finalDuration || recordDuration || 1;
+      const uniqueId = `audio-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+
+      // Cria objeto de mensagem local
+      const newMsg: ChatMessage = {
+        id: uniqueId,
+        sender: currentRole,
+        audioUrl: uri,
+        audioDuration: durationSec,
+        senderPhoto: currentUserPhoto,
+        createdAt: new Date().toISOString(),
+      };
+
+      setMessages((prev) => [...prev, newMsg]);
+
+      // Envio via socket (pode enviar o URI ou integrar com a rota de upload de mídia da sua API)
+      socket.emit('chat:send_message', { 
+        rideId, 
+        audioUrl: uri, 
+        audioDuration: durationSec, 
+        id: uniqueId 
+      });
+
+    } catch (error) {
+      console.error('Erro ao finalizar áudio:', error);
+    }
+  };
+
+  // 7. Cancelar gravação sem enviar
+  const cancelRecording = async () => {
+    if (recordTimerRef.current) {
+      clearInterval(recordTimerRef.current);
+      recordTimerRef.current = null;
+    }
+    if (recording) {
+      try {
+        await recording.stopAndUnloadAsync();
+      } catch (e) {}
+    }
+    setRecording(null);
+    setIsRecording(false);
+    setRecordDuration(0);
+  };
+
+  // 8. Reproduzir ou Pausar Mensagem de Voz
+  const togglePlayAudio = async (msgId: string, audioUrl?: string | null) => {
+    if (!audioUrl) return;
+
+    try {
+      if (playingAudioId === msgId && soundObject) {
+        await soundObject.pauseAsync();
+        setPlayingAudioId(null);
+        return;
+      }
+
+      if (soundObject) {
+        await soundObject.unloadAsync();
+      }
+
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: audioUrl },
+        { shouldPlay: true }
+      );
+
+      setSoundObject(sound);
+      setPlayingAudioId(msgId);
+
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.isLoaded && status.didJustFinish) {
+          setPlayingAudioId(null);
+          sound.unloadAsync();
+        }
+      });
+    } catch (error) {
+      console.warn("Erro ao reproduzir áudio:", error);
+      setPlayingAudioId(null);
+    }
   };
 
   const renderAvatar = (photoUrl?: string | null) => {
@@ -222,15 +372,45 @@ export function ChatModal({
             onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
             renderItem={({ item }) => {
               const isMe = item.sender === currentRole;
+              const isPlaying = playingAudioId === item.id;
+
               return (
                 <View style={[styles.messageRow, isMe ? styles.rowMe : styles.rowOther]}>
                   {!isMe && renderAvatar(item.senderPhoto || otherUserPhoto)}
                   
                   <View style={styles.messageContent}>
                     <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleOther]}>
-                      <Text style={[styles.messageText, isMe ? styles.textMe : styles.textOther]}>
-                        {item.text}
-                      </Text>
+                      
+                      {/* SE FOR MENSAGEM DE ÁUDIO */}
+                      {item.audioUrl ? (
+                        <TouchableOpacity 
+                          style={styles.audioContainer}
+                          onPress={() => togglePlayAudio(item.id, item.audioUrl)}
+                          activeOpacity={0.8}
+                        >
+                          <Ionicons 
+                            name={isPlaying ? "pause-circle" : "play-circle"} 
+                            size={32} 
+                            color={isMe ? "#EAB308" : "#0F172A"} 
+                          />
+                          <View style={styles.audioWaveformPlaceholder}>
+                            <View style={[styles.audioBar, { height: 12, backgroundColor: isMe ? '#FFF' : '#64748B' }]} />
+                            <View style={[styles.audioBar, { height: 20, backgroundColor: isMe ? '#FFF' : '#64748B' }]} />
+                            <View style={[styles.audioBar, { height: 16, backgroundColor: isMe ? '#FFF' : '#64748B' }]} />
+                            <View style={[styles.audioBar, { height: 24, backgroundColor: isMe ? '#FFF' : '#64748B' }]} />
+                            <View style={[styles.audioBar, { height: 10, backgroundColor: isMe ? '#FFF' : '#64748B' }]} />
+                          </View>
+                          <Text style={[styles.audioDurationText, isMe ? styles.textMe : styles.textOther]}>
+                            00:{String(item.audioDuration || 0).padStart(2, '0')}
+                          </Text>
+                        </TouchableOpacity>
+                      ) : (
+                        /* SE FOR MENSAGEM DE TEXTO */
+                        <Text style={[styles.messageText, isMe ? styles.textMe : styles.textOther]}>
+                          {item.text}
+                        </Text>
+                      )}
+
                     </View>
                     {item.createdAt && (
                       <Text style={[styles.timestamp, isMe ? styles.timestampMe : styles.timestampOther]}>
@@ -245,25 +425,61 @@ export function ChatModal({
             }}
           />
 
-          {/* CAIXA DE ENTRADA DE MENSAGEM */}
+          {/* CAIXA DE ENTRADA / CONTROLE DE GRAVAÇÃO */}
           <View style={[styles.chatInputContainer, { paddingBottom: dynamicBottomPadding }]}>
-            <TextInput
-              style={styles.chatInput}
-              value={inputText}
-              onChangeText={setInputText}
-              placeholder={t('type_something', 'Digite sua mensagem...')}
-              placeholderTextColor="#94A3B8"
-              multiline
-              maxLength={250}
-            />
-            <TouchableOpacity 
-              style={[styles.chatSendButton, !inputText.trim() && styles.chatSendButtonDisabled]} 
-              onPress={sendMessage}
-              disabled={!inputText.trim()}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="send" size={18} color="#FFF" style={styles.sendIcon} />
-            </TouchableOpacity>
+            {isRecording ? (
+              /* BARRA DE GRAVAÇÃO ATIVA (ATÉ 10s) */
+              <View style={styles.recordingBar}>
+                <TouchableOpacity onPress={cancelRecording} style={styles.cancelRecBtn}>
+                  <Ionicons name="trash-outline" size={22} color="#EF4444" />
+                </TouchableOpacity>
+
+                <View style={styles.recordingTimerContainer}>
+                  <View style={styles.recordingDot} />
+                  <Text style={styles.recordingTimerText}>
+                    00:{String(recordDuration).padStart(2, '0')} / 00:10
+                  </Text>
+                </View>
+
+                <TouchableOpacity 
+                  onPress={() => stopAndSendRecording()} 
+                  style={styles.sendAudioBtn}
+                >
+                  <Ionicons name="checkmark-sharp" size={20} color="#FFF" />
+                </TouchableOpacity>
+              </View>
+            ) : (
+              /* ENTRADA DE TEXTO E MIC NORMAL */
+              <>
+                <TextInput
+                  style={styles.chatInput}
+                  value={inputText}
+                  onChangeText={setInputText}
+                  placeholder={t('type_something', 'Digite sua mensagem...')}
+                  placeholderTextColor="#94A3B8"
+                  multiline
+                  maxLength={250}
+                />
+
+                {inputText.trim().length > 0 ? (
+                  <TouchableOpacity 
+                    style={styles.chatSendButton} 
+                    onPress={sendMessage}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="send" size={18} color="#FFF" style={styles.sendIcon} />
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity 
+                    style={styles.micButton} 
+                    onPress={startRecording}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="mic" size={22} color="#FFF" />
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
           </View>
         </View>
       </KeyboardAvoidingView>
@@ -274,10 +490,10 @@ export function ChatModal({
 const styles = StyleSheet.create({
   chatOverlay: {
     flex: 1,
-    justify: 'flex-end',
+    justifyContent: 'flex-end',
   },
   backdrop: {
-    ...StyleSheet.absoluteFill,
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(15, 23, 42, 0.4)', 
   },
   chatContainer: {
@@ -340,7 +556,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
   },
   messageContent: {
-    maxWidth: '72%',
+    maxWidth: '75%',
   },
   bubble: {
     paddingHorizontal: 16,
@@ -392,7 +608,7 @@ const styles = StyleSheet.create({
   },
   chatInputContainer: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: 12,
     borderTopWidth: 1,
@@ -422,10 +638,76 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  chatSendButtonDisabled: {
-    backgroundColor: '#CBD5E1',
+  micButton: {
+    backgroundColor: '#EF4444',
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   sendIcon: {
     marginLeft: 2, 
+  },
+  /* ESTILOS DE ÁUDIO */
+  audioContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minWidth: 160,
+  },
+  audioWaveformPlaceholder: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    flex: 1,
+  },
+  audioBar: {
+    width: 3,
+    borderRadius: 2,
+  },
+  audioDurationText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  /* ESTILOS BARRA DE GRAVAÇÃO ATIVA */
+  recordingBar: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: 24,
+    paddingHorizontal: 12,
+    height: 48,
+  },
+  cancelRecBtn: {
+    padding: 6,
+  },
+  recordingTimerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  recordingDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#EF4444',
+  },
+  recordingTimerText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#991B1B',
+  },
+  sendAudioBtn: {
+    backgroundColor: '#16A34A',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

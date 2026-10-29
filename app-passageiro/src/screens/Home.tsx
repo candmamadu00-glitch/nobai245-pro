@@ -28,6 +28,7 @@ import { api } from '../services/api';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { registerAndSendPushToken } from '../services/notifications';
 import { updateOngoingRideNotification, dismissOngoingRideNotification } from '../services/ongoingNotification';
+import * as Notifications from 'expo-notifications';
 // Token Mapbox
 const MAPBOX_ACCESS_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_KEY || 'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZTRyc3NmMDBzMTJ5cTA1anJvYjFsOSJ9.pUAoGXwZS8FtYNr85VD1TA';
 if (MAPBOX_ACCESS_TOKEN) {
@@ -36,7 +37,7 @@ if (MAPBOX_ACCESS_TOKEN) {
 
 const STORAGE_RIDE_KEY = '@bai245:active_ride_state';
 const STORAGE_FAVORITES_KEY = '@bai245:favorite_places';
-
+const STORAGE_RECENT_SEARCHES_KEY = '@bai245:recent_searches';
 const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com').replace(/\/api\/?$/, '');
 
 const BISSAU_CENTER = { latitude: 11.8636, longitude: -15.5977 };
@@ -349,6 +350,7 @@ export function Home() {
   const [isPaymentModalVisible, setIsPaymentModalVisible] = useState(false);
   const [paymentPhone, setPaymentPhone] = useState((user as any)?.phone || '955000000');
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [recentSearches, setRecentSearches] = useState<MapboxGeocodingFeature[]>([]);
 
   const [, setIsConnected] = useState(true);
   const [locationError, setLocationError] = useState<string | null>(null);
@@ -1014,7 +1016,75 @@ useEffect(() => {
     const backHandlerSubscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => backHandlerSubscription.remove();
   }, [isMenuVisible, isChatVisible, isSearchModalVisible, showCancelModal, showRatingModal, bookingStep, rideStatus]);
+// 🟢 ESTADO E CARREGAMENTO DO HISTÓRICO DE PESQUISAS RECENTES
 
+useEffect(() => {
+  async function loadRecentSearches() {
+    try {
+      const savedRecents = await AsyncStorage.getItem(STORAGE_RECENT_SEARCHES_KEY);
+      if (savedRecents && isMountedRef.current) {
+        setRecentSearches(JSON.parse(savedRecents));
+      }
+    } catch (e) {
+      console.error('Erro ao carregar histórico de buscas:', e);
+    }
+  }
+  loadRecentSearches();
+}, []);
+
+// 🟢 REGISTRA NOVA PESQUISA NO HISTÓRICO (MÁXIMO DE 10 ITENS)
+const saveToRecentSearches = async (newItem: MapboxGeocodingFeature) => {
+  try {
+    const filtered = recentSearches.filter(
+      item => item.description.toLowerCase().trim() !== newItem.description.toLowerCase().trim()
+    );
+    const updated = [newItem, ...filtered].slice(0, 10);
+
+    setRecentSearches(updated);
+    await AsyncStorage.setItem(STORAGE_RECENT_SEARCHES_KEY, JSON.stringify(updated));
+  } catch (e) {
+    console.error('Erro ao salvar busca recente:', e);
+  }
+};
+
+// 🟢 EXCLUI UM ITEM DO HISTÓRICO DE BUSCAS
+const removeRecentSearch = async (id: string) => {
+  try {
+    const updated = recentSearches.filter(item => item.id !== id);
+    setRecentSearches(updated);
+    await AsyncStorage.setItem(STORAGE_RECENT_SEARCHES_KEY, JSON.stringify(updated));
+  } catch (e) {
+    console.error('Erro ao remover busca recente:', e);
+  }
+};
+
+// 🟢 SALVA LOCAL FAVORITO (CASA OU TRABALHO)
+const saveFavoritePlace = async (type: 'home' | 'work', place: FavoritePlace) => {
+  try {
+    let updatedHome = homeLocation;
+    let updatedWork = workLocation;
+
+    if (type === 'home') {
+      updatedHome = place;
+      setHomeLocation(place);
+    } else {
+      updatedWork = place;
+      setWorkLocation(place);
+    }
+
+    await AsyncStorage.setItem(
+      STORAGE_FAVORITES_KEY,
+      JSON.stringify({ home: updatedHome, work: updatedWork })
+    );
+
+    Alert.alert(
+      'Endereço Salvo! 🌟',
+      `${type === 'home' ? 'Casa' : 'Trabalho'} definido para: ${place.address}`
+    );
+  } catch (e) {
+    console.error('Erro ao salvar local favorito:', e);
+  }
+};
   // 🟢 EXTRATOR UNIFICADO PARA EVITAR driverInfo NULL (SUPORTA NESTED E FLAT)
 const extractDriverInfo = (source: any, otpFallback?: string): DriverInfo | null => {
   if (!source) return null;
@@ -1851,6 +1921,16 @@ function openSearchModal(type: 'pickup' | 'dropoff' | 'extraStop') {
 }
 
 const handleSelectSearchResult = (address: string, coords: { latitude: number; longitude: number }) => {
+  const selectedFeature: MapboxGeocodingFeature = {
+    id: `recent_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    description: address,
+    latitude: coords.latitude,
+    longitude: coords.longitude,
+  };
+
+  // Salva no histórico de recentes
+  saveToRecentSearches(selectedFeature);
+
   if (searchType === 'pickup') {
     isManualPickupRef.current = true;
     setPickupAddress(address);
@@ -2396,19 +2476,6 @@ return (
           </View>
         </View>
       )}
-
-      {/* PONTO DE REFERÊNCIA */}
-      <Text style={styles.sectionLabel}>Ponto de Referência (Opcional)</Text>
-      <View style={[styles.referenceContainer, { marginBottom: 24 }]}>
-        <TextInput
-          style={styles.referenceInput}
-          placeholder="Ex: Próximo à farmácia, casa azul..."
-          placeholderTextColor="#94A3B8"
-          value={referencePoint}
-          onChangeText={setReferencePoint}
-        />
-      </View>
-    </ScrollView>
 
     {/* BOTÃO FIXO DE CONFIRMAÇÃO */}
     <View style={{
@@ -3080,7 +3147,7 @@ return (
     >
       <SafeAreaView style={styles.searchModalContainer}>
         <KeyboardAvoidingView 
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
           style={{ flex: 1 }}
         >
           {/* CABEÇALHO */}
@@ -3107,166 +3174,289 @@ return (
             <View style={{ width: 40 }} />
           </View>
 
-          {/* CORPO DO FORMULÁRIO DE BUSCA */}
+          {/* CORPO DO FORMULÁRIO COM SCROLLVIEW (IMPEDE O TECLADO DE COBRIR OS CAMPOS) */}
           <View style={styles.modalBody}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15, paddingHorizontal: 4 }}>
-              <View style={{ alignItems: 'center', marginRight: 12 }}>
-                <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#EAB308' }} />
-                <View style={{ width: 2, height: showExtraStop ? 42 : 32, backgroundColor: '#334155', marginVertical: 4 }} />
-                {showExtraStop && (
-                  <>
-                    <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#3B82F6' }} />
-                    <View style={{ width: 2, height: 42, backgroundColor: '#334155', marginVertical: 4 }} />
-                  </>
-                )}
-                <View style={{ width: 10, height: 10, backgroundColor: '#10B981', borderRadius: 2 }} />
-              </View>
-
-              <View style={{ flex: 1 }}>
-                {/* 1. LOCAL DE PARTIDA */}
-                <View style={[
-                  styles.mapboxSearchInputWrapper, 
-                  searchType === 'pickup' ? { borderColor: '#EAB308', borderWidth: 1 } : { marginBottom: 10, borderWidth: 1, borderColor: '#334155' }
-                ]}>
-                  <TextInput
-                    style={styles.mapboxSearchInput}
-                    placeholder={t('pickup_location', 'Local de Partida')}
-                    placeholderTextColor="#64748B"
-                    value={searchType === 'pickup' ? searchQuery : pickupAddress}
-                    autoCorrect={false}
-                    autoCapitalize="sentences"
-                    onFocus={() => { setSearchType('pickup'); setSearchQuery(pickupAddress); }}
-                    onChangeText={(text) => {
-                      setSearchQuery(text);
-                      handleMapboxSearch(text);
-                    }}
-                  />
-                  {isSearchingMapbox && searchType === 'pickup' ? (
-                    <ActivityIndicator size="small" color="#EAB308" style={{ marginRight: 6 }} />
-                  ) : (searchType === 'pickup' ? searchQuery : pickupAddress) ? (
-                    <TouchableOpacity onPress={() => { setSearchQuery(''); setPickupAddress(''); }}>
-                      <Ionicons name="close-circle" size={18} color="#64748B" />
-                    </TouchableOpacity>
-                  ) : null}
+            <ScrollView 
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 24 }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15, paddingHorizontal: 4 }}>
+                <View style={{ alignItems: 'center', marginRight: 12 }}>
+                  <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#EAB308' }} />
+                  <View style={{ width: 2, height: showExtraStop ? 42 : 32, backgroundColor: '#334155', marginVertical: 4 }} />
+                  {showExtraStop && (
+                    <>
+                      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#3B82F6' }} />
+                      <View style={{ width: 2, height: 42, backgroundColor: '#334155', marginVertical: 4 }} />
+                    </>
+                  )}
+                  <View style={{ width: 10, height: 10, backgroundColor: '#10B981', borderRadius: 2 }} />
                 </View>
 
-                {/* 2. PARADA EXTRA */}
-                {showExtraStop && (
+                <View style={{ flex: 1 }}>
+                  {/* 1. LOCAL DE PARTIDA */}
                   <View style={[
                     styles.mapboxSearchInputWrapper, 
-                    searchType === 'extraStop' ? { borderColor: '#3B82F6', borderWidth: 1 } : { marginBottom: 10, borderWidth: 1, borderColor: '#334155' }
+                    searchType === 'pickup' ? { borderColor: '#EAB308', borderWidth: 1 } : { marginBottom: 10, borderWidth: 1, borderColor: '#334155' }
                   ]}>
                     <TextInput
                       style={styles.mapboxSearchInput}
-                      placeholder="Adicionar parada..."
+                      placeholder={t('pickup_location', 'Local de Partida')}
                       placeholderTextColor="#64748B"
-                      value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
+                      value={searchType === 'pickup' ? searchQuery : pickupAddress}
                       autoCorrect={false}
                       autoCapitalize="sentences"
-                      onFocus={() => { setSearchType('extraStop'); setSearchQuery(extraStopAddress); }}
+                      onFocus={() => { setSearchType('pickup'); setSearchQuery(pickupAddress); }}
                       onChangeText={(text) => {
                         setSearchQuery(text);
                         handleMapboxSearch(text);
                       }}
                     />
-                    <TouchableOpacity 
-                      onPress={() => { setShowExtraStop(false); setExtraStopAddress(''); setExtraStopCoords(null); }}
-                      style={{ padding: 4 }}
-                    >
-                      <Ionicons name="close-circle" size={20} color="#EF4444" />
-                    </TouchableOpacity>
+                    {isSearchingMapbox && searchType === 'pickup' ? (
+                      <ActivityIndicator size="small" color="#EAB308" style={{ marginRight: 6 }} />
+                    ) : (searchType === 'pickup' ? searchQuery : pickupAddress) ? (
+                      <TouchableOpacity onPress={() => { setSearchQuery(''); setPickupAddress(''); }}>
+                        <Ionicons name="close-circle" size={18} color="#64748B" />
+                      </TouchableOpacity>
+                    ) : null}
                   </View>
-                )}
 
-                {/* 3. DESTINO */}
-                <View style={[
-                  styles.mapboxSearchInputWrapper, 
-                  searchType === 'dropoff' ? { borderColor: '#10B981', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
-                ]}>
+                  {/* 2. PARADA EXTRA */}
+                  {showExtraStop && (
+                    <View style={[
+                      styles.mapboxSearchInputWrapper, 
+                      searchType === 'extraStop' ? { borderColor: '#3B82F6', borderWidth: 1 } : { marginBottom: 10, borderWidth: 1, borderColor: '#334155' }
+                    ]}>
+                      <TextInput
+                        style={styles.mapboxSearchInput}
+                        placeholder="Adicionar parada..."
+                        placeholderTextColor="#64748B"
+                        value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
+                        autoCorrect={false}
+                        autoCapitalize="sentences"
+                        onFocus={() => { setSearchType('extraStop'); setSearchQuery(extraStopAddress); }}
+                        onChangeText={(text) => {
+                          setSearchQuery(text);
+                          handleMapboxSearch(text);
+                        }}
+                      />
+                      <TouchableOpacity 
+                        onPress={() => { setShowExtraStop(false); setExtraStopAddress(''); setExtraStopCoords(null); }}
+                        style={{ padding: 4 }}
+                      >
+                        <Ionicons name="close-circle" size={20} color="#EF4444" />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {/* 3. DESTINO */}
+                  <View style={[
+                    styles.mapboxSearchInputWrapper, 
+                    searchType === 'dropoff' ? { borderColor: '#10B981', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
+                  ]}>
+                    <TextInput
+                      style={styles.mapboxSearchInput}
+                      placeholder={t('where_to', 'Para onde vamos?')}
+                      placeholderTextColor="#64748B"
+                      value={searchType === 'dropoff' ? searchQuery : dropoffAddress}
+                      autoCorrect={false}
+                      autoCapitalize="sentences"
+                      onFocus={() => { setSearchType('dropoff'); setSearchQuery(dropoffAddress); }}
+                      onChangeText={(text) => {
+                        setSearchQuery(text);
+                        handleMapboxSearch(text);
+                      }}
+                    />
+                    {isSearchingMapbox && searchType === 'dropoff' ? (
+                      <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 6 }} />
+                    ) : (searchType === 'dropoff' ? searchQuery : dropoffAddress) ? (
+                      <TouchableOpacity onPress={() => { setSearchQuery(''); setDropoffAddress(''); }}>
+                        <Ionicons name="close-circle" size={18} color="#64748B" />
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+
+                  {!showExtraStop && (
+                    <TouchableOpacity 
+                      style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center' }} 
+                      onPress={() => { setShowExtraStop(true); setSearchType('extraStop'); setSearchQuery(''); }}
+                    >
+                      <Ionicons name="add-circle-outline" size={18} color="#3B82F6" />
+                      <Text style={{ color: '#3B82F6', fontWeight: '700', marginLeft: 6, fontSize: 13 }}>
+                        Adicionar parada
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+
+              {/* 📍 CAMPO OBRIGATÓRIO DE PONTO DE REFERÊNCIA */}
+              <View style={{ marginBottom: 16 }}>
+                <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '800', marginBottom: 6 }}>
+                  PONTO DE REFERÊNCIA (OBRIGATÓRIO) *
+                </Text>
+                <View style={[styles.mapboxSearchInputWrapper, { borderWidth: 1, borderColor: referencePoint.trim() ? '#10B981' : '#EAB308' }]}>
+                  <Ionicons name="business" size={18} color="#EAB308" style={{ marginRight: 8 }} />
                   <TextInput
                     style={styles.mapboxSearchInput}
-                    placeholder={t('where_to', 'Para onde vamos?')}
+                    placeholder="Ex: Próximo à farmácia, casa azul..."
                     placeholderTextColor="#64748B"
-                    value={searchType === 'dropoff' ? searchQuery : dropoffAddress}
+                    value={referencePoint}
+                    onChangeText={setReferencePoint}
                     autoCorrect={false}
-                    autoCapitalize="sentences"
-                    onFocus={() => { setSearchType('dropoff'); setSearchQuery(dropoffAddress); }}
-                    onChangeText={(text) => {
-                      setSearchQuery(text);
-                      handleMapboxSearch(text);
-                    }}
-                    autoFocus
                   />
-                  {isSearchingMapbox && searchType === 'dropoff' ? (
-                    <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 6 }} />
-                  ) : (searchType === 'dropoff' ? searchQuery : dropoffAddress) ? (
-                    <TouchableOpacity onPress={() => { setSearchQuery(''); setDropoffAddress(''); }}>
-                      <Ionicons name="close-circle" size={18} color="#64748B" />
-                    </TouchableOpacity>
-                  ) : null}
                 </View>
-
-                {!showExtraStop && (
-                  <TouchableOpacity 
-                    style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center' }} 
-                    onPress={() => { setShowExtraStop(true); setSearchType('extraStop'); setSearchQuery(''); }}
-                  >
-                    <Ionicons name="add-circle-outline" size={18} color="#3B82F6" />
-                    <Text style={{ color: '#3B82F6', fontWeight: '700', marginLeft: 6, fontSize: 13 }}>
-                      Adicionar parada
-                    </Text>
-                  </TouchableOpacity>
-                )}
               </View>
-            </View>
 
-            {/* LISTA DE RESULTADOS DA BUSCA */}
-            <FlatList
-              data={searchResults}
-              keyExtractor={(item) => item.id}
-              keyboardShouldPersistTaps="always"
-              showsVerticalScrollIndicator={false}
-              style={{ marginTop: 8 }}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.searchResultItem}
-                  activeOpacity={0.7}
-                  onPress={() => {
-                    if (searchType === 'pickup') {
-                      isManualPickupRef.current = true;
-                      setPickupAddress(item.description);
-                      setPickupCoords({ latitude: item.latitude, longitude: item.longitude });
-                      if (cameraRef.current) {
-                        cameraRef.current.setCamera({
-                          centerCoordinate: [item.longitude, item.latitude],
-                          zoomLevel: 15,
-                          animationDuration: 800,
-                        });
+              {/* CONDICIONAL: FAVORITOS + RECENTES (QUANDO VAZIO) OU RESULTADOS DA BUSCA */}
+              {searchQuery.trim().length === 0 ? (
+                <View>
+                  {/* LOCAIS FAVORITOS (CASA / TRABALHO) */}
+                  <Text style={styles.sectionHeaderTitle}>Locais Salvos</Text>
+                  
+                  <TouchableOpacity 
+                    style={styles.savedPlaceRow} 
+                    onPress={() => handleFavoritePress('home')}
+                    onLongPress={() => {
+                      if (pickupCoords) {
+                        saveFavoritePlace('home', { address: pickupAddress, ...pickupCoords });
                       }
-                      setSearchType(showExtraStop && !extraStopCoords ? 'extraStop' : 'dropoff');
-                      setSearchQuery('');
-                      setSearchResults([]);
-                    } else if (searchType === 'extraStop') {
-                      setExtraStopAddress(item.description);
-                      setExtraStopCoords({ latitude: item.latitude, longitude: item.longitude });
-                      setSearchType('dropoff');
-                      setSearchQuery('');
-                      setSearchResults([]);
-                    } else {
-                      setDropoffAddress(item.description);
-                      setDropoffCoords({ latitude: item.latitude, longitude: item.longitude });
-                      setIsSearchModalVisible(false);
-                      setBookingStep('SERVICE_AND_PRICE');
-                    }
-                  }}
-                >
-                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#1E293B', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
-                    <Ionicons name="location" size={18} color="#EAB308" />
-                  </View>
-                  <Text style={[styles.searchResultText, { color: '#F8FAFC' }]}>{item.description}</Text>
-                </TouchableOpacity>
+                    }}
+                  >
+                    <View style={[styles.savedIconCircle, { backgroundColor: '#FEF3C7' }]}>
+                      <Ionicons name="home" size={20} color="#D97706" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.savedPlaceTitle}>Casa</Text>
+                      <Text style={styles.savedPlaceSub} numberOfLines={1}>
+                        {homeLocation ? homeLocation.address : 'Segure para definir a localização atual como Casa'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity 
+                    style={styles.savedPlaceRow} 
+                    onPress={() => handleFavoritePress('work')}
+                    onLongPress={() => {
+                      if (pickupCoords) {
+                        saveFavoritePlace('work', { address: pickupAddress, ...pickupCoords });
+                      }
+                    }}
+                  >
+                    <View style={[styles.savedIconCircle, { backgroundColor: '#E0F2FE' }]}>
+                      <Ionicons name="briefcase" size={20} color="#0284C7" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.savedPlaceTitle}>Trabalho</Text>
+                      <Text style={styles.savedPlaceSub} numberOfLines={1}>
+                        {workLocation ? workLocation.address : 'Segure para definir a localização atual como Trabalho'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* HISTÓRICO DE PESQUISAS RECENTES */}
+                  {recentSearches.length > 0 && (
+                    <View style={{ marginTop: 20 }}>
+                      <Text style={styles.sectionHeaderTitle}>Pesquisas Recentes</Text>
+                      {recentSearches.map((item) => (
+                        <View key={item.id} style={styles.recentItemRow}>
+                          <TouchableOpacity 
+                            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 }}
+                            onPress={() => {
+                              if (!referencePoint.trim()) {
+                                Alert.alert('Ponto de Referência Obrigatório', 'Por favor, digite um ponto de referência para ajudar o motorista a te encontrar.');
+                                return;
+                              }
+                              if (searchType === 'pickup') {
+                                isManualPickupRef.current = true;
+                                setPickupAddress(item.description);
+                                setPickupCoords({ latitude: item.latitude, longitude: item.longitude });
+                              } else if (searchType === 'extraStop') {
+                                setExtraStopAddress(item.description);
+                                setExtraStopCoords({ latitude: item.latitude, longitude: item.longitude });
+                              } else {
+                                setDropoffAddress(item.description);
+                                setDropoffCoords({ latitude: item.latitude, longitude: item.longitude });
+                                setIsSearchModalVisible(false);
+                                setBookingStep('SERVICE_AND_PRICE');
+                              }
+                            }}
+                          >
+                            <Ionicons name="time-outline" size={20} color="#64748B" />
+                            <Text style={styles.recentText} numberOfLines={1}>{item.description}</Text>
+                          </TouchableOpacity>
+                          
+                          <TouchableOpacity onPress={() => removeRecentSearch(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                            <Ionicons name="close-circle" size={18} color="#94A3B8" />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              ) : (
+                /* RESULTADOS DA PESQUISA EM TEMPO REAL */
+                <View style={{ marginTop: 8 }}>
+                  {searchResults.map((item) => (
+                    <TouchableOpacity
+                      key={item.id}
+                      style={styles.searchResultItem}
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        // Validação: Exige ponto de referência ao selecionar o destino
+                        if (!referencePoint.trim() && searchType === 'dropoff') {
+                          Alert.alert(
+                            'Ponto de Referência Obrigatório 📍',
+                            'Por favor, preencha o Ponto de Referência para que o motorista consiga localizar você facilmente.'
+                          );
+                          return;
+                        }
+
+                        if (searchType === 'pickup') {
+                          isManualPickupRef.current = true;
+                          setPickupAddress(item.description);
+                          setPickupCoords({ latitude: item.latitude, longitude: item.longitude });
+                          if (cameraRef.current) {
+                            cameraRef.current.setCamera({
+                              centerCoordinate: [item.longitude, item.latitude],
+                              zoomLevel: 15,
+                              animationDuration: 800,
+                            });
+                          }
+                          setSearchType(showExtraStop && !extraStopCoords ? 'extraStop' : 'dropoff');
+                          setSearchQuery('');
+                          setSearchResults([]);
+                        } else if (searchType === 'extraStop') {
+                          setExtraStopAddress(item.description);
+                          setExtraStopCoords({ latitude: item.latitude, longitude: item.longitude });
+                          setSearchType('dropoff');
+                          setSearchQuery('');
+                          setSearchResults([]);
+                        } else {
+                          const selectedFeature = {
+                            id: `recent_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                            description: item.description,
+                            latitude: item.latitude,
+                            longitude: item.longitude,
+                          };
+                          saveToRecentSearches(selectedFeature);
+                          setDropoffAddress(item.description);
+                          setDropoffCoords({ latitude: item.latitude, longitude: item.longitude });
+                          setIsSearchModalVisible(false);
+                          setBookingStep('SERVICE_AND_PRICE');
+                        }
+                      }}
+                    >
+                      <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#1E293B', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
+                        <Ionicons name="location" size={18} color="#EAB308" />
+                      </View>
+                      <Text style={[styles.searchResultText, { color: '#F8FAFC' }]}>{item.description}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
               )}
-            />
+            </ScrollView>
           </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -4610,6 +4800,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+
   // 🇬🇼 ESTILOS DO BOTÃO FLUTUANTE COM BANDEIRA
   floatingRideBadgeContainer: {
     position: 'absolute',
@@ -4656,6 +4847,7 @@ const styles = StyleSheet.create({
     padding: 2,
     marginLeft: 4,
   },
+
   // 📡 ESTILOS DO RADAR DE BUSCA
   radarWaveCircle: {
     position: 'absolute',
@@ -4681,5 +4873,52 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.5,
     shadowRadius: 6,
+  },
+
+  // 🟢 ESTILOS ADICIONADOS PARA ELIMINAR OS ERROS EM VERMELHO
+  sectionHeaderTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+    marginBottom: 10,
+    marginTop: 12,
+    textTransform: 'uppercase',
+  },
+  savedPlaceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+  },
+  savedIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  savedPlaceTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#F8FAFC',
+  },
+  savedPlaceSub: {
+    fontSize: 12,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  recentItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+  },
+  recentText: {
+    fontSize: 14,
+    color: '#CBD5E1',
   },
 });

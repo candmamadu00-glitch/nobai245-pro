@@ -51,7 +51,7 @@ function safeSocketEmit(room: string, event: string, payload: any): void {
 }
 
 // -----------------------------------------------------------------------------
-// HELPER PARA DISPARO DE NOVAS CORRIDAS PARA MOTORISTAS (INCLUINDO FILA)
+// HELPER PARA DISPARO DE NOVAS CORRIDAS PARA MOTORISTAS (APENAS DISPONÍVEIS)
 // -----------------------------------------------------------------------------
 export async function notifyDriversNewRide(rideId: string): Promise<void> {
   console.log(`\n🚨 [RIDE DISPATCH] Buscando motoristas para notificar sobre a corrida ${rideId}...`);
@@ -87,51 +87,24 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
         lastLng: true,
         walletBalance: true,
         isAvailable: true,
-        currentRideId: true,
-        currentRide: {
-          select: {
-            destinationLat: true,
-            destinationLng: true,
-            status: true
-          }
-        }
+        currentRideId: true
       },
     });
 
     const qualifiedDrivers = [];
 
     for (const driver of activeDrivers) {
+      // 🛑 REGRA DE FILA DESATIVADA: Motoristas ocupados ou indisponíveis não recebem novas corridas
+      if (!driver.isAvailable || driver.currentRideId) {
+        continue;
+      }
+
       if (ride.paymentMethod === 'CASH' && Number(driver.walletBalance || 0) < MIN_DRIVER_BALANCE_FOR_CASH) {
         continue;
       }
 
-      if (driver.currentRideId) {
-        const existingQueuedRide = await prisma.ride.findFirst({
-          where: {
-            driverId: driver.id,
-            status: { in: [RideStatus.ACCEPTED, ('QUEUED' as any).QUEUED] },
-            id: { not: driver.currentRideId }
-          }
-        });
-
-        if (existingQueuedRide) continue;
-      }
-
-      let refLat: number | null = null;
-      let refLng: number | null = null;
-
-      if (driver.isAvailable || !driver.currentRideId) {
-        refLat = driver.lastLat !== null && driver.lastLat !== undefined ? Number(driver.lastLat) : null;
-        refLng = driver.lastLng !== null && driver.lastLng !== undefined ? Number(driver.lastLng) : null;
-      } else if (driver.currentRide?.destinationLat && driver.currentRide?.destinationLng) {
-        refLat = Number(driver.currentRide.destinationLat);
-        refLng = Number(driver.currentRide.destinationLng);
-      }
-
-      if (refLat === null || refLng === null) {
-        refLat = driver.lastLat !== null && driver.lastLat !== undefined ? Number(driver.lastLat) : null;
-        refLng = driver.lastLng !== null && driver.lastLng !== undefined ? Number(driver.lastLng) : null;
-      }
+      const refLat = driver.lastLat !== null && driver.lastLat !== undefined ? Number(driver.lastLat) : null;
+      const refLng = driver.lastLng !== null && driver.lastLng !== undefined ? Number(driver.lastLng) : null;
 
       if (refLat === null || refLng === null || isNaN(refLat) || isNaN(refLng)) continue;
 
@@ -139,7 +112,7 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
       if (distKm <= 5.0) {
         qualifiedDrivers.push({
           ...driver,
-          isQueuedOffer: !driver.isAvailable
+          isQueuedOffer: false
         });
       }
     }
@@ -174,16 +147,15 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
 
       safeSocketEmit(`driver_${driver.id}`, 'ride:new_request', {
         ...ridePayload,
-        isQueuedOffer: driver.isQueuedOffer
+        isQueuedOffer: false
       });
 
       if (driver.deviceToken) {
-        const title = driver.isQueuedOffer ? '🚗 Próxima Corrida (Fila) Solicitada!' : '🚗 Nova Corrida Solicitada!';
         sendPushNotification(
           driver.deviceToken,
-          title,
+          '🚗 Nova Corrida Solicitada!',
           `Ganho estimado: ${ride.priceXof} XOF. Toque para aceitar.`,
-          { type: 'NEW_RIDE_REQUEST', rideId: ride.id, isQueuedOffer: driver.isQueuedOffer },
+          { type: 'NEW_RIDE_REQUEST', rideId: ride.id, isQueuedOffer: false },
           PUSH_CHANNELS.NEW_RIDE_ALARM
         ).catch(() => null);
       }
@@ -494,12 +466,17 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
 }
 
 // -----------------------------------------------------------------------------
-// 1. ACEITAR CORRIDA (COM MULTI-BROADCAST E PUSH)
+// 1. ACEITAR CORRIDA (SEM FILA)
 // -----------------------------------------------------------------------------
 export async function acceptRideLogic(rideId: string, driverId: string) {
   const driver = await prisma.driver.findUnique({ where: { id: driverId } });
   if (!driver || !driver.isOnline || driver.status !== 'APPROVED') {
     throw new Error('DRIVER_UNAVAILABLE: Motorista indisponível ou conta não aprovada.');
+  }
+
+  // 🛑 REGRA DE FILA DESATIVADA: Impede aceite se já houver corrida ativa ou se estiver indisponível
+  if (driver.currentRideId || !driver.isAvailable) {
+    throw new Error('DRIVER_BUSY: Você já possui uma corrida em andamento. Conclua-a antes de aceitar uma nova.');
   }
 
   const ride = await prisma.ride.findUnique({ where: { id: rideId } });
@@ -514,31 +491,13 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     }
   }
 
-  let targetStatus: RideStatus = RideStatus.ACCEPTED;
-
-  if (driver.currentRideId) {
-    const existingQueue = await prisma.ride.findFirst({
-      where: {
-        driverId,
-        status: { in: [RideStatus.ACCEPTED, ('QUEUED' as any).QUEUED] },
-        id: { not: driver.currentRideId }
-      }
-    });
-
-    if (existingQueue) {
-      throw new Error('DRIVER_QUEUE_FULL: Você já possui uma corrida em andamento e outra agendada na fila.');
-    }
-
-    targetStatus = ('QUEUED' as any);
-  }
+  const targetStatus: RideStatus = RideStatus.ACCEPTED;
 
   const result = await prisma.$transaction(async (tx) => {
-    if (!driver.currentRideId) {
-      await tx.driver.update({
-        where: { id: driverId },
-        data: { currentRideId: rideId, isAvailable: false }
-      });
-    }
+    await tx.driver.update({
+      where: { id: driverId },
+      data: { currentRideId: rideId, isAvailable: false }
+    });
 
     const updatedRide = await tx.ride.updateMany({
       where: { id: rideId, status: RideStatus.SEARCHING },
@@ -603,7 +562,7 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     driverRating: Number(result.driver?.ratingAverage || 5.0),
     startOtp: result.startOtp || null,
     priceXof: Number(result.priceXof || 0),
-    isQueuedRide: targetStatus === ('QUEUED' as any)
+    isQueuedRide: false
   };
 
   // 📣 MULTI-BROADCAST SOCKET COMPLETO
@@ -621,9 +580,7 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
 
   // 🔔 PUSH NOTIFICATION DE ACEITE
   if (result.passenger?.deviceToken) {
-    const pushMsg = targetStatus === ('QUEUED' as any) 
-      ? `O motorista ${result.driver?.fullName || 'parceiro'} aceitou sua corrida! Ele concluirá a viagem atual antes de ir até você.`
-      : `O motorista ${result.driver?.fullName || 'parceiro'} aceitou sua corrida e está a caminho!`;
+    const pushMsg = `O motorista ${result.driver?.fullName || 'parceiro'} aceitou sua corrida e está a caminho!`;
 
     sendPushNotification(
       result.passenger.deviceToken,

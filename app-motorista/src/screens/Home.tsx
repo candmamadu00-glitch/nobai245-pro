@@ -428,7 +428,41 @@ export function Home() {
     checkBattery();
     return () => { if (sub?.remove) sub.remove(); };
   }, []);
+// 🟢 CARREGAMENTO INICIAL DE GPS (Garante que o ícone do carro apareça assim que o app abre)
+useEffect(() => {
+  async function loadInitialPosition() {
+    try {
+      const foreground = await Location.requestForegroundPermissionsAsync();
+      if (foreground.status === 'granted') {
+        const currentLoc = await Location.getCurrentPositionAsync({ 
+          accuracy: Location.Accuracy.Balanced 
+        });
 
+        if (currentLoc?.coords && isMountedRef.current) {
+          // Define a localização inicial no estado para renderizar o carro no mapa imediatamente
+          setLocation(currentLoc);
+          lastDriverCoordsRef.current = {
+            latitude: currentLoc.coords.latitude,
+            longitude: currentLoc.coords.longitude,
+            heading: currentLoc.coords.heading || 0,
+          };
+
+          // Centraliza a câmera do mapa na posição inicial do motorista
+          if (cameraRef.current) {
+            cameraRef.current.setCamera({
+              centerCoordinate: [currentLoc.coords.longitude, currentLoc.coords.latitude],
+              zoomLevel: 16,
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ Não foi possível obter posição inicial prévia do motorista:', err);
+    }
+  }
+
+  loadInitialPosition();
+}, []);
   useEffect(() => {
     let activePlayer: any = null;
     const hasActiveOffer = !!queuedOfferData || (rideState === 'idle' && !!incomingRide);
