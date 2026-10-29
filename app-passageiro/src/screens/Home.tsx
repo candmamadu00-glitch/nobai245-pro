@@ -29,6 +29,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { registerAndSendPushToken } from '../services/notifications';
 import { updateOngoingRideNotification, dismissOngoingRideNotification } from '../services/ongoingNotification';
 import * as Notifications from 'expo-notifications';
+
 // Token Mapbox
 const MAPBOX_ACCESS_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_KEY || 'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZTRyc3NmMDBzMTJ5cTA1anJvYjFsOSJ9.pUAoGXwZS8FtYNr85VD1TA';
 if (MAPBOX_ACCESS_TOKEN) {
@@ -281,6 +282,43 @@ const findNearestLocalBairro = (lat: number, lng: number) => {
   return null;
 };
 
+// 🟢 GEOCODIFICAÇÃO REVERSA PRECISA PARA GUINÉ-BISSAU
+const reverseGeocodeBissau = async (latitude: number, longitude: number, userRefPoint?: string): Promise<string> => {
+  try {
+    const localBairro = findNearestLocalBairro(latitude, longitude);
+
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${longitude},${latitude}.json?access_token=${MAPBOX_ACCESS_TOKEN}&country=gw&types=neighborhood,locality,place,address,poi&language=pt`;
+    const response = await fetch(url);
+    const data = await response.json();
+
+    let fetchedAddress = '';
+
+    if (data && data.features && data.features.length > 0) {
+      const feature = data.features[0];
+      fetchedAddress = feature.text || feature.place_name || '';
+    }
+
+    let finalAddress = '';
+    if (localBairro) {
+      finalAddress = localBairro;
+    } else if (fetchedAddress) {
+      finalAddress = `${fetchedAddress}, Bissau`;
+    } else {
+      finalAddress = `Bissau (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`;
+    }
+
+    if (userRefPoint && userRefPoint.trim()) {
+      finalAddress += ` • Ref: ${userRefPoint.trim()}`;
+    }
+
+    return finalAddress;
+  } catch (error) {
+    console.warn('⚠️ Erro na geocodificação reversa:', error);
+    const fallbackBairro = findNearestLocalBairro(latitude, longitude) || 'Bissau, Guiné-Bissau';
+    return userRefPoint ? `${fallbackBairro} • Ref: ${userRefPoint.trim()}` : fallbackBairro;
+  }
+};
+
 export function Home() {
   const { user, signOut } = useAuth();
   const navigation = useNavigation<any>();
@@ -360,15 +398,15 @@ export function Home() {
   const [routeGeometry, setRouteGeometry] = useState<any>(null);
   const [nearbyDrivers, setNearbyDrivers] = useState<Array<{ id: string; lat: number; lng: number; heading?: number }>>([]);
   const [isSearchingRide, setIsSearchingRide] = useState(false);
-  // 🇬🇼 ESTADOS E ANIMAÇÃO DO BOTÃO FLUTUANTE GUINÉ-BISSAU
   const [isAppInBackground, setIsAppInBackground] = useState(false);
   const floatingPan = useRef(new Animated.ValueXY({ x: Dimensions.get('window').width - 70, y: 180 })).current;
-// Interpolações para criar 2 ondas de radar escalonadas
-const radarScale1 = radarAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 3.2] });
-const radarOpacity1 = radarAnim.interpolate({ inputRange: [0, 0.6, 1], outputRange: [0.6, 0.25, 0] });
 
-const radarScale2 = radarAnim.interpolate({ inputRange: [0, 0.4, 1], outputRange: [0.8, 1.8, 3.2] });
-const radarOpacity2 = radarAnim.interpolate({ inputRange: [0, 0.4, 0.8, 1], outputRange: [0, 0.5, 0.2, 0] });
+  const radarScale1 = radarAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 3.2] });
+  const radarOpacity1 = radarAnim.interpolate({ inputRange: [0, 0.6, 1], outputRange: [0.6, 0.25, 0] });
+
+  const radarScale2 = radarAnim.interpolate({ inputRange: [0, 0.4, 1], outputRange: [0.8, 1.8, 3.2] });
+  const radarOpacity2 = radarAnim.interpolate({ inputRange: [0, 0.4, 0.8, 1], outputRange: [0, 0.5, 0.2, 0] });
+
   const VEHICLE_OPTIONS = [
     { id: 'moto' as VehicleType, title: 'Moto', subtitle: t('moto_subtitle', 'Rápido e econômico'), image: require('../assets/vehicles/moto.png') },
     { id: 'particular' as VehicleType, title: t('standard_vehicle', 'Particular'), subtitle: t('particular_subtitle', 'Viagem exclusiva'), image: require('../assets/vehicles/carro_white.png') },
@@ -384,7 +422,8 @@ const radarOpacity2 = radarAnim.interpolate({ inputRange: [0, 0.4, 0.8, 1], outp
     BAFATA: { price: null, label: 'Bafatá / Gabú', description: t('on_request', 'Preço sob consulta prévia') },
     GABU: { price: null, label: 'Bafatá / Gabú', description: t('on_request', 'Preço sob consulta prévia') },
   };
- const panResponderFloating = useRef(
+
+  const panResponderFloating = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
@@ -396,6 +435,7 @@ const radarOpacity2 = radarAnim.interpolate({ inputRange: [0, 0.4, 0.8, 1], outp
       },
     })
   ).current;
+
   const changeLanguage = useCallback((code: string) => {
     i18n.changeLanguage(code);
     setLangModalVisible(false);
@@ -420,7 +460,6 @@ const radarOpacity2 = radarAnim.interpolate({ inputRange: [0, 0.4, 0.8, 1], outp
     })
   ).current;
 
-  // 🟢 CÁLCULO DE ESTIMATIVA AJUSTADO PARA MÚLTIPLAS PARADAS
   const calculateEstimate = useCallback((pickup: any, dropoff: any, extra?: any) => {
     if (
       typeof pickup?.latitude !== 'number' || typeof pickup?.longitude !== 'number' ||
@@ -458,54 +497,53 @@ const radarOpacity2 = radarAnim.interpolate({ inputRange: [0, 0.4, 0.8, 1], outp
       setPaymentPhone((user as any).phone);
     }
   }, [user]);
-// Reseta a visibilidade quando uma nova corrida inicia
-useEffect(() => {
-  if (rideStatus !== 'idle') {
-    setIsFloatingBadgeVisible(true);
-  }
-}, [rideStatus]);
-// 📡 EFFECT QUE INICIA E REPETE A ANIMAÇÃO DO RADAR DURANTE A BUSCA
-useEffect(() => {
-  if (rideStatus === 'searching') {
-    Animated.loop(
-      Animated.timing(radarAnim, {
-        toValue: 1,
-        duration: 2200,
-        useNativeDriver: true,
-      })
-    ).start();
-  } else {
-    radarAnim.setValue(0);
-  }
-}, [rideStatus, radarAnim]);
-useEffect(() => {
-  if (['accepted', 'arrived', 'in_progress'].includes(rideStatus)) {
-    updateOngoingRideNotification({
-      title: rideStatus === 'accepted' ? 'Motorista a caminho' : 'Viagem em andamento',
-      body: `A caminho de: ${dropoffAddress || 'Seu destino'}`,
-      vehiclePlate: driverInfo?.licensePlate,
-      vehicleModel: driverInfo?.carModel,
-      etaMinutes: driverEta,
-    });
-  } else {
-    dismissOngoingRideNotification();
-  }
-}, [rideStatus, driverEta, driverInfo, dropoffAddress]);
- // 🟢 HANDLER UNIFICADO DE RECEBIMENTO DE MENSAGENS DO CHAT
+
+  useEffect(() => {
+    if (rideStatus !== 'idle') {
+      setIsFloatingBadgeVisible(true);
+    }
+  }, [rideStatus]);
+
+  useEffect(() => {
+    if (rideStatus === 'searching') {
+      Animated.loop(
+        Animated.timing(radarAnim, {
+          toValue: 1,
+          duration: 2200,
+          useNativeDriver: true,
+        })
+      ).start();
+    } else {
+      radarAnim.setValue(0);
+    }
+  }, [rideStatus, radarAnim]);
+
+  useEffect(() => {
+    if (['accepted', 'arrived', 'in_progress'].includes(rideStatus)) {
+      updateOngoingRideNotification({
+        title: rideStatus === 'accepted' ? 'Motorista a caminho' : 'Viagem em andamento',
+        body: `A caminho de: ${dropoffAddress || 'Seu destino'}`,
+        vehiclePlate: driverInfo?.licensePlate,
+        vehicleModel: driverInfo?.carModel,
+        etaMinutes: driverEta,
+      });
+    } else {
+      dismissOngoingRideNotification();
+    }
+  }, [rideStatus, driverEta, driverInfo, dropoffAddress]);
+
   const handleIncomingChatMessage = useCallback((data: any) => {
     if (!isMountedRef.current || !data) return;
 
     const text = String(data.text || data.message || '').trim();
     if (!text) return;
 
-    // Normaliza e identifica se a mensagem veio do motorista
     const rawSender = String(data.sender || '').toLowerCase();
     const isFromDriver = rawSender.includes('driver') || rawSender !== 'passenger';
     const normalizedSender: 'passenger' | 'driver' = isFromDriver ? 'driver' : 'passenger';
 
     const messageId = String(data.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`);
 
-    // Adiciona ao estado evitando mensagens duplicadas
     setMessages(prev => {
       if (prev.some(m => m.id === messageId || (m.text === text && m.sender === normalizedSender))) {
         return prev;
@@ -513,7 +551,6 @@ useEffect(() => {
       return [...prev, { id: messageId, sender: normalizedSender, text, senderPhoto: data.senderPhoto }];
     });
 
-    // 🔔 NOTIFICAÇÃO POP-UP NA TELA DO PASSAGEIRO
     if (isFromDriver && !isChatVisible) {
       Alert.alert(
         `💬 Mensagem do Motorista`,
@@ -533,126 +570,43 @@ useEffect(() => {
   }, []);
 
   const persistRideState = async (
-  rideId: string | null, 
-  status: RideStatus, 
-  extraData?: {
-    driverInfo?: DriverInfo | null;
-    pickupCoords?: { latitude: number; longitude: number } | null;
-    pickupAddress?: string;
-    dropoffCoords?: { latitude: number; longitude: number } | null;
-    dropoffAddress?: string;
-    extraStopCoords?: { latitude: number; longitude: number } | null;
-    extraStopAddress?: string;
-    startOtp?: string;
-    estimatedPrice?: number | null;
-  }
-) => {
-  try {
-    if (rideId && status !== 'idle' && status !== 'completed') {
-      const payload = {
-        rideId,
-        status,
-        driverInfo: extraData?.driverInfo ?? driverInfo,
-        pickupCoords: extraData?.pickupCoords ?? pickupCoords,
-        pickupAddress: extraData?.pickupAddress ?? pickupAddress,
-        dropoffCoords: extraData?.dropoffCoords ?? dropoffCoords,
-        dropoffAddress: extraData?.dropoffAddress ?? dropoffAddress,
-        extraStopCoords: extraData?.extraStopCoords ?? extraStopCoords,
-        extraStopAddress: extraData?.extraStopAddress ?? extraStopAddress,
-        startOtp: extraData?.startOtp ?? startOtp,
-        estimatedPrice: extraData?.estimatedPrice ?? estimatedPrice,
-      };
-      await AsyncStorage.setItem(STORAGE_RIDE_KEY, JSON.stringify(payload));
-    } else {
-      await AsyncStorage.removeItem(STORAGE_RIDE_KEY);
+    rideId: string | null, 
+    status: RideStatus, 
+    extraData?: {
+      driverInfo?: DriverInfo | null;
+      pickupCoords?: { latitude: number; longitude: number } | null;
+      pickupAddress?: string;
+      dropoffCoords?: { latitude: number; longitude: number } | null;
+      dropoffAddress?: string;
+      extraStopCoords?: { latitude: number; longitude: number } | null;
+      extraStopAddress?: string;
+      startOtp?: string;
+      estimatedPrice?: number | null;
     }
-  } catch (e) {
-    console.error('Erro ao salvar estado local do passageiro:', e);
-  }
-};
-  // 🟢 SINCRONIZAÇÃO COMPLETA DE CORRIDA ATIVA (INCLUINDO SUPORTE A PARADAS)
-  const syncActiveRideWithServer = useCallback(async () => {
+  ) => {
     try {
-      if (!api || typeof api.get !== 'function') return;
-
-      const response = await api.get('/rides/active').catch(() => null);
-      
-      if (response?.data?.ride && isMountedRef.current) {
-        const ride = response.data.ride;
-        const mappedStatus: RideStatus = 
-          ride.status === 'SEARCHING' ? 'searching' :
-          ride.status === 'QUEUED' ? 'queued' :
-          ride.status === 'ACCEPTED' ? 'accepted' :
-          ride.status === 'ARRIVED' ? 'arrived' :
-          ride.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
-
-        if (mappedStatus !== 'idle') {
-          setActiveRideId(ride.id);
-          activeRideIdRef.current = ride.id;
-          setRideStatus(mappedStatus);
-          if (ride.startOtp) setStartOtp(ride.startOtp);
-
-          if (ride.driver) {
-            setDriverInfo({
-              id: ride.driver.id,
-              name: ride.driver.fullName || 'Motorista',
-              photoUrl: formatPhotoUrl(ride.driver.profilePicture),
-              carModel: ride.driver.vehicleModel || ride.driver.vehicleBrand,
-              carColor: ride.driver.vehicleColor,
-              licensePlate: ride.driver.vehiclePlate,
-              rating: Number(ride.driver.ratingAverage || 5.0),
-              phone: ride.driver.phone,
-            });
-
-            if (ride.driver.currentLat && ride.driver.currentLng) {
-              setDriverLocation({
-                latitude: Number(ride.driver.currentLat),
-                longitude: Number(ride.driver.currentLng),
-                heading: Number(ride.driver.heading || 0),
-              });
-            }
-          }
-
-          if (ride.originLat && ride.originLng) {
-            setPickupCoords({ latitude: Number(ride.originLat), longitude: Number(ride.originLng) });
-            if (ride.originAddress) setPickupAddress(ride.originAddress);
-          }
-
-          // 🟢 RECUPERAÇÃO DAS PARADAS INTERMEDIÁRIAS
-          if (Array.isArray(ride.stops) && ride.stops.length > 0) {
-            const firstStop = ride.stops[0];
-            const stopLat = Number(firstStop.lat || firstStop.latitude);
-            const stopLng = Number(firstStop.lng || firstStop.longitude);
-            if (!isNaN(stopLat) && !isNaN(stopLng)) {
-              setExtraStopCoords({ latitude: stopLat, longitude: stopLng });
-              setExtraStopAddress(firstStop.address || 'Parada Intermediária');
-              setShowExtraStop(true);
-            }
-          } else if (ride.extraStopLat && ride.extraStopLng) {
-            setExtraStopCoords({ latitude: Number(ride.extraStopLat), longitude: Number(ride.extraStopLng) });
-            if (ride.extraStopAddress) setExtraStopAddress(ride.extraStopAddress);
-            setShowExtraStop(true);
-          }
-
-          if (ride.destinationLat && ride.destinationLng) {
-            setDropoffCoords({ latitude: Number(ride.destinationLat), longitude: Number(ride.destinationLng) });
-            if (ride.destinationAddress) setDropoffAddress(ride.destinationAddress);
-          }
-
-          if (ride.priceXof) setEstimatedPrice(Number(ride.priceXof));
-
-          activateKeepAwakeAsync('PASSENGER_RIDE_KEEP_AWAKE').catch(() => {});
-
-          await AsyncStorage.setItem(STORAGE_RIDE_KEY, JSON.stringify({ 
-            rideId: ride.id, 
-            status: mappedStatus 
-          }));
-        }
+      if (rideId && status !== 'idle' && status !== 'completed') {
+        const payload = {
+          rideId,
+          status,
+          driverInfo: extraData?.driverInfo ?? driverInfo,
+          pickupCoords: extraData?.pickupCoords ?? pickupCoords,
+          pickupAddress: extraData?.pickupAddress ?? pickupAddress,
+          dropoffCoords: extraData?.dropoffCoords ?? dropoffCoords,
+          dropoffAddress: extraData?.dropoffAddress ?? dropoffAddress,
+          extraStopCoords: extraData?.extraStopCoords ?? extraStopCoords,
+          extraStopAddress: extraData?.extraStopAddress ?? extraStopAddress,
+          startOtp: extraData?.startOtp ?? startOtp,
+          estimatedPrice: extraData?.estimatedPrice ?? estimatedPrice,
+        };
+        await AsyncStorage.setItem(STORAGE_RIDE_KEY, JSON.stringify(payload));
+      } else {
+        await AsyncStorage.removeItem(STORAGE_RIDE_KEY);
       }
-    } catch (err) {
-      console.warn('⚠️ [PASSENGER] Erro ao sincronizar corrida ativa com servidor:', err);
+    } catch (e) {
+      console.error('Erro ao salvar estado local do passageiro:', e);
     }
-  }, []);
+  };
 
   const fitMapBounds = useCallback((coordsArray: Array<{ latitude: number; longitude: number }>) => {
     if (!cameraRef.current || !coordsArray || coordsArray.length < 2) return;
@@ -675,7 +629,6 @@ useEffect(() => {
     }
   }, []);
 
-  // 🟢 BUSCA DE ROTA NO MAPBOX COM WAYPOINTS DE PARADAS
   const fetchMapboxRoute = useCallback(async (
     origin: { latitude: number; longitude: number }, 
     destination: { latitude: number; longitude: number }, 
@@ -689,7 +642,6 @@ useEffect(() => {
     }
 
     try {
-      // Montagem da lista de pontos da rota
       const waypoints: string[] = [`${origin.longitude},${origin.latitude}`];
 
       if (Array.isArray(extraStops)) {
@@ -735,6 +687,103 @@ useEffect(() => {
     }
   }, [rideStatus, vehicleType]);
 
+  const syncPassengerActiveRide = useCallback(async () => {
+    try {
+      if (!api || typeof api.get !== 'function') return;
+
+      let response = await api.get('/passengers/active-ride').catch(() => null);
+      if (!response?.data?.ride) {
+        response = await api.get('/rides/active').catch(() => null);
+      }
+      
+      if (response?.data?.ride && isMountedRef.current) {
+        const ride = response.data.ride;
+        const mappedStatus: RideStatus = 
+          ride.status === 'SEARCHING' || ride.status === 'QUEUED' || ride.status === 'PENDING' ? 'searching' :
+          ride.status === 'ACCEPTED' ? 'accepted' :
+          ride.status === 'ARRIVED' ? 'arrived' :
+          ride.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
+
+        if (mappedStatus !== 'idle') {
+          setActiveRideId(ride.id);
+          activeRideIdRef.current = ride.id;
+          setRideStatus(mappedStatus);
+          setBookingStep('SEARCHING');
+
+          const otpCode = String(ride.startOtp || ride.otpPin || ride.pin || '');
+          if (otpCode) setStartOtp(otpCode);
+
+          const parsedDriver = extractDriverInfo(ride, otpCode);
+          if (parsedDriver) {
+            setDriverInfo(parsedDriver);
+          }
+
+          const dObj = ride.driver || {};
+          const lat = Number(dObj.currentLat || ride.driverLat || ride.currentLat);
+          const lng = Number(dObj.currentLng || ride.driverLng || ride.currentLng);
+          if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
+            setDriverLocation({
+              latitude: lat,
+              longitude: lng,
+              heading: Number(dObj.heading || ride.heading || 0),
+            });
+          }
+
+          let pCoords = null;
+          let dCoords = null;
+
+          if (ride.originLat && ride.originLng) {
+            pCoords = { latitude: Number(ride.originLat), longitude: Number(ride.originLng) };
+            setPickupCoords(pCoords);
+            if (ride.originAddress) setPickupAddress(ride.originAddress);
+          }
+
+          if (ride.destinationLat && ride.destinationLng) {
+            dCoords = { latitude: Number(ride.destinationLat), longitude: Number(ride.destinationLng) };
+            setDropoffCoords(dCoords);
+            if (ride.destinationAddress) setDropoffAddress(ride.destinationAddress);
+          }
+
+          if (Array.isArray(ride.stops) && ride.stops.length > 0) {
+            const firstStop = ride.stops[0];
+            const stopLat = Number(firstStop.lat || firstStop.latitude);
+            const stopLng = Number(firstStop.lng || firstStop.longitude);
+            if (!isNaN(stopLat) && !isNaN(stopLng)) {
+              setExtraStopCoords({ latitude: stopLat, longitude: stopLng });
+              setExtraStopAddress(firstStop.address || 'Parada Intermediária');
+              setShowExtraStop(true);
+            }
+          }
+
+          if (ride.priceXof) setEstimatedPrice(Number(ride.priceXof));
+
+          if (pCoords && dCoords) {
+            fetchMapboxRoute(pCoords, dCoords, extraStopCoords);
+            fitMapBounds([pCoords, dCoords]);
+          }
+
+          activateKeepAwakeAsync('PASSENGER_RIDE_KEEP_AWAKE').catch(() => {});
+
+          await persistRideState(ride.id, mappedStatus, {
+            driverInfo: parsedDriver,
+            pickupCoords: pCoords,
+            pickupAddress: ride.originAddress,
+            dropoffCoords: dCoords,
+            dropoffAddress: ride.destinationAddress,
+            startOtp: otpCode,
+            estimatedPrice: ride.priceXof ? Number(ride.priceXof) : null
+          });
+
+          if (socket && socket.connected) {
+            socket.emit('passenger:rejoin_ride', { rideId: ride.id });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ [PASSENGER] Erro na rede - mantendo cache local:', err);
+    }
+  }, [fetchMapboxRoute, fitMapBounds, extraStopCoords]);
+
   const handleMapboxSearch = async (text: string) => {
     setSearchQuery(text);
     if (!text || text.trim().length < 2) {
@@ -742,14 +791,8 @@ useEffect(() => {
       return;
     }
 
-  
-    console.log(`\n==================================================`);
-    console.log(`🔍 [BUSCA INICIADA] Termo: "${text}"`);
-    console.log(`==================================================`);
-
     const normalizedQuery = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
-    // 1️⃣ Catálogo local interno
     const localMatches = GUINEA_BISSAU_BAIRROS.filter(item => {
       const normDesc = item.description.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
       return normDesc.includes(normalizedQuery);
@@ -758,13 +801,8 @@ useEffect(() => {
     setIsSearchingMapbox(true);
 
     try {
-      // 2️⃣ Photon OSM
       const photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&lat=${BISSAU_CENTER.latitude}&lon=${BISSAU_CENTER.longitude}&limit=15`;
-
-      // 3️⃣ OpenStreetMap Nominatim
       const osmUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(text)}&countrycodes=gw&viewbox=-15.85,11.70,-15.40,12.05&bounded=0&format=json&addressdetails=1&limit=10`;
-
-      // 4️⃣ Mapbox Geocoding
       const mapboxUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(text)}.json?country=gw&proximity=${BISSAU_CENTER.longitude},${BISSAU_CENTER.latitude}&types=poi,address,neighborhood,locality,place,street&autocomplete=true&limit=10&language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`;
 
       const [resPhoton, resOsm, resMapbox] = await Promise.allSettled([
@@ -780,7 +818,6 @@ useEffect(() => {
 
       let apiResults: MapboxGeocodingFeature[] = [];
 
-      // 📌 Motor 1: Photon OSM
       if (resPhoton.status === 'fulfilled' && resPhoton.value.ok) {
         const photonData = await resPhoton.value.json();
         const features = photonData?.features || [];
@@ -809,7 +846,6 @@ useEffect(() => {
         apiResults.push(...photonFeatures);
       }
 
-      // 📌 Motor 2: OpenStreetMap Nominatim
       if (resOsm.status === 'fulfilled' && resOsm.value.ok) {
         const osmData = await resOsm.value.json();
         if (Array.isArray(osmData)) {
@@ -824,7 +860,6 @@ useEffect(() => {
         }
       }
 
-      // 📌 Motor 3: Mapbox Geocoding
       if (resMapbox.status === 'fulfilled' && resMapbox.value.ok) {
         const mapboxData = await resMapbox.value.json();
         const features = mapboxData?.features || [];
@@ -887,9 +922,9 @@ useEffect(() => {
         setLocationError(null);
       }
 
-      let location;
+      let location: Location.LocationObject | null = null;
       try {
-        location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       } catch (err) {
         location = await Location.getLastKnownPositionAsync();
         if (!location) {
@@ -909,24 +944,25 @@ useEffect(() => {
       setPassengerLocation(location);
 
       if (!isManualPickupRef.current) {
-        setPickupCoords({ latitude: location.coords.latitude, longitude: location.coords.longitude });
+        const { latitude, longitude } = location.coords;
+        setPickupCoords({ latitude, longitude });
 
-        const localName = findNearestLocalBairro(location.coords.latitude, location.coords.longitude);
+        const localName = findNearestLocalBairro(latitude, longitude);
+
         if (localName) {
           setPickupAddress(localName);
         } else if (MAPBOX_ACCESS_TOKEN && isMountedRef.current) {
           try {
-            const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${location.coords.longitude},${location.coords.latitude}.json?language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`;
+            const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${longitude},${latitude}.json?country=gw&proximity=${longitude},${latitude}&types=neighborhood,locality,place,address,poi&language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`;
             const res = await fetch(url);
             if (res.ok) {
               const data = await res.json();
               if (data?.features?.length > 0 && isMountedRef.current) {
-                const placeName = data.features[0].place_name || '';
-                const parts = placeName.split(',')
-                  .map((p: string) => p.trim())
-                  .filter((p: string) => p && !p.toLowerCase().includes('guiné'));
-                const cleanAddress = parts.length > 0 ? parts.slice(0, 2).join(', ') : 'Bissau, Centro';
-                
+                const bestFeature = data.features[0];
+                const neighborhood = data.features.find((f: any) => f.place_type?.includes('neighborhood'))?.text;
+                const placeName = bestFeature.text || bestFeature.place_name || 'Bissau, Centro';
+
+                const cleanAddress = neighborhood ? `${neighborhood}, Bissau` : placeName;
                 if (!isManualPickupRef.current) {
                   setPickupAddress(cleanAddress);
                 }
@@ -1016,186 +1052,95 @@ useEffect(() => {
     const backHandlerSubscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => backHandlerSubscription.remove();
   }, [isMenuVisible, isChatVisible, isSearchModalVisible, showCancelModal, showRatingModal, bookingStep, rideStatus]);
-// 🟢 ESTADO E CARREGAMENTO DO HISTÓRICO DE PESQUISAS RECENTES
 
-useEffect(() => {
-  async function loadRecentSearches() {
+  useEffect(() => {
+    async function loadRecentSearches() {
+      try {
+        const savedRecents = await AsyncStorage.getItem(STORAGE_RECENT_SEARCHES_KEY);
+        if (savedRecents && isMountedRef.current) {
+          setRecentSearches(JSON.parse(savedRecents));
+        }
+      } catch (e) {
+        console.error('Erro ao carregar histórico de buscas:', e);
+      }
+    }
+    loadRecentSearches();
+  }, []);
+
+  const saveToRecentSearches = async (newItem: MapboxGeocodingFeature) => {
     try {
-      const savedRecents = await AsyncStorage.getItem(STORAGE_RECENT_SEARCHES_KEY);
-      if (savedRecents && isMountedRef.current) {
-        setRecentSearches(JSON.parse(savedRecents));
-      }
+      const filtered = recentSearches.filter(
+        item => item.description.toLowerCase().trim() !== newItem.description.toLowerCase().trim()
+      );
+      const updated = [newItem, ...filtered].slice(0, 10);
+
+      setRecentSearches(updated);
+      await AsyncStorage.setItem(STORAGE_RECENT_SEARCHES_KEY, JSON.stringify(updated));
     } catch (e) {
-      console.error('Erro ao carregar histórico de buscas:', e);
+      console.error('Erro ao salvar busca recente:', e);
     }
-  }
-  loadRecentSearches();
-}, []);
-
-// 🟢 REGISTRA NOVA PESQUISA NO HISTÓRICO (MÁXIMO DE 10 ITENS)
-const saveToRecentSearches = async (newItem: MapboxGeocodingFeature) => {
-  try {
-    const filtered = recentSearches.filter(
-      item => item.description.toLowerCase().trim() !== newItem.description.toLowerCase().trim()
-    );
-    const updated = [newItem, ...filtered].slice(0, 10);
-
-    setRecentSearches(updated);
-    await AsyncStorage.setItem(STORAGE_RECENT_SEARCHES_KEY, JSON.stringify(updated));
-  } catch (e) {
-    console.error('Erro ao salvar busca recente:', e);
-  }
-};
-
-// 🟢 EXCLUI UM ITEM DO HISTÓRICO DE BUSCAS
-const removeRecentSearch = async (id: string) => {
-  try {
-    const updated = recentSearches.filter(item => item.id !== id);
-    setRecentSearches(updated);
-    await AsyncStorage.setItem(STORAGE_RECENT_SEARCHES_KEY, JSON.stringify(updated));
-  } catch (e) {
-    console.error('Erro ao remover busca recente:', e);
-  }
-};
-
-// 🟢 SALVA LOCAL FAVORITO (CASA OU TRABALHO)
-const saveFavoritePlace = async (type: 'home' | 'work', place: FavoritePlace) => {
-  try {
-    let updatedHome = homeLocation;
-    let updatedWork = workLocation;
-
-    if (type === 'home') {
-      updatedHome = place;
-      setHomeLocation(place);
-    } else {
-      updatedWork = place;
-      setWorkLocation(place);
-    }
-
-    await AsyncStorage.setItem(
-      STORAGE_FAVORITES_KEY,
-      JSON.stringify({ home: updatedHome, work: updatedWork })
-    );
-
-    Alert.alert(
-      'Endereço Salvo! 🌟',
-      `${type === 'home' ? 'Casa' : 'Trabalho'} definido para: ${place.address}`
-    );
-  } catch (e) {
-    console.error('Erro ao salvar local favorito:', e);
-  }
-};
-  // 🟢 EXTRATOR UNIFICADO PARA EVITAR driverInfo NULL (SUPORTA NESTED E FLAT)
-const extractDriverInfo = (source: any, otpFallback?: string): DriverInfo | null => {
-  if (!source) return null;
-  const d = source.driver || source;
-  const id = d.id || source.driverId || source.driver_id;
-  if (!id) return null;
-
-  const otpCode = String(source.startOtp || source.otpPin || source.pin || d.startOtp || otpFallback || '');
-
-  return {
-    id: String(id),
-    name: d.fullName || d.name || source.driverName || 'Motorista',
-    photoUrl: formatPhotoUrl(d.profilePicture || d.photoUrl || source.driverPhoto),
-    profilePicture: formatPhotoUrl(d.profilePicture || d.photoUrl || source.driverPhoto),
-    carModel: d.vehicleModel || d.vehicleBrand || source.carModel || source.vehicleModel || 'Veículo Padrão',
-    carColor: d.vehicleColor || source.carColor || source.vehicleColor || source.color || 'BRANCO',
-    vehicleType: d.vehicleType || source.vehicleType || source.vehicle_type || 'PARTICULAR',
-    licensePlate: d.vehiclePlate || source.licensePlate || source.plate || 'SEM PLACA',
-    rating: Number(d.ratingAverage || d.rating || source.driverRating || 5.0),
-    phone: d.phone || source.driverPhone,
-    startOtp: otpCode,
   };
-};
 
-// 🟢 SINCRONIZAÇÃO SEGURA DE CORRIDA ATIVA
-const syncPassengerActiveRide = useCallback(async () => {
-  try {
-    if (!api || typeof api.get !== 'function') return;
-
-    let response = await api.get('/passengers/active-ride').catch(() => null);
-    if (!response?.data?.ride) {
-      response = await api.get('/rides/active').catch(() => null);
+  const removeRecentSearch = async (id: string) => {
+    try {
+      const updated = recentSearches.filter(item => item.id !== id);
+      setRecentSearches(updated);
+      await AsyncStorage.setItem(STORAGE_RECENT_SEARCHES_KEY, JSON.stringify(updated));
+    } catch (e) {
+      console.error('Erro ao remover busca recente:', e);
     }
-    
-    if (response?.data?.ride && isMountedRef.current) {
-      const ride = response.data.ride;
-      const mappedStatus: RideStatus = 
-        ride.status === 'SEARCHING' || ride.status === 'QUEUED' || ride.status === 'PENDING' ? 'searching' :
-        ride.status === 'ACCEPTED' ? 'accepted' :
-        ride.status === 'ARRIVED' ? 'arrived' :
-        ride.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
+  };
 
-      if (mappedStatus !== 'idle') {
-        setActiveRideId(ride.id);
-        activeRideIdRef.current = ride.id;
-        setRideStatus(mappedStatus);
+  const saveFavoritePlace = async (type: 'home' | 'work', place: FavoritePlace) => {
+    try {
+      let updatedHome = homeLocation;
+      let updatedWork = workLocation;
 
-        const otpCode = String(ride.startOtp || ride.otpPin || ride.pin || '');
-        if (otpCode) setStartOtp(otpCode);
-
-        const parsedDriver = extractDriverInfo(ride, otpCode);
-        if (parsedDriver) {
-          setDriverInfo(parsedDriver);
-        }
-
-        const dObj = ride.driver || {};
-        const lat = Number(dObj.currentLat || ride.driverLat || ride.currentLat);
-        const lng = Number(dObj.currentLng || ride.driverLng || ride.currentLng);
-        if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
-          setDriverLocation({
-            latitude: lat,
-            longitude: lng,
-            heading: Number(dObj.heading || ride.heading || 0),
-          });
-        }
-
-        if (ride.originLat && ride.originLng) {
-          setPickupCoords({ latitude: Number(ride.originLat), longitude: Number(ride.originLng) });
-          if (ride.originAddress) setPickupAddress(ride.originAddress);
-        }
-
-        if (Array.isArray(ride.stops) && ride.stops.length > 0) {
-          const firstStop = ride.stops[0];
-          const stopLat = Number(firstStop.lat || firstStop.latitude);
-          const stopLng = Number(firstStop.lng || firstStop.longitude);
-          if (!isNaN(stopLat) && !isNaN(stopLng)) {
-            setExtraStopCoords({ latitude: stopLat, longitude: stopLng });
-            setExtraStopAddress(firstStop.address || 'Parada Intermediária');
-            setShowExtraStop(true);
-          }
-        }
-
-        if (ride.destinationLat && ride.destinationLng) {
-          setDropoffCoords({ latitude: Number(ride.destinationLat), longitude: Number(ride.destinationLng) });
-          if (ride.destinationAddress) setDropoffAddress(ride.destinationAddress);
-        }
-
-        if (ride.priceXof) setEstimatedPrice(Number(ride.priceXof));
-
-        activateKeepAwakeAsync('PASSENGER_RIDE_KEEP_AWAKE').catch(() => {});
-
-        await persistRideState(ride.id, mappedStatus, {
-          driverInfo: parsedDriver,
-          pickupCoords: ride.originLat ? { latitude: Number(ride.originLat), longitude: Number(ride.originLng) } : null,
-          pickupAddress: ride.originAddress,
-          dropoffCoords: ride.destinationLat ? { latitude: Number(ride.destinationLat), longitude: Number(ride.destinationLng) } : null,
-          dropoffAddress: ride.destinationAddress,
-          startOtp: otpCode,
-          estimatedPrice: ride.priceXof ? Number(ride.priceXof) : null
-        });
-
-        if (socket && socket.connected) {
-          socket.emit('passenger:rejoin_ride', { rideId: ride.id });
-        }
+      if (type === 'home') {
+        updatedHome = place;
+        setHomeLocation(place);
+      } else {
+        updatedWork = place;
+        setWorkLocation(place);
       }
+
+      await AsyncStorage.setItem(
+        STORAGE_FAVORITES_KEY,
+        JSON.stringify({ home: updatedHome, work: updatedWork })
+      );
+
+      Alert.alert(
+        'Endereço Salvo! 🌟',
+        `${type === 'home' ? 'Casa' : 'Trabalho'} definido para: ${place.address}`
+      );
+    } catch (e) {
+      console.error('Erro ao salvar local favorito:', e);
     }
-  } catch (err) {
-    console.warn('⚠️ [PASSENGER] Erro na rede - mantendo cache local:', err);
-  }
-}, []);
-  // 📱 Monitora mudança de estado do app (1º Plano vs 2º Plano)
+  };
+
+  const extractDriverInfo = (source: any, otpFallback?: string): DriverInfo | null => {
+    if (!source) return null;
+    const d = source.driver || source;
+    const id = d.id || source.driverId || source.driver_id;
+    if (!id) return null;
+
+    const otpCode = String(source.startOtp || source.otpPin || source.pin || d.startOtp || otpFallback || '');
+
+    return {
+      id: String(id),
+      name: d.fullName || d.name || source.driverName || 'Motorista',
+      photoUrl: formatPhotoUrl(d.profilePicture || d.photoUrl || source.driverPhoto),
+      profilePicture: formatPhotoUrl(d.profilePicture || d.photoUrl || source.driverPhoto),
+      carModel: d.vehicleModel || d.vehicleBrand || source.carModel || source.vehicleModel || 'Veículo Padrão',
+      carColor: d.vehicleColor || source.carColor || source.vehicleColor || source.color || 'BRANCO',
+      vehicleType: d.vehicleType || source.vehicleType || source.vehicle_type || 'PARTICULAR',
+      licensePlate: d.vehiclePlate || source.licensePlate || source.plate || 'SEM PLACA',
+      rating: Number(d.ratingAverage || d.rating || source.driverRating || 5.0),
+      phone: d.phone || source.driverPhone,
+      startOtp: otpCode,
+    };
+  };
+
   useEffect(() => {
     const subscription = AppState.addEventListener('change', async (nextAppState) => {
       const isBg = nextAppState.match(/inactive|background/);
@@ -1222,6 +1167,7 @@ const syncPassengerActiveRide = useCallback(async () => {
 
     return () => subscription.remove();
   }, [getCurrentLocationWithFallback, syncPassengerActiveRide]);
+
   useEffect(() => {
     const currentLat = pickupCoords?.latitude || passengerLocation?.coords?.latitude;
     const currentLng = pickupCoords?.longitude || passengerLocation?.coords?.longitude;
@@ -1271,255 +1217,260 @@ const syncPassengerActiveRide = useCallback(async () => {
   }, []);
 
   useEffect(() => {
-  // 1️⃣ Restaura o estado da corrida do AsyncStorage, busca o GPS e sincroniza com o servidor
-  async function initAppAndPermissions() {
-    try {
-      const savedState = await AsyncStorage.getItem(STORAGE_RIDE_KEY);
-      if (savedState && isMountedRef.current) {
-        const parsed = JSON.parse(savedState);
-        if (parsed?.rideId && parsed?.status && parsed.status !== 'idle' && parsed.status !== 'completed') {
-          setActiveRideId(parsed.rideId);
-          activeRideIdRef.current = parsed.rideId;
-          setRideStatus(parsed.status);
-          if (parsed.driverInfo) setDriverInfo(parsed.driverInfo);
-          if (parsed.pickupCoords) setPickupCoords(parsed.pickupCoords);
-          if (parsed.pickupAddress) setPickupAddress(parsed.pickupAddress);
-          if (parsed.dropoffCoords) setDropoffCoords(parsed.dropoffCoords);
-          if (parsed.dropoffAddress) setDropoffAddress(parsed.dropoffAddress);
-          if (parsed.extraStopCoords) setExtraStopCoords(parsed.extraStopCoords);
-          if (parsed.extraStopAddress) {
-            setExtraStopAddress(parsed.extraStopAddress);
-            setShowExtraStop(true);
+    async function initAppAndPermissions() {
+      try {
+        const savedState = await AsyncStorage.getItem(STORAGE_RIDE_KEY);
+        if (savedState && isMountedRef.current) {
+          const parsed = JSON.parse(savedState);
+          if (parsed?.rideId && parsed?.status && parsed.status !== 'idle' && parsed.status !== 'completed') {
+            setActiveRideId(parsed.rideId);
+            activeRideIdRef.current = parsed.rideId;
+            setRideStatus(parsed.status);
+            setBookingStep('SEARCHING');
+
+            if (parsed.driverInfo) setDriverInfo(parsed.driverInfo);
+            if (parsed.pickupCoords) setPickupCoords(parsed.pickupCoords);
+            if (parsed.pickupAddress) setPickupAddress(parsed.pickupAddress);
+            if (parsed.dropoffCoords) setDropoffCoords(parsed.dropoffCoords);
+            if (parsed.dropoffAddress) setDropoffAddress(parsed.dropoffAddress);
+            if (parsed.extraStopCoords) setExtraStopCoords(parsed.extraStopCoords);
+            if (parsed.extraStopAddress) {
+              setExtraStopAddress(parsed.extraStopAddress);
+              setShowExtraStop(true);
+            }
+            if (parsed.startOtp) setStartOtp(parsed.startOtp);
+            if (parsed.estimatedPrice) setEstimatedPrice(parsed.estimatedPrice);
+
+            if (parsed.pickupCoords && parsed.dropoffCoords) {
+              fitMapBounds([parsed.pickupCoords, parsed.dropoffCoords]);
+            } else if (parsed.pickupCoords && cameraRef.current) {
+              cameraRef.current.setCamera({
+                centerCoordinate: [parsed.pickupCoords.longitude, parsed.pickupCoords.latitude],
+                zoomLevel: 15,
+                animationDuration: 500,
+              });
+            }
           }
-          if (parsed.startOtp) setStartOtp(parsed.startOtp);
-          if (parsed.estimatedPrice) setEstimatedPrice(parsed.estimatedPrice);
+        }
+      } catch (err) {
+        console.error('Erro ao recuperar corrida salva localmente:', err);
+      }
+
+      await getCurrentLocationWithFallback();
+      await syncPassengerActiveRide();
+    }
+
+    initAppAndPermissions();
+
+    if (!user?.id) return;
+
+    connectPassengerSocket();
+    registerAndSendPushToken();
+
+    if (activeRideIdRef.current) {
+      socket.emit('passenger:rejoin_ride', { rideId: activeRideIdRef.current });
+    }
+
+    const handleConnect = () => {
+      if (isMountedRef.current) setIsConnected(true);
+      if (socket && socket.connected) {
+        socket.emit('passenger:request_state');
+        if (activeRideIdRef.current) {
+          socket.emit('passenger:rejoin_ride', { rideId: activeRideIdRef.current });
         }
       }
-    } catch (err) {
-      console.error('Erro ao recuperar corrida salva localmente:', err);
-    }
+    };
 
-    await getCurrentLocationWithFallback();
-    await syncPassengerActiveRide();
-  }
+    const handleDisconnect = () => {
+      if (isMountedRef.current) setIsConnected(false);
+    };
 
-  initAppAndPermissions();
-
-  if (!user?.id) return;
-
-  // 2️⃣ Conecta o Socket do passageiro e envia o Push Token para o servidor
-  connectPassengerSocket();
-  registerAndSendPushToken();
-
-  if (activeRideIdRef.current) {
-    socket.emit('passenger:rejoin_ride', { rideId: activeRideIdRef.current });
-  }
-
-  const handleConnect = () => {
-    if (isMountedRef.current) setIsConnected(true);
-    if (socket && socket.connected) {
-      socket.emit('passenger:request_state');
-      if (activeRideIdRef.current) {
-        socket.emit('passenger:rejoin_ride', { rideId: activeRideIdRef.current });
-      }
-    }
-  };
-
-  const handleDisconnect = () => {
-    if (isMountedRef.current) setIsConnected(false);
-  };
-
-  const handleStateRecovered = async (data: any) => {
-  if (!isMountedRef.current || !data) return;
-  try {
-    if (!data?.hasActiveRide) {
-      setRideStatus((currentStatus) => {
-        if (['accepted', 'arrived', 'in_progress', 'searching'].includes(currentStatus)) {
-          return currentStatus;
+    const handleStateRecovered = async (data: any) => {
+      if (!isMountedRef.current || !data) return;
+      try {
+        if (!data?.hasActiveRide) {
+          setRideStatus((currentStatus) => {
+            if (['accepted', 'arrived', 'in_progress', 'searching'].includes(currentStatus)) {
+              return currentStatus;
+            }
+            return 'idle';
+          });
+          return;
         }
-        return 'idle';
-      });
-      return;
-    }
 
-    if (data?.hasActiveRide && data?.ride) {
+        if (data?.hasActiveRide && data?.ride) {
+          if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+          const ride = data.ride;
+          setActiveRideId(ride.id);
+          activeRideIdRef.current = ride.id;
+
+          if (typeof ride.originLat === 'number' && typeof ride.originLng === 'number') {
+            const lat = Number(ride.originLat);
+            const lng = Number(ride.originLng);
+            if (!isNaN(lat) && !isNaN(lng)) setPickupCoords({ latitude: lat, longitude: lng });
+            if (ride.originAddress) setPickupAddress(ride.originAddress);
+          }
+
+          if (typeof ride.destinationLat === 'number' && typeof ride.destinationLng === 'number') {
+            const lat = Number(ride.destinationLat);
+            const lng = Number(ride.destinationLng);
+            if (!isNaN(lat) && !isNaN(lng)) setDropoffCoords({ latitude: lat, longitude: lng });
+            if (ride.destinationAddress) setDropoffAddress(ride.destinationAddress);
+          }
+
+          const otpCode = String(ride.startOtp || ride.otpPin || ride.pin || '');
+          if (otpCode) setStartOtp(otpCode);
+
+          const parsedDriver = extractDriverInfo(ride, otpCode);
+          if (parsedDriver) {
+            setDriverInfo(parsedDriver);
+          }
+        }
+      } catch (err) {
+        console.error('Erro ao processar estado recuperado:', err);
+      }
+    };
+
+    const handleRideAccepted = (data: any) => {
+      if (!isMountedRef.current || !data) return;
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-      const ride = data.ride;
-      setActiveRideId(ride.id);
-      activeRideIdRef.current = ride.id;
 
-      if (typeof ride.originLat === 'number' && typeof ride.originLng === 'number') {
-        const lat = Number(ride.originLat);
-        const lng = Number(ride.originLng);
-        if (!isNaN(lat) && !isNaN(lng)) setPickupCoords({ latitude: lat, longitude: lng });
-        if (ride.originAddress) setPickupAddress(ride.originAddress);
-      }
+      const otpCode = String(data.startOtp || data.otpPin || data.pin || '');
+      setStartOtp(otpCode); 
+      setActiveRideId(data.rideId || data.id);
+      activeRideIdRef.current = data.rideId || data.id;
 
-      if (typeof ride.destinationLat === 'number' && typeof ride.destinationLng === 'number') {
-        const lat = Number(ride.destinationLat);
-        const lng = Number(ride.destinationLng);
-        if (!isNaN(lat) && !isNaN(lng)) setDropoffCoords({ latitude: lat, longitude: lng });
-        if (ride.destinationAddress) setDropoffAddress(ride.destinationAddress);
-      }
-
-      const otpCode = String(ride.startOtp || ride.otpPin || ride.pin || '');
-      if (otpCode) setStartOtp(otpCode);
-
-      const parsedDriver = extractDriverInfo(ride, otpCode);
+      const parsedDriver = extractDriverInfo(data, otpCode);
       if (parsedDriver) {
         setDriverInfo(parsedDriver);
       }
-    }
-  } catch (err) {
-    console.error('Erro ao processar estado recuperado:', err);
-  }
-};
 
-const handleRideAccepted = (data: any) => {
-  if (!isMountedRef.current || !data) return;
-  if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-
-  const otpCode = String(data.startOtp || data.otpPin || data.pin || '');
-  setStartOtp(otpCode); 
-  setActiveRideId(data.rideId || data.id);
-  activeRideIdRef.current = data.rideId || data.id;
-
-  const parsedDriver = extractDriverInfo(data, otpCode);
-  if (parsedDriver) {
-    setDriverInfo(parsedDriver);
-  }
-
-  setAcceptedAt(new Date());
-  setRideStatus(data.isQueuedRide ? 'queued' : 'accepted');
-  persistRideState(data.rideId || data.id, data.isQueuedRide ? 'queued' : 'accepted', {
-    driverInfo: parsedDriver,
-    startOtp: otpCode,
-  });
-
-  Alert.alert(
-    t('ride_accepted_title', 'Corrida Aceita! 🚗'), 
-    `${parsedDriver?.name || 'O motorista'} ${t('ride_accepted_msg', 'aceitou sua viagem e está a caminho.')}`
-  );
-};
-
-  const handleDriverArrived = (data: any) => {
-    if (!isMountedRef.current) return;
-    setRideStatus('arrived');
-    if (data?.startOtp) setStartOtp(data.startOtp);
-    if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'arrived');
-    
-    Alert.alert(
-      t('driver_arrived_title', 'Motorista no Local! 📍'), 
-      t('driver_arrived_alert_msg', 'Seu motorista chegou ao ponto de partida e está te aguardando.')
-    );
-  };
-
-  const handleRideStarted = () => { 
-    if (!isMountedRef.current) return;
-    setRideStatus('in_progress'); 
-    setIsChatVisible(false); 
-    if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'in_progress');
-  };
-
-  const handleRideFinished = () => { 
-    if (!isMountedRef.current) return;
-    setRideStatus('completed');
-    setShowRatingModal(true); 
-    persistRideState(null, 'idle');
-  };
-
-  const handleRideCancelled = (data: any) => {
-    if (!isMountedRef.current) return;
-    
-    if (data?.cancelledBy === 'DRIVER') {
-      Alert.alert(t('warning_title', 'Aviso ⚠️'), t('driver_cancelled_msg', 'O motorista cancelou a corrida. Por favor, solicite um novo veículo.'));
-    } else {
-      Alert.alert(t('cancelled_title', 'Cancelado'), data?.appliedPenalty ? `${t('cancellation_fee', 'Taxa de cancelamento:')} ${data.penaltyAmount} XOF.` : t('ride_cancelled_msg', 'Sua corrida foi cancelada.'));
-    }
-    
-    resetRideState();
-  };
-
-  const handleNoDriversFound = () => {
-    if (!isMountedRef.current) return;
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    Alert.alert(t('search_ended_title', 'Busca Encerrada'), t('no_drivers_found_msg', 'Não encontramos motoristas disponíveis na sua região. Tente novamente.'));
-    resetRideState();
-  };
-
-  const handlePriceCalculated = (data: any) => {
-    if (!isMountedRef.current || !data) return;
-    if (typeof data.price === 'number') setEstimatedPrice(data.price);
-    if (typeof data.distance === 'number') setEstimatedDistance(data.distance);
-  };
-
-  const handleDriverPosition = (data: any) => {
-    if (!isMountedRef.current || !data) return;
-    const lat = Number(data.latitude ?? data.lat);
-    const lng = Number(data.longitude ?? data.lng);
-
-    if (!isNaN(lat) && !isNaN(lng)) {
-      setDriverLocation({
-        latitude: lat,
-        longitude: lng,
-        heading: typeof data.heading === 'number' ? data.heading : 0,
+      setAcceptedAt(new Date());
+      setRideStatus(data.isQueuedRide ? 'queued' : 'accepted');
+      persistRideState(data.rideId || data.id, data.isQueuedRide ? 'queued' : 'accepted', {
+        driverInfo: parsedDriver,
+        startOtp: otpCode,
       });
-    }
-  };
 
-  // 3️⃣ REGISTRO DOS EVENTOS DO SOCKET E CHAT
-  socket.on('connect', handleConnect);
-  socket.on('disconnect', handleDisconnect);
-  socket.on('passenger:state_recovered', handleStateRecovered);
-  socket.on('driver:position', handleDriverPosition);
-  
-  // Status da Corrida
-  socket.on('ride:accepted', handleRideAccepted);
-  socket.on('ride:arrived', handleDriverArrived);
-  socket.on('ride:driver_arrived', handleDriverArrived);
-  socket.on('ride:started', handleRideStarted);
-  socket.on('ride:finished', handleRideFinished);
-  socket.on('ride:completed', handleRideFinished);
-  socket.on('ride:cancelled', handleRideCancelled);
-  
-  // Chat em Tempo Real
-  socket.on('chat:receive_message', handleIncomingChatMessage);
-  socket.on('chat:message', handleIncomingChatMessage);
-  socket.on('chat:new_message', handleIncomingChatMessage);
-  
-  socket.on('ride:no_drivers_found', handleNoDriversFound);
-  socket.on('ride:price_calculated', handlePriceCalculated);
-  socket.on('ride:inaccessible_location', handleInaccessibleLocationAlert);
+      Alert.alert(
+        t('ride_accepted_title', 'Corrida Aceita! 🚗'), 
+        `${parsedDriver?.name || 'O motorista'} ${t('ride_accepted_msg', 'aceitou sua viagem e está a caminho.')}`
+      );
+    };
 
-  return () => {
-    socket.off('connect', handleConnect);
-    socket.off('disconnect', handleDisconnect);
-    socket.off('passenger:state_recovered', handleStateRecovered);
-    socket.off('driver:position', handleDriverPosition);
-    socket.off('ride:accepted', handleRideAccepted);
-    socket.off('ride:arrived', handleDriverArrived);
-    socket.off('ride:driver_arrived', handleDriverArrived);
-    socket.off('ride:started', handleRideStarted);
-    socket.off('ride:finished', handleRideFinished);
-    socket.off('ride:completed', handleRideFinished);
-    socket.off('ride:cancelled', handleRideCancelled);
-    socket.off('chat:receive_message', handleIncomingChatMessage);
-    socket.off('chat:message', handleIncomingChatMessage);
-    socket.off('chat:new_message', handleIncomingChatMessage);
-    socket.off('ride:no_drivers_found', handleNoDriversFound);
-    socket.off('ride:price_calculated', handlePriceCalculated);
-    socket.off('ride:inaccessible_location', handleInaccessibleLocationAlert);
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-  };
-}, [
-  user?.id, 
-  getCurrentLocationWithFallback, 
-  handleInaccessibleLocationAlert, 
-  handleIncomingChatMessage, 
-  resetRideState, 
-  syncPassengerActiveRide, 
-  t
-]);
+    const handleDriverArrived = (data: any) => {
+      if (!isMountedRef.current) return;
+      setRideStatus('arrived');
+      if (data?.startOtp) setStartOtp(data.startOtp);
+      if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'arrived');
+      
+      Alert.alert(
+        t('driver_arrived_title', 'Motorista no Local! 📍'), 
+        t('driver_arrived_alert_msg', 'Seu motorista chegou ao ponto de partida e está te aguardando.')
+      );
+    };
+
+    const handleRideStarted = () => { 
+      if (!isMountedRef.current) return;
+      setRideStatus('in_progress'); 
+      setIsChatVisible(false); 
+      if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'in_progress');
+    };
+
+    const handleRideFinished = () => { 
+      if (!isMountedRef.current) return;
+      setRideStatus('completed');
+      setShowRatingModal(true); 
+      persistRideState(null, 'idle');
+    };
+
+    const handleRideCancelled = (data: any) => {
+      if (!isMountedRef.current) return;
+      
+      if (data?.cancelledBy === 'DRIVER') {
+        Alert.alert(t('warning_title', 'Aviso ⚠️'), t('driver_cancelled_msg', 'O motorista cancelou a corrida. Por favor, solicite um novo veículo.'));
+      } else {
+        Alert.alert(t('cancelled_title', 'Cancelado'), data?.appliedPenalty ? `${t('cancellation_fee', 'Taxa de cancelamento:')} ${data.penaltyAmount} XOF.` : t('ride_cancelled_msg', 'Sua corrida foi cancelada.'));
+      }
+      
+      resetRideState();
+    };
+
+    const handleNoDriversFound = () => {
+      if (!isMountedRef.current) return;
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      Alert.alert(t('search_ended_title', 'Busca Encerrada'), t('no_drivers_found_msg', 'Não encontramos motoristas disponíveis na sua região. Tente novamente.'));
+      resetRideState();
+    };
+
+    const handlePriceCalculated = (data: any) => {
+      if (!isMountedRef.current || !data) return;
+      if (typeof data.price === 'number') setEstimatedPrice(data.price);
+      if (typeof data.distance === 'number') setEstimatedDistance(data.distance);
+    };
+
+    const handleDriverPosition = (data: any) => {
+      if (!isMountedRef.current || !data) return;
+      const lat = Number(data.latitude ?? data.lat);
+      const lng = Number(data.longitude ?? data.lng);
+
+      if (!isNaN(lat) && !isNaN(lng)) {
+        setDriverLocation({
+          latitude: lat,
+          longitude: lng,
+          heading: typeof data.heading === 'number' ? data.heading : 0,
+        });
+      }
+    };
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('passenger:state_recovered', handleStateRecovered);
+    socket.on('driver:position', handleDriverPosition);
+    socket.on('ride:accepted', handleRideAccepted);
+    socket.on('ride:arrived', handleDriverArrived);
+    socket.on('ride:driver_arrived', handleDriverArrived);
+    socket.on('ride:started', handleRideStarted);
+    socket.on('ride:finished', handleRideFinished);
+    socket.on('ride:completed', handleRideFinished);
+    socket.on('ride:cancelled', handleRideCancelled);
+    socket.on('chat:receive_message', handleIncomingChatMessage);
+    socket.on('chat:message', handleIncomingChatMessage);
+    socket.on('chat:new_message', handleIncomingChatMessage);
+    socket.on('ride:no_drivers_found', handleNoDriversFound);
+    socket.on('ride:price_calculated', handlePriceCalculated);
+    socket.on('ride:inaccessible_location', handleInaccessibleLocationAlert);
+
+    return () => {
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('passenger:state_recovered', handleStateRecovered);
+      socket.off('driver:position', handleDriverPosition);
+      socket.off('ride:accepted', handleRideAccepted);
+      socket.off('ride:arrived', handleDriverArrived);
+      socket.off('ride:driver_arrived', handleDriverArrived);
+      socket.off('ride:started', handleRideStarted);
+      socket.off('ride:finished', handleRideFinished);
+      socket.off('ride:completed', handleRideFinished);
+      socket.off('ride:cancelled', handleRideCancelled);
+      socket.off('chat:receive_message', handleIncomingChatMessage);
+      socket.off('chat:message', handleIncomingChatMessage);
+      socket.off('chat:new_message', handleIncomingChatMessage);
+      socket.off('ride:no_drivers_found', handleNoDriversFound);
+      socket.off('ride:price_calculated', handlePriceCalculated);
+      socket.off('ride:inaccessible_location', handleInaccessibleLocationAlert);
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
+  }, [
+    user?.id, 
+    getCurrentLocationWithFallback, 
+    handleInaccessibleLocationAlert, 
+    handleIncomingChatMessage, 
+    resetRideState, 
+    syncPassengerActiveRide, 
+    fitMapBounds,
+    t
+  ]);
 
   useEffect(() => {
     let origin = pickupCoords;
@@ -1575,30 +1526,30 @@ const handleRideAccepted = (data: any) => {
       deactivateKeepAwake('passenger_ride_tag').catch(() => {});
     };
   }, [rideStatus]);
-// 📱 DISPARO DE NOTIFICAÇÃO FIXA AO MINIMIZAR O APP DURANTE A CORRIDA
-useEffect(() => {
-  const subscription = AppState.addEventListener('change', async (nextAppState) => {
-    const isRideActive = ['accepted', 'arrived', 'in_progress'].includes(rideStatus);
 
-    // Quando o passageiro sai do app (vai para a tela inicial - Foto 2)
-    if (nextAppState.match(/inactive|background/) && isRideActive) {
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: "🇬🇼 Nobai245 • Corrida em Andamento",
-          body: driverInfo ? `${driverInfo.name} (${driverInfo.carModel}) • Toque para abrir` : "Sua corrida está ativa. Toque para voltar ao app.",
-          data: { screen: 'Home', activeRideId },
-          sticky: true, // Notificação fixa
-          priority: Notifications.AndroidNotificationPriority.HIGH,
-        },
-        trigger: null, // Dispara imediatamente
-      });
-    }
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', async (nextAppState) => {
+      const isRideActive = ['accepted', 'arrived', 'in_progress'].includes(rideStatus);
 
-    appStateRef.current = nextAppState;
-  });
+      if (nextAppState.match(/inactive|background/) && isRideActive) {
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: "🇬🇼 Nobai245 • Corrida em Andamento",
+            body: driverInfo ? `${driverInfo.name} (${driverInfo.carModel}) • Toque para abrir` : "Sua corrida está ativa. Toque para voltar ao app.",
+            data: { screen: 'Home', activeRideId },
+            sticky: true,
+            priority: Notifications.AndroidNotificationPriority.HIGH,
+          },
+          trigger: null,
+        });
+      }
 
-  return () => subscription.remove();
-}, [rideStatus, driverInfo, activeRideId]);
+      appStateRef.current = nextAppState;
+    });
+
+    return () => subscription.remove();
+  }, [rideStatus, driverInfo, activeRideId]);
+
   async function handleInitialRequestRide() {
     const needsDropoff = serviceType !== 'aluguel';
     if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
@@ -1636,376 +1587,372 @@ useEffect(() => {
     setIsPaymentModalVisible(true);
   }
 
-async function confirmPaymentAndRide() {
-  if (!user?.id) {
-    Alert.alert(t('error_title', 'Erro'), t('missing_user_data', 'Dados de usuário não encontrados.'));
-    return;
-  }
-
-  let cleanPhone = paymentPhone.replace(/[^\d]/g, '');
-  if (cleanPhone.startsWith('245') && cleanPhone.length === 12) {
-    cleanPhone = cleanPhone.substring(3);
-  }
-  
-  const isGwPhoneValid = /^9[567]\d{7}$/.test(cleanPhone);
-  
-  if (!cleanPhone || !isGwPhoneValid) {
-    Alert.alert(
-      t('error_title', 'Erro de Formato'), 
-      t('invalid_phone_msg', 'Por favor, informe um número válido de 9 dígitos da conta Orange Money ou MTN (ex: 95XXXXXXX, 96XXXXXXX ou 97XXXXXXX).')
-    );
-    return;
-  }
-
-  setIsProcessingPayment(true);
-
-  try {
-    const abortController = new AbortController();
-    const timeoutId = setTimeout(() => abortController.abort(), 30000);
-
-    const paymentResponse = await initiateMobileMoneyPayment({
-      phone: cleanPhone,
-      amount: estimatedPrice || 1000,
-      provider: paymentMethod as 'ORANGE_MONEY' | 'MTN_MOMO',
-      passengerId: user.id,
-    }, { signal: abortController.signal });
-
-    clearTimeout(timeoutId);
-
-    if (paymentResponse?.success) {
-      if (isMountedRef.current) {
-        setIsProcessingPayment(false);
-        setIsPaymentModalVisible(false);
-      }
-
-      Alert.alert(
-        'Solicitação Enviada 📲',
-        'Confirme a transação inserindo o seu PIN no prompt USSD que apareceu na tela do seu celular.',
-        [
-          { text: 'OK, já confirmei', onPress: () => executeRideRequest() }
-        ]
-      );
-    } else {
-      throw new Error(paymentResponse?.message || 'Falha ao processar pagamento.');
-    }
-  } catch (error: unknown) {
-    if (isMountedRef.current) {
-      setIsProcessingPayment(false);
-    }
-    const err = error as { name?: string; response?: { data?: { message?: string } } };
-    const isTimeout = err.name === 'AbortError';
-    Alert.alert(
-      t('error_title', 'Aviso no Pagamento'), 
-      isTimeout 
-        ? 'A operadora está demorando para responder. Tente novamente ou use dinheiro.' 
-        : err?.response?.data?.message || 'Não foi possível autorizar o débito. Verifique o saldo ou o número e tente novamente.'
-    );
-  }
-}
-
-function executeRideRequest() {
-  if (!user?.id || !pickupCoords) {
-    Alert.alert(t('warning_title', 'Aviso ⚠️'), t('missing_data_msg', 'Dados insuficientes para iniciar a corrida. Verifique sua localização.'));
-    return;
-  }
-
-  try {
-    if (!socket.connected) connectPassengerSocket();
-
-    setRideStatus('searching');
-    
-    // Mapeamento estrito para os Enums do Backend
-    const mappedServiceType = serviceType === 'viagem' ? 'RIDE' : serviceType === 'entrega' ? 'DELIVERY' : 'RENTAL';
-    const mappedVehicleType = 
-      vehicleType === 'particular' ? 'PARTICULAR' : 
-      vehicleType === 'moto-carro' ? 'MOTO_CARRO' : 
-      (vehicleType as string) === 'toca-toca' ? 'TOCA_TOCA' :
-      vehicleType.toUpperCase();
-      
-    const regionLabel = RENTAL_PRICES[selectedRegion]?.label || selectedRegion;
-
-    emitRequestRide({
-      passengerId: user.id,
-      passengerName: (user as any)?.name || user.fullName,
-      passengerRating: Number((user as any)?.rating || user.ratingAverage || 5.0),
-      pickupLat: pickupCoords.latitude,
-      pickupLng: pickupCoords.longitude,
-      originAddress: pickupAddress,
-      destinationLat: dropoffCoords?.latitude || pickupCoords.latitude,
-      destinationLng: dropoffCoords?.longitude || pickupCoords.longitude,
-      destinationAddress: serviceType === 'aluguel' ? `Aluguel Toca-Toca (${regionLabel})` : dropoffAddress,
-      referencePoint: referencePoint.trim(),
-      serviceType: mappedServiceType,
-      vehicleType: mappedVehicleType,
-      paymentMethod: paymentMethod,
-      estimatedPrice: estimatedPrice,
-      priceXof: estimatedPrice,
-      guestName: isForAnotherPerson ? guestName : undefined,
-      guestPhone: isForAnotherPerson ? guestPhone : undefined,
-      // 🟢 PARADAS INTERMEDIÁRIAS COMPATÍVEIS COM O MOTORISTA
-      stops: (extraStopCoords?.latitude && extraStopCoords?.longitude) ? [
-        {
-          address: extraStopAddress || 'Parada Intermediária',
-          lat: extraStopCoords.latitude,
-          lng: extraStopCoords.longitude,
-          latitude: extraStopCoords.latitude,
-          longitude: extraStopCoords.longitude,
-          status: 'PENDING'
-        }
-      ] : [],
-      extraStopLat: extraStopCoords?.latitude,
-      extraStopLng: extraStopCoords?.longitude,
-      extraStopAddress: extraStopAddress || undefined,
-    });
-
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    searchTimeoutRef.current = setTimeout(() => {
-      if (isMountedRef.current) {
-        Alert.alert(
-          t('no_response_title', 'Sem resposta'), 
-          t('no_driver_accepted_msg', 'Nenhum motorista aceitou no momento. Tente novamente.')
-        );
-        resetRideState();
-      }
-    }, 60000);
-
-  } catch (error) {
-    Alert.alert(
-      t('error_title', 'Erro'), 
-      t('server_error_msg', 'Ocorreu um problema ao comunicar com os servidores.')
-    );
-  }
-}
-
-function checkPenaltyApplicable() {
-  if (!acceptedAt) return false;
-  return (new Date().getTime() - acceptedAt.getTime()) > 2 * 60 * 1000;
-}
-
-const handleCloseCancelModal = useCallback(() => setShowCancelModal(false), []);
-
-const handleConfirmCancel = useCallback((reason: string) => {
-  setShowCancelModal(false);
-
-  if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-
-  if (!activeRideId || !user?.id) {
-    resetRideState();
-    return;
-  }
-  
-  cancelRideByPassenger(activeRideId, user.id, reason);
-  
-  persistRideState(null, 'idle');
-  setActiveRideId(null);
-  setRideStatus('idle');
-  setBookingStep('ADDRESS');
-  setDriverInfo(null);
-  setDriverLocation(null);
-  setStartOtp('');
-  
-  if (activeRideIdRef.current) activeRideIdRef.current = null;
-  resetRideState();
-}, [activeRideId, user?.id, resetRideState]);
-
-const onMapRegionDidChange = useCallback(async (feature: any) => {
-  setIsMapMoving(false);
-  if (rideStatus !== 'idle' || bookingStep !== 'ADDRESS') return;
-
-  if (isManualPickupRef.current) return;
-
-  const coords = feature?.geometry?.coordinates;
-  if (!coords || !Array.isArray(coords) || coords.length < 2) return;
-
-  const [lng, lat] = coords;
-  if (typeof lng !== 'number' || typeof lat !== 'number' || isNaN(lng) || isNaN(lat)) return;
-
-  setPickupCoords({ latitude: lat, longitude: lng });
-
-  const localName = findNearestLocalBairro(lat, lng);
-  if (localName) {
-    setPickupAddress(localName);
-    return;
-  }
-
-  if (MAPBOX_ACCESS_TOKEN) {
-    try {
-      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`;
-      const res = await fetch(url);
-
-      if (!res.ok) return;
-
-      const data = await res.json();
-      
-      if (data?.features?.length > 0) {
-        const placeName = data.features[0].place_name || '';
-        const parts = placeName.split(',')
-          .map((p: string) => p.trim())
-          .filter((p: string) => p && !p.toLowerCase().includes('guiné'));
-        const cleanAddress = parts.length > 0 ? parts.slice(0, 2).join(', ') : 'Bissau, Centro';
-        setPickupAddress(cleanAddress);
-      }
-    } catch (err) {
-      console.warn('Geocodificação Mapbox falhou no arraste:', err);
-      setPickupAddress('Bissau, Centro');
-    }
-  }
-}, [rideStatus, bookingStep]);
-
-const handleSubmitRating = useCallback((stars: number, tags: string[], comment: string) => {
-  if (activeRideId && driverInfo && user?.id) {
-    rateDriver({ 
-      rideId: activeRideId, 
-      reviewerId: user.id, 
-      receiverId: driverInfo.id, 
-      stars, 
-      tags,
-      comment 
-    });
-  }
-  setShowRatingModal(false);
-  resetRideState();
-}, [activeRideId, driverInfo, user?.id, resetRideState]);
-
-const handleResetToMyGps = () => {
-  isManualPickupRef.current = false;
-  getCurrentLocationWithFallback();
-};
-
-const handleCallDriver = () => {
-  setIsChatVisible(true);
-  Alert.alert(
-    t('contact_protected_title', 'Contato Protegido 🔒'),
-    t('contact_protected_msg', 'Por motivos de segurança e privacidade, a comunicação deve ser feita exclusivamente pelo Chat do aplicativo.')
-  );
-};
-
-const handleShareTrip = async () => {
-  try {
-    if (!driverInfo || !dropoffAddress || !activeRideId) {
-      Alert.alert(t('warning_title', 'Aviso ⚠️'), t('wait_trip_data', 'Aguarde os dados da corrida carregarem para compartilhar.'));
+  async function confirmPaymentAndRide() {
+    if (!user?.id) {
+      Alert.alert(t('error_title', 'Erro'), t('missing_user_data', 'Dados de usuário não encontrados.'));
       return;
     }
 
-    const apiDomain = process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com';
-    const trackingUrl = `${apiDomain}/track/${activeRideId}`;
+    let cleanPhone = paymentPhone.replace(/[^\d]/g, '');
+    if (cleanPhone.startsWith('245') && cleanPhone.length === 12) {
+      cleanPhone = cleanPhone.substring(3);
+    }
+    
+    const isGwPhoneValid = /^9[567]\d{7}$/.test(cleanPhone);
+    
+    if (!cleanPhone || !isGwPhoneValid) {
+      Alert.alert(
+        t('error_title', 'Erro de Formato'), 
+        t('invalid_phone_msg', 'Por favor, informe um número válido de 9 dígitos da conta Orange Money ou MTN (ex: 95XXXXXXX, 96XXXXXXX ou 97XXXXXXX).')
+      );
+      return;
+    }
 
-    const mensagem = `🚕 Acompanhe minha viagem no Nobai245!\n\n` +
-      `👤 Motorista: ${driverInfo.name}\n` +
-      `🚘 Veículo: ${driverInfo.carModel || 'Veículo'} (${driverInfo.carColor || 'Cor N/A'}) - Placa: ${driverInfo.licensePlate || 'N/A'}\n` +
-      `📍 Destino: ${dropoffAddress}\n` +
-      `${driverEta ? `⏳ Previsão de chegada: ${driverEta} minutos\n` : ''}` +
-      `🌐 Acompanhe em tempo real pelo navegador: ${trackingUrl}`;
+    setIsProcessingPayment(true);
 
-    await Share.share({ message: mensagem, title: 'Detalhes da minha corrida' });
-  } catch (error) {
-    Alert.alert(t('error_title', 'Erro'), t('share_error_msg', 'Não foi possível abrir o menu de compartilhamento.'));
+    try {
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => abortController.abort(), 30000);
+
+      const paymentResponse = await initiateMobileMoneyPayment({
+        phone: cleanPhone,
+        amount: estimatedPrice || 1000,
+        provider: paymentMethod as 'ORANGE_MONEY' | 'MTN_MOMO',
+        passengerId: user.id,
+      }, { signal: abortController.signal });
+
+      clearTimeout(timeoutId);
+
+      if (paymentResponse?.success) {
+        if (isMountedRef.current) {
+          setIsProcessingPayment(false);
+          setIsPaymentModalVisible(false);
+        }
+
+        Alert.alert(
+          'Solicitação Enviada 📲',
+          'Confirme a transação inserindo o seu PIN no prompt USSD que apareceu na tela do seu celular.',
+          [
+            { text: 'OK, já confirmei', onPress: () => executeRideRequest() }
+          ]
+        );
+      } else {
+        throw new Error(paymentResponse?.message || 'Falha ao processar pagamento.');
+      }
+    } catch (error: unknown) {
+      if (isMountedRef.current) {
+        setIsProcessingPayment(false);
+      }
+      const err = error as { name?: string; response?: { data?: { message?: string } } };
+      const isTimeout = err.name === 'AbortError';
+      Alert.alert(
+        t('error_title', 'Aviso no Pagamento'), 
+        isTimeout 
+          ? 'A operadora está demorando para responder. Tente novamente ou use dinheiro.' 
+          : err?.response?.data?.message || 'Não foi possível autorizar o débito. Verifique o saldo ou o número e tente novamente.'
+      );
+    }
   }
-};
 
-function sendMessage() {
-  if (!inputText.trim() || !activeRideId) return;
-  const uniqueId = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-  const passengerName = (user as any)?.name || user?.fullName || t('passenger', 'Passageiro');
+  function executeRideRequest() {
+    if (!user?.id || !pickupCoords) {
+      Alert.alert(t('warning_title', 'Aviso ⚠️'), t('missing_data_msg', 'Dados insuficientes para iniciar a corrida. Verifique sua localização.'));
+      return;
+    }
 
-  setMessages(prev => [...prev, { id: uniqueId, sender: 'passenger', text: inputText.trim() }]);
-  sendChatMessage(activeRideId, passengerName, inputText.trim());
-  setInputText('');
-}
+    try {
+      if (!socket.connected) connectPassengerSocket();
 
-function openSearchModal(type: 'pickup' | 'dropoff' | 'extraStop') {
-  setSearchType(type);
-  setSearchQuery('');
-  setSearchResults([]);
-  setIsSearchModalVisible(true);
-}
+      setRideStatus('searching');
+      
+      const mappedServiceType = serviceType === 'viagem' ? 'RIDE' : serviceType === 'entrega' ? 'DELIVERY' : 'RENTAL';
+      const mappedVehicleType = 
+        vehicleType === 'particular' ? 'PARTICULAR' : 
+        vehicleType === 'moto-carro' ? 'MOTO_CARRO' : 
+        (vehicleType as string) === 'toca-toca' ? 'TOCA_TOCA' :
+        vehicleType.toUpperCase();
+        
+      const regionLabel = RENTAL_PRICES[selectedRegion]?.label || selectedRegion;
 
-const handleSelectSearchResult = (address: string, coords: { latitude: number; longitude: number }) => {
-  const selectedFeature: MapboxGeocodingFeature = {
-    id: `recent_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-    description: address,
-    latitude: coords.latitude,
-    longitude: coords.longitude,
+      emitRequestRide({
+        passengerId: user.id,
+        passengerName: (user as any)?.name || user.fullName,
+        passengerRating: Number((user as any)?.rating || user.ratingAverage || 5.0),
+        pickupLat: pickupCoords.latitude,
+        pickupLng: pickupCoords.longitude,
+        originAddress: pickupAddress,
+        destinationLat: dropoffCoords?.latitude || pickupCoords.latitude,
+        destinationLng: dropoffCoords?.longitude || pickupCoords.longitude,
+        destinationAddress: serviceType === 'aluguel' ? `Aluguel Toca-Toca (${regionLabel})` : dropoffAddress,
+        referencePoint: referencePoint.trim(),
+        serviceType: mappedServiceType,
+        vehicleType: mappedVehicleType,
+        paymentMethod: paymentMethod,
+        estimatedPrice: estimatedPrice,
+        priceXof: estimatedPrice,
+        guestName: isForAnotherPerson ? guestName : undefined,
+        guestPhone: isForAnotherPerson ? guestPhone : undefined,
+        stops: (extraStopCoords?.latitude && extraStopCoords?.longitude) ? [
+          {
+            address: extraStopAddress || 'Parada Intermediária',
+            lat: extraStopCoords.latitude,
+            lng: extraStopCoords.longitude,
+            latitude: extraStopCoords.latitude,
+            longitude: extraStopCoords.longitude,
+            status: 'PENDING'
+          }
+        ] : [],
+        extraStopLat: extraStopCoords?.latitude,
+        extraStopLng: extraStopCoords?.longitude,
+        extraStopAddress: extraStopAddress || undefined,
+      });
+
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      searchTimeoutRef.current = setTimeout(() => {
+        if (isMountedRef.current) {
+          Alert.alert(
+            t('no_response_title', 'Sem resposta'), 
+            t('no_driver_accepted_msg', 'Nenhum motorista aceitou no momento. Tente novamente.')
+          );
+          resetRideState();
+        }
+      }, 60000);
+
+    } catch (error) {
+      Alert.alert(
+        t('error_title', 'Erro'), 
+        t('server_error_msg', 'Ocorreu um problema ao comunicar com os servidores.')
+      );
+    }
+  }
+
+  function checkPenaltyApplicable() {
+    if (!acceptedAt) return false;
+    return (new Date().getTime() - acceptedAt.getTime()) > 2 * 60 * 1000;
+  }
+
+  const handleCloseCancelModal = useCallback(() => setShowCancelModal(false), []);
+
+  const handleConfirmCancel = useCallback((reason: string) => {
+    setShowCancelModal(false);
+
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+
+    if (!activeRideId || !user?.id) {
+      resetRideState();
+      return;
+    }
+    
+    cancelRideByPassenger(activeRideId, user.id, reason);
+    
+    persistRideState(null, 'idle');
+    setActiveRideId(null);
+    setRideStatus('idle');
+    setBookingStep('ADDRESS');
+    setDriverInfo(null);
+    setDriverLocation(null);
+    setStartOtp('');
+    
+    if (activeRideIdRef.current) activeRideIdRef.current = null;
+    resetRideState();
+  }, [activeRideId, user?.id, resetRideState]);
+
+  const onMapRegionDidChange = useCallback(async (feature: any) => {
+    setIsMapMoving(false);
+    if (rideStatus !== 'idle' || bookingStep !== 'ADDRESS') return;
+
+    if (isManualPickupRef.current) return;
+
+    const coords = feature?.geometry?.coordinates;
+    if (!coords || !Array.isArray(coords) || coords.length < 2) return;
+
+    const [lng, lat] = coords;
+    if (typeof lng !== 'number' || typeof lat !== 'number' || isNaN(lng) || isNaN(lat)) return;
+
+    setPickupCoords({ latitude: lat, longitude: lng });
+
+    const localName = findNearestLocalBairro(lat, lng);
+    if (localName) {
+      setPickupAddress(localName);
+      return;
+    }
+
+    if (MAPBOX_ACCESS_TOKEN) {
+      try {
+        const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`;
+        const res = await fetch(url);
+
+        if (!res.ok) return;
+
+        const data = await res.json();
+        
+        if (data?.features?.length > 0) {
+          const placeName = data.features[0].place_name || '';
+          const parts = placeName.split(',')
+            .map((p: string) => p.trim())
+            .filter((p: string) => p && !p.toLowerCase().includes('guiné'));
+          const cleanAddress = parts.length > 0 ? parts.slice(0, 2).join(', ') : 'Bissau, Centro';
+          setPickupAddress(cleanAddress);
+        }
+      } catch (err) {
+        console.warn('Geocodificação Mapbox falhou no arraste:', err);
+        setPickupAddress('Bissau, Centro');
+      }
+    }
+  }, [rideStatus, bookingStep]);
+
+  const handleSubmitRating = useCallback((stars: number, tags: string[], comment: string) => {
+    if (activeRideId && driverInfo && user?.id) {
+      rateDriver({ 
+        rideId: activeRideId, 
+        reviewerId: user.id, 
+        receiverId: driverInfo.id, 
+        stars, 
+        tags,
+        comment 
+      });
+    }
+    setShowRatingModal(false);
+    resetRideState();
+  }, [activeRideId, driverInfo, user?.id, resetRideState]);
+
+  const handleResetToMyGps = () => {
+    isManualPickupRef.current = false;
+    getCurrentLocationWithFallback();
   };
 
-  // Salva no histórico de recentes
-  saveToRecentSearches(selectedFeature);
+  const handleCallDriver = () => {
+    setIsChatVisible(true);
+    Alert.alert(
+      t('contact_protected_title', 'Contato Protegido 🔒'),
+      t('contact_protected_msg', 'Por motivos de segurança e privacidade, a comunicação deve ser feita exclusivamente pelo Chat do aplicativo.')
+    );
+  };
 
-  if (searchType === 'pickup') {
-    isManualPickupRef.current = true;
-    setPickupAddress(address);
-    setPickupCoords(coords);
-  } else if (searchType === 'dropoff') {
-    setDropoffAddress(address);
-    setDropoffCoords(coords);
-    setBookingStep('SERVICE_AND_PRICE');
-  } else if (searchType === 'extraStop') {
-    setExtraStopAddress(address);
-    setExtraStopCoords(coords);
+  const handleShareTrip = async () => {
+    try {
+      if (!driverInfo || !dropoffAddress || !activeRideId) {
+        Alert.alert(t('warning_title', 'Aviso ⚠️'), t('wait_trip_data', 'Aguarde os dados da corrida carregarem para compartilhar.'));
+        return;
+      }
+
+      const apiDomain = process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com';
+      const trackingUrl = `${apiDomain}/track/${activeRideId}`;
+
+      const mensagem = `🚕 Acompanhe minha viagem no Nobai245!\n\n` +
+        `👤 Motorista: ${driverInfo.name}\n` +
+        `🚘 Veículo: ${driverInfo.carModel || 'Veículo'} (${driverInfo.carColor || 'Cor N/A'}) - Placa: ${driverInfo.licensePlate || 'N/A'}\n` +
+        `📍 Destino: ${dropoffAddress}\n` +
+        `${driverEta ? `⏳ Previsão de chegada: ${driverEta} minutos\n` : ''}` +
+        `🌐 Acompanhe em tempo real pelo navegador: ${trackingUrl}`;
+
+      await Share.share({ message: mensagem, title: 'Detalhes da minha corrida' });
+    } catch (error) {
+      Alert.alert(t('error_title', 'Erro'), t('share_error_msg', 'Não foi possível abrir o menu de compartilhamento.'));
+    }
+  };
+
+  function sendMessage() {
+    if (!inputText.trim() || !activeRideId) return;
+    const uniqueId = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const passengerName = (user as any)?.name || user?.fullName || t('passenger', 'Passageiro');
+
+    setMessages(prev => [...prev, { id: uniqueId, sender: 'passenger', text: inputText.trim() }]);
+    sendChatMessage(activeRideId, passengerName, inputText.trim());
+    setInputText('');
   }
 
-  setIsSearchModalVisible(false);
-};
-
-const handleSosPress = () => {
-  Alert.alert(
-    t('emergency_sos', 'SOS / Emergência 🚨'),
-    t('choose_emergency_service', 'Selecione o serviço de emergência que deseja contactar:'),
-    [
-      { 
-        text: '🚨 Central de Segurança (112)', 
-        onPress: () => Linking.openURL('tel:112').catch(() => {}) 
-      },
-      { 
-        text: '🚒 Bombeiros (1313)', 
-        onPress: () => Linking.openURL('tel:1313').catch(() => {}) 
-      },
-      { 
-        text: '🚑 Saúde / Ambulância (1919)', 
-        onPress: () => Linking.openURL('tel:1919').catch(() => {}) 
-      },
-      { 
-        text: t('back_btn', 'Cancelar'), 
-        style: 'cancel' 
-      },
-    ],
-    { cancelable: true }
-  );
-};
-// 🛡️ COORDENADA SEGURA DA CÂMERA (Garante que o mapa NUNCA vá para o Oceano [0,0])
-const safeCenterCoordinate = React.useMemo(() => {
-  if (
-    driverLocation?.latitude && 
-    driverLocation?.longitude && 
-    !isNaN(Number(driverLocation.latitude)) && 
-    Number(driverLocation.latitude) !== 0
-  ) {
-    return [Number(driverLocation.longitude), Number(driverLocation.latitude)];
+  function openSearchModal(type: 'pickup' | 'dropoff' | 'extraStop') {
+    setSearchType(type);
+    setSearchQuery('');
+    setSearchResults([]);
+    setIsSearchModalVisible(true);
   }
 
-  if (
-    pickupCoords?.latitude && 
-    pickupCoords?.longitude && 
-    !isNaN(Number(pickupCoords.latitude)) && 
-    Number(pickupCoords.latitude) !== 0
-  ) {
-    return [Number(pickupCoords.longitude), Number(pickupCoords.latitude)];
-  }
+  const handleSelectSearchResult = (address: string, coords: { latitude: number; longitude: number }) => {
+    const selectedFeature: MapboxGeocodingFeature = {
+      id: `recent_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      description: address,
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+    };
 
-  if (
-    passengerLocation?.coords?.latitude && 
-    passengerLocation?.coords?.longitude && 
-    !isNaN(Number(passengerLocation.coords.latitude)) && 
-    Number(passengerLocation.coords.latitude) !== 0
-  ) {
-    return [Number(passengerLocation.coords.longitude), Number(passengerLocation.coords.latitude)];
-  }
+    saveToRecentSearches(selectedFeature);
 
-  return [BISSAU_CENTER.longitude, BISSAU_CENTER.latitude];
-}, [driverLocation, pickupCoords, passengerLocation]);
+    if (searchType === 'pickup') {
+      isManualPickupRef.current = true;
+      setPickupAddress(address);
+      setPickupCoords(coords);
+    } else if (searchType === 'dropoff') {
+      setDropoffAddress(address);
+      setDropoffCoords(coords);
+      setBookingStep('SERVICE_AND_PRICE');
+    } else if (searchType === 'extraStop') {
+      setExtraStopAddress(address);
+      setExtraStopCoords(coords);
+    }
 
-// 🛡️ TRAVA DE SEGURANÇA (Se houver corrida restaurada, exibe a tela imediatamente)
-const hasActiveRestoredRide = rideStatus !== 'idle' && Boolean(activeRideId);
+    setIsSearchModalVisible(false);
+  };
+
+  const handleSosPress = () => {
+    Alert.alert(
+      t('emergency_sos', 'SOS / Emergência 🚨'),
+      t('choose_emergency_service', 'Selecione o serviço de emergência que deseja contactar:'),
+      [
+        { 
+          text: '🚨 Central de Segurança (112)', 
+          onPress: () => Linking.openURL('tel:112').catch(() => {}) 
+        },
+        { 
+          text: '🚒 Bombeiros (1313)', 
+          onPress: () => Linking.openURL('tel:1313').catch(() => {}) 
+        },
+        { 
+          text: '🚑 Saúde / Ambulância (1919)', 
+          onPress: () => Linking.openURL('tel:1919').catch(() => {}) 
+        },
+        { 
+          text: t('back_btn', 'Cancelar'), 
+          style: 'cancel' 
+        },
+      ],
+      { cancelable: true }
+    );
+  };
+
+  const safeCenterCoordinate = React.useMemo(() => {
+    if (
+      driverLocation?.latitude && 
+      driverLocation?.longitude && 
+      !isNaN(Number(driverLocation.latitude)) && 
+      Number(driverLocation.latitude) !== 0
+    ) {
+      return [Number(driverLocation.longitude), Number(driverLocation.latitude)];
+    }
+
+    if (
+      pickupCoords?.latitude && 
+      pickupCoords?.longitude && 
+      !isNaN(Number(pickupCoords.latitude)) && 
+      Number(pickupCoords.latitude) !== 0
+    ) {
+      return [Number(pickupCoords.longitude), Number(pickupCoords.latitude)];
+    }
+
+    if (
+      passengerLocation?.coords?.latitude && 
+      passengerLocation?.coords?.longitude && 
+      !isNaN(Number(passengerLocation.coords.latitude)) && 
+      Number(passengerLocation.coords.latitude) !== 0
+    ) {
+      return [Number(passengerLocation.coords.longitude), Number(passengerLocation.coords.latitude)];
+    }
+
+    return [BISSAU_CENTER.longitude, BISSAU_CENTER.latitude];
+  }, [driverLocation, pickupCoords, passengerLocation]);
+
+  const hasActiveRestoredRide = rideStatus !== 'idle' && Boolean(activeRideId);
 
 if (!passengerLocation && !hasActiveRestoredRide && locationError) {
   return (
