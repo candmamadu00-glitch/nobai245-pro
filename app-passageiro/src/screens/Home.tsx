@@ -2477,21 +2477,22 @@ return (
         </View>
       )}
 
-    {/* BOTÃO FIXO DE CONFIRMAÇÃO */}
-    <View style={{
-      padding: 16,
-      borderTopWidth: 1,
-      borderTopColor: '#1E293B',
-      backgroundColor: '#0F172A'
-    }}>
-      <TouchableOpacity 
-        style={[styles.requestButton, { height: 52 }]} 
-        onPress={() => setBookingStep('PAYMENT')}
-        activeOpacity={0.85}
-      >
-        <Text style={[styles.requestButtonText, { fontSize: 16 }]}>Continuar para Pagamento ➔</Text>
-      </TouchableOpacity>
-    </View>
+      {/* BOTÃO FIXO DE CONFIRMAÇÃO */}
+      <View style={{
+        paddingVertical: 16,
+        borderTopWidth: 1,
+        borderTopColor: '#1E293B',
+        backgroundColor: '#0F172A'
+      }}>
+        <TouchableOpacity 
+          style={[styles.requestButton, { height: 52 }]} 
+          onPress={() => setBookingStep('PAYMENT')}
+          activeOpacity={0.85}
+        >
+          <Text style={[styles.requestButtonText, { fontSize: 16 }]}>Continuar para Pagamento ➔</Text>
+        </TouchableOpacity>
+      </View>
+    </ScrollView>
   </SafeAreaView>
 </Modal>
 {/* 💳 SELEÇÃO DE FORMA DE PAGAMENTO */}
