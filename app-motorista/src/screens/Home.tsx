@@ -28,7 +28,7 @@ import { StartRideOtpModal } from '../components/StartRideOtpModal';
 import { api } from '../services/api';
 import { DriverSOSModal } from '../components/DriverSOSModal';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
-import { createAudioPlayer } from 'expo-audio';
+import { Audio } from 'expo-av';
 import { useBilingualVoice } from '../hooks/useBilingualVoice';
 import { updateOngoingRideNotification, dismissOngoingRideNotification } from '../services/ongoingNotification';
 // 🛡️ Token Mapbox
@@ -430,37 +430,40 @@ export function Home() {
   }, []);
 
   useEffect(() => {
-    let activePlayer: any = null;
-    const hasActiveOffer = !!queuedOfferData || (rideState === 'idle' && !!incomingRide);
+  let activePlayer: Audio.Sound | null = null;
+  const hasActiveOffer = !!queuedOfferData || (rideState === 'idle' && !!incomingRide);
 
-    if (hasActiveOffer) {
-      Vibration.vibrate([0, 800, 300, 800], false);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+  if (hasActiveOffer) {
+    Vibration.vibrate([0, 800, 300, 800], false);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
 
+    (async () => {
       try {
-        const player = createAudioPlayer(require('../../assets/sounds/alert.mp3'));
-        player.loop = false;
-        player.play();
-        alertPlayerRef.current = player;
-        activePlayer = player;
+        const { sound } = await Audio.Sound.createAsync(
+          require('../../assets/sounds/alert.mp3'),
+          { shouldPlay: true }
+        );
+        alertPlayerRef.current = sound;
+        activePlayer = sound;
       } catch (audioErr) {}
+    })();
 
-      playBilingualVoice('new_ride', 'Nova viagem encontrada');
-    } else {
-      Vibration.cancel();
-      if (alertPlayerRef.current) {
-        try { alertPlayerRef.current.pause(); } catch (e) {}
-        alertPlayerRef.current = null;
-      }
+    playBilingualVoice('new_ride', 'Nova viagem encontrada');
+  } else {
+    Vibration.cancel();
+    if (alertPlayerRef.current) {
+      try { alertPlayerRef.current.unloadAsync(); } catch (e) {}
+      alertPlayerRef.current = null;
     }
+  }
 
-    return () => {
-      Vibration.cancel();
-      if (activePlayer) {
-        try { activePlayer.pause(); } catch (e) {}
-      }
-    };
-  }, [queuedOfferData, incomingRide, rideState, playBilingualVoice]);
+  return () => {
+    Vibration.cancel();
+    if (activePlayer) {
+      try { activePlayer.unloadAsync(); } catch (e) {}
+    }
+  };
+}, [queuedOfferData, incomingRide, rideState, playBilingualVoice]);
 
   useEffect(() => { if (route.params?.openChat) setIsChatVisible(true); }, [route.params]); 
 // 🟢 CARREGAMENTO INICIAL DE GPS (Garante que o ícone do carro apareça assim que o app abre)
