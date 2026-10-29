@@ -1,22 +1,30 @@
-import { useState } from 'react';
-import { useAudioRecorder as useExpoAudioRecorder, AudioModule, RecordingPresets } from 'expo-audio';
+import { useState, useRef } from 'react';
+import { Audio } from 'expo-av';
 // @ts-ignore
 import * as FileSystem from 'expo-file-system';
 
 export function useAudioRecorder() {
   const [isRecording, setIsRecording] = useState(false);
-  const audioRecorder = useExpoAudioRecorder(RecordingPresets.LOW_QUALITY);
+  const recordingRef = useRef<Audio.Recording | null>(null);
 
   async function startRecording() {
     try {
-      const status = await AudioModule.requestRecordingPermissionsAsync();
+      const status = await Audio.requestPermissionsAsync();
       if (!status.granted) {
         console.warn('Permissão de microfone negada');
         return;
       }
 
-      await audioRecorder.prepareToRecordAsync();
-      audioRecorder.record();
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.LOW_QUALITY
+      );
+
+      recordingRef.current = recording;
       setIsRecording(true);
     } catch (err) {
       console.error('Erro ao iniciar gravação SOS:', err);
@@ -26,10 +34,11 @@ export function useAudioRecorder() {
 
   async function stopRecording(): Promise<string | null> {
     try {
-      if (!audioRecorder.isRecording) return null;
+      if (!recordingRef.current) return null;
 
-      await audioRecorder.stop();
-      const uri = audioRecorder.uri;
+      await recordingRef.current.stopAndUnloadAsync();
+      const uri = recordingRef.current.getURI();
+      recordingRef.current = null;
       setIsRecording(false);
 
       if (!uri) return null;
@@ -43,6 +52,7 @@ export function useAudioRecorder() {
     } catch (err) {
       console.error('Erro ao parar gravação SOS:', err);
       setIsRecording(false);
+      recordingRef.current = null;
       return null;
     }
   }
