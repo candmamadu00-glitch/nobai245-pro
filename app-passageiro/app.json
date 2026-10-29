@@ -41,7 +41,7 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-dev-client",
+      
       [
         "@rnmapbox/maps",
         {
