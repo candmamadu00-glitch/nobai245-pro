@@ -93,6 +93,7 @@
           }
         }
       ],
+      "expo-av",
       "expo-asset"
     ],
     "extra": {
