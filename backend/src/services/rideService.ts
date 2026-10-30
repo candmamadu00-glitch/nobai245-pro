@@ -772,7 +772,7 @@ export async function notifyDriverNearbyIfClose(rideId: string, distanceMeters: 
   }
 }
 // -----------------------------------------------------------------------------
-// 5. FINALIZAÇÃO DA CORRIDA E LIQUIDAÇÃO (COM DEBITO AUTOMÁTICO DE COMISSÃO)
+// 5. FINALIZAÇÃO DA CORRIDA E LIQUIDAÇÃO (COM DÉBITO AUTOMÁTICO DE COMISSÃO)
 // -----------------------------------------------------------------------------
 export async function finalizeRideAndCharge(
   rideId: string, 
@@ -898,7 +898,7 @@ export async function finalizeRideAndCharge(
           walletBalance: finalDriverBalance,
           currentRideId: nextCurrentRideId, 
           isAvailable: isDriverAvailable,
-          isOnline: shouldStayOnline // Se caiu abaixo de 1000 XOF, fica Offline automaticamente
+          isOnline: shouldStayOnline
         } 
       });
 
@@ -919,7 +919,7 @@ export async function finalizeRideAndCharge(
           balanceBefore: currentDriverBalance,
           balanceAfter: finalDriverBalance,
           reference: `COMM-CASH-${ride.id.slice(0, 8)}-${Date.now()}`,
-          description: `Comissão da taxa de plataforma (${commissionRate * 100}%) sobre corrida em dinheiro de ${calculatedFare} XOF`
+          description: `Comissão da taxa de plataforma (${Math.round(commissionRate * 100)}%) sobre corrida em dinheiro de ${calculatedFare} XOF`
         }
       });
       commissionTransactionId = commTx.id;
@@ -1033,18 +1033,6 @@ export async function finalizeRideAndCharge(
     ).catch(err => console.error('❌ Erro no Push de finalização:', err));
   }
 
-  return { 
-    success: true, 
-    fareXOF: calculatedFare, 
-    driverEarnings, 
-    platformFee, 
-    distanceKm, 
-    paymentMethod: isCash ? 'CASH' : String(ride.paymentMethod), 
-    hasQueuedRide: !!queuedRideToPromote, 
-    nextRideId: queuedRideToPromote?.id || null 
-  };
-}
-
   const provider = (ride.paymentMethod || PaymentMethod.ORANGE_MONEY).toString().toUpperCase();
   const driverPhone = (ride.driver as any).paymentAccountNumber || ride.driver.phone;
 
@@ -1113,7 +1101,7 @@ export async function finalizeRideAndCharge(
     driverEarnings, 
     platformFee, 
     distanceKm, 
-    paymentMethod: String(ride.paymentMethod), 
+    paymentMethod: isCash ? 'CASH' : String(ride.paymentMethod), 
     hasQueuedRide: !!queuedRideToPromote, 
     nextRideId: queuedRideToPromote?.id || null 
   };
