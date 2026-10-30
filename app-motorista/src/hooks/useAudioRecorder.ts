@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Audio } from 'expo-av';
+import { Audio } from 'expo-audio';
 // @ts-ignore
 import * as FileSystem from 'expo-file-system';
 

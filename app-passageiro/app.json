@@ -41,7 +41,6 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      
       [
         "@rnmapbox/maps",
         {
@@ -93,8 +92,8 @@
           }
         }
       ],
-      "expo-av",
-      "expo-asset"
+      "expo-asset",
+      "expo-audio"
     ],
     "extra": {
       "eas": {

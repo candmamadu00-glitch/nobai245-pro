@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react';
-import { Audio } from 'expo-av';
+import { Audio } from 'expo-audio';
 import * as Speech from 'expo-speech';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 

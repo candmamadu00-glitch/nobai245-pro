@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Socket } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
-import { Audio } from 'expo-av';
+import { Audio } from 'expo-audio';
 import { api } from '../services/api';
 
 export interface ChatMessage {

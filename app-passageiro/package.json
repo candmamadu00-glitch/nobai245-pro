@@ -14,7 +14,7 @@
     "axios": "^1.6.8",
     "expo": "~57.0.27",
     "expo-asset": "~57.0.20",
-    "expo-av": "^16.0.8",
+    "expo-audio": "~57.0.5",
     "expo-build-properties": "~57.0.22",
     "expo-camera": "~57.0.6",
     "expo-device": "~57.0.2",

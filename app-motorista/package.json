@@ -14,7 +14,7 @@
     "babel-preset-expo": "~57.0.0",
     "expo": "~57.0.31",
     "expo-asset": "~57.0.20",
-    "expo-av": "^16.0.8",
+    "expo-audio": "~57.0.5",
     "expo-battery": "~57.0.3",
     "expo-build-properties": "~57.0.22",
     "expo-camera": "~57.0.6",

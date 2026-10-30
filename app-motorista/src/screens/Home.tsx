@@ -28,7 +28,7 @@ import { StartRideOtpModal } from '../components/StartRideOtpModal';
 import { api } from '../services/api';
 import { DriverSOSModal } from '../components/DriverSOSModal';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
-import { Audio } from 'expo-av';
+import { Audio } from 'expo-audio';
 import { useBilingualVoice } from '../hooks/useBilingualVoice';
 import { updateOngoingRideNotification, dismissOngoingRideNotification } from '../services/ongoingNotification';
 // 🛡️ Token Mapbox
