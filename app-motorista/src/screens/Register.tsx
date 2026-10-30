@@ -39,21 +39,69 @@ export function Register() {
 
   const navigation = useNavigation<any>();
 
-  async function pickImage(setter: (uri: string) => void, title: string) {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      return Alert.alert('Permissão', 'Precisamos de acesso à galeria para enviar os documentos.');
-    }
+  /**
+   * Menu de captura de imagem com opções de Câmera ou Galeria
+   */
+  function pickImage(setter: (uri: string) => void, title: string) {
+    Alert.alert(
+      `Enviar ${title}`,
+      'Escolha como deseja enviar a imagem do seu documento ou foto:',
+      [
+        {
+          text: '📷 Tirar Foto Agora',
+          onPress: async () => {
+            try {
+              const permission = await ImagePicker.requestCameraPermissionsAsync();
+              if (!permission.granted) {
+                return Alert.alert('Permissão Negada', 'Precisamos de acesso à câmara para capturar a foto.');
+              }
 
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      quality: 0.7,
-    });
+              const result = await ImagePicker.launchCameraAsync({
+                mediaTypes: ['images'],
+                allowsEditing: true,
+                quality: 0.8,
+              });
 
-    if (!result.canceled && result.assets && result.assets[0]?.uri) {
-      setter(result.assets[0].uri);
-    }
+              if (!result.canceled && result.assets && result.assets[0]?.uri) {
+                setter(result.assets[0].uri);
+              }
+            } catch (error) {
+              console.error('Erro ao abrir câmera:', error);
+              Alert.alert('Erro', 'Não foi possível abrir a câmara do dispositivo.');
+            }
+          },
+        },
+        {
+          text: '🖼️ Escolher da Galeria',
+          onPress: async () => {
+            try {
+              const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+              if (!permission.granted) {
+                return Alert.alert('Permissão Negada', 'Precisamos de acesso à galeria para selecionar a imagem.');
+              }
+
+              const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ['images'],
+                allowsEditing: true,
+                quality: 0.8,
+              });
+
+              if (!result.canceled && result.assets && result.assets[0]?.uri) {
+                setter(result.assets[0].uri);
+              }
+            } catch (error) {
+              console.error('Erro ao abrir galeria:', error);
+              Alert.alert('Erro', 'Não foi possível acessar a galeria de fotos.');
+            }
+          },
+        },
+        {
+          text: 'Cancelar',
+          style: 'cancel',
+        },
+      ],
+      { cancelable: true }
+    );
   }
 
   function handleNextStep() {
@@ -82,7 +130,6 @@ export function Register() {
 
     setLoading(true);
 
-    // 🔍 LOG DE DEPURAÇÃO DOS DADOS DE ENTRADA
     console.log('=== 📤 [DEBUG CADASTRO] ENVIANDO DADOS AO BACKEND ===');
     console.log({
       fullName: fullName.trim(),
@@ -119,7 +166,8 @@ export function Register() {
       
       formData.append('documentType', documentType);
       formData.append('documentNumber', documentNumber.trim().toUpperCase());
-const appendImage = (key: string, uri: string) => {
+
+      const appendImage = (key: string, uri: string) => {
         const filename = uri.split('/').pop() || `${key}.jpg`;
         const match = /\.(\w+)$/.exec(filename);
         const ext = match ? match[1].toLowerCase() : 'jpg';
@@ -136,7 +184,6 @@ const appendImage = (key: string, uri: string) => {
       appendImage('licenseFront', licenseFront);
       appendImage('licenseBack', licenseBack);
 
-      // 🟢 Envia com o header explícito multipart/form-data
       const response = await api.post('/drivers/register', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
@@ -145,20 +192,33 @@ const appendImage = (key: string, uri: string) => {
 
       console.log('=== ✅ [DEBUG CADASTRO] SUCESSO ===', response.data);
       
-      Alert.alert('🎉 Bem-vindo(a)!', response.data.message || 'Cadastro enviado para aprovação.');
-      navigation.navigate('Login');
+      // Mensagem de sucesso formatada e profissional
+      Alert.alert(
+        '🎉 Cadastro Concluído com Sucesso!',
+        'Seus dados e documentos foram enviados para nossa equipe de análise.\n\n' +
+        '📋 Status: Em Verificação\n' +
+        '⏱️ Tempo estimado: Ativação em até 24 horas\n\n' +
+        'Assim que seu perfil for aprovado, você receberá uma notificação e poderá entrar online para começar a faturar com a Nô Bai 245!',
+        [
+          {
+            text: 'Ir para a Tela Inicial',
+            onPress: () => navigation.navigate('Login'),
+          },
+        ],
+        { cancelable: false }
+      );
     } catch (error: any) {
-      // 🔍 LOG DE DEPURAÇÃO DA RESPOSTA DE ERRO DA API
       console.log('=== ❌ [DEBUG CADASTRO] ERRO RETORNADO PELA API ===');
       console.log('Status HTTP:', error.response?.status);
       console.log('Resposta do Servidor:', JSON.stringify(error.response?.data, null, 2));
       console.log('Mensagem de Erro:', error.message);
 
-      Alert.alert('Erro', error.response?.data?.error || error.response?.data?.message || 'Falha ao registrar.');
+      Alert.alert('Erro no Cadastro', error.response?.data?.error || error.response?.data?.message || 'Falha ao registrar.');
     } finally {
       setLoading(false);
     }
   }
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={theme.colors.primaryDark} translucent />

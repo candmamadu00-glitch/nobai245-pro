@@ -9,6 +9,7 @@ const router = Router();
 
 const ORANGE_WEBHOOK_SECRET = process.env.ORANGE_WEBHOOK_SECRET || '';
 const MTN_WEBHOOK_SECRET = process.env.MTN_WEBHOOK_SECRET || '';
+const SMS_GATEWAY_SECRET = process.env.SMS_GATEWAY_SECRET || 'bai245_sms_gateway_secret_2026_key';
 
 const ALLOWED_IPS = (process.env.ALLOWED_WEBHOOK_IPS || '127.0.0.1,192.168.1.1')
   .split(',')
@@ -47,9 +48,6 @@ function secureCompare(a: string, b: string): boolean {
   }
 }
 
-/**
- * 🛡️ Emissão de eventos via Socket.io e disparo de Push Alarme para motoristas
- */
 async function emitSuccessSockets(rideId?: string | null, passengerId?: string | null) {
   const io = getIo();
 
@@ -67,7 +65,6 @@ async function emitSuccessSockets(rideId?: string | null, passengerId?: string |
         });
       }
 
-      // 🔔 Notifica motoristas próximos via Socket e PUSH Alarme
       await notifyDriversNewRide(rideId).catch((err) => {
         console.warn('⚠️ [WEBHOOK] Falha ao despachar notificação para motoristas:', err?.message || err);
       });
@@ -82,6 +79,115 @@ async function emitSuccessSockets(rideId?: string | null, passengerId?: string |
     }
   }
 }
+
+// -----------------------------------------------------------------------------
+// 🤖 GAMBIARRA AUTOMÁTICA: RECARGA DE MOTORISTA VIA LEITURA DE SMS (ANDROID)
+// -----------------------------------------------------------------------------
+router.post('/sms-gateway', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const secret = (req.headers['x-secret'] || req.body.secret || req.query.secret) as string;
+
+    if (!secureCompare(secret, SMS_GATEWAY_SECRET)) {
+      console.warn('🚨 [SMS GATEWAY] Tentativa de acesso com secret inválido.');
+      return res.status(401).json({ error: 'Secret de autenticação inválido.' });
+    }
+
+    const { message, sender } = req.body;
+    if (!message) {
+      return res.status(400).json({ error: 'Mensagem do SMS não informada.' });
+    }
+
+    console.log(`📩 [SMS RECEBIDO] De: ${sender || 'Desconhecido'} | Conteúdo: "${message}"`);
+
+    // RegEx para extrair valor (ex: "5000 XOF", "5.000 XOF" ou "5000XOF") e telefone do remetente
+    const amountMatch = message.match(/(\d+[\d\.]*)\s*XOF/i);
+    const phoneMatch = message.match(/(?:de|from)\s+(\d{7,12})/i);
+
+    if (!amountMatch) {
+      console.warn('⚠️ [SMS GATEWAY] Valor em XOF não encontrado no texto do SMS.');
+      return res.status(200).json({ status: 'ignored', reason: 'Valor XOF não identificado' });
+    }
+
+    const amountXOF = Number(amountMatch[1].replace(/\./g, ''));
+    let driverPhone = phoneMatch ? phoneMatch[1].replace(/\D/g, '') : '';
+
+    // Se o número não veio no texto do SMS, pega do campo sender
+    if (!driverPhone && sender) {
+      driverPhone = String(sender).replace(/\D/g, '');
+    }
+
+    if (!driverPhone) {
+      return res.status(400).json({ error: 'Não foi possível identificar o telefone do remetente.' });
+    }
+
+    // Pega os últimos 8 dígitos do telefone para buscar no banco
+    const last8Digits = driverPhone.slice(-8);
+
+    const driver = await prisma.driver.findFirst({
+      where: {
+        phone: { contains: last8Digits }
+      }
+    });
+
+    if (!driver) {
+      console.warn(`⚠️ [SMS GATEWAY] Nenhum motorista encontrado com o telefone contendo: ${last8Digits}`);
+      return res.status(404).json({ error: 'Motorista não encontrado no sistema.' });
+    }
+
+    // Executa a recarga transacional no banco
+    const result = await prisma.$transaction(async (tx) => {
+      const currentBalance = Number(driver.walletBalance || 0);
+      const newBalance = currentBalance + amountXOF;
+
+      await tx.driver.update({
+        where: { id: driver.id },
+        data: { walletBalance: newBalance }
+      });
+
+      await tx.transaction.create({
+        data: {
+          driverId: driver.id,
+          type: 'MANUAL_RECHARGE',
+          status: 'COMPLETED',
+          amount: amountXOF,
+          balanceBefore: currentBalance,
+          balanceAfter: newBalance,
+          paymentMethod: 'ORANGE_MONEY',
+          reference: `SMS-AUTO-${Date.now()}`,
+          description: `Recarga automática por SMS de ${amountXOF} XOF`
+        }
+      });
+
+      return { driverId: driver.id, newBalance, fullName: driver.fullName };
+    });
+
+    console.log(`✅ [RECARGA SMS CONCLUÍDA] Motorista: ${result.fullName} | Saldo Anterior: -> Novo Saldo: ${result.newBalance} XOF`);
+
+    // Notifica o app do motorista em tempo real via Socket
+    const io = getIo();
+    if (io) {
+      io.to(driver.id)
+        .to(`driver_${driver.id}`)
+        .to(`driver:${driver.id}`)
+        .emit('wallet:updated', {
+          message: `Recarga de ${amountXOF} XOF confirmada com sucesso!`,
+          walletBalance: result.newBalance
+        });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Recarga processada com sucesso!',
+      driverName: result.fullName,
+      creditedAmount: amountXOF,
+      newBalance: result.newBalance
+    });
+
+  } catch (error: any) {
+    console.error('❌ [SMS GATEWAY ERR]:', error);
+    return res.status(500).json({ error: 'Erro ao processar recarga.' });
+  }
+});
 
 // -----------------------------------------------------------------------------
 // WEBHOOK ORANGE MONEY

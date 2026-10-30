@@ -842,7 +842,7 @@ handleSocketEvent(socket, 'passenger:rejoin_ride', async (data) => {
     });
   });
 
-  // --- MOTORISTA FICA ONLINE ---
+  // --- MOTORISTA FICA ONLINE (COM TRAVA DE SALDO MÍNIMO DE 1.000 XOF) ---
   handleSocketEvent(socket, 'driver:online', async (data) => {
     if (isSocketRateLimited(socket, 'driver:online')) return;
     if (!isDriver(socket)) {
@@ -854,6 +854,48 @@ handleSocketEvent(socket, 'passenger:rejoin_ride', async (data) => {
     const { lat, lng } = data || {};
 
     console.log(`🟢 [MOTORISTA ONLINE INICIADO] ID: ${driverId} | Coords enviadas: ${lat}, ${lng}`);
+
+    // 🔍 1. Busca os dados atualizados do motorista no banco de dados
+    const driver = await prisma.driver.findUnique({
+      where: { id: driverId },
+      select: { 
+        id: true, 
+        status: true, 
+        walletBalance: true, 
+        vehicleType: true, 
+        lastLat: true, 
+        lastLng: true 
+      }
+    });
+
+    if (!driver || driver.status !== 'APPROVED') {
+      socket.emit('error', { message: 'Sua conta ainda está em análise ou não foi aprovada.' });
+      return;
+    }
+
+    // 🛑 2. TRAVA DE SEGURANÇA: Verifica saldo mínimo de 1.000 XOF
+    const MIN_REQUIRED_BALANCE = 1000;
+    const currentBalance = Number(driver.walletBalance || 0);
+
+    if (currentBalance < MIN_REQUIRED_BALANCE) {
+      console.warn(`🛑 [SALDO INSUFFICIENT] Driver ${driverId} tentou ficar online com ${currentBalance} XOF`);
+
+      await prisma.driver.update({
+        where: { id: driverId },
+        data: { isOnline: false, isAvailable: false }
+      }).catch(() => null);
+
+      const errorMessage = `Saldo insuficiente (${currentBalance.toLocaleString('pt-GW')} XOF). É necessário ter no mínimo 1.000 XOF na carteira para ficar online.`;
+
+      socket.emit('driver:online_failed', {
+        reason: 'INSUFFICIENT_BALANCE',
+        currentBalance,
+        minRequired: MIN_REQUIRED_BALANCE,
+        message: errorMessage
+      });
+      socket.emit('error', { message: errorMessage });
+      return;
+    }
 
     socket.join(driverId);
     socket.join(`driver_${driverId}`);
@@ -889,6 +931,11 @@ handleSocketEvent(socket, 'passenger:rejoin_ride', async (data) => {
     } else {
       console.warn(`⚠️ [REDIS GEO WARN] Motorista ${driverId} ficou online SEM coordenadas válidas.`);
     }
+
+    socket.emit('driver:online_success', {
+      message: 'Você está online e visível para chamadas!',
+      walletBalance: currentBalance
+    });
 
     const pendingRides = await prisma.ride.findMany({
       where: {

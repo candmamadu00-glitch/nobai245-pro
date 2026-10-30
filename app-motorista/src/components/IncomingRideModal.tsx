@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { 
-  View, Text, StyleSheet, Modal, TouchableOpacity, 
-  Image, Animated, Dimensions 
+  View, Text, StyleSheet, Modal, TouchableOpacity, Image 
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { createAudioPlayer } from 'expo-audio';
 
 interface Stop {
   address: string;
@@ -23,8 +23,6 @@ interface IncomingRideData {
   paymentMethod?: 'ORANGE_MONEY' | 'MTN_MOMO' | 'WALLET' | 'CASH';
   priceXof?: number;
   stops?: Stop[];
-  extraStopAddress?: string;
-  isQueuedOffer?: boolean;
 }
 
 interface IncomingRideModalProps {
@@ -33,7 +31,6 @@ interface IncomingRideModalProps {
   timeLeft: number;
   onAccept: () => void;
   onReject: () => void;
-  isQueuedOffer?: boolean;
 }
 
 const formatCurrency = (val?: number | null): string => {
@@ -47,12 +44,39 @@ export function IncomingRideModal({
   ride,
   timeLeft,
   onAccept,
-  onReject,
-  isQueuedOffer = false
+  onReject
 }: IncomingRideModalProps) {
-  if (!visible || !ride) return null;
+  const ringtonePlayerRef = useRef<any>(null);
 
-  const isQueued = isQueuedOffer || ride.isQueuedOffer;
+  // Reproduz o áudio da chamada enquanto a corrida estiver em oferta no modal
+  useEffect(() => {
+    if (visible && ride) {
+      try {
+        // Certifique-se de que o arquivo esteja em src/assets/audio/ride_request.mp3
+        const soundAsset = require('../../assets/audio/crioulo/new_ride.mp3');
+        const player = createAudioPlayer(soundAsset);
+        player.loop = true;
+        player.play();
+        ringtonePlayerRef.current = player;
+      } catch (err) {
+        console.error('[MODAL RIDE] Erro ao iniciar áudio da chamada:', err);
+      }
+    } else {
+      if (ringtonePlayerRef.current) {
+        try { ringtonePlayerRef.current.pause(); } catch (e) {}
+        ringtonePlayerRef.current = null;
+      }
+    }
+
+    return () => {
+      if (ringtonePlayerRef.current) {
+        try { ringtonePlayerRef.current.pause(); } catch (e) {}
+        ringtonePlayerRef.current = null;
+      }
+    };
+  }, [visible, ride]);
+
+  if (!visible || !ride) return null;
 
   return (
     <Modal
@@ -64,16 +88,10 @@ export function IncomingRideModal({
       <View style={styles.overlay}>
         <View style={styles.container}>
           
-          {/* BANNER SUPERIOR - CORRIDA EM FILA OU NORMAL */}
-          <View style={[styles.badgeBanner, isQueued ? styles.queuedBanner : styles.normalBanner]}>
-            <Ionicons 
-              name={isQueued ? "layers-outline" : "flash-outline"} 
-              size={18} 
-              color="#FFF" 
-            />
-            <Text style={styles.badgeText}>
-              {isQueued ? '🔄 PRÓXIMA CORRIDA (EM FILA)' : '🚗 NOVA SOLICITAÇÃO'}
-            </Text>
+          {/* BANNER SUPERIOR */}
+          <View style={[styles.badgeBanner, styles.normalBanner]}>
+            <Ionicons name="flash-outline" size={18} color="#FFF" />
+            <Text style={styles.badgeText}>🚗 NOVA SOLICITAÇÃO</Text>
           </View>
 
           {/* TEMPO RESTANTE */}
@@ -114,7 +132,6 @@ export function IncomingRideModal({
               </Text>
             </View>
 
-            {/* EXIBIÇÃO DE PARADAS SE HOUVER */}
             {ride.stops && ride.stops.length > 0 && (
               <View style={styles.routeItem}>
                 <Ionicons name="ellipsis-vertical" size={18} color="#EAB308" />
@@ -152,14 +169,12 @@ export function IncomingRideModal({
             </TouchableOpacity>
 
             <TouchableOpacity 
-              style={[styles.acceptButton, isQueued && styles.acceptQueuedButton]} 
+              style={styles.acceptButton} 
               onPress={onAccept} 
               activeOpacity={0.85}
             >
               <Ionicons name="checkmark-sharp" size={24} color="#FFF" />
-              <Text style={styles.acceptText}>
-                {isQueued ? 'Aceitar e Pôr na Fila' : 'Aceitar Corrida'}
-              </Text>
+              <Text style={styles.acceptText}>Aceitar Corrida</Text>
             </TouchableOpacity>
           </View>
 
@@ -173,7 +188,7 @@ const styles = StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.65)',
-    justifyContent: 'flex-end',
+    justify: 'flex-end',
   },
   container: {
     backgroundColor: '#FFF',
@@ -192,7 +207,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   normalBanner: { backgroundColor: '#059669' },
-  queuedBanner: { backgroundColor: '#D97706' },
   badgeText: { color: '#FFF', fontWeight: '800', fontSize: 12 },
   timerContainer: {
     width: 44,
@@ -274,6 +288,5 @@ const styles = StyleSheet.create({
     backgroundColor: '#059669',
     gap: 6,
   },
-  acceptQueuedButton: { backgroundColor: '#D97706' },
   acceptText: { color: '#FFF', fontWeight: '800', fontSize: 15 },
 });

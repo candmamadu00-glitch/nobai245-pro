@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Socket } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
-import { Audio } from 'expo-audio';
+import { AudioModule, RecordingPresets, useAudioRecorder, createAudioPlayer } from 'expo-audio';
 import { api } from '../services/api';
 
 export interface ChatMessage {
@@ -60,48 +60,64 @@ export function ChatModal({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
   
-  // Estados para gravação e reprodução de áudio
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  // Hook de gravação do expo-audio
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+
+  // Estados para gravação e reprodução
   const [isRecording, setIsRecording] = useState(false);
   const [recordDuration, setRecordDuration] = useState(0);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
-  const [soundObject, setSoundObject] = useState<Audio.Sound | null>(null);
 
   const flatListRef = useRef<FlatList>(null);
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const activePlayerRef = useRef<any>(null);
 
-  // 1. Limpeza de som ao fechar o modal ou desmontar
+  // 1. Limpeza ao desmontar
   useEffect(() => {
     return () => {
-      if (soundObject) {
-        soundObject.unloadAsync();
+      if (activePlayerRef.current) {
+        try { activePlayerRef.current.pause(); } catch (e) {}
       }
       if (recordTimerRef.current) {
         clearInterval(recordTimerRef.current);
       }
     };
-  }, [soundObject]);
+  }, []);
 
-  // 2. Escuta de mensagens via Socket (Texto + Áudio)
+  // 2. Escuta de mensagens via Socket com trava antiduplicação
   useEffect(() => {
     if (!socket || !visible) return;
 
     const handleReceiveMessage = (msg: any) => {
       if (!msg) return;
 
+      const msgSender = (msg.sender === 'passenger' || msg.senderType === 'PASSENGER') ? 'passenger' : 'driver';
+      const msgText = msg.text || msg.message || '';
+      const msgAudio = msg.audioUrl || msg.audio || null;
+
       const formattedMsg: ChatMessage = {
-        id: String(msg.id || Date.now()),
-        sender: msg.sender === 'passenger' || msg.senderType === 'PASSENGER' ? 'passenger' : 'driver',
-        text: msg.text || msg.message || '',
-        audioUrl: msg.audioUrl || msg.audio || null,
+        id: String(msg.id || `msg-${Date.now()}-${Math.random()}`),
+        sender: msgSender,
+        text: msgText,
+        audioUrl: msgAudio,
         audioDuration: msg.audioDuration || 0,
         senderPhoto: msg.senderPhoto,
         createdAt: msg.createdAt || new Date().toISOString(),
       };
 
       setMessages((prev) => {
-        const isDuplicate = prev.some((item) => item.id === formattedMsg.id);
-        if (isDuplicate) return prev;
+        // Checa duplicação por ID exato
+        if (prev.some((item) => item.id === formattedMsg.id)) return prev;
+
+        // Checa duplicação de mensagem enviada localmente (evita dobrar)
+        if (formattedMsg.sender === currentRole) {
+          const isOptimisticDuplicate = prev.some(
+            (item) => item.sender === currentRole && 
+            ((msgText && item.text === msgText) || (msgAudio && item.audioUrl === msgAudio))
+          );
+          if (isOptimisticDuplicate) return prev;
+        }
+
         return [...prev, formattedMsg];
       });
     };
@@ -119,7 +135,7 @@ export function ChatModal({
       socket.off('chat:message', handleReceiveMessage);
       socket.off('chat:new_message', handleReceiveMessage);
     };
-  }, [socket, visible]);
+  }, [socket, visible, currentRole]);
 
   // 3. Busca histórico HTTP
   useEffect(() => {
@@ -152,8 +168,9 @@ export function ChatModal({
         });
     } else if (!visible) {
       setMessages([]);
-      if (soundObject) {
-        soundObject.unloadAsync();
+      if (activePlayerRef.current) {
+        try { activePlayerRef.current.pause(); } catch (e) {}
+        activePlayerRef.current = null;
         setPlayingAudioId(null);
       }
     }
@@ -179,33 +196,24 @@ export function ChatModal({
     setInputText('');
   };
 
-  // 5. Iniciar gravação de áudio (Máximo 10 segundos)
+  // 5. Iniciar gravação de áudio com expo-audio
   const startRecording = async () => {
     try {
-      const permission = await Audio.requestPermissionsAsync();
-      if (permission.status !== 'granted') {
+      const permission = await AudioModule.requestRecordingPermissionsAsync();
+      if (!permission.granted) {
         Alert.alert(t('permission_denied', 'Permissão negada'), t('mic_permission_needed', 'Precisamos de acesso ao microfone para enviar áudios.'));
         return;
       }
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-      });
-
-      const { recording: newRecording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
-
-      setRecording(newRecording);
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
       setIsRecording(true);
       setRecordDuration(0);
 
-      // Cronômetro para limite de 10 segundos
       recordTimerRef.current = setInterval(() => {
         setRecordDuration((prev) => {
           if (prev >= 9) {
-            stopAndSendRecording(newRecording, 10);
+            stopAndSendRecording(10);
             return 10;
           }
           return prev + 1;
@@ -214,33 +222,27 @@ export function ChatModal({
 
     } catch (err) {
       console.error('Falha ao iniciar gravação:', err);
+      setIsRecording(false);
     }
   };
 
   // 6. Parar e enviar gravação de áudio
-  const stopAndSendRecording = async (recToStop?: Audio.Recording | null, finalDuration?: number) => {
+  const stopAndSendRecording = async (finalDuration?: number) => {
     if (recordTimerRef.current) {
       clearInterval(recordTimerRef.current);
       recordTimerRef.current = null;
     }
 
-    const currentRec = recToStop || recording;
-    if (!currentRec) return;
-
     try {
       setIsRecording(false);
-      await currentRec.stopAndUnloadAsync();
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
-
-      const uri = currentRec.getURI();
-      setRecording(null);
+      await audioRecorder.stop();
+      const uri = audioRecorder.uri;
 
       if (!uri) return;
 
       const durationSec = finalDuration || recordDuration || 1;
       const uniqueId = `audio-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
 
-      // Cria objeto de mensagem local
       const newMsg: ChatMessage = {
         id: uniqueId,
         sender: currentRole,
@@ -252,7 +254,6 @@ export function ChatModal({
 
       setMessages((prev) => [...prev, newMsg]);
 
-      // Envio via socket (pode enviar o URI ou integrar com a rota de upload de mídia da sua API)
       socket.emit('chat:send_message', { 
         rideId, 
         audioUrl: uri, 
@@ -260,54 +261,52 @@ export function ChatModal({
         id: uniqueId 
       });
 
+      setRecordDuration(0);
     } catch (error) {
       console.error('Erro ao finalizar áudio:', error);
+      setIsRecording(false);
     }
   };
 
-  // 7. Cancelar gravação sem enviar
+  // 7. Cancelar gravação
   const cancelRecording = async () => {
     if (recordTimerRef.current) {
       clearInterval(recordTimerRef.current);
       recordTimerRef.current = null;
     }
-    if (recording) {
-      try {
-        await recording.stopAndUnloadAsync();
-      } catch (e) {}
-    }
-    setRecording(null);
+    try {
+      await audioRecorder.stop();
+    } catch (e) {}
     setIsRecording(false);
     setRecordDuration(0);
   };
 
-  // 8. Reproduzir ou Pausar Mensagem de Voz
+  // 8. Reproduzir ou Pausar Mensagem de Voz (expo-audio)
   const togglePlayAudio = async (msgId: string, audioUrl?: string | null) => {
     if (!audioUrl) return;
 
     try {
-      if (playingAudioId === msgId && soundObject) {
-        await soundObject.pauseAsync();
+      if (playingAudioId === msgId && activePlayerRef.current) {
+        try { activePlayerRef.current.pause(); } catch (e) {}
+        activePlayerRef.current = null;
         setPlayingAudioId(null);
         return;
       }
 
-      if (soundObject) {
-        await soundObject.unloadAsync();
+      if (activePlayerRef.current) {
+        try { activePlayerRef.current.pause(); } catch (e) {}
+        activePlayerRef.current = null;
       }
 
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: audioUrl },
-        { shouldPlay: true }
-      );
-
-      setSoundObject(sound);
+      const player = createAudioPlayer({ uri: audioUrl });
+      activePlayerRef.current = player;
       setPlayingAudioId(msgId);
+      player.play();
 
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
+      player.addListener('playbackStatusUpdate', (status: any) => {
+        if (status?.didJustFinish) {
           setPlayingAudioId(null);
-          sound.unloadAsync();
+          activePlayerRef.current = null;
         }
       });
     } catch (error) {
@@ -493,7 +492,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   backdrop: {
-    ...StyleSheet.absoluteFill,
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(15, 23, 42, 0.4)', 
   },
   chatContainer: {
@@ -649,7 +648,6 @@ const styles = StyleSheet.create({
   sendIcon: {
     marginLeft: 2, 
   },
-  /* ESTILOS DE ÁUDIO */
   audioContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -670,7 +668,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  /* ESTILOS BARRA DE GRAVAÇÃO ATIVA */
   recordingBar: {
     flex: 1,
     flexDirection: 'row',

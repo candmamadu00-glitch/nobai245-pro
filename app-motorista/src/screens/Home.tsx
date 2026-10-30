@@ -150,7 +150,12 @@ export interface IncomingRideData {
   destinationLat?: number;
   destinationLng?: number;
   destinationAddress?: string;
-  referencePoint?: string;
+  
+  // 🟢 PONTOS DE REFERÊNCIA INDIVIDUAIS DE EMBARQUE E DESEMBARQUE
+  pickupReferencePoint?: string;
+  dropoffReferencePoint?: string;
+  referencePoint?: string; // Mantido para retrocompatibilidade
+  
   startOtp?: string;
   serviceType?: 'RIDE' | 'DELIVERY' | 'RENTAL';
   vehicleType?: 'PARTICULAR' | 'TAXI' | 'MOTO' | 'MOTO_CARRO' | 'TOCA_TOCA';
@@ -428,42 +433,83 @@ export function Home() {
     checkBattery();
     return () => { if (sub?.remove) sub.remove(); };
   }, []);
+useEffect(() => {
+  if (!socket) return;
 
-  useEffect(() => {
-  let activePlayer: Audio.Sound | null = null;
-  const hasActiveOffer = !!queuedOfferData || (rideState === 'idle' && !!incomingRide);
+  // 🛑 Tratador de Falha ao Ficar Online por Saldo Baixo
+  const handleOnlineFailed = (data: { reason?: string; message?: string; minRequired?: number }) => {
+    setIsOnline(false);
+    Alert.alert(
+      'Carteira com Saldo Insuficiente 💳',
+      data.message || 'Você precisa de no mínimo 1.000 XOF para ficar online e receber corridas.',
+      [
+        { text: 'Agora Não', style: 'cancel' },
+        { 
+          text: 'Recarregar Carteira', 
+          onPress: () => navigation.navigate('Wallet') 
+        }
+      ]
+    );
+  };
 
-  if (hasActiveOffer) {
-    Vibration.vibrate([0, 800, 300, 800], false);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+  // 🛑 Tratador de Desligamento Automático Pós-Corrida em Dinheiro
+  const handleForcedOffline = (data: { message?: string }) => {
+    setIsOnline(false);
+    Alert.alert(
+      'Modo Offline Ativado ⚠️',
+      data.message || 'A comissão cobrada deixou seu saldo abaixo de 1.000 XOF. Recarregue para voltar a trabalhar.',
+      [
+        { text: 'Entendi', style: 'default' },
+        { text: 'Ir para Carteira', onPress: () => navigation.navigate('Wallet') }
+      ]
+    );
+  };
 
-    (async () => {
-      try {
-        const { sound } = await Audio.Sound.createAsync(
-          require('../../assets/sounds/alert.mp3'),
-          { shouldPlay: true }
-        );
-        alertPlayerRef.current = sound;
-        activePlayer = sound;
-      } catch (audioErr) {}
-    })();
-
-    playBilingualVoice('new_ride', 'Nova viagem encontrada');
-  } else {
-    Vibration.cancel();
-    if (alertPlayerRef.current) {
-      try { alertPlayerRef.current.unloadAsync(); } catch (e) {}
-      alertPlayerRef.current = null;
-    }
-  }
+  socket.on('driver:online_failed', handleOnlineFailed);
+  socket.on('driver:forced_offline', handleForcedOffline);
 
   return () => {
-    Vibration.cancel();
-    if (activePlayer) {
-      try { activePlayer.unloadAsync(); } catch (e) {}
-    }
+    socket.off('driver:online_failed', handleOnlineFailed);
+    socket.off('driver:forced_offline', handleForcedOffline);
   };
-}, [queuedOfferData, incomingRide, rideState, playBilingualVoice]);
+}, [socket]);
+  useEffect(() => {
+    let activePlayer: any = null;
+    const hasActiveOffer = rideState === 'idle' && !!incomingRide;
+
+    if (hasActiveOffer) {
+      Vibration.vibrate([0, 800, 300, 800], false);
+      try {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      } catch (e) {}
+
+      try {
+        const soundAsset = require('../../assets/sounds/alert.mp3');
+        const player = createAudioPlayer(soundAsset);
+        player.loop = true;
+        player.play();
+        alertPlayerRef.current = player;
+        activePlayer = player;
+      } catch (audioErr) {
+        console.error('Erro ao tocar áudio de alerta:', audioErr);
+      }
+
+      playBilingualVoice('new_ride', 'Nova viagem encontrada');
+    } else {
+      Vibration.cancel();
+      if (alertPlayerRef.current) {
+        try { alertPlayerRef.current.pause(); } catch (e) {}
+        alertPlayerRef.current = null;
+      }
+    }
+
+    return () => {
+      Vibration.cancel();
+      if (activePlayer) {
+        try { activePlayer.pause(); } catch (e) {}
+      }
+    };
+  }, [incomingRide, rideState, playBilingualVoice]);
 
   useEffect(() => { if (route.params?.openChat) setIsChatVisible(true); }, [route.params]); 
 // 🟢 CARREGAMENTO INICIAL DE GPS (Garante que o ícone do carro apareça assim que o app abre)
@@ -762,7 +808,13 @@ useEffect(() => {
     const currentRideState = rideStateRef.current || rideState;
     const newRideId = data.rideId || (data as any).id;
 
-    if (currentRideId && currentRideId === newRideId) return;
+    // 🛑 IMPEDE NOVAS CORRIDAS SE O MOTORISTA JÁ ESTIVER EM CORRIDA (FILA DESATIVADA)
+    const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState) || !!currentRideId;
+    if (isCurrentlyInRide) {
+      console.log('Motorista em corrida ativa. Nova oferta ignorada.');
+      return;
+    }
+
     if (incomingRideRef.current?.rideId === newRideId && currentRideState !== 'idle') return;
 
     setShowReceiptModal(false);
@@ -793,13 +845,15 @@ useEffect(() => {
       }));
     }
 
-    const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
-
     const formattedOffer = {
       ...data,
       rideId: newRideId,
-      referencePoint: (data as any).referencePoint || (data as any).reference_point || '',
-      isQueuedOffer: isCurrentlyInRide,
+      // 🟢 Captura individual dos dois pontos de referência de embarque e desembarque
+      pickupReferencePoint: (data as any).pickupReferencePoint || (data as any).referencePoint || (data as any).reference_point || '',
+      dropoffReferencePoint: (data as any).dropoffReferencePoint || '',
+      referencePoint: (data as any).referencePoint || (data as any).reference_point || '', // mantido para retrocompatibilidade
+      
+      isQueuedOffer: false,
       passengerName: data.passengerName || 'Passageiro',
       passengerRating: data.passengerRating || 5.0,
       serviceType: normalizedService,
@@ -813,13 +867,8 @@ useEffect(() => {
     };
 
     setTimeLeft(15);
-
-    if (isCurrentlyInRide) {
-      setQueuedOfferData(formattedOffer);
-    } else {
-      setQueuedOfferData(null);
-      setIncomingRide(formattedOffer);
-    }
+    setQueuedOfferData(null);
+    setIncomingRide(formattedOffer);
 
     snapToState(true);
     Vibration.vibrate([0, 500, 200, 500], false);
@@ -904,7 +953,11 @@ useEffect(() => {
           setRideState(mappedState);
           setIncomingRide({
             rideId: activeRide.id,
+            // 🟢 Mapeia os pontos de referência sincronizados do banco
+            pickupReferencePoint: (activeRide as any)?.pickupReferencePoint || (activeRide as any)?.referencePoint || (activeRide as any)?.reference_point || '',
+            dropoffReferencePoint: (activeRide as any)?.dropoffReferencePoint || '',
             referencePoint: (activeRide as any)?.referencePoint || (activeRide as any)?.reference_point || '',
+            
             passengerId: activeRide.passengerId,
             passengerName: activeRide.passenger?.fullName || 'Passageiro',
             passengerPhone: activeRide.passenger?.phone,
@@ -1786,36 +1839,84 @@ const formattedStops = useMemo(() => {
               </View>
 
               {/* 📍 ROTA E PARADAS NA CORRIDA ATIVA */}
-              <View style={styles.routeAddressesContainer}>
-                {/* ORIGEM */}
-                <View style={styles.addressItem}>
-                  <Ionicons name="location" size={16} color="#10B981" />
-                  <View style={styles.addressTextWrapper}>
-                    <Text style={styles.addressLabel}>Origem:</Text>
-                    <Text style={styles.addressValue} numberOfLines={1}>
-                      {incomingRide?.originAddress || 'Local de Embarque'}
-                    </Text>
+<View style={styles.routeAddressesContainer}>
+  {/* ORIGEM / EMBARQUE */}
+  <View style={styles.addressItem}>
+    <Ionicons name="location" size={16} color="#10B981" />
+    <View style={styles.addressTextWrapper}>
+      <Text style={styles.addressLabel}>Origem:</Text>
+      <Text style={styles.addressValue} numberOfLines={1}>
+        {incomingRide?.originAddress || 'Local de Embarque'}
+      </Text>
 
-                    {Boolean((incomingRide as any)?.referencePoint) && (
-                      <View style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        backgroundColor: 'rgba(234, 179, 8, 0.15)',
-                        borderWidth: 1,
-                        borderColor: '#EAB308',
-                        paddingHorizontal: 8,
-                        paddingVertical: 4,
-                        borderRadius: 6,
-                        marginTop: 4
-                      }}>
-                        <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
-                        <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
-                          Ref: {(incomingRide as any).referencePoint}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                </View>
+      {/* 🟢 Ref. de Embarque / Partida */}
+      {Boolean((incomingRide as any)?.pickupReferencePoint || (incomingRide as any)?.referencePoint) && (
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: 'rgba(234, 179, 8, 0.15)',
+          borderWidth: 1,
+          borderColor: '#EAB308',
+          paddingHorizontal: 8,
+          paddingVertical: 4,
+          borderRadius: 6,
+          marginTop: 4
+        }}>
+          <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
+          <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
+            Ref. Embarque: {(incomingRide as any).pickupReferencePoint || (incomingRide as any).referencePoint}
+          </Text>
+        </View>
+      )}
+    </View>
+  </View>
+
+  {/* 🟢 TODAS AS PARADAS INTERMEDIÁRIAS */}
+  {formattedStops.length > 0 && formattedStops.map((stop: any, idx: number) => (
+    <View key={`active-stop-${idx}`} style={[styles.addressItem, { backgroundColor: 'rgba(59, 130, 246, 0.08)', padding: 6, borderRadius: 8, marginVertical: 3 }]}>
+      <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
+      <View style={styles.addressTextWrapper}>
+        <Text style={[styles.addressLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>
+          Parada {idx + 1} de {formattedStops.length}:
+        </Text>
+        <Text style={styles.addressValue} numberOfLines={1}>
+          {stop.address}
+        </Text>
+      </View>
+    </View>
+  ))}
+
+  {/* DESTINO FINAL / DESEMBARQUE */}
+  <View style={styles.addressItem}>
+    <Ionicons name="flag" size={16} color="#EF4444" />
+    <View style={styles.addressTextWrapper}>
+      <Text style={[styles.addressLabel, { color: '#EF4444' }]}>Destino Final:</Text>
+      <Text style={styles.addressValue} numberOfLines={1}>
+        {incomingRide?.destinationAddress || 'Local de Desembarque'}
+      </Text>
+
+      {/* 🟢 Ref. de Desembarque / Chegada */}
+      {Boolean((incomingRide as any)?.dropoffReferencePoint) && (
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: 'rgba(239, 68, 68, 0.15)',
+          borderWidth: 1,
+          borderColor: '#EF4444',
+          paddingHorizontal: 8,
+          paddingVertical: 4,
+          borderRadius: 6,
+          marginTop: 4
+        }}>
+          <Ionicons name="flag" size={14} color="#EF4444" style={{ marginRight: 4 }} />
+          <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '700', flex: 1 }}>
+            Ref. Destino: {(incomingRide as any).dropoffReferencePoint}
+          </Text>
+        </View>
+      )}
+    </View>
+  </View>
+</View>
 
                 {/* 🟢 TODAS AS PARADAS INTERMEDIÁRIAS */}
                 {formattedStops.length > 0 && formattedStops.map((stop: any, idx: number) => (
@@ -2093,35 +2194,36 @@ const formattedStops = useMemo(() => {
           </View>
 
           <View style={styles.routeTimelineContainer}>
-            {/* EMBARQUE */}
-            <View style={styles.timelineRow}>
-              <Ionicons name="location" size={16} color="#10B981" />
-              <View style={styles.timelineTextContainer}>
-                <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
-                <Text style={styles.timelineAddress} numberOfLines={2}>
-                  {activeOffer?.originAddress || 'Local de origem'}
-                </Text>
+            {/* EMBARQUE NA OFERTA */}
+<View style={styles.timelineRow}>
+  <Ionicons name="location" size={16} color="#10B981" />
+  <View style={styles.timelineTextContainer}>
+    <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
+    <Text style={styles.timelineAddress} numberOfLines={2}>
+      {activeOffer?.originAddress || 'Local de origem'}
+    </Text>
 
-                {Boolean((activeOffer as any)?.referencePoint) && (
-                  <View style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    backgroundColor: 'rgba(234, 179, 8, 0.15)',
-                    borderWidth: 1,
-                    borderColor: '#EAB308',
-                    paddingHorizontal: 8,
-                    paddingVertical: 4,
-                    borderRadius: 6,
-                    marginTop: 4
-                  }}>
-                    <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
-                    <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
-                      Ref: {(activeOffer as any)?.referencePoint}
-                    </Text>
-                  </View>
-                )}
-              </View>
-            </View>
+    {/* 🟢 Ref. de Embarque da Oferta */}
+    {Boolean((activeOffer as any)?.pickupReferencePoint || (activeOffer as any)?.referencePoint) && (
+      <View style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(234, 179, 8, 0.15)',
+        borderWidth: 1,
+        borderColor: '#EAB308',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 6,
+        marginTop: 4
+      }}>
+        <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
+        <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
+          Ref. Embarque: {(activeOffer as any)?.pickupReferencePoint || (activeOffer as any)?.referencePoint}
+        </Text>
+      </View>
+    )}
+  </View>
+</View>
 
             {/* 🟢 PARADAS INTERMEDIÁRIAS EXIBIDAS NA TELA DE ACEITE (SOLICITAÇÃO) */}
             {formattedStops.length > 0 ? (
@@ -2161,6 +2263,27 @@ const formattedStops = useMemo(() => {
               </View>
             </View>
           </View>
+          {/* 🟢 Ref. de Desembarque / Destino no Modal de Oferta */}
+    {Boolean((activeOffer as any)?.dropoffReferencePoint) && (
+      <View style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(239, 68, 68, 0.15)',
+        borderWidth: 1,
+        borderColor: '#EF4444',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 6,
+        marginTop: 4
+      }}>
+        <Ionicons name="flag" size={14} color="#EF4444" style={{ marginRight: 4 }} />
+        <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '700', flex: 1 }}>
+          Ref. Destino: {(activeOffer as any)?.dropoffReferencePoint}
+        </Text>
+      </View>
+    )}
+  </View>
+</View>
 
           <View style={styles.newRequestActions}>
             <TouchableOpacity 

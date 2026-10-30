@@ -147,32 +147,45 @@ export function Wallet() {
               </View>
 
               {/* CARD DE SALDO DE COMISSÃO */}
-              <View style={styles.card}>
-                <View style={styles.cardHeader}>
-                  <Ionicons name="shield-checkmark" size={20} color={theme.colors.primaryDark} />
-                  <Text style={styles.cardTitle}>Saldo da Comissão do App</Text>
-                </View>
-                <Text style={styles.cardSub}>Taxa de manutenção debitada automaticamente</Text>
+<View style={styles.card}>
+  <View style={styles.cardHeader}>
+    <Ionicons name="shield-checkmark" size={20} color={theme.colors.primaryDark} />
+    <Text style={styles.cardTitle}>Saldo da Comissão do App</Text>
+  </View>
+  <Text style={styles.cardSub}>Mínimo de 1.000 XOF necessário para ficar Online</Text>
 
-                <View style={styles.balanceRow}>
-                  <Text style={styles.balanceLabel}>Saldo de Recarga:</Text>
-                  <Text style={[
-                    styles.balanceValue, 
-                    { color: (financeData?.walletBalance || 0) < 0 ? theme.colors.dangerRed : theme.colors.emeraldGreen }
-                  ]}>
-                    {formatMoney(financeData?.walletBalance || 0)} XOF
-                  </Text>
-                </View>
+  <View style={styles.balanceRow}>
+    <Text style={styles.balanceLabel}>Saldo de Recarga:</Text>
+    <Text style={[
+      styles.balanceValue, 
+      { color: (financeData?.walletBalance || 0) < 1000 ? theme.colors.dangerRed : theme.colors.emeraldGreen }
+    ]}>
+      {formatMoney(financeData?.walletBalance || 0)} XOF
+    </Text>
+  </View>
 
-                {(financeData?.walletBalance || 0) < 0 && (
-                  <View style={styles.warningBox}>
-                    <Ionicons name="warning" size={18} color={theme.colors.dangerRed} />
-                    <Text style={styles.warningText}>
-                      Saldo negativo. Recarregue para continuar recebendo viagens.
-                    </Text>
-                  </View>
-                )}
-              </View>
+  {(financeData?.walletBalance || 0) < 1000 && (
+    <View style={styles.warningBox}>
+      <Ionicons name="warning" size={18} color={theme.colors.dangerRed} />
+      <Text style={styles.warningText}>
+        Saldo inferior a 1.000 XOF. Recarregue para ficar online e receber viagens.
+      </Text>
+    </View>
+  )}
+
+  {/* 🚀 BOTÃO DE RECARGA DE SALDO */}
+  <TouchableOpacity 
+    style={styles.rechargeButton}
+    onPress={() => {
+      // Abre a tela ou modal de recarga via Orange Money / MTN MoMo
+      navigation.navigate('TopUpWallet');
+    }}
+    activeOpacity={0.85}
+  >
+    <Ionicons name="add-circle-outline" size={20} color="#FFF" />
+    <Text style={styles.rechargeButtonText}>Recarregar Saldo via Mobile Money</Text>
+  </TouchableOpacity>
+</View>
 
               {/* BANNER MOBILE MONEY */}
               <View style={styles.infoBanner}>
@@ -259,4 +272,19 @@ const styles = StyleSheet.create({
 
   infoBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECFDF5', padding: 14, borderRadius: theme.borderRadius.md, gap: 10 },
   infoBannerText: { fontSize: 12, color: '#047857', fontWeight: '500', flex: 1, lineHeight: 17 },
+  rechargeButton: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  backgroundColor: theme.colors.primaryDark,
+  paddingVertical: 12,
+  borderRadius: theme.borderRadius.md,
+  marginTop: 16,
+  gap: 8,
+},
+rechargeButtonText: {
+  color: '#FFF',
+  fontWeight: '700',
+  fontSize: 14,
+},
 });

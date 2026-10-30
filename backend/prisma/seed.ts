@@ -25,6 +25,23 @@ async function main() {
     },
   });
 
+  // -----------------------------------------------------------------------------
+  // 1.1. CONFIGURAÇÃO FINANCEIRA ADMINISTRATIVA (NÚMEROS DE RECEBIMENTO DA EMPRESA)
+  // -----------------------------------------------------------------------------
+  await prisma.systemConfig.upsert({
+    where: { id: 'bai245-system-config' },
+    update: {
+      adminOrangeNumber: '245957330790', // 👈 EDITE AQUI: Número Orange Money oficial da empresa
+      adminMtnNumber: '245960000000',    // 👈 EDITE AQUI: Número MTN MoMo oficial da empresa
+    },
+    create: {
+      id: 'bai245-system-config',
+      adminOrangeNumber: '245957330790', // 👈 EDITE AQUI: Número Orange Money oficial da empresa
+      adminMtnNumber: '245960000000',    // 👈 EDITE AQUI: Número MTN MoMo oficial da empresa
+    },
+  });
+  console.log('✅ Números administrativos de recebimento configurados no SystemConfig!');
+
   // 2. Configuração de Tarifas em Francos CFA (XOF) para Guiné-Bissau
   const tariffs = [
     // --- TÁXI TRADICIONAL ---

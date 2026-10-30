@@ -361,6 +361,8 @@ export function Home() {
   const [isGuestModalVisible, setIsGuestModalVisible] = useState(false);
 
   const [referencePoint, setReferencePoint] = useState('');
+  const [pickupReferencePoint, setPickupReferencePoint] = useState('');
+  const [dropoffReferencePoint, setDropoffReferencePoint] = useState('');
   const [driverEta, setDriverEta] = useState<number | null>(null);
 
   const [vehicleType, setVehicleType] = useState<VehicleType>('particular');
@@ -532,7 +534,14 @@ export function Home() {
     }
   }, [rideStatus, driverEta, driverInfo, dropoffAddress]);
 
-  const handleIncomingChatMessage = useCallback((data: any) => {
+  // 1. Referência para manter o estado do Chat sempre atualizado nos eventos do Socket
+  const isChatVisibleRef = useRef(isChatVisible);
+  useEffect(() => {
+    isChatVisibleRef.current = isChatVisible;
+  }, [isChatVisible]);
+
+  // 2. Manipulador de mensagens de chat com notificação push local do sistema
+  const handleIncomingChatMessage = useCallback(async (data: any) => {
     if (!isMountedRef.current || !data) return;
 
     const text = String(data.text || data.message || '').trim();
@@ -544,6 +553,7 @@ export function Home() {
 
     const messageId = String(data.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`);
 
+    // Atualiza o estado da lista de mensagens sem duplicar
     setMessages(prev => {
       if (prev.some(m => m.id === messageId || (m.text === text && m.sender === normalizedSender))) {
         return prev;
@@ -551,7 +561,25 @@ export function Home() {
       return [...prev, { id: messageId, sender: normalizedSender, text, senderPhoto: data.senderPhoto }];
     });
 
-    if (isFromDriver && !isChatVisible) {
+    // Se a mensagem veio do motorista e o chat NÃO está visível na tela
+    if (isFromDriver && !isChatVisibleRef.current) {
+      
+      // 🔔 1. Dispara o Banner de Notificação no Topo do Celular (Usando o canal com prioridade HIGH)
+      try {
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: `💬 ${driverInfo?.name || 'Motorista'}`,
+            body: text,
+            data: { screen: 'Chat', rideId: activeRideIdRef.current },
+            sound: 'default',
+          },
+          trigger: null, // Dispara imediatamente
+        });
+      } catch (notifErr) {
+        console.warn('⚠️ Erro ao disparar notificação push local do chat:', notifErr);
+      }
+
+      // 💬 2. Alerta interno em tela
       Alert.alert(
         `💬 Mensagem do Motorista`,
         text,
@@ -562,12 +590,7 @@ export function Home() {
         { cancelable: true }
       );
     }
-  }, [isChatVisible]);
-
-  const isNightTimeForPin = useCallback(() => {
-    const currentHour = new Date().getHours();
-    return currentHour >= 18 || currentHour < 6;
-  }, []);
+  }, [driverInfo?.name]);
 
   const persistRideState = async (
     rideId: string | null, 
@@ -1192,29 +1215,31 @@ export function Home() {
     return () => clearInterval(interval);
   }, [pickupCoords, passengerLocation]);
 
-  const resetRideState = useCallback(() => {
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    persistRideState(null, 'idle');
-    setRideStatus('idle');
-    setBookingStep('ADDRESS');
-    setActiveRideId(null);
-    activeRideIdRef.current = null;
-    setDriverLocation(null);
-    setDriverInfo(null);
-    setStartOtp('');
-    setAcceptedAt(null);
-    setDropoffAddress('');
-    setDropoffCoords(null);
-    setExtraStopAddress('');
-    setExtraStopCoords(null);
-    setShowExtraStop(false);
-    setIsForAnotherPerson(false);
-    setReferencePoint('');
-    setMessages([]); 
-    setDriverEta(null);
-    setRouteGeometry(null);
-    isManualPickupRef.current = false;
-  }, []);
+  // Atualização da função resetRideState (adicione a limpeza dos dois estados):
+const resetRideState = useCallback(() => {
+  if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+  persistRideState(null, 'idle');
+  setRideStatus('idle');
+  setBookingStep('ADDRESS');
+  setActiveRideId(null);
+  activeRideIdRef.current = null;
+  setDriverLocation(null);
+  setDriverInfo(null);
+  setStartOtp('');
+  setAcceptedAt(null);
+  setDropoffAddress('');
+  setDropoffCoords(null);
+  setExtraStopAddress('');
+  setExtraStopCoords(null);
+  setShowExtraStop(false);
+  setIsForAnotherPerson(false);
+  setPickupReferencePoint('');
+  setDropoffReferencePoint('');
+  setMessages([]); 
+  setDriverEta(null);
+  setRouteGeometry(null);
+  isManualPickupRef.current = false;
+}, []);
 
   useEffect(() => {
     async function initAppAndPermissions() {
@@ -1352,10 +1377,16 @@ export function Home() {
         startOtp: otpCode,
       });
 
-      Alert.alert(
-        t('ride_accepted_title', 'Corrida Aceita! 🚗'), 
-        `${parsedDriver?.name || 'O motorista'} ${t('ride_accepted_msg', 'aceitou sua viagem e está a caminho.')}`
-      );
+      // 🔔 Notificação Push de topo (Não bloqueia a tela)
+      Notifications.scheduleNotificationAsync({
+        content: {
+          title: t('ride_accepted_title', 'Corrida Aceita! 🚗'),
+          body: `${parsedDriver?.name || 'O motorista'} ${t('ride_accepted_msg', 'aceitou sua viagem e está a caminho.')}`,
+          data: { channelId: 'ride-updates' },
+          sound: 'default',
+        },
+        trigger: null,
+      }).catch(() => {});
     };
 
     const handleDriverArrived = (data: any) => {
@@ -1364,10 +1395,16 @@ export function Home() {
       if (data?.startOtp) setStartOtp(data.startOtp);
       if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'arrived');
       
-      Alert.alert(
-        t('driver_arrived_title', 'Motorista no Local! 📍'), 
-        t('driver_arrived_alert_msg', 'Seu motorista chegou ao ponto de partida e está te aguardando.')
-      );
+      // 🔔 Notificação Push de topo
+      Notifications.scheduleNotificationAsync({
+        content: {
+          title: t('driver_arrived_title', 'Motorista no Local! 📍'),
+          body: t('driver_arrived_alert_msg', 'Seu motorista chegou ao ponto de partida e está te aguardando.'),
+          data: { channelId: 'ride-updates' },
+          sound: 'default',
+        },
+        trigger: null,
+      }).catch(() => {});
     };
 
     const handleRideStarted = () => { 
@@ -1386,12 +1423,23 @@ export function Home() {
 
     const handleRideCancelled = (data: any) => {
       if (!isMountedRef.current) return;
-      
-      if (data?.cancelledBy === 'DRIVER') {
-        Alert.alert(t('warning_title', 'Aviso ⚠️'), t('driver_cancelled_msg', 'O motorista cancelou a corrida. Por favor, solicite um novo veículo.'));
-      } else {
-        Alert.alert(t('cancelled_title', 'Cancelado'), data?.appliedPenalty ? `${t('cancellation_fee', 'Taxa de cancelamento:')} ${data.penaltyAmount} XOF.` : t('ride_cancelled_msg', 'Sua corrida foi cancelada.'));
-      }
+
+      const isDriverCancel = data?.cancelledBy === 'DRIVER';
+      const title = isDriverCancel ? t('warning_title', 'Aviso ⚠️') : t('cancelled_title', 'Cancelado');
+      const body = isDriverCancel 
+        ? t('driver_cancelled_msg', 'O motorista cancelou a corrida. Por favor, solicite um novo veículo.')
+        : (data?.appliedPenalty ? `${t('cancellation_fee', 'Taxa de cancelamento:')} ${data.penaltyAmount} XOF.` : t('ride_cancelled_msg', 'Sua corrida foi cancelada.'));
+
+      // 🔔 Notificação Push de topo
+      Notifications.scheduleNotificationAsync({
+        content: {
+          title,
+          body,
+          data: { channelId: 'ride-updates' },
+          sound: 'default',
+        },
+        trigger: null,
+      }).catch(() => {});
       
       resetRideState();
     };
@@ -1399,7 +1447,17 @@ export function Home() {
     const handleNoDriversFound = () => {
       if (!isMountedRef.current) return;
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-      Alert.alert(t('search_ended_title', 'Busca Encerrada'), t('no_drivers_found_msg', 'Não encontramos motoristas disponíveis na sua região. Tente novamente.'));
+
+      Notifications.scheduleNotificationAsync({
+        content: {
+          title: t('search_ended_title', 'Busca Encerrada'),
+          body: t('no_drivers_found_msg', 'Não encontramos motoristas disponíveis na sua região. Tente novamente.'),
+          data: { channelId: 'ride-updates' },
+          sound: 'default',
+        },
+        trigger: null,
+      }).catch(() => {});
+
       resetRideState();
     };
 
@@ -1684,7 +1742,12 @@ export function Home() {
         destinationLat: dropoffCoords?.latitude || pickupCoords.latitude,
         destinationLng: dropoffCoords?.longitude || pickupCoords.longitude,
         destinationAddress: serviceType === 'aluguel' ? `Aluguel Toca-Toca (${regionLabel})` : dropoffAddress,
-        referencePoint: referencePoint.trim(),
+        
+        // 🟢 Envio individual dos pontos de referência
+        pickupReferencePoint: pickupReferencePoint.trim(),
+        dropoffReferencePoint: dropoffReferencePoint.trim(),
+        referencePoint: pickupReferencePoint.trim(), // mantém compatibilidade
+
         serviceType: mappedServiceType,
         vehicleType: mappedVehicleType,
         paymentMethod: paymentMethod,
@@ -2254,62 +2317,117 @@ return (
           contentContainerStyle={{ flexGrow: 1, paddingBottom: 16 }}
         >
           {/* CONFIGURAÇÃO DE ROTA (APENAS QUANDO LIVRE) */}
-          {rideStatus === 'idle' && bookingStep === 'ADDRESS' && (
-            <View style={{ width: '100%', paddingTop: 4 }}>
-              <Text style={styles.sheetTitle}>{t('where_to', 'Para onde vamos?')}</Text>
-              
-              <TouchableOpacity style={styles.mainSearchInput} activeOpacity={0.8} onPress={() => openSearchModal('pickup')}>
-                <Ionicons name="location" size={20} color="#EAB308" style={{ marginRight: 12 }} />
-                <Text style={styles.mainSearchText} numberOfLines={1} ellipsizeMode="tail">
-                  {pickupAddress || t('pickup_location', 'Local de partida')}
-                </Text>
-              </TouchableOpacity>
+{rideStatus === 'idle' && bookingStep === 'ADDRESS' && (
+  <View style={{ width: '100%', paddingTop: 4 }}>
+    <Text style={styles.sheetTitle}>{t('where_to', 'Para onde vamos?')}</Text>
+    
+    {/* 📍 EMBARQUE E REFERÊNCIA DE PARTIDA */}
+    <View style={{ marginBottom: 10 }}>
+      <TouchableOpacity style={styles.mainSearchInput} activeOpacity={0.8} onPress={() => openSearchModal('pickup')}>
+        <Ionicons name="location" size={20} color="#EAB308" style={{ marginRight: 12 }} />
+        <Text style={styles.mainSearchText} numberOfLines={1} ellipsizeMode="tail">
+          {pickupAddress || t('pickup_location', 'Local de partida')}
+        </Text>
+      </TouchableOpacity>
 
-              {showExtraStop && (
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-                  <TouchableOpacity style={[styles.mainSearchInput, { flex: 1, borderColor: '#3B82F6', marginBottom: 0 }]} activeOpacity={0.8} onPress={() => openSearchModal('extraStop')}>
-                    <Ionicons name="location-sharp" size={18} color="#3B82F6" style={{ marginRight: 12 }} />
-                    <Text style={styles.mainSearchText} numberOfLines={1} ellipsizeMode="tail">
-                      {extraStopAddress || 'Adicionar Parada Intermediária...'}
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity 
-                    style={{ padding: 10, marginLeft: 6, backgroundColor: 'rgba(239,68,68,0.15)', borderRadius: 12 }} 
-                    onPress={() => { setShowExtraStop(false); setExtraStopAddress(''); setExtraStopCoords(null); }}
-                  >
-                    <Ionicons name="trash-outline" size={20} color="#EF4444" />
-                  </TouchableOpacity>
-                </View>
-              )}
+      {/* Input Ref. Partida */}
+      <View style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#1E293B',
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        marginTop: 6,
+        borderWidth: 1,
+        borderColor: '#334155',
+      }}>
+        <Ionicons name="compass-outline" size={16} color="#94A3B8" style={{ marginRight: 8 }} />
+        <TextInput
+          style={{ flex: 1, color: '#F8FAFC', fontSize: 13, padding: 0 }}
+          placeholder="Ref. Partida (ex: Perto da Farmácia Central)"
+          placeholderTextColor="#64748B"
+          value={pickupReferencePoint}
+          onChangeText={setPickupReferencePoint}
+          maxLength={80}
+        />
+      </View>
+    </View>
 
-              <TouchableOpacity style={styles.mainSearchInput} activeOpacity={0.8} onPress={() => openSearchModal('dropoff')}>
-                <Ionicons name="flag" size={20} color="#EF4444" style={{ marginRight: 12 }} />
-                <Text style={styles.mainSearchText} numberOfLines={1} ellipsizeMode="tail">
-                  {dropoffAddress || t('enter_destination_placeholder', 'Digite seu destino...')}
-                </Text>
-              </TouchableOpacity>
+    {/* 🔵 PARADA EXTRA (SE HOUVER) */}
+    {showExtraStop && (
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+        <TouchableOpacity style={[styles.mainSearchInput, { flex: 1, borderColor: '#3B82F6', marginBottom: 0 }]} activeOpacity={0.8} onPress={() => openSearchModal('extraStop')}>
+          <Ionicons name="location-sharp" size={18} color="#3B82F6" style={{ marginRight: 12 }} />
+          <Text style={styles.mainSearchText} numberOfLines={1} ellipsizeMode="tail">
+            {extraStopAddress || 'Adicionar Parada Intermediária...'}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={{ padding: 10, marginLeft: 6, backgroundColor: 'rgba(239,68,68,0.15)', borderRadius: 12 }} 
+          onPress={() => { setShowExtraStop(false); setExtraStopAddress(''); setExtraStopCoords(null); }}
+        >
+          <Ionicons name="trash-outline" size={20} color="#EF4444" />
+        </TouchableOpacity>
+      </View>
+    )}
 
-              {!showExtraStop && (
-                <TouchableOpacity 
-                  style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 6, paddingHorizontal: 4 }} 
-                  onPress={() => { setShowExtraStop(true); openSearchModal('extraStop'); }}
-                >
-                  <Ionicons name="add-circle-outline" size={20} color="#3B82F6" style={{ marginRight: 6 }} />
-                  <Text style={{ color: '#3B82F6', fontWeight: '600', fontSize: 13 }}>+ Adicionar Parada Intermediária</Text>
-                </TouchableOpacity>
-              )}
+    {/* 🚩 DESTINO E REFERÊNCIA DE CHEGADA */}
+    <View style={{ marginBottom: 10 }}>
+      <TouchableOpacity style={styles.mainSearchInput} activeOpacity={0.8} onPress={() => openSearchModal('dropoff')}>
+        <Ionicons name="flag" size={20} color="#EF4444" style={{ marginRight: 12 }} />
+        <Text style={styles.mainSearchText} numberOfLines={1} ellipsizeMode="tail">
+          {dropoffAddress || t('enter_destination_placeholder', 'Digite seu destino...')}
+        </Text>
+      </TouchableOpacity>
 
-              {dropoffCoords ? (
-                <TouchableOpacity style={styles.requestButton} activeOpacity={0.85} onPress={() => setBookingStep('SERVICE_AND_PRICE')}>
-                  <Text style={styles.requestButtonText}>{t('next_btn', 'Avançar')}</Text>
-                </TouchableOpacity>
-              ) : (
-                <TouchableOpacity style={[styles.requestButton, { backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155' }]} activeOpacity={0.8} onPress={() => openSearchModal('dropoff')}>
-                  <Text style={[styles.requestButtonText, { color: '#EAB308' }]}>{t('where_do_you_want_to_go', 'Aonde você quer ir?')}</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          )}
+      {/* Input Ref. Destino */}
+      {Boolean(dropoffAddress) && (
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: '#1E293B',
+          borderRadius: 12,
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          marginTop: 6,
+          borderWidth: 1,
+          borderColor: '#334155',
+        }}>
+          <Ionicons name="compass-outline" size={16} color="#94A3B8" style={{ marginRight: 8 }} />
+          <TextInput
+            style={{ flex: 1, color: '#F8FAFC', fontSize: 13, padding: 0 }}
+            placeholder="Ref. Destino (ex: Em frente ao Mercado)"
+            placeholderTextColor="#64748B"
+            value={dropoffReferencePoint}
+            onChangeText={setDropoffReferencePoint}
+            maxLength={80}
+          />
+        </View>
+      )}
+    </View>
+
+    {!showExtraStop && (
+      <TouchableOpacity 
+        style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 6, paddingHorizontal: 4 }} 
+        onPress={() => { setShowExtraStop(true); openSearchModal('extraStop'); }}
+      >
+        <Ionicons name="add-circle-outline" size={20} color="#3B82F6" style={{ marginRight: 6 }} />
+        <Text style={{ color: '#3B82F6', fontWeight: '600', fontSize: 13 }}>+ Adicionar Parada Intermediária</Text>
+      </TouchableOpacity>
+    )}
+
+    {dropoffCoords ? (
+      <TouchableOpacity style={styles.requestButton} activeOpacity={0.85} onPress={() => setBookingStep('SERVICE_AND_PRICE')}>
+        <Text style={styles.requestButtonText}>{t('next_btn', 'Avançar')}</Text>
+      </TouchableOpacity>
+    ) : (
+      <TouchableOpacity style={[styles.requestButton, { backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155' }]} activeOpacity={0.8} onPress={() => openSearchModal('dropoff')}>
+        <Text style={[styles.requestButtonText, { color: '#EAB308' }]}>{t('where_do_you_want_to_go', 'Aonde você quer ir?')}</Text>
+      </TouchableOpacity>
+    )}
+  </View>
+)}
 
           {/* 🚖 MODAL DE TELA INTEIRA PARA SELEÇÃO DE VEÍCULO E SERVIÇO */}
 <Modal
@@ -4869,4 +4987,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#CBD5E1',
   },
+  referenceInputContainer: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  backgroundColor: '#1E293B',
+  borderRadius: 12,
+  paddingHorizontal: 12,
+  paddingVertical: 8,
+  marginTop: 6,
+  borderWidth: 1,
+  borderColor: '#334155',
+},
+referenceTextInput: {
+  flex: 1,
+  color: '#F8FAFC',
+  fontSize: 13,
+  padding: 0,
+},
 });

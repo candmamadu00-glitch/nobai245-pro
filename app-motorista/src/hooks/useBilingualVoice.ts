@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react';
-import { Audio } from 'expo-audio';
+import { createAudioPlayer } from 'expo-audio';
 import * as Speech from 'expo-speech';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -17,7 +17,7 @@ const CREOLE_AUDIO_MAP: Record<string, any> = {
 };
 
 export function useBilingualVoice() {
-  const soundRef = useRef<Audio.Sound | null>(null);
+  const playerRef = useRef<any>(null);
   const lastSpokenRef = useRef<{ text: string; time: number }>({ text: '', time: 0 });
 
   const speakInstruction = useCallback(async (
@@ -28,7 +28,7 @@ export function useBilingualVoice() {
     try {
       const now = Date.now();
 
-      // 🛡️ Trava antirrepetição (10 segundos)
+      // Trava antirrepetição (10 segundos)
       if (lastSpokenRef.current.text === ptText && (now - lastSpokenRef.current.time) < 10000) {
         return;
       }
@@ -40,15 +40,11 @@ export function useBilingualVoice() {
 
       lastSpokenRef.current = { text: ptText, time: now };
 
-      // Para voz em andamento
       try { Speech.stop(); } catch (e) {}
 
-      // Para e descarrega o áudio anterior da memória
-      if (soundRef.current) {
-        try {
-          await soundRef.current.unloadAsync();
-        } catch (e) {}
-        soundRef.current = null;
+      if (playerRef.current) {
+        try { playerRef.current.pause(); } catch (e) {}
+        playerRef.current = null;
       }
 
       const playCreoleMp3 = async () => {
@@ -56,8 +52,9 @@ export function useBilingualVoice() {
         if (!asset) return;
 
         try {
-          const { sound } = await Audio.Sound.createAsync(asset, { shouldPlay: true });
-          soundRef.current = sound;
+          const player = createAudioPlayer(asset);
+          playerRef.current = player;
+          player.play();
         } catch (errMp3) {
           console.error('💥 [VOZ LOG] ERRO ao tocar MP3 Crioulo:', errMp3);
         }
