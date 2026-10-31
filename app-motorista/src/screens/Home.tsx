@@ -28,7 +28,7 @@ import { StartRideOtpModal } from '../components/StartRideOtpModal';
 import { api } from '../services/api';
 import { DriverSOSModal } from '../components/DriverSOSModal';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
-import { Audio } from 'expo-audio';
+import { createAudioPlayer } from 'expo-audio';
 import { useBilingualVoice } from '../hooks/useBilingualVoice';
 import { updateOngoingRideNotification, dismissOngoingRideNotification } from '../services/ongoingNotification';
 // 🛡️ Token Mapbox
@@ -153,8 +153,9 @@ export interface IncomingRideData {
   
   // 🟢 PONTOS DE REFERÊNCIA INDIVIDUAIS DE EMBARQUE E DESEMBARQUE
   pickupReferencePoint?: string;
+  extraStopReferencePoint?: string;
   dropoffReferencePoint?: string;
-  referencePoint?: string; // Mantido para retrocompatibilidade
+  referencePoint?: string;
   
   startOtp?: string;
   serviceType?: 'RIDE' | 'DELIVERY' | 'RENTAL';
@@ -392,6 +393,64 @@ export function Home() {
   }, [incomingRide, rideState]);
 
   const profileImageUrl = formatImageUrl(driver?.profilePicture || undefined);
+  const syncActiveRideWithServer = useCallback(async () => {
+    try {
+      if (!api || typeof api.get !== 'function') return;
+      const response = await api.get('/drivers/active-ride').catch(() => null);
+      if (response?.data?.ride && isMountedRef.current) {
+        const activeRide = response.data.ride;
+        const mappedState: RideState = 
+          activeRide.status === 'ACCEPTED' ? 'accepted' :
+          activeRide.status === 'ARRIVED' ? 'arrived' :
+          activeRide.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
+
+        if (mappedState !== 'idle') {
+          let rawStops = activeRide.stops;
+          if (typeof rawStops === 'string') {
+            try { rawStops = JSON.parse(rawStops); } catch { rawStops = []; }
+          }
+
+          let stopsArray: any[] = [];
+          if (Array.isArray(rawStops) && rawStops.length > 0) {
+            stopsArray = rawStops.map((s: any, idx: number) => ({
+              ...s,
+              id: s.id || `stop_${idx}`,
+              lat: Number(s.lat ?? s.latitude),
+              lng: Number(s.lng ?? s.longitude),
+              address: s.address || s.name || `Parada ${idx + 1}`,
+              status: s.status || 'PENDING'
+            }));
+          }
+
+          setActiveRideId(activeRide.id);
+          setRideState(mappedState);
+          setIncomingRide({
+            rideId: activeRide.id,
+            // 🟢 Mapeia os pontos de referência sincronizados do banco
+            pickupReferencePoint: (activeRide as any)?.pickupReferencePoint || (activeRide as any)?.referencePoint || (activeRide as any)?.reference_point || '',
+            dropoffReferencePoint: (activeRide as any)?.dropoffReferencePoint || '',
+            referencePoint: (activeRide as any)?.referencePoint || (activeRide as any)?.reference_point || '',
+            
+            passengerId: activeRide.passengerId,
+            passengerName: activeRide.passenger?.fullName || 'Passageiro',
+            passengerPhone: activeRide.passenger?.phone,
+            passengerPhoto: activeRide.passenger?.profilePicture,
+            passengerRating: activeRide.passenger?.ratingAverage || 5.0,
+            pickupLat: Number(activeRide.originLat),
+            pickupLng: Number(activeRide.originLng),
+            originAddress: activeRide.originAddress,
+            destinationLat: Number(activeRide.destinationLat),
+            destinationLng: Number(activeRide.destinationLng),
+            destinationAddress: activeRide.destinationAddress,
+            priceXof: Number(activeRide.priceXof),
+            paymentMethod: activeRide.paymentMethod,
+            stops: stopsArray,
+          } as any);
+          persistActiveRideState(activeRide, mappedState, activeRide.id);
+        }
+      }
+    } catch (err) {}
+  }, []);
 
   const fetchTodayEarnings = useCallback(async () => {
     try {
@@ -433,6 +492,74 @@ export function Home() {
     checkBattery();
     return () => { if (sub?.remove) sub.remove(); };
   }, []);
+  // 🟢 MONITORE E RECONECTE O MOTORISTA AUTOMATICAMENTE (HEARTBEAT)
+useEffect(() => {
+  let heartbeatInterval: ReturnType<typeof setInterval>;
+
+  if (isOnline) {
+    heartbeatInterval = setInterval(async () => {
+      // 1. Tenta reconectar o Socket caso a rede oscile
+      if (!socket || !socket.connected) {
+        console.log('⚡ Reconectando Socket do motorista...');
+        await connectDriverSocket();
+      }
+
+      // 2. Garante sincronização de estado com a API via HTTP Fallback
+      if (activeRideIdRef.current) {
+        try {
+          const res = await api.get('/drivers/active-ride').catch(() => null);
+          if (res?.data?.ride && isMountedRef.current) {
+            const serverStatus = res.data.ride.status;
+            if (serverStatus === 'CANCELLED' || serverStatus === 'COMPLETED') {
+              syncActiveRideWithServer();
+            }
+          }
+        } catch (e) {
+          // Mantém operação offline sem interromper a navegação
+        }
+      }
+    }, 8000);
+  }
+
+  return () => {
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
+  };
+}, [isOnline, syncActiveRideWithServer]);
+// 📦 MÓDULO DE MAPA OFFLINE (BISSAU - SETOR AUTÓNOMO)
+const setupBissauOfflineMap = async () => {
+  try {
+    const packs = await Mapbox.offlineManager.getPacks();
+    const exists = packs.some(p => p.name === 'bissau_city_map');
+
+    if (!exists) {
+      console.log('🌐 Iniciando download do mapa offline de Bissau...');
+      await Mapbox.offlineManager.createPack(
+        {
+          name: 'bissau_city_map',
+          styleURL: 'mapbox://styles/mapbox/streets-v12',
+          minZoom: 11,
+          maxZoom: 16,
+          bounds: [
+            [-15.65, 11.80], // Limite Sudoeste
+            [-15.50, 11.92], // Limite Nordeste
+          ],
+        },
+        (pack, status) => {
+          if (status.state === 'complete') {
+            console.log('✅ Mapa de Bissau gravado no armazenamento local.');
+          }
+        }
+      );
+    }
+  } catch (error) {
+    console.warn('⚠️ Erro ao salvar cache de mapa offline:', error);
+  }
+};
+
+// Chamada na inicialização do componente:
+useEffect(() => {
+  setupBissauOfflineMap();
+}, []);
 useEffect(() => {
   if (!socket) return;
 
@@ -919,65 +1046,6 @@ useEffect(() => {
       persistActiveRideState(incomingRideRef.current, 'in_progress', activeRideIdRef.current);
     }
   };
-
-  const syncActiveRideWithServer = useCallback(async () => {
-    try {
-      if (!api || typeof api.get !== 'function') return;
-      const response = await api.get('/drivers/active-ride').catch(() => null);
-      if (response?.data?.ride && isMountedRef.current) {
-        const activeRide = response.data.ride;
-        const mappedState: RideState = 
-          activeRide.status === 'ACCEPTED' ? 'accepted' :
-          activeRide.status === 'ARRIVED' ? 'arrived' :
-          activeRide.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
-
-        if (mappedState !== 'idle') {
-          let rawStops = activeRide.stops;
-          if (typeof rawStops === 'string') {
-            try { rawStops = JSON.parse(rawStops); } catch { rawStops = []; }
-          }
-
-          let stopsArray: any[] = [];
-          if (Array.isArray(rawStops) && rawStops.length > 0) {
-            stopsArray = rawStops.map((s: any, idx: number) => ({
-              ...s,
-              id: s.id || `stop_${idx}`,
-              lat: Number(s.lat ?? s.latitude),
-              lng: Number(s.lng ?? s.longitude),
-              address: s.address || s.name || `Parada ${idx + 1}`,
-              status: s.status || 'PENDING'
-            }));
-          }
-
-          setActiveRideId(activeRide.id);
-          setRideState(mappedState);
-          setIncomingRide({
-            rideId: activeRide.id,
-            // 🟢 Mapeia os pontos de referência sincronizados do banco
-            pickupReferencePoint: (activeRide as any)?.pickupReferencePoint || (activeRide as any)?.referencePoint || (activeRide as any)?.reference_point || '',
-            dropoffReferencePoint: (activeRide as any)?.dropoffReferencePoint || '',
-            referencePoint: (activeRide as any)?.referencePoint || (activeRide as any)?.reference_point || '',
-            
-            passengerId: activeRide.passengerId,
-            passengerName: activeRide.passenger?.fullName || 'Passageiro',
-            passengerPhone: activeRide.passenger?.phone,
-            passengerPhoto: activeRide.passenger?.profilePicture,
-            passengerRating: activeRide.passenger?.ratingAverage || 5.0,
-            pickupLat: Number(activeRide.originLat),
-            pickupLng: Number(activeRide.originLng),
-            originAddress: activeRide.originAddress,
-            destinationLat: Number(activeRide.destinationLat),
-            destinationLng: Number(activeRide.destinationLng),
-            destinationAddress: activeRide.destinationAddress,
-            priceXof: Number(activeRide.priceXof),
-            paymentMethod: activeRide.paymentMethod,
-            stops: stopsArray,
-          } as any);
-          persistActiveRideState(activeRide, mappedState, activeRide.id);
-        }
-      }
-    } catch (err) {}
-  }, []);
 
   const handleRideFinished = async (data: any) => {
     if (!isMountedRef.current) return;
@@ -1472,12 +1540,12 @@ useEffect(() => {
   const topHeaderInset = Math.max((insets?.top || 0) + 10, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 16);
   const bottomInset = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 24 : 16);
 
-  // 1º Declare activeOffer PRIMEIRO:
+ // 1º Declare activeOffer PRIMEIRO:
 const activeOffer = (queuedOfferData && queuedOfferData.rideId !== activeRideId) 
   ? queuedOfferData 
   : (rideState === 'idle' ? incomingRide : null);
 
-// 2º Declare formattedStops LOGO DEPOIS:
+// 2º Mapeamento limpo das Paradas com Pontos de Referência
 const formattedStops = useMemo(() => {
   const stopsSource = activeOffer?.stops || incomingRide?.stops;
   if (!stopsSource) return [];
@@ -1489,11 +1557,12 @@ const formattedStops = useMemo(() => {
   return raw.map((s: any, idx: number) => ({
     id: s.id || `stop_${idx}`,
     address: s.address || s.name || s.extraStopAddress || `Parada ${idx + 1}`,
+    referencePoint: s.referencePoint || s.extraStopReferencePoint || activeOffer?.extraStopReferencePoint || incomingRide?.extraStopReferencePoint || '',
     lat: Number(s.lat ?? s.latitude ?? 0),
     lng: Number(s.lng ?? s.longitude ?? 0),
     status: s.status || 'PENDING'
   }));
-}, [activeOffer?.stops, incomingRide?.stops]);
+}, [activeOffer?.stops, activeOffer?.extraStopReferencePoint, incomingRide?.stops, incomingRide?.extraStopReferencePoint]);
   return (
   <View style={styles.container}>
     <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
@@ -1840,16 +1909,17 @@ const formattedStops = useMemo(() => {
 
               {/* 📍 ROTA E PARADAS NA CORRIDA ATIVA */}
 <View style={styles.routeAddressesContainer}>
-  {/* ORIGEM / EMBARQUE */}
+  
+  {/* 🟡 1. ORIGEM / EMBARQUE */}
   <View style={styles.addressItem}>
     <Ionicons name="location" size={16} color="#10B981" />
     <View style={styles.addressTextWrapper}>
       <Text style={styles.addressLabel}>Origem:</Text>
-      <Text style={styles.addressValue} numberOfLines={1}>
+      <Text style={styles.addressValue} numberOfLines={2}>
         {incomingRide?.originAddress || 'Local de Embarque'}
       </Text>
 
-      {/* 🟢 Ref. de Embarque / Partida */}
+      {/* Ref. de Embarque / Partida */}
       {Boolean((incomingRide as any)?.pickupReferencePoint || (incomingRide as any)?.referencePoint) && (
         <View style={{
           flexDirection: 'row',
@@ -1871,31 +1941,77 @@ const formattedStops = useMemo(() => {
     </View>
   </View>
 
-  {/* 🟢 TODAS AS PARADAS INTERMEDIÁRIAS */}
-  {formattedStops.length > 0 && formattedStops.map((stop: any, idx: number) => (
-    <View key={`active-stop-${idx}`} style={[styles.addressItem, { backgroundColor: 'rgba(59, 130, 246, 0.08)', padding: 6, borderRadius: 8, marginVertical: 3 }]}>
+  {/* 🔵 2. PARADAS INTERMEDIÁRIAS */}
+  {formattedStops.length > 0 ? (
+    formattedStops.map((stop: any, idx: number) => (
+      <View key={`active-stop-${idx}`} style={[styles.addressItem, { backgroundColor: 'rgba(59, 130, 246, 0.08)', padding: 8, borderRadius: 8, marginVertical: 3 }]}>
+        <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
+        <View style={styles.addressTextWrapper}>
+          <Text style={[styles.addressLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>
+            Parada {idx + 1} de {formattedStops.length}:
+          </Text>
+          <Text style={styles.addressValue} numberOfLines={2}>
+            {stop.address}
+          </Text>
+          {Boolean(stop.referencePoint) && (
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: 'rgba(59, 130, 246, 0.15)',
+              borderWidth: 1,
+              borderColor: '#3B82F6',
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+              borderRadius: 6,
+              marginTop: 4
+            }}>
+              <Ionicons name="compass-outline" size={14} color="#3B82F6" style={{ marginRight: 4 }} />
+              <Text style={{ color: '#3B82F6', fontSize: 12, fontWeight: '700', flex: 1 }}>
+                Ref. Parada: {stop.referencePoint}
+              </Text>
+            </View>
+          )}
+        </View>
+      </View>
+    ))
+  ) : (incomingRide?.extraStopAddress) ? (
+    <View style={[styles.addressItem, { backgroundColor: 'rgba(59, 130, 246, 0.08)', padding: 8, borderRadius: 8, marginVertical: 3 }]}>
       <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
       <View style={styles.addressTextWrapper}>
-        <Text style={[styles.addressLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>
-          Parada {idx + 1} de {formattedStops.length}:
-        </Text>
-        <Text style={styles.addressValue} numberOfLines={1}>
-          {stop.address}
-        </Text>
+        <Text style={[styles.addressLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>Parada Intermediária:</Text>
+        <Text style={styles.addressValue} numberOfLines={2}>{incomingRide.extraStopAddress}</Text>
+        {Boolean((incomingRide as any)?.extraStopReferencePoint) && (
+          <View style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: 'rgba(59, 130, 246, 0.15)',
+            borderWidth: 1,
+            borderColor: '#3B82F6',
+            paddingHorizontal: 8,
+            paddingVertical: 4,
+            borderRadius: 6,
+            marginTop: 4
+          }}>
+            <Ionicons name="compass-outline" size={14} color="#3B82F6" style={{ marginRight: 4 }} />
+            <Text style={{ color: '#3B82F6', fontSize: 12, fontWeight: '700', flex: 1 }}>
+              Ref. Parada: {(incomingRide as any).extraStopReferencePoint}
+            </Text>
+          </View>
+        )}
       </View>
     </View>
-  ))}
+  ) : null}
 
-  {/* DESTINO FINAL / DESEMBARQUE */}
+  {/* 🔴 3. DESTINO FINAL / DESEMBARQUE */}
   <View style={styles.addressItem}>
     <Ionicons name="flag" size={16} color="#EF4444" />
     <View style={styles.addressTextWrapper}>
       <Text style={[styles.addressLabel, { color: '#EF4444' }]}>Destino Final:</Text>
-      <Text style={styles.addressValue} numberOfLines={1}>
+      <Text style={styles.addressValue} numberOfLines={2}>
         {incomingRide?.destinationAddress || 'Local de Desembarque'}
       </Text>
 
-      {/* 🟢 Ref. de Desembarque / Chegada */}
+      {/* Ref. de Desembarque / Destino */}
       {Boolean((incomingRide as any)?.dropoffReferencePoint) && (
         <View style={{
           flexDirection: 'row',
@@ -1916,6 +2032,7 @@ const formattedStops = useMemo(() => {
       )}
     </View>
   </View>
+
 </View>
 
                 {/* 🟢 TODAS AS PARADAS INTERMEDIÁRIAS */}
@@ -1934,14 +2051,13 @@ const formattedStops = useMemo(() => {
                 ))}
 
                 {/* DESTINO FINAL */}
-                <View style={styles.addressItem}>
-                  <Ionicons name="flag" size={16} color="#EF4444" />
-                  <View style={styles.addressTextWrapper}>
-                    <Text style={[styles.addressLabel, { color: '#EF4444' }]}>Destino Final:</Text>
-                    <Text style={styles.addressValue} numberOfLines={1}>
-                      {incomingRide?.destinationAddress || 'Local de Desembarque'}
-                    </Text>
-                  </View>
+              <View style={styles.addressItem}>
+                <Ionicons name="flag" size={16} color="#EF4444" />
+                <View style={styles.addressTextWrapper}>
+                  <Text style={[styles.addressLabel, { color: '#EF4444' }]}>Destino Final:</Text>
+                  <Text style={styles.addressValue} numberOfLines={1}>
+                    {incomingRide?.destinationAddress || 'Local de Desembarque'}
+                  </Text>
                 </View>
               </View>
 
@@ -2194,97 +2310,133 @@ const formattedStops = useMemo(() => {
           </View>
 
           <View style={styles.routeTimelineContainer}>
-            {/* EMBARQUE NA OFERTA */}
-<View style={styles.timelineRow}>
-  <Ionicons name="location" size={16} color="#10B981" />
-  <View style={styles.timelineTextContainer}>
-    <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
-    <Text style={styles.timelineAddress} numberOfLines={2}>
-      {activeOffer?.originAddress || 'Local de origem'}
-    </Text>
+  
+  {/* EMBARQUE NA OFERTA */}
+  <View style={styles.timelineRow}>
+    <Ionicons name="location" size={16} color="#10B981" />
+    <View style={styles.timelineTextContainer}>
+      <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
+      <Text style={styles.timelineAddress} numberOfLines={2}>
+        {activeOffer?.originAddress || 'Local de origem'}
+      </Text>
 
-    {/* 🟢 Ref. de Embarque da Oferta */}
-    {Boolean((activeOffer as any)?.pickupReferencePoint || (activeOffer as any)?.referencePoint) && (
-      <View style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: 'rgba(234, 179, 8, 0.15)',
-        borderWidth: 1,
-        borderColor: '#EAB308',
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 6,
-        marginTop: 4
-      }}>
-        <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
-        <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
-          Ref. Embarque: {(activeOffer as any)?.pickupReferencePoint || (activeOffer as any)?.referencePoint}
-        </Text>
-      </View>
-    )}
+      {/* Ref. Embarque da Oferta */}
+      {Boolean((activeOffer as any)?.pickupReferencePoint || (activeOffer as any)?.referencePoint) && (
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: 'rgba(234, 179, 8, 0.15)',
+          borderWidth: 1,
+          borderColor: '#EAB308',
+          paddingHorizontal: 8,
+          paddingVertical: 4,
+          borderRadius: 6,
+          marginTop: 4
+        }}>
+          <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
+          <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
+            Ref. Embarque: {(activeOffer as any)?.pickupReferencePoint || (activeOffer as any)?.referencePoint}
+          </Text>
+        </View>
+      )}
+    </View>
   </View>
-</View>
 
-            {/* 🟢 PARADAS INTERMEDIÁRIAS EXIBIDAS NA TELA DE ACEITE (SOLICITAÇÃO) */}
-            {formattedStops.length > 0 ? (
-              formattedStops.map((stop: any, idx: number) => (
-                <View key={`offer-stop-${idx}`} style={[styles.timelineRow, { backgroundColor: 'rgba(59, 130, 246, 0.08)', paddingVertical: 4, paddingHorizontal: 6, borderRadius: 6, marginVertical: 3 }]}>
-                  <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
-                  <View style={styles.timelineTextContainer}>
-                    <Text style={[styles.timelineLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>
-                      PARADA {idx + 1} DE {formattedStops.length}:
-                    </Text>
-                    <Text style={styles.timelineAddress} numberOfLines={2}>
-                      {stop.address}
-                    </Text>
-                  </View>
-                </View>
-              ))
-            ) : (activeOffer?.extraStopAddress || incomingRide?.extraStopAddress) ? (
-              <View style={[styles.timelineRow, { backgroundColor: 'rgba(59, 130, 246, 0.08)', paddingVertical: 4, paddingHorizontal: 6, borderRadius: 6, marginVertical: 3 }]}>
-                <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
-                <View style={styles.timelineTextContainer}>
-                  <Text style={[styles.timelineLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>PARADA INTERMEDIÁRIA:</Text>
-                  <Text style={styles.timelineAddress} numberOfLines={2}>
-                    {activeOffer?.extraStopAddress || incomingRide?.extraStopAddress}
-                  </Text>
-                </View>
-              </View>
-            ) : null}
-
-            {/* DESTINO */}
-            <View style={styles.timelineRow}>
-              <Ionicons name="flag" size={16} color="#EF4444" />
-              <View style={styles.timelineTextContainer}>
-                <Text style={styles.timelineLabel}>LEVAR PARA:</Text>
-                <Text style={styles.timelineAddress} numberOfLines={2}>
-                  {activeOffer?.destinationAddress || 'Local de destino'}
-                </Text>
-              </View>
+  {/* PARADAS INTERMEDIÁRIAS NA OFERTA */}
+  {formattedStops.length > 0 ? (
+    formattedStops.map((stop: any, idx: number) => (
+      <View key={`offer-stop-${idx}`} style={[styles.timelineRow, { backgroundColor: 'rgba(59, 130, 246, 0.08)', paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, marginVertical: 3 }]}>
+        <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
+        <View style={styles.timelineTextContainer}>
+          <Text style={[styles.timelineLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>
+            PARADA {idx + 1} DE {formattedStops.length}:
+          </Text>
+          <Text style={styles.timelineAddress} numberOfLines={2}>
+            {stop.address}
+          </Text>
+          {Boolean(stop.referencePoint) && (
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: 'rgba(59, 130, 246, 0.15)',
+              borderWidth: 1,
+              borderColor: '#3B82F6',
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+              borderRadius: 6,
+              marginTop: 4
+            }}>
+              <Ionicons name="compass-outline" size={14} color="#3B82F6" style={{ marginRight: 4 }} />
+              <Text style={{ color: '#3B82F6', fontSize: 12, fontWeight: '700', flex: 1 }}>
+                Ref. Parada: {stop.referencePoint}
+              </Text>
             </View>
-          </View>
-          {/* 🟢 Ref. de Desembarque / Destino no Modal de Oferta */}
-    {Boolean((activeOffer as any)?.dropoffReferencePoint) && (
-      <View style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: 'rgba(239, 68, 68, 0.15)',
-        borderWidth: 1,
-        borderColor: '#EF4444',
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 6,
-        marginTop: 4
-      }}>
-        <Ionicons name="flag" size={14} color="#EF4444" style={{ marginRight: 4 }} />
-        <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '700', flex: 1 }}>
-          Ref. Destino: {(activeOffer as any)?.dropoffReferencePoint}
-        </Text>
+          )}
+        </View>
       </View>
-    )}
-  </View>
-</View>
+    ))
+  ) : (activeOffer?.extraStopAddress || incomingRide?.extraStopAddress) ? (
+    <View style={[styles.timelineRow, { backgroundColor: 'rgba(59, 130, 246, 0.08)', paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, marginVertical: 3 }]}>
+      <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
+      <View style={styles.timelineTextContainer}>
+        <Text style={[styles.timelineLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>PARADA INTERMEDIÁRIA:</Text>
+        <Text style={styles.timelineAddress} numberOfLines={2}>
+          {activeOffer?.extraStopAddress || incomingRide?.extraStopAddress}
+        </Text>
+        {Boolean((activeOffer as any)?.extraStopReferencePoint) && (
+          <View style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: 'rgba(59, 130, 246, 0.15)',
+            borderWidth: 1,
+            borderColor: '#3B82F6',
+            paddingHorizontal: 8,
+            paddingVertical: 4,
+            borderRadius: 6,
+            marginTop: 4
+          }}>
+            <Ionicons name="compass-outline" size={14} color="#3B82F6" style={{ marginRight: 4 }} />
+            <Text style={{ color: '#3B82F6', fontSize: 12, fontWeight: '700', flex: 1 }}>
+              Ref. Parada: {(activeOffer as any)?.extraStopReferencePoint}
+            </Text>
+          </View>
+        )}
+      </View>
+    </View>
+  ) : null}
 
+  {/* DESTINO NA OFERTA */}
+  <View style={styles.timelineRow}>
+    <Ionicons name="flag" size={16} color="#EF4444" />
+    <View style={styles.timelineTextContainer}>
+      <Text style={styles.timelineLabel}>LEVAR PARA:</Text>
+      <Text style={styles.timelineAddress} numberOfLines={2}>
+        {activeOffer?.destinationAddress || 'Local de destino'}
+      </Text>
+
+      {/* Ref. Desembarque da Oferta */}
+      {Boolean((activeOffer as any)?.dropoffReferencePoint) && (
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: 'rgba(239, 68, 68, 0.15)',
+          borderWidth: 1,
+          borderColor: '#EF4444',
+          paddingHorizontal: 8,
+          paddingVertical: 4,
+          borderRadius: 6,
+          marginTop: 4
+        }}>
+          <Ionicons name="flag" size={14} color="#EF4444" style={{ marginRight: 4 }} />
+          <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '700', flex: 1 }}>
+            Ref. Destino: {(activeOffer as any)?.dropoffReferencePoint}
+          </Text>
+        </View>
+      )}
+    </View>
+  </View>
+ 
+</View>
           <View style={styles.newRequestActions}>
             <TouchableOpacity 
               style={styles.rejectBtn} 
@@ -2334,7 +2486,6 @@ const formattedStops = useMemo(() => {
   </View>
 );
 }
-
 // ---------------------------------------------------------------------------
 // ESTILOS UNIFICADOS
 // ---------------------------------------------------------------------------

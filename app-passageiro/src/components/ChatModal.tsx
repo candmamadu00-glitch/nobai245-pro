@@ -60,10 +60,8 @@ export function ChatModal({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
   
-  // Hook de gravação do expo-audio
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
-  // Estados para gravação e reprodução
   const [isRecording, setIsRecording] = useState(false);
   const [recordDuration, setRecordDuration] = useState(0);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
@@ -72,7 +70,6 @@ export function ChatModal({
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activePlayerRef = useRef<any>(null);
 
-  // 1. Limpeza ao desmontar ou fechar
   useEffect(() => {
     return () => {
       if (activePlayerRef.current) {
@@ -84,7 +81,6 @@ export function ChatModal({
     };
   }, []);
 
-  // 2. Escuta de mensagens via Socket com trava antiduplicação
   useEffect(() => {
     if (!socket || !visible) return;
 
@@ -106,10 +102,8 @@ export function ChatModal({
       };
 
       setMessages((prev) => {
-        // Trava 1: Evita IDs idênticos
         if (prev.some((item) => item.id === formattedMsg.id)) return prev;
 
-        // Trava 2: Evita duplicar mensagens enviadas por si mesmo (já adicionadas localmente)
         if (formattedMsg.sender === currentRole) {
           const isOptimisticDuplicate = prev.some(
             (item) => item.sender === currentRole && 
@@ -137,7 +131,6 @@ export function ChatModal({
     };
   }, [socket, visible, currentRole]);
 
-  // 3. Busca histórico HTTP
   useEffect(() => {
     if (visible && rideId) {
       api.get(`/rides/${rideId}/chat`)
@@ -176,7 +169,6 @@ export function ChatModal({
     }
   }, [visible, rideId]);
 
-  // 4. Envio de mensagem de texto
   const sendMessage = () => {
     if (!inputText.trim() || !socket) return;
 
@@ -196,7 +188,6 @@ export function ChatModal({
     setInputText('');
   };
 
-  // 5. Iniciar gravação de áudio com expo-audio
   const startRecording = async () => {
     try {
       const permission = await AudioModule.requestRecordingPermissionsAsync();
@@ -226,7 +217,6 @@ export function ChatModal({
     }
   };
 
-  // 6. Parar e enviar gravação de áudio
   const stopAndSendRecording = async (finalDuration?: number) => {
     if (recordTimerRef.current) {
       clearInterval(recordTimerRef.current);
@@ -268,7 +258,6 @@ export function ChatModal({
     }
   };
 
-  // 7. Cancelar gravação sem enviar
   const cancelRecording = async () => {
     if (recordTimerRef.current) {
       clearInterval(recordTimerRef.current);
@@ -281,7 +270,6 @@ export function ChatModal({
     setRecordDuration(0);
   };
 
-  // 8. Reproduzir ou Pausar Mensagem de Voz (expo-audio)
   const togglePlayAudio = async (msgId: string, audioUrl?: string | null) => {
     if (!audioUrl) return;
 
@@ -339,13 +327,13 @@ export function ChatModal({
         </TouchableWithoutFeedback>
 
         <View style={styles.chatContainer}>
-          {/* CABEÇALHO DO CHAT */}
+          {/* CABEÇALHO */}
           <View style={styles.chatHeader}>
             <View style={styles.headerTitleRow}>
               {renderAvatar(otherUserPhoto)}
               <View>
                 <Text style={styles.chatTitle}>
-                  {otherUserName || t('chat_with_user', 'Chat da Corrida')}
+                  {otherUserName || t('chat_with_user', 'Chat com Motorista')}
                 </Text>
                 <Text style={styles.chatSubtitle}>
                   {currentRole === 'passenger' ? t('driver', 'Motorista') : t('passenger', 'Passageiro')}
@@ -357,11 +345,11 @@ export function ChatModal({
               onPress={onClose} 
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
-              <Ionicons name="close" size={22} color="#64748B" />
+              <Ionicons name="close" size={22} color="#94A3B8" />
             </TouchableOpacity>
           </View>
 
-          {/* LISTA DE MENSAGENS */}
+          {/* MENSAGENS */}
           <FlatList
             ref={flatListRef}
             data={messages}
@@ -379,8 +367,6 @@ export function ChatModal({
                   
                   <View style={styles.messageContent}>
                     <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleOther]}>
-                      
-                      {/* SE FOR MENSAGEM DE ÁUDIO */}
                       {item.audioUrl ? (
                         <TouchableOpacity 
                           style={styles.audioContainer}
@@ -390,26 +376,24 @@ export function ChatModal({
                           <Ionicons 
                             name={isPlaying ? "pause-circle" : "play-circle"} 
                             size={32} 
-                            color={isMe ? "#EAB308" : "#0F172A"} 
+                            color={isMe ? "#0F172A" : "#EAB308"} 
                           />
                           <View style={styles.audioWaveformPlaceholder}>
-                            <View style={[styles.audioBar, { height: 12, backgroundColor: isMe ? '#FFF' : '#64748B' }]} />
-                            <View style={[styles.audioBar, { height: 20, backgroundColor: isMe ? '#FFF' : '#64748B' }]} />
-                            <View style={[styles.audioBar, { height: 16, backgroundColor: isMe ? '#FFF' : '#64748B' }]} />
-                            <View style={[styles.audioBar, { height: 24, backgroundColor: isMe ? '#FFF' : '#64748B' }]} />
-                            <View style={[styles.audioBar, { height: 10, backgroundColor: isMe ? '#FFF' : '#64748B' }]} />
+                            <View style={[styles.audioBar, { height: 12, backgroundColor: isMe ? '#0F172A' : '#E2E8F0' }]} />
+                            <View style={[styles.audioBar, { height: 20, backgroundColor: isMe ? '#0F172A' : '#E2E8F0' }]} />
+                            <View style={[styles.audioBar, { height: 16, backgroundColor: isMe ? '#0F172A' : '#E2E8F0' }]} />
+                            <View style={[styles.audioBar, { height: 24, backgroundColor: isMe ? '#0F172A' : '#E2E8F0' }]} />
+                            <View style={[styles.audioBar, { height: 10, backgroundColor: isMe ? '#0F172A' : '#E2E8F0' }]} />
                           </View>
                           <Text style={[styles.audioDurationText, isMe ? styles.textMe : styles.textOther]}>
                             00:{String(item.audioDuration || 0).padStart(2, '0')}
                           </Text>
                         </TouchableOpacity>
                       ) : (
-                        /* SE FOR MENSAGEM DE TEXTO */
                         <Text style={[styles.messageText, isMe ? styles.textMe : styles.textOther]}>
                           {item.text}
                         </Text>
                       )}
-
                     </View>
                     {item.createdAt && (
                       <Text style={[styles.timestamp, isMe ? styles.timestampMe : styles.timestampOther]}>
@@ -424,10 +408,9 @@ export function ChatModal({
             }}
           />
 
-          {/* CAIXA DE ENTRADA / CONTROLE DE GRAVAÇÃO */}
+          {/* INPUT + BOTÃO DE ÁUDIO/MIC */}
           <View style={[styles.chatInputContainer, { paddingBottom: dynamicBottomPadding }]}>
             {isRecording ? (
-              /* BARRA DE GRAVAÇÃO ATIVA (ATÉ 10s) */
               <View style={styles.recordingBar}>
                 <TouchableOpacity onPress={cancelRecording} style={styles.cancelRecBtn}>
                   <Ionicons name="trash-outline" size={22} color="#EF4444" />
@@ -448,14 +431,13 @@ export function ChatModal({
                 </TouchableOpacity>
               </View>
             ) : (
-              /* ENTRADA DE TEXTO E MIC NORMAL */
               <>
                 <TextInput
                   style={styles.chatInput}
                   value={inputText}
                   onChangeText={setInputText}
-                  placeholder={t('type_something', 'Digite sua mensagem...')}
-                  placeholderTextColor="#94A3B8"
+                  placeholder={t('type_something', 'Escreva algo...')}
+                  placeholderTextColor="#64748B"
                   multiline
                   maxLength={250}
                 />
@@ -466,7 +448,7 @@ export function ChatModal({
                     onPress={sendMessage}
                     activeOpacity={0.8}
                   >
-                    <Ionicons name="send" size={18} color="#FFF" style={styles.sendIcon} />
+                    <Ionicons name="send" size={18} color="#0F172A" style={styles.sendIcon} />
                   </TouchableOpacity>
                 ) : (
                   <TouchableOpacity 
@@ -474,7 +456,7 @@ export function ChatModal({
                     onPress={startRecording}
                     activeOpacity={0.8}
                   >
-                    <Ionicons name="mic" size={22} color="#FFF" />
+                    <Ionicons name="mic" size={22} color="#0F172A" />
                   </TouchableOpacity>
                 )}
               </>
@@ -493,20 +475,15 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(15, 23, 42, 0.4)', 
+    backgroundColor: 'rgba(15, 23, 42, 0.6)', 
   },
   chatContainer: {
-    backgroundColor: '#FFF',
+    backgroundColor: '#0F172A',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     maxHeight: '88%',
     flex: 1,
     paddingTop: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 10,
   },
   chatHeader: {
     flexDirection: 'row',
@@ -516,7 +493,7 @@ const styles = StyleSheet.create({
     paddingBottom: 14,
     paddingTop: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: '#1E293B',
   },
   headerTitleRow: {
     flexDirection: 'row',
@@ -526,15 +503,15 @@ const styles = StyleSheet.create({
   chatTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#0F172A',
+    color: '#FFFFFF',
   },
   chatSubtitle: {
     fontSize: 12,
-    color: '#64748B',
+    color: '#94A3B8',
     marginTop: 2,
   },
   closeButton: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#1E293B',
     padding: 6,
     borderRadius: 20,
   },
@@ -563,11 +540,11 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   bubbleMe: {
-    backgroundColor: '#0F172A',
+    backgroundColor: '#EAB308',
     borderBottomRightRadius: 4,
   },
   bubbleOther: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#1E293B',
     borderBottomLeftRadius: 4,
   },
   messageText: {
@@ -575,14 +552,15 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   textMe: {
-    color: '#FFFFFF',
+    color: '#0F172A',
+    fontWeight: '600',
   },
   textOther: {
-    color: '#0F172A',
+    color: '#FFFFFF',
   },
   timestamp: {
     fontSize: 10,
-    color: '#94A3B8',
+    color: '#64748B',
     marginTop: 4,
   },
   timestampMe: {
@@ -595,13 +573,13 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#E2E8F0',
+    backgroundColor: '#334155',
   },
   avatarPlaceholder: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#E2E8F0',
+    backgroundColor: '#334155',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -611,15 +589,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
-    backgroundColor: '#FFF',
+    borderTopColor: '#1E293B',
+    backgroundColor: '#0F172A',
     gap: 12,
   },
   chatInput: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#1E293B',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#334155',
     borderRadius: 24,
     paddingHorizontal: 16,
     paddingTop: 12,
@@ -627,10 +605,10 @@ const styles = StyleSheet.create({
     minHeight: 48,
     maxHeight: 120,
     fontSize: 15,
-    color: '#0F172A',
+    color: '#FFFFFF',
   },
   chatSendButton: {
-    backgroundColor: '#0F172A',
+    backgroundColor: '#EAB308',
     width: 48,
     height: 48,
     borderRadius: 24,
@@ -638,7 +616,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   micButton: {
-    backgroundColor: '#EF4444',
+    backgroundColor: '#EAB308',
     width: 48,
     height: 48,
     borderRadius: 24,
@@ -673,9 +651,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#FEF2F2',
+    backgroundColor: '#450A0A',
     borderWidth: 1,
-    borderColor: '#FCA5A5',
+    borderColor: '#991B1B',
     borderRadius: 24,
     paddingHorizontal: 12,
     height: 48,
@@ -697,7 +675,7 @@ const styles = StyleSheet.create({
   recordingTimerText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#991B1B',
+    color: '#FCA5A5',
   },
   sendAudioBtn: {
     backgroundColor: '#16A34A',

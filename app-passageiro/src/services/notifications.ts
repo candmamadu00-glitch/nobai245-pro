@@ -92,7 +92,7 @@ export async function registerAndSendPushToken(accessToken?: string): Promise<st
 
     console.log('📱 [PUSH PASSAGEIRO TOKEN GENERATED]:', pushToken);
 
-    // 4️⃣ Envio via HTTP REST (Com tratamento explícito de log)
+    // 4️⃣ Envio via HTTP REST
     try {
       await api.put('/passengers/device-token', { deviceToken: pushToken });
       console.log('✅ [PUSH PASSAGEIRO DB] Token salvo via HTTP com sucesso no banco!');
@@ -104,7 +104,7 @@ export async function registerAndSendPushToken(accessToken?: string): Promise<st
       );
     }
 
-    // 5️⃣ Envio via Socket (Com tratamento para Socket desconectado/handshake)
+    // 5️⃣ Envio via Socket
     const emitSocketToken = () => {
       if (socket && socket.connected) {
         socket.emit('passenger:update_device_token', { deviceToken: pushToken });
@@ -150,7 +150,7 @@ export function setupNotificationListeners(
         subResponse.remove();
       }
     } catch (e) {
-      // Ignora falhas na desativação
+      // Ignora falhas na limpeza
     }
   };
 }

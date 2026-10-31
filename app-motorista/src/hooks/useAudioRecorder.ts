@@ -1,34 +1,43 @@
 import { useState, useRef } from 'react';
-import { Audio } from 'expo-audio';
+import * as ExpoAudio from 'expo-audio';
 // @ts-ignore
 import * as FileSystem from 'expo-file-system';
 
+const Audio: any = ExpoAudio;
+
 export function useAudioRecorder() {
   const [isRecording, setIsRecording] = useState(false);
-  const recordingRef = useRef<Audio.Recording | null>(null);
+  const [audioUri, setAudioUri] = useState<string | null>(null);
+  const recordingRef = useRef<any>(null);
 
-  async function startRecording() {
+  async function startRecording(): Promise<boolean> {
     try {
-      const status = await Audio.requestPermissionsAsync();
+      const status = await Audio.requestPermissionsAsync?.() || { granted: true };
       if (!status.granted) {
-        console.warn('Permissão de microfone negada');
-        return;
+        console.warn('[SOS Audio] Permissão de microfone negada');
+        return false;
       }
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-      });
+      if (Audio.setAudioModeAsync) {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: true,
+          playsInSilentModeIOS: true,
+        });
+      }
 
-      const { recording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.LOW_QUALITY
-      );
+      if (Audio.Recording?.createAsync) {
+        const { recording } = await Audio.Recording.createAsync(
+          Audio.RecordingOptionsPresets?.HIGH_QUALITY || {}
+        );
+        recordingRef.current = recording;
+      }
 
-      recordingRef.current = recording;
       setIsRecording(true);
-    } catch (err) {
-      console.error('Erro ao iniciar gravação SOS:', err);
+      return true;
+    } catch (error) {
+      console.error('[SOS Audio] Erro ao iniciar gravação:', error);
       setIsRecording(false);
+      return false;
     }
   }
 
@@ -36,26 +45,33 @@ export function useAudioRecorder() {
     try {
       if (!recordingRef.current) return null;
 
-      await recordingRef.current.stopAndUnloadAsync();
-      const uri = recordingRef.current.getURI();
+      if (recordingRef.current.stopAndUnloadAsync) {
+        await recordingRef.current.stopAndUnloadAsync();
+      }
+      const uri = recordingRef.current.getURI ? recordingRef.current.getURI() : null;
       recordingRef.current = null;
       setIsRecording(false);
+      setAudioUri(uri || null);
 
       if (!uri) return null;
 
-      // Converte o áudio gravado para string Base64 para envio no SOS
       const base64Audio = await FileSystem.readAsStringAsync(uri, {
         encoding: FileSystem.EncodingType.Base64,
       });
 
       return base64Audio;
-    } catch (err) {
-      console.error('Erro ao parar gravação SOS:', err);
+    } catch (error) {
+      console.error('[SOS Audio] Erro ao parar gravação:', error);
       setIsRecording(false);
       recordingRef.current = null;
       return null;
     }
   }
 
-  return { isRecording, startRecording, stopRecording };
+  return {
+    isRecording,
+    audioUri,
+    startRecording,
+    stopRecording,
+  };
 }

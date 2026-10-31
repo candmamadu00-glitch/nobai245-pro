@@ -1,31 +1,37 @@
 import { useState, useRef } from 'react';
-import { Audio } from 'expo-audio';
+import * as ExpoAudio from 'expo-audio';
 // @ts-ignore
 import * as FileSystem from 'expo-file-system';
+
+const Audio: any = ExpoAudio;
 
 export function useAudioRecorder() {
   const [isRecording, setIsRecording] = useState(false);
   const [audioUri, setAudioUri] = useState<string | null>(null);
-  const recordingRef = useRef<Audio.Recording | null>(null);
+  const recordingRef = useRef<any>(null);
 
   async function startRecording(): Promise<boolean> {
     try {
-      const status = await Audio.requestPermissionsAsync();
+      const status = await Audio.requestPermissionsAsync?.() || { granted: true };
       if (!status.granted) {
         console.warn('[SOS Audio] Permissão de microfone negada');
         return false;
       }
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-      });
+      if (Audio.setAudioModeAsync) {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: true,
+          playsInSilentModeIOS: true,
+        });
+      }
 
-      const { recording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
+      if (Audio.Recording?.createAsync) {
+        const { recording } = await Audio.Recording.createAsync(
+          Audio.RecordingOptionsPresets?.HIGH_QUALITY || {}
+        );
+        recordingRef.current = recording;
+      }
 
-      recordingRef.current = recording;
       setIsRecording(true);
       return true;
     } catch (error) {
@@ -39,8 +45,10 @@ export function useAudioRecorder() {
     try {
       if (!recordingRef.current) return null;
 
-      await recordingRef.current.stopAndUnloadAsync();
-      const uri = recordingRef.current.getURI();
+      if (recordingRef.current.stopAndUnloadAsync) {
+        await recordingRef.current.stopAndUnloadAsync();
+      }
+      const uri = recordingRef.current.getURI ? recordingRef.current.getURI() : null;
       recordingRef.current = null;
       setIsRecording(false);
       setAudioUri(uri || null);
