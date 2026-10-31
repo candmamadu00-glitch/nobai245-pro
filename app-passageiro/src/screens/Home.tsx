@@ -151,7 +151,10 @@ const formatPhotoUrl = (path?: string) => {
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
   return `${cleanBase}${cleanPath}`;
 };
-
+const isNightTimeForPin = () => {
+  const hour = new Date().getHours();
+  return hour >= 18 || hour < 6;
+};
 function calculateVehiclePrice(type: VehicleType, distanceKm: number | null): number | null {
   if (distanceKm === null || distanceKm <= 0 || isNaN(distanceKm) || !isFinite(distanceKm)) return null;
 
