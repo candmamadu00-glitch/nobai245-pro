@@ -883,7 +883,7 @@ export async function finalizeRideAndCharge(
 
     // 3. Processamento do Pagamento em Dinheiro (CASH)
     if (isCash) {
-      const currentDriverBalance = Number(ride.driver.walletBalance || 0);
+      const driverPhone = (ride.driver as any)?.paymentAccountNumber || ride.driver?.phone;
       finalDriverBalance = currentDriverBalance - platformFee;
 
       // 🛑 TRAVA AUTOMÁTICA: Se o saldo restante for menor que 1.000 XOF, desloga o motorista do modo online
