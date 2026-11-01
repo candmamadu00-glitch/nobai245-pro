@@ -29,6 +29,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { registerAndSendPushToken } from '../services/notifications';
 import { updateOngoingRideNotification, dismissOngoingRideNotification } from '../services/ongoingNotification';
 import * as Notifications from 'expo-notifications';
+import { ChatModal } from '../components/ChatModal';
 import { speakRideStatusUpdate, speakText, triggerHapticFeedback } from '../utils/accessibility';
 
 // Token Mapbox
@@ -68,7 +69,9 @@ interface FavoritePlace {
 interface ChatMessage { 
   id: string; 
   sender: 'passenger' | 'driver'; 
-  text: string; 
+  text?: string; 
+  audioUrl?: string | null;
+  audioDuration?: number;
   senderPhoto?: string;
 }
 
@@ -383,7 +386,7 @@ export function Home() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<MapboxGeocodingFeature[]>([]);
   const [isSearchingMapbox, setIsSearchingMapbox] = useState(false);
-
+  const [isVoiceAssistEnabled, setIsVoiceAssistEnabled] = useState<boolean>(true);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [isChatVisible, setIsChatVisible] = useState(false);
@@ -533,6 +536,24 @@ const [interpolatedCoords, setInterpolatedCoords] = useState<[number, number]>([
       radarAnim.setValue(0);
     }
   }, [rideStatus, radarAnim]);
+  // 💾 Carrega a preferência de voz do passageiro do AsyncStorage
+  useEffect(() => {
+    AsyncStorage.getItem('@nobai245:voice_assist').then((val) => {
+      if (val !== null) {
+        setIsVoiceAssistEnabled(val === 'true');
+      }
+    }).catch(() => {});
+  }, []);
+  // 🔄 Função para alternar a voz e salvar no dispositivo
+  const toggleVoiceAssist = async () => {
+    const nextState = !isVoiceAssistEnabled;
+    setIsVoiceAssistEnabled(nextState);
+    await AsyncStorage.setItem('@nobai245:voice_assist', String(nextState)).catch(() => {});
+    
+    if (nextState) {
+      speakText('Assistência de voz ativada');
+    }
+  };
 // 🟢 Animação suave a 60 FPS
   useEffect(() => {
     if (!driverLocation?.latitude || !driverLocation?.longitude) return;
@@ -563,9 +584,9 @@ const [interpolatedCoords, setInterpolatedCoords] = useState<[number, number]>([
     animationFrame = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(animationFrame);
   }, [driverLocation?.latitude, driverLocation?.longitude]);
-  // 🔊 LEITURA EM VOZ ALTA AUTOMÁTICA E HÁPTICA QUANDO O STATUS MUDAR
+  // 🔊 LEITURA EM VOZ ALTA AUTOMÁTICA QUANDO O STATUS MUDAR (Apenas se ativado pelo usuário)
 useEffect(() => {
-  if (rideStatus === 'idle') return;
+  if (rideStatus === 'idle' || !isVoiceAssistEnabled) return;
 
   speakRideStatusUpdate(rideStatus, {
     driverName: driverInfo?.name || 'Motorista',
@@ -576,7 +597,32 @@ useEffect(() => {
     destination: dropoffAddress || 'seu destino',
     origin: pickupAddress || 'seu local de embarque',
   });
-}, [rideStatus, driverInfo, estimatedPrice, dropoffAddress, pickupAddress]);
+}, [rideStatus, driverInfo, estimatedPrice, dropoffAddress, pickupAddress, isVoiceAssistEnabled]);
+// 🔔 ESCUTA E EXIBE NOTIFICAÇÕES / PUSH EM TEMPO REAL NA TELA
+useEffect(() => {
+  const notificationSubscription = Notifications.addNotificationReceivedListener((notification) => {
+    const { title, body, data } = notification.request.content;
+
+    // Se for mensagem de chat ou atualização de corrida e a modal não estiver aberta
+    if (data?.channelId === 'chat-messages' && !isChatVisibleRef.current) {
+      triggerHapticFeedback('NEW_OFFER');
+    }
+
+    console.log(`🔔 [PUSH RECEBIDO NA TELA]: ${title} - ${body}`);
+  });
+
+  const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
+    const data = response.notification.request.content.data;
+    if (data?.rideId || data?.channelId === 'chat-messages') {
+      setIsChatVisible(true);
+    }
+  });
+
+  return () => {
+    notificationSubscription.remove();
+    responseSubscription.remove();
+  };
+}, []);
 // 📦 MÓDULO DE MAPA OFFLINE (BISSAU - SETOR AUTÓNOMO)
 const setupBissauOfflineMap = async () => {
   try {
@@ -632,27 +678,43 @@ useEffect(() => {
     isChatVisibleRef.current = isChatVisible;
   }, [isChatVisible]);
 
- // 💬 Manipulador silencioso de mensagens do Chat (Sem Pop-up na tela e Sem Notificações Duplicadas)
+ // 💬 MANIPULADOR DE MENSAGENS DE TEXTO E ÁUDIO NO CHAT (Passageiro)
 const handleIncomingChatMessage = useCallback((data: any) => {
   if (!isMountedRef.current || !data) return;
 
   const text = String(data.text || data.message || '').trim();
-  if (!text) return;
+  const audioUrl = data.audioUrl || data.audio || null;
+  const audioDuration = Number(data.audioDuration || data.duration || 0);
 
-  const rawSender = String(data.sender || '').toLowerCase();
+  // Se não houver nem texto nem áudio, ignora
+  if (!text && !audioUrl) return;
+
+  const rawSender = String(data.sender || data.senderType || '').toLowerCase();
   const isFromDriver = rawSender.includes('driver') || rawSender !== 'passenger';
   const normalizedSender: 'passenger' | 'driver' = isFromDriver ? 'driver' : 'passenger';
   const messageId = String(data.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`);
 
-  // Atualiza o estado interno da lista de mensagens evitando itens duplicados
   setMessages(prev => {
-    if (prev.some(m => m.id === messageId || (m.text === text && m.sender === normalizedSender))) {
-      return prev;
-    }
-    return [...prev, { id: messageId, sender: normalizedSender, text, senderPhoto: data.senderPhoto }];
-  });
+    // Evita duplicar mensagens locais ou já processadas
+    const isDuplicate = prev.some(
+      m => m.id === messageId || 
+      (text && m.text === text && m.sender === normalizedSender) ||
+      (audioUrl && m.audioUrl === audioUrl)
+    );
+    if (isDuplicate) return prev;
 
-  // 🔴 REMOVIDO O Alert.alert PARA NÃO BLOQUEAR A VISÃO DO MAPA DO PASSAGEIRO
+    return [
+      ...prev, 
+      { 
+        id: messageId, 
+        sender: normalizedSender, 
+        text, 
+        audioUrl, 
+        audioDuration, 
+        senderPhoto: data.senderPhoto || data.driverPhoto 
+      }
+    ];
+  });
 }, []);
 
  const persistRideState = async (
@@ -1971,28 +2033,40 @@ return () => {
     );
   };
 
-  const handleShareTrip = async () => {
-    try {
-      if (!driverInfo || !dropoffAddress || !activeRideId) {
-        Alert.alert(t('warning_title', 'Aviso ⚠️'), t('wait_trip_data', 'Aguarde os dados da corrida carregarem para compartilhar.'));
-        return;
-      }
-
-      const apiDomain = process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com';
-      const trackingUrl = `${apiDomain}/track/${activeRideId}`;
-
-      const mensagem = `🚕 Acompanhe minha viagem no Nobai245!\n\n` +
-        `👤 Motorista: ${driverInfo.name}\n` +
-        `🚘 Veículo: ${driverInfo.carModel || 'Veículo'} (${driverInfo.carColor || 'Cor N/A'}) - Placa: ${driverInfo.licensePlate || 'N/A'}\n` +
-        `📍 Destino: ${dropoffAddress}\n` +
-        `${driverEta ? `⏳ Previsão de chegada: ${driverEta} minutos\n` : ''}` +
-        `🌐 Acompanhe em tempo real pelo navegador: ${trackingUrl}`;
-
-      await Share.share({ message: mensagem, title: 'Detalhes da minha corrida' });
-    } catch (error) {
-      Alert.alert(t('error_title', 'Erro'), t('share_error_msg', 'Não foi possível abrir o menu de compartilhamento.'));
+  // 📤 COMPARTILHAMENTO PROFISSIONAL DE VIAGEM EM TEMPO REAL
+const handleShareTrip = async () => {
+  try {
+    if (!driverInfo || !dropoffAddress || !activeRideId) {
+      Alert.alert(
+        t('warning_title', 'Aviso ⚠️'), 
+        t('wait_trip_data', 'Aguarde os dados da corrida carregarem para compartilhar.')
+      );
+      return;
     }
-  };
+
+    const apiDomain = process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com';
+    const baseUrl = apiDomain.replace(/\/api\/?$/, '').replace(/\/$/, '');
+    const trackingUrl = `${baseUrl}/track/${activeRideId}`;
+
+    const mensagem = 
+      `🚕 *Acompanhe minha viagem no Nô Bai 245!*\n\n` +
+      `👤 *Motorista:* ${driverInfo.name || 'Motorista'}\n` +
+      `🚘 *Veículo:* ${driverInfo.carModel || 'Veículo'} (${driverInfo.carColor || 'N/A'}) — Placa: *${driverInfo.licensePlate || 'N/A'}*\n` +
+      `📍 *Destino:* ${dropoffAddress}\n` +
+      `${driverEta ? `⏳ *Previsão de Chegada:* ${driverEta} min\n` : ''}\n` +
+      `🌐 *Acompanhe ao vivo no mapa pelo navegador:*\n${trackingUrl}`;
+
+    await Share.share({ 
+      message: mensagem, 
+      title: 'Acompanhar Minha Viagem - Nô Bai 245' 
+    });
+  } catch (error) {
+    Alert.alert(
+      t('error_title', 'Erro'), 
+      t('share_error_msg', 'Não foi possível abrir o menu de compartilhamento.')
+    );
+  }
+};
 
   function sendMessage() {
     if (!inputText.trim() || !activeRideId) return;
@@ -2121,41 +2195,57 @@ return (
     <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
     {/* 1. HEADER FLUTUANTE */}
-    <View style={[styles.floatingHeader, { top: topHeaderInset }]}>
-      <View style={styles.headerContent}>
-        <TouchableOpacity 
-          style={styles.headerUserInfo} 
-          activeOpacity={0.8}
-          onPress={() => navigation.navigate('Profile')}
-        >
-          <View style={styles.avatarPlaceholder}>
-            {user?.profilePicture ? (
-              <Image 
-                source={{ uri: formatPhotoUrl(user.profilePicture) }} 
-                style={{ width: '100%', height: '100%', borderRadius: 50 }} 
-              />
-            ) : (
-              <Ionicons name="person" size={18} color="#0F172A" />
-            )}
-          </View>
-          <Text style={styles.greetingText}>
-            {t('greeting', 'Olá')}, {user?.fullName ? user.fullName.split(' ')[0] : t('passenger', 'Passageiro')}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={styles.langHeaderBtn} 
-          onPress={() => setLangModalVisible(true)}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.langHeaderBtnText}>{i18n.language?.toUpperCase() || 'PT'}</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.menuIcon} activeOpacity={0.7} onPress={() => setIsMenuVisible(true)}>
-          <Ionicons name="menu" size={22} color="#EAB308" />
-        </TouchableOpacity>
+<View style={[styles.floatingHeader, { top: topHeaderInset }]}>
+  <View style={styles.headerContent}>
+    <TouchableOpacity 
+      style={styles.headerUserInfo} 
+      activeOpacity={0.8}
+      onPress={() => navigation.navigate('Profile')}
+    >
+      <View style={styles.avatarPlaceholder}>
+        {user?.profilePicture ? (
+          <Image 
+            source={{ uri: formatPhotoUrl(user.profilePicture) }} 
+            style={{ width: '100%', height: '100%', borderRadius: 50 }} 
+          />
+        ) : (
+          <Ionicons name="person" size={18} color="#0F172A" />
+        )}
       </View>
-    </View>
+      <Text style={styles.greetingText}>
+        {t('greeting', 'Olá')}, {user?.fullName ? user.fullName.split(' ')[0] : t('passenger', 'Passageiro')}
+      </Text>
+    </TouchableOpacity>
+
+    {/* 🔊 BOTÃO TOGGLE DA ASSISTÊNCIA DE VOZ (NOVO) */}
+    <TouchableOpacity 
+      style={[
+        styles.voiceToggleHeaderBtn, 
+        { backgroundColor: isVoiceAssistEnabled ? '#EAB308' : '#1E293B' }
+      ]} 
+      onPress={toggleVoiceAssist}
+      activeOpacity={0.8}
+    >
+      <Ionicons 
+        name={isVoiceAssistEnabled ? "volume-high" : "volume-mute"} 
+        size={18} 
+        color={isVoiceAssistEnabled ? "#0F172A" : "#94A3B8"} 
+      />
+    </TouchableOpacity>
+
+    <TouchableOpacity 
+      style={styles.langHeaderBtn} 
+      onPress={() => setLangModalVisible(true)}
+      activeOpacity={0.8}
+    >
+      <Text style={styles.langHeaderBtnText}>{i18n.language?.toUpperCase() || 'PT'}</Text>
+    </TouchableOpacity>
+
+    <TouchableOpacity style={styles.menuIcon} activeOpacity={0.7} onPress={() => setIsMenuVisible(true)}>
+      <Ionicons name="menu" size={22} color="#EAB308" />
+    </TouchableOpacity>
+  </View>
+</View>
 
     {/* 2. MAPA DE NAVEGAÇÃO MAPBOX */}
     <Mapbox.MapView
@@ -3196,6 +3286,27 @@ return (
           </View>
 
           <View style={styles.menuItems}>
+            {/* Opção de Ativar/Desativar Voz no Menu */}
+  <TouchableOpacity style={styles.menuItem} onPress={toggleVoiceAssist} activeOpacity={0.7}>
+    <Ionicons 
+      name={isVoiceAssistEnabled ? "volume-high-outline" : "volume-mute-outline"} 
+      size={20} 
+      color={isVoiceAssistEnabled ? "#EAB308" : "#0F172A"} 
+    />
+    <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingRight: 8 }}>
+      <Text style={styles.menuItemText}>{t('voice_assist', 'Assistência por Voz')}</Text>
+      <View style={{
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 10,
+        backgroundColor: isVoiceAssistEnabled ? '#EAB308' : '#334155'
+      }}>
+        <Text style={{ fontSize: 10, fontWeight: 'bold', color: isVoiceAssistEnabled ? '#0F172A' : '#FFF' }}>
+          {isVoiceAssistEnabled ? 'LIGADO' : 'DESLIGADO'}
+        </Text>
+      </View>
+    </View>
+  </TouchableOpacity>
             <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('Profile'); }} activeOpacity={0.7}>
               <Ionicons name="person-outline" size={20} color="#0F172A" />
               <Text style={styles.menuItemText}>{t('my_profile', 'Meu Perfil')}</Text>
@@ -3673,6 +3784,17 @@ return (
     </KeyboardAvoidingView>
   </SafeAreaView>
 </Modal>
+{/* CHATMODAL COM TODAS AS PROPS DE ÁUDIO E SESSÃO SINCROIZADAS */}
+<ChatModal 
+  visible={isChatVisible} 
+  onClose={() => setIsChatVisible(false)} 
+  socket={socket} 
+  rideId={activeRideId || ''} 
+  currentRole="passenger" 
+  currentUserPhoto={user?.profilePicture ? formatPhotoUrl(user.profilePicture) : null} 
+  otherUserName={driverInfo?.name || 'Motorista'} 
+  otherUserPhoto={driverInfo?.photoUrl || driverInfo?.profilePicture} 
+/>
     {/* MODAL DE CANCELAMENTO */}
       <CancelModal
         visible={showCancelModal}
@@ -5168,5 +5290,15 @@ priceText: {
   fontSize: 18,
   fontWeight: '800',
   color: '#EAB308',
+},
+voiceToggleHeaderBtn: {
+  width: 36,
+  height: 36,
+  borderRadius: 18,
+  alignItems: 'center',
+  justifyContent: 'center',
+  marginRight: 6,
+  borderWidth: 1,
+  borderColor: '#334155',
 },
 });

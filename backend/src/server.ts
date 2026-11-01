@@ -253,6 +253,7 @@ app.get('/track/:rideId/data', async (req: Request, res: Response) => {
     const driverLng = Number(ride.driver?.lastLng || ride.originLng || -15.5833);
 
     return res.json({
+      rideId: ride.id,
       status: ride.status || 'IN_PROGRESS',
       driverLat,
       driverLng,
@@ -266,7 +267,6 @@ app.get('/track/:rideId/data', async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Erro ao buscar dados do rastreamento' });
   }
 });
-
 // =============================================================================
 // 🌐 ROTA PÚBLICA DE RASTREAMENTO WEB DA VIAGEM
 // =============================================================================

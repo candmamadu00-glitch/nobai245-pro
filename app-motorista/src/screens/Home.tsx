@@ -174,7 +174,14 @@ export interface IncomingRideData {
   transactionId?: string;
   stops?: any[]; 
 }
-
+interface ChatMessage {
+  id: string;
+  sender: 'passenger' | 'driver';
+  text?: string;
+  audioUrl?: string | null;
+  audioDuration?: number;
+  senderPhoto?: string;
+}
 export interface CompletedRideInfo { fareXOF: number; distanceKm: number; transactionId: string; }
 
 function calculateDirectDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -242,7 +249,10 @@ const formatImageUrl = (path?: string | null): string | undefined => {
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
   return `${CLEAN_BASE_URL}${cleanPath}`;
 };
-
+// 🏎️ UTILITÁRIO DE INTERPOLAÇÃO LINEAR (LERP) PARA SUAVIZAR MOVIMENTO
+function lerp(start: number, end: number, amt: number): number {
+  return (1 - amt) * start + amt * end;
+}
 export function Home() {
   useKeepAwake();
 
@@ -283,7 +293,7 @@ export function Home() {
   const [showSosModal, setShowSosModal] = useState(false);
   const [showNavSheet, setShowNavSheet] = useState(false);
   const [currentStopIndex, setCurrentStopIndex] = useState(0);
-
+  const [isVoiceAssistEnabled, setIsVoiceAssistEnabled] = useState<boolean>(true);
   const [todayEarnings, setTodayEarnings] = useState<number>(0);
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [serviceFilters, setServiceFilters] = useState({ RIDE: true, DELIVERY: true, RENTAL: true });
@@ -350,7 +360,40 @@ export function Home() {
       },
     })
   ).current;
+// 🎯 FUNÇÃO PARA ENQUADRAR MOTORISTA E PONTO DE DESTINO/EMBARQUE NO MAPA
+const fitMapBounds = useCallback((
+  driverLng: number, 
+  driverLat: number, 
+  targetLng: number, 
+  targetLat: number
+) => {
+  if (!cameraRef.current || !isMapReady) return;
 
+  const minLng = Math.min(driverLng, targetLng);
+  const maxLng = Math.max(driverLng, targetLng);
+  const minLat = Math.min(driverLat, targetLat);
+  const maxLat = Math.max(driverLat, targetLat);
+
+  // Calcula os limites Sudoeste (SW) e Nordeste (NE)
+  const ne = [maxLng, maxLat];
+  const sw = [minLng, minLat];
+
+  try {
+    cameraRef.current.setCamera({
+      bounds: {
+        ne,
+        sw,
+        paddingTop: 120,
+        paddingBottom: 280,
+        paddingLeft: 50,
+        paddingRight: 50,
+      },
+      animationDuration: 1200,
+    });
+  } catch (err) {
+    console.warn('Erro ao ajustar limites da câmera Mapbox:', err);
+  }
+}, [isMapReady]);
   const stops = incomingRide?.stops || [];
   const isNavigatingToStop = currentStopIndex < stops.length;
   const displayPassengerName = incomingRide?.guestName || incomingRide?.passengerName || 'Passageiro';
@@ -526,9 +569,30 @@ useEffect(() => {
     if (heartbeatInterval) clearInterval(heartbeatInterval);
   };
 }, [isOnline, syncActiveRideWithServer]);
-// 🔊 LEITURA AUTOMÁTICA DE AÇÕES PARA O MOTORISTA
+// 💾 Carrega a preferência de voz do motorista salva no AsyncStorage
+  useEffect(() => {
+    AsyncStorage.getItem('@nobai245:driver_voice_assist')
+      .then((val) => {
+        if (val !== null) {
+          setIsVoiceAssistEnabled(val === 'true');
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // 🔄 Função para alternar a voz e salvar no dispositivo
+  const toggleVoiceAssist = async () => {
+    const nextState = !isVoiceAssistEnabled;
+    setIsVoiceAssistEnabled(nextState);
+    await AsyncStorage.setItem('@nobai245:driver_voice_assist', String(nextState)).catch(() => {});
+    
+    if (nextState) {
+      speakText('Assistência de voz do motorista ativada');
+    }
+  };
+// 🔊 LEITURA AUTOMÁTICA DE AÇÕES PARA O MOTORISTA (Respeita a preferência de voz)
 useEffect(() => {
-  if (rideState === 'idle') return;
+  if (rideState === 'idle' || !isVoiceAssistEnabled) return;
 
   if (rideState === 'accepted') {
     speakText(
@@ -543,7 +607,7 @@ useEffect(() => {
     speakText(`Viagem iniciada para: ${incomingRide?.destinationAddress || 'Destino final'}.`);
     triggerHapticFeedback('BUTTON_PRESS');
   }
-}, [rideState, incomingRide?.originAddress, incomingRide?.destinationAddress]);
+}, [rideState, incomingRide?.originAddress, incomingRide?.destinationAddress, isVoiceAssistEnabled]);
 // 📦 MÓDULO DE MAPA OFFLINE (BISSAU - SETOR AUTÓNOMO)
 const setupBissauOfflineMap = async () => {
   try {
@@ -904,48 +968,51 @@ useEffect(() => {
     }
   }, [location?.coords, routeSteps, currentStepIndex, playBilingualVoice]);
 
-  useEffect(() => {
-    if (!location?.coords || !incomingRide) return;
+  // 🟢 useEffect UNIFICADO: Desenha a rota, enquadra a câmera e persiste o estado
+useEffect(() => {
+  if (!location?.coords || !incomingRide) return;
 
-    const driverLat = location.coords.latitude;
-    const driverLng = location.coords.longitude;
+  const driverLat = location.coords.latitude;
+  const driverLng = location.coords.longitude;
 
-    const pLat = Number(incomingRide.pickupLat);
-    const pLng = Number(incomingRide.pickupLng);
-    const dLat = Number(incomingRide.destinationLat);
-    const dLng = Number(incomingRide.destinationLng);
+  const pLat = Number(incomingRide.pickupLat);
+  const pLng = Number(incomingRide.pickupLng);
+  const dLat = Number(incomingRide.destinationLat);
+  const dLng = Number(incomingRide.destinationLng);
 
-    if (rideState === 'accepted' || rideState === 'arrived') {
-      if (!isNaN(pLat) && !isNaN(pLng) && pLat !== 0 && pLng !== 0) {
-        fetchMapboxRoute(driverLng, driverLat, pLng, pLat);
-      }
-    } else if (rideState === 'in_progress') {
-      if (!isNaN(dLat) && !isNaN(dLng) && dLat !== 0 && dLng !== 0) {
-        let rawStops = incomingRide.stops;
-        if (typeof rawStops === 'string') {
-          try { rawStops = JSON.parse(rawStops); } catch (e) { rawStops = []; }
-        }
-
-        let pendingStops: any[] = [];
-        if (Array.isArray(rawStops) && rawStops.length > 0) {
-          pendingStops = rawStops.filter((s: any) => {
-            const lat = Number(s.lat ?? s.latitude);
-            const lng = Number(s.lng ?? s.longitude);
-            return s.status !== 'COMPLETED' && !isNaN(lat) && !isNaN(lng) && lat !== 0;
-          });
-        }
-        fetchMapboxRoute(driverLng, driverLat, dLng, dLat, pendingStops);
-      }
-    } else if (rideState === 'idle' && incomingRide) {
-      if (!isNaN(pLat) && !isNaN(pLng) && !isNaN(dLat) && !isNaN(dLng)) {
-        fetchMapboxRoute(pLng, pLat, dLng, dLat);
-      }
-    } else {
-      setRouteCoordinates(null);
+  if (rideState === 'accepted' || rideState === 'arrived') {
+    if (!isNaN(pLat) && !isNaN(pLng) && pLat !== 0 && pLng !== 0) {
+      fetchMapboxRoute(driverLng, driverLat, pLng, pLat);
+      fitMapBounds(driverLng, driverLat, pLng, pLat); // 🎯 Enquadra Embarque
     }
+  } else if (rideState === 'in_progress') {
+    if (!isNaN(dLat) && !isNaN(dLng) && dLat !== 0 && dLng !== 0) {
+      let rawStops = incomingRide.stops;
+      if (typeof rawStops === 'string') {
+        try { rawStops = JSON.parse(rawStops); } catch (e) { rawStops = []; }
+      }
 
-    persistActiveRideState(incomingRide, rideState, activeRideId);
-  }, [rideState, activeRideId, location?.coords?.latitude, location?.coords?.longitude, incomingRide]);
+      let pendingStops: any[] = [];
+      if (Array.isArray(rawStops) && rawStops.length > 0) {
+        pendingStops = rawStops.filter((s: any) => {
+          const lat = Number(s.lat ?? s.latitude);
+          const lng = Number(s.lng ?? s.longitude);
+          return s.status !== 'COMPLETED' && !isNaN(lat) && !isNaN(lng) && lat !== 0;
+        });
+      }
+      fetchMapboxRoute(driverLng, driverLat, dLng, dLat, pendingStops);
+      fitMapBounds(driverLng, driverLat, dLng, dLat); // 🎯 Enquadra Desembarque
+    }
+  } else if (rideState === 'idle' && incomingRide) {
+    if (!isNaN(pLat) && !isNaN(pLng) && !isNaN(dLat) && !isNaN(dLng)) {
+      fetchMapboxRoute(pLng, pLat, dLng, dLat);
+    }
+  } else {
+    setRouteCoordinates(null);
+  }
+
+  persistActiveRideState(incomingRide, rideState, activeRideId);
+}, [rideState, activeRideId, location?.coords?.latitude, location?.coords?.longitude, incomingRide, fitMapBounds]);
 
   const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean; rideId?: string }) => {
     if (!isMountedRef.current) return;
@@ -990,7 +1057,6 @@ useEffect(() => {
         status: s.status || 'PENDING'
       }));
     }
-
     const formattedOffer = {
       ...data,
       rideId: newRideId,
@@ -1189,93 +1255,106 @@ useEffect(() => {
   }
 
   const startTrackingForState = async (currentState: RideState) => {
-    if (locationWatcherRef.current) { 
-      locationWatcherRef.current.remove(); 
-      locationWatcherRef.current = null; 
-    }
+  if (locationWatcherRef.current) { 
+    locationWatcherRef.current.remove(); 
+    locationWatcherRef.current = null; 
+  }
 
-    const isActive = ['accepted', 'arrived', 'in_progress'].includes(currentState);
-    
-    let timeInterval = isActive ? 2000 : 6000;
-    let distanceInterval = isActive ? 3 : 10;
+  const isActive = ['accepted', 'arrived', 'in_progress'].includes(currentState);
+  
+  let timeInterval = isActive ? 2000 : 6000;
+  let distanceInterval = isActive ? 3 : 10;
 
-    if (isLowBattery) {
-      timeInterval = isActive ? 5000 : 12000;
-      distanceInterval = isActive ? 8 : 20;
-    }
+  if (isLowBattery) {
+    timeInterval = isActive ? 5000 : 12000;
+    distanceInterval = isActive ? 8 : 20;
+  }
 
-    try {
-      const hasStartedBg = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
-      if (!hasStartedBg) {
-        await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-          accuracy: isActive ? Location.Accuracy.BestForNavigation : Location.Accuracy.Balanced,
-          timeInterval,
-          distanceInterval,
-          showsBackgroundLocationIndicator: true,
-          foregroundService: {
-            notificationTitle: 'Nô Bai 245 Motorista',
-            notificationBody: isActive ? 'Navegação de corrida ativa' : 'Você está online e visível',
-            notificationColor: '#0E243C',
-          },
-        }).catch(() => {});
-      }
-
-      locationWatcherRef.current = await Location.watchPositionAsync(
-        { 
-          accuracy: isActive ? Location.Accuracy.BestForNavigation : Location.Accuracy.Balanced, 
-          timeInterval, 
-          distanceInterval 
+  try {
+    const hasStartedBg = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
+    if (!hasStartedBg) {
+      await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+        accuracy: isActive ? Location.Accuracy.BestForNavigation : Location.Accuracy.Balanced,
+        timeInterval,
+        distanceInterval,
+        showsBackgroundLocationIndicator: true,
+        foregroundService: {
+          notificationTitle: 'Nô Bai 245 Motorista',
+          notificationBody: isActive ? 'Navegação de corrida ativa' : 'Você está online e visível',
+          notificationColor: '#0E243C',
         },
-        (newLocation) => {
-          if (!isMountedRef.current) return;
-          setLocation(newLocation);
+      }).catch(() => {});
+    }
 
-          const { latitude, longitude } = newLocation.coords;
-          let calculatedHeading = newLocation.coords.heading;
+    locationWatcherRef.current = await Location.watchPositionAsync(
+      { 
+        accuracy: isActive ? Location.Accuracy.BestForNavigation : Location.Accuracy.Balanced, 
+        timeInterval, 
+        distanceInterval 
+      },
+      (newLocation) => {
+        if (!isMountedRef.current) return;
+        setLocation(newLocation);
 
-          if (calculatedHeading == null || calculatedHeading < 0) {
-            if (lastDriverCoordsRef.current) {
-              const distKm = calculateDirectDistance(
+        const { latitude, longitude } = newLocation.coords;
+        let calculatedHeading = newLocation.coords.heading;
+
+        if (calculatedHeading == null || calculatedHeading < 0) {
+          if (lastDriverCoordsRef.current) {
+            const distKm = calculateDirectDistance(
+              lastDriverCoordsRef.current.latitude,
+              lastDriverCoordsRef.current.longitude,
+              latitude,
+              longitude
+            );
+
+            if (distKm * 1000 > 2) {
+              calculatedHeading = calculateBearing(
                 lastDriverCoordsRef.current.latitude,
                 lastDriverCoordsRef.current.longitude,
                 latitude,
                 longitude
               );
-
-              if (distKm * 1000 > 2) {
-                calculatedHeading = calculateBearing(
-                  lastDriverCoordsRef.current.latitude,
-                  lastDriverCoordsRef.current.longitude,
-                  latitude,
-                  longitude
-                );
-              } else {
-                calculatedHeading = lastDriverCoordsRef.current.heading || 0;
-              }
             } else {
-              calculatedHeading = 0;
+              calculatedHeading = lastDriverCoordsRef.current.heading || 0;
             }
-          }
-
-          lastDriverCoordsRef.current = { latitude, longitude, heading: calculatedHeading };
-
-          updateCameraThrottled(longitude, latitude);
-
-          if (driver?.id && socket?.connected) {
-            socket.emit('driver:location_update', {
-              driverId: driver.id,
-              rideId: activeRideIdRef.current || undefined,
-              latitude,
-              longitude,
-              speed: Math.max(0, newLocation.coords.speed || 0),
-              heading: calculatedHeading,
-            });
+          } else {
+            calculatedHeading = 0;
           }
         }
-      );
-    } catch (e) {}
-  };
 
+        // 🏎️ SUAVIZAÇÃO LERP DA POSIÇÃO DO VEÍCULO (ANTI-JITTER)
+        const prevCoords = lastDriverCoordsRef.current;
+        let smoothLat = latitude;
+        let smoothLng = longitude;
+
+        if (prevCoords) {
+          smoothLat = lerp(prevCoords.latitude, latitude, 0.3);
+          smoothLng = lerp(prevCoords.longitude, longitude, 0.3);
+        }
+
+        lastDriverCoordsRef.current = { 
+          latitude: smoothLat, 
+          longitude: smoothLng, 
+          heading: calculatedHeading 
+        };
+
+        updateCameraThrottled(smoothLng, smoothLat);
+
+        if (driver?.id && socket?.connected) {
+          socket.emit('driver:location_update', {
+            driverId: driver.id,
+            rideId: activeRideIdRef.current || undefined,
+            latitude: smoothLat,
+            longitude: smoothLng,
+            speed: Math.max(0, newLocation.coords.speed || 0),
+            heading: calculatedHeading,
+          });
+        }
+      }
+    );
+  } catch (e) {}
+};
   async function startTracking() {
     if (driver?.status !== 'APPROVED') {
       return Alert.alert('Conta em Análise', 'Aguarde a aprovação dos documentos.');
@@ -1711,47 +1790,63 @@ const formattedStops = useMemo(() => {
     </Mapbox.MapView>
 
     {/* 📊 HEADER SUPERIOR FLUTUANTE */}
-    <View style={[styles.headerContainer, { top: topHeaderInset }]} pointerEvents="box-none">
-      <View style={styles.headerRow}>
-        <TouchableOpacity 
-          style={[styles.statusPill, isOnline ? styles.pillOnline : styles.pillOffline]} 
-          onPress={isOnline ? stopTracking : startTracking} 
-          disabled={rideState !== 'idle' || isLoading}
-          activeOpacity={0.85}
-        >
-          <View style={[styles.statusDot, isOnline ? styles.dotGreen : styles.dotRed]} />
-          <Text style={[styles.statusPillText, { color: isOnline ? '#0F172A' : '#FFFFFF' }]}>
-            {isOnline ? 'Online' : 'Offline'}
-          </Text>
-        </TouchableOpacity>
+<View style={[styles.headerContainer, { top: topHeaderInset }]} pointerEvents="box-none">
+  <View style={styles.headerRow}>
+    <TouchableOpacity 
+      style={[styles.statusPill, isOnline ? styles.pillOnline : styles.pillOffline]} 
+      onPress={isOnline ? stopTracking : startTracking} 
+      disabled={rideState !== 'idle' || isLoading}
+      activeOpacity={0.85}
+    >
+      <View style={[styles.statusDot, isOnline ? styles.dotGreen : styles.dotRed]} />
+      <Text style={[styles.statusPillText, { color: isOnline ? '#0F172A' : '#FFFFFF' }]}>
+        {isOnline ? 'Online' : 'Offline'}
+      </Text>
+    </TouchableOpacity>
 
-        <TouchableOpacity style={styles.earningsPill} onPress={() => navigation.navigate('Earnings')} activeOpacity={0.85}>
-          <Ionicons name="wallet-outline" size={15} color="#10B981" />
-          <Text style={styles.earningsPillText}>{formatCurrency(todayEarnings)} XOF</Text>
-        </TouchableOpacity>
+    <TouchableOpacity style={styles.earningsPill} onPress={() => navigation.navigate('Earnings')} activeOpacity={0.85}>
+      <Ionicons name="wallet-outline" size={15} color="#10B981" />
+      <Text style={styles.earningsPillText}>{formatCurrency(todayEarnings)} XOF</Text>
+    </TouchableOpacity>
 
-        <TouchableOpacity style={styles.filterPill} onPress={() => setShowFilterModal(true)} activeOpacity={0.85}>
-          <Ionicons name="options-outline" size={18} color="#EAB308" />
-        </TouchableOpacity>
+    {/* 🔊 BOTÃO TOGGLE DA ASSISTÊNCIA DE VOZ DO MOTORISTA */}
+    <TouchableOpacity 
+      style={[
+        styles.voiceToggleHeaderBtn, 
+        { backgroundColor: isVoiceAssistEnabled ? '#EAB308' : '#1E293B' }
+      ]} 
+      onPress={toggleVoiceAssist}
+      activeOpacity={0.85}
+    >
+      <Ionicons 
+        name={isVoiceAssistEnabled ? "volume-high" : "volume-mute"} 
+        size={18} 
+        color={isVoiceAssistEnabled ? "#0F172A" : "#94A3B8"} 
+      />
+    </TouchableOpacity>
 
-        <TouchableOpacity style={styles.profilePill} onPress={() => navigation.navigate('Profile')} activeOpacity={0.85}>
-          {profileImageUrl ? (
-            <Image source={{ uri: profileImageUrl }} style={styles.headerProfileImage} />
-          ) : (
-            <Ionicons name="person-circle-outline" size={24} color="#EAB308" />
-          )}
-        </TouchableOpacity>
-      </View>
+    <TouchableOpacity style={styles.filterPill} onPress={() => setShowFilterModal(true)} activeOpacity={0.85}>
+      <Ionicons name="options-outline" size={18} color="#EAB308" />
+    </TouchableOpacity>
 
-      {isLowBattery && !isRideActive && (
-        <View style={styles.lowBatteryBanner}>
-          <Ionicons name="battery-dead" size={13} color="#FFFFFF" />
-          <Text style={styles.lowBatteryText}>
-            Bateria Fraca ({Math.round((batteryLevel || 0) * 100)}%) - Modo Economia Ativo
-          </Text>
-        </View>
+    <TouchableOpacity style={styles.profilePill} onPress={() => navigation.navigate('Profile')} activeOpacity={0.85}>
+      {profileImageUrl ? (
+        <Image source={{ uri: profileImageUrl }} style={styles.headerProfileImage} />
+      ) : (
+        <Ionicons name="person-circle-outline" size={24} color="#EAB308" />
       )}
+    </TouchableOpacity>
+  </View>
+
+  {isLowBattery && !isRideActive && (
+    <View style={styles.lowBatteryBanner}>
+      <Ionicons name="battery-dead" size={13} color="#FFFFFF" />
+      <Text style={styles.lowBatteryText}>
+        Bateria Fraca ({Math.round((batteryLevel || 0) * 100)}%) - Modo Economia Ativo
+      </Text>
     </View>
+  )}
+</View>
 
     {/* 🎛️ BOTÕES FLUTUANTES */}
     <View style={styles.floatingButtonsWrapper} pointerEvents="box-none">
@@ -2022,44 +2117,43 @@ const formattedStops = useMemo(() => {
   ) : null}
 
   {/* 🔴 3. DESTINO FINAL / DESEMBARQUE */}
-  <View style={styles.addressItem}>
-    <Ionicons name="flag" size={16} color="#EF4444" />
-    <View style={styles.addressTextWrapper}>
-      <Text style={[styles.addressLabel, { color: '#EF4444' }]}>Destino Final:</Text>
-      <Text style={styles.addressValue} numberOfLines={2}>
-        {incomingRide?.destinationAddress || 'Local de Desembarque'}
-      </Text>
+<View style={styles.addressItem}>
+  <Ionicons name="flag" size={16} color="#EF4444" />
+  <View style={styles.addressTextWrapper}>
+    <Text style={[styles.addressLabel, { color: '#EF4444' }]}>Destino Final:</Text>
+    <Text style={styles.addressValue} numberOfLines={2}>
+      {incomingRide?.destinationAddress || 'Local de Desembarque'}
+    </Text>
 
-      {/* Ref. de Desembarque / Destino com Fallbacks */}
-      {Boolean(
-        (incomingRide as any)?.dropoffReferencePoint || 
-        (incomingRide as any)?.destinationReferencePoint ||
-        ((incomingRide as any)?.referencePoint && !((incomingRide as any)?.pickupReferencePoint))
-      ) && (
-        <View style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          backgroundColor: 'rgba(239, 68, 68, 0.15)',
-          borderWidth: 1,
-          borderColor: '#EF4444',
-          paddingHorizontal: 8,
-          paddingVertical: 4,
-          borderRadius: 6,
-          marginTop: 4
-        }}>
-          <Ionicons name="flag" size={14} color="#EF4444" style={{ marginRight: 4 }} />
-          <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '700', flex: 1 }}>
-            Ref. Destino: {
-              (incomingRide as any).dropoffReferencePoint || 
-              (incomingRide as any).destinationReferencePoint || 
-              (incomingRide as any).referencePoint
-            }
-          </Text>
-        </View>
-      )}
-    </View>
+    {/* 📍 Ponto de Referência do Destino Final */}
+    {Boolean(
+      (incomingRide as any)?.dropoffReferencePoint || 
+      (incomingRide as any)?.destinationReferencePoint ||
+      ((incomingRide as any)?.referencePoint && !((incomingRide as any)?.pickupReferencePoint))
+    ) && (
+      <View style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(239, 68, 68, 0.15)',
+        borderWidth: 1,
+        borderColor: '#EF4444',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 6,
+        marginTop: 4
+      }}>
+        <Ionicons name="flag" size={14} color="#EF4444" style={{ marginRight: 4 }} />
+        <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '700', flex: 1 }}>
+          Ref. Destino: {
+            (incomingRide as any).dropoffReferencePoint || 
+            (incomingRide as any).destinationReferencePoint || 
+            (incomingRide as any).referencePoint
+          }
+        </Text>
+      </View>
+    )}
   </View>
-
+</View>
 </View>
 
 {/* DETALHES DE ENTREGA */}
@@ -2220,41 +2314,54 @@ const formattedStops = useMemo(() => {
       </View>
     </Modal>
 
-    {/* ⚙️ MODAL DE FILTROS */}
-    <Modal visible={showFilterModal} transparent animationType="slide">
-      <View style={styles.filterModalOverlay}>
-        <View style={[styles.filterModalCard, { paddingBottom: Math.max((insets?.bottom || 0) + 24, Platform.OS === 'android' ? 36 : 20) }]}>
-          <Text style={styles.filterModalTitle}>Preferências de Chamada</Text>
-          <Text style={styles.filterModalSub}>Selecione os serviços que deseja receber:</Text>
-          
-          <View style={styles.filterRow}>
-            <View style={styles.filterLabelContainer}>
-              <Ionicons name="car-sport" size={18} color="#EAB308" />
-              <Text style={styles.filterLabelText}>Corridas de Passageiro</Text>
-            </View>
-            <Switch value={serviceFilters.RIDE} onValueChange={(val) => setServiceFilters(prev => ({ ...prev, RIDE: val }))} trackColor={{ false: '#334155', true: '#EAB308' }} />
-          </View>
-          <View style={styles.filterRow}>
-            <View style={styles.filterLabelContainer}>
-              <Ionicons name="cube" size={18} color="#3B82F6" />
-              <Text style={styles.filterLabelText}>Entregas de Encomenda</Text>
-            </View>
-            <Switch value={serviceFilters.DELIVERY} onValueChange={(val) => setServiceFilters(prev => ({ ...prev, DELIVERY: val }))} trackColor={{ false: '#334155', true: '#3B82F6' }} />
-          </View>
-          <View style={styles.filterRow}>
-            <View style={styles.filterLabelContainer}>
-              <Ionicons name="time" size={18} color="#7C3AED" />
-              <Text style={styles.filterLabelText}>Aluguel</Text>
-            </View>
-            <Switch value={serviceFilters.RENTAL} onValueChange={(val) => setServiceFilters(prev => ({ ...prev, RENTAL: val }))} trackColor={{ false: '#334155', true: '#7C3AED' }} />
-          </View>
-
-          <TouchableOpacity style={styles.closeFilterBtn} onPress={() => setShowFilterModal(false)} activeOpacity={0.85}>
-            <Text style={styles.closeFilterText}>Salvar Preferências</Text>
-          </TouchableOpacity>
+    {/* ⚙️ MODAL DE FILTROS E PREFERÊNCIAS */}
+<Modal visible={showFilterModal} transparent animationType="slide">
+  <View style={styles.filterModalOverlay}>
+    <View style={[styles.filterModalCard, { paddingBottom: Math.max((insets?.bottom || 0) + 24, Platform.OS === 'android' ? 36 : 20) }]}>
+      <Text style={styles.filterModalTitle}>Preferências de Chamada</Text>
+      <Text style={styles.filterModalSub}>Selecione os serviços que deseja receber e opcionalidades:</Text>
+      
+      {/* 🔊 CHAVE DA ASSISTÊNCIA POR VOZ */}
+      <View style={styles.filterRow}>
+        <View style={styles.filterLabelContainer}>
+          <Ionicons name="volume-high" size={18} color="#EAB308" />
+          <Text style={styles.filterLabelText}>Assistência por Voz</Text>
         </View>
+        <Switch 
+          value={isVoiceAssistEnabled} 
+          onValueChange={toggleVoiceAssist} 
+          trackColor={{ false: '#334155', true: '#EAB308' }} 
+        />
       </View>
-    </Modal>
+
+      <View style={styles.filterRow}>
+        <View style={styles.filterLabelContainer}>
+          <Ionicons name="car-sport" size={18} color="#EAB308" />
+          <Text style={styles.filterLabelText}>Corridas de Passageiro</Text>
+        </View>
+        <Switch value={serviceFilters.RIDE} onValueChange={(val) => setServiceFilters(prev => ({ ...prev, RIDE: val }))} trackColor={{ false: '#334155', true: '#EAB308' }} />
+      </View>
+      <View style={styles.filterRow}>
+        <View style={styles.filterLabelContainer}>
+          <Ionicons name="cube" size={18} color="#3B82F6" />
+          <Text style={styles.filterLabelText}>Entregas de Encomenda</Text>
+        </View>
+        <Switch value={serviceFilters.DELIVERY} onValueChange={(val) => setServiceFilters(prev => ({ ...prev, DELIVERY: val }))} trackColor={{ false: '#334155', true: '#3B82F6' }} />
+      </View>
+      <View style={styles.filterRow}>
+        <View style={styles.filterLabelContainer}>
+          <Ionicons name="time" size={18} color="#7C3AED" />
+          <Text style={styles.filterLabelText}>Aluguel</Text>
+        </View>
+        <Switch value={serviceFilters.RENTAL} onValueChange={(val) => setServiceFilters(prev => ({ ...prev, RENTAL: val }))} trackColor={{ false: '#334155', true: '#7C3AED' }} />
+      </View>
+
+      <TouchableOpacity style={styles.closeFilterBtn} onPress={() => setShowFilterModal(false)} activeOpacity={0.85}>
+        <Text style={styles.closeFilterText}>Salvar Preferências</Text>
+      </TouchableOpacity>
+    </View>
+  </View>
+</Modal>
 
     {/* 🧭 NAVEGAÇÃO TURBYTURN */}
     <TurnByTurnSheet 
@@ -2313,133 +2420,140 @@ const formattedStops = useMemo(() => {
           </View>
 
           <View style={styles.routeTimelineContainer}>
-  
-  {/* EMBARQUE NA OFERTA */}
-  <View style={styles.timelineRow}>
-    <Ionicons name="location" size={16} color="#10B981" />
-    <View style={styles.timelineTextContainer}>
-      <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
-      <Text style={styles.timelineAddress} numberOfLines={2}>
-        {activeOffer?.originAddress || 'Local de origem'}
-      </Text>
+            {/* EMBARQUE NA OFERTA */}
+            <View style={styles.timelineRow}>
+              <Ionicons name="location" size={16} color="#10B981" />
+              <View style={styles.timelineTextContainer}>
+                <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
+                <Text style={styles.timelineAddress} numberOfLines={2}>
+                  {activeOffer?.originAddress || 'Local de origem'}
+                </Text>
 
-      {/* Ref. Embarque da Oferta */}
-      {Boolean((activeOffer as any)?.pickupReferencePoint || (activeOffer as any)?.referencePoint) && (
-        <View style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          backgroundColor: 'rgba(234, 179, 8, 0.15)',
-          borderWidth: 1,
-          borderColor: '#EAB308',
-          paddingHorizontal: 8,
-          paddingVertical: 4,
-          borderRadius: 6,
-          marginTop: 4
-        }}>
-          <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
-          <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
-            Ref. Embarque: {(activeOffer as any)?.pickupReferencePoint || (activeOffer as any)?.referencePoint}
-          </Text>
-        </View>
-      )}
-    </View>
-  </View>
-
-  {/* PARADAS INTERMEDIÁRIAS NA OFERTA */}
-  {formattedStops.length > 0 ? (
-    formattedStops.map((stop: any, idx: number) => (
-      <View key={`offer-stop-${idx}`} style={[styles.timelineRow, { backgroundColor: 'rgba(59, 130, 246, 0.08)', paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, marginVertical: 3 }]}>
-        <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
-        <View style={styles.timelineTextContainer}>
-          <Text style={[styles.timelineLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>
-            PARADA {idx + 1} DE {formattedStops.length}:
-          </Text>
-          <Text style={styles.timelineAddress} numberOfLines={2}>
-            {stop.address}
-          </Text>
-          {Boolean(stop.referencePoint) && (
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              backgroundColor: 'rgba(59, 130, 246, 0.15)',
-              borderWidth: 1,
-              borderColor: '#3B82F6',
-              paddingHorizontal: 8,
-              paddingVertical: 4,
-              borderRadius: 6,
-              marginTop: 4
-            }}>
-              <Ionicons name="compass-outline" size={14} color="#3B82F6" style={{ marginRight: 4 }} />
-              <Text style={{ color: '#3B82F6', fontSize: 12, fontWeight: '700', flex: 1 }}>
-                Ref. Parada: {stop.referencePoint}
-              </Text>
+                {/* Ref. Embarque da Oferta */}
+                {Boolean((activeOffer as any)?.pickupReferencePoint || (activeOffer as any)?.referencePoint) && (
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    backgroundColor: 'rgba(234, 179, 8, 0.15)',
+                    borderWidth: 1,
+                    borderColor: '#EAB308',
+                    paddingHorizontal: 8,
+                    paddingVertical: 4,
+                    borderRadius: 6,
+                    marginTop: 4
+                  }}>
+                    <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
+                    <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
+                      Ref. Embarque: {(activeOffer as any)?.pickupReferencePoint || (activeOffer as any)?.referencePoint}
+                    </Text>
+                  </View>
+                )}
+              </View>
             </View>
-          )}
-        </View>
-      </View>
-    ))
-  ) : (activeOffer?.extraStopAddress || incomingRide?.extraStopAddress) ? (
-    <View style={[styles.timelineRow, { backgroundColor: 'rgba(59, 130, 246, 0.08)', paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, marginVertical: 3 }]}>
-      <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
-      <View style={styles.timelineTextContainer}>
-        <Text style={[styles.timelineLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>PARADA INTERMEDIÁRIA:</Text>
-        <Text style={styles.timelineAddress} numberOfLines={2}>
-          {activeOffer?.extraStopAddress || incomingRide?.extraStopAddress}
-        </Text>
-        {Boolean((activeOffer as any)?.extraStopReferencePoint) && (
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            backgroundColor: 'rgba(59, 130, 246, 0.15)',
-            borderWidth: 1,
-            borderColor: '#3B82F6',
-            paddingHorizontal: 8,
-            paddingVertical: 4,
-            borderRadius: 6,
-            marginTop: 4
-          }}>
-            <Ionicons name="compass-outline" size={14} color="#3B82F6" style={{ marginRight: 4 }} />
-            <Text style={{ color: '#3B82F6', fontSize: 12, fontWeight: '700', flex: 1 }}>
-              Ref. Parada: {(activeOffer as any)?.extraStopReferencePoint}
-            </Text>
+
+            {/* PARADAS INTERMEDIÁRIAS NA OFERTA */}
+            {formattedStops.length > 0 ? (
+              formattedStops.map((stop: any, idx: number) => (
+                <View key={`offer-stop-${idx}`} style={[styles.timelineRow, { backgroundColor: 'rgba(59, 130, 246, 0.08)', paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, marginVertical: 3 }]}>
+                  <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
+                  <View style={styles.timelineTextContainer}>
+                    <Text style={[styles.timelineLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>
+                      PARADA {idx + 1} DE {formattedStops.length}:
+                    </Text>
+                    <Text style={styles.timelineAddress} numberOfLines={2}>
+                      {stop.address}
+                    </Text>
+                    {Boolean(stop.referencePoint) && (
+                      <View style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        backgroundColor: 'rgba(59, 130, 246, 0.15)',
+                        borderWidth: 1,
+                        borderColor: '#3B82F6',
+                        paddingHorizontal: 8,
+                        paddingVertical: 4,
+                        borderRadius: 6,
+                        marginTop: 4
+                      }}>
+                        <Ionicons name="compass-outline" size={14} color="#3B82F6" style={{ marginRight: 4 }} />
+                        <Text style={{ color: '#3B82F6', fontSize: 12, fontWeight: '700', flex: 1 }}>
+                          Ref. Parada: {stop.referencePoint}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+              ))
+            ) : (activeOffer?.extraStopAddress || incomingRide?.extraStopAddress) ? (
+              <View style={[styles.timelineRow, { backgroundColor: 'rgba(59, 130, 246, 0.08)', paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, marginVertical: 3 }]}>
+                <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
+                <View style={styles.timelineTextContainer}>
+                  <Text style={[styles.timelineLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>PARADA INTERMEDIÁRIA:</Text>
+                  <Text style={styles.timelineAddress} numberOfLines={2}>
+                    {activeOffer?.extraStopAddress || incomingRide?.extraStopAddress}
+                  </Text>
+                  {Boolean((activeOffer as any)?.extraStopReferencePoint) && (
+                    <View style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: 'rgba(59, 130, 246, 0.15)',
+                      borderWidth: 1,
+                      borderColor: '#3B82F6',
+                      paddingHorizontal: 8,
+                      paddingVertical: 4,
+                      borderRadius: 6,
+                      marginTop: 4
+                    }}>
+                      <Ionicons name="compass-outline" size={14} color="#3B82F6" style={{ marginRight: 4 }} />
+                      <Text style={{ color: '#3B82F6', fontSize: 12, fontWeight: '700', flex: 1 }}>
+                        Ref. Parada: {(activeOffer as any)?.extraStopReferencePoint}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+            ) : null}
+
+            {/* DESTINO NA OFERTA */}
+            <View style={styles.timelineRow}>
+              <Ionicons name="flag" size={16} color="#EF4444" />
+              <View style={styles.timelineTextContainer}>
+                <Text style={styles.timelineLabel}>LEVAR PARA:</Text>
+                <Text style={styles.timelineAddress} numberOfLines={2}>
+                  {activeOffer?.destinationAddress || 'Local de destino'}
+                </Text>
+
+                {/* 📍 Ponto de Referência do Destino na Oferta */}
+                {Boolean(
+                  (activeOffer as any)?.dropoffReferencePoint || 
+                  (activeOffer as any)?.destinationReferencePoint || 
+                  ((activeOffer as any)?.referencePoint && !((activeOffer as any)?.pickupReferencePoint))
+                ) && (
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                    borderWidth: 1,
+                    borderColor: '#EF4444',
+                    paddingHorizontal: 8,
+                    paddingVertical: 4,
+                    borderRadius: 6,
+                    marginTop: 4
+                  }}>
+                    <Ionicons name="flag" size={14} color="#EF4444" style={{ marginRight: 4 }} />
+                    <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '700', flex: 1 }}>
+                      Ref. Destino: {
+                        (activeOffer as any).dropoffReferencePoint || 
+                        (activeOffer as any).destinationReferencePoint || 
+                        (activeOffer as any).referencePoint
+                      }
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </View>
           </View>
-        )}
-      </View>
-    </View>
-  ) : null}
 
-  {/* DESTINO NA OFERTA */}
-  <View style={styles.timelineRow}>
-    <Ionicons name="flag" size={16} color="#EF4444" />
-    <View style={styles.timelineTextContainer}>
-      <Text style={styles.timelineLabel}>LEVAR PARA:</Text>
-      <Text style={styles.timelineAddress} numberOfLines={2}>
-        {activeOffer?.destinationAddress || 'Local de destino'}
-      </Text>
-
-      {/* Ref. Desembarque da Oferta */}
-      {Boolean((activeOffer as any)?.dropoffReferencePoint) && (
-        <View style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          backgroundColor: 'rgba(239, 68, 68, 0.15)',
-          borderWidth: 1,
-          borderColor: '#EF4444',
-          paddingHorizontal: 8,
-          paddingVertical: 4,
-          borderRadius: 6,
-          marginTop: 4
-        }}>
-          <Ionicons name="flag" size={14} color="#EF4444" style={{ marginRight: 4 }} />
-          <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '700', flex: 1 }}>
-            Ref. Destino: {(activeOffer as any)?.dropoffReferencePoint}
-          </Text>
-        </View>
-      )}
-    </View>
-  </View>
- 
-</View>
           <View style={styles.newRequestActions}>
             <TouchableOpacity 
               style={styles.rejectBtn} 
@@ -2471,40 +2585,18 @@ const formattedStops = useMemo(() => {
         </View>
       </View>
     </Modal>
-{/* 🔊 BOTÃO DE OUVR ROTAS E ENDEREÇOS NO MOTORISTA */}
-<TouchableOpacity
-  onPress={() => {
-    triggerHapticFeedback('BUTTON_PRESS');
-    speakText(
-      `Passageiro ${incomingRide?.passengerName || 'Passageiro'}. Embarque em: ${incomingRide?.originAddress || ''}. Destino: ${incomingRide?.destinationAddress || ''}. Valor a cobrar: ${incomingRide?.priceXof || 0} XOF.`
-    );
-  }}
-  style={{
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#EAB308',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    marginVertical: 6,
-    alignSelf: 'flex-start'
-  }}
-  accessibilityLabel="Ouvir detalhes da viagem em voz alta"
->
-  <Ionicons name="volume-high" size={18} color="#0F172A" style={{ marginRight: 6 }} />
-  <Text style={{ color: '#0F172A', fontWeight: '700', fontSize: 13 }}>Ouvir Endereço e Valor</Text>
-</TouchableOpacity>
-    {/* 💬 CHAT INTERNO */}
-    <ChatModal 
-      visible={isChatVisible} 
-      onClose={() => setIsChatVisible(false)} 
-      socket={socket} 
-      rideId={activeRideId || ''} 
-      currentRole="driver" 
-      currentUserPhoto={profileImageUrl} 
-      otherUserName={displayPassengerName} 
-      otherUserPhoto={formatImageUrl(incomingRide?.passengerPhoto)} 
-    />
+
+   {/* 💬 CHAT INTERNO (Sincronizado para Texto e Áudio) */}
+<ChatModal 
+  visible={isChatVisible} 
+  onClose={() => setIsChatVisible(false)} 
+  socket={socket} 
+  rideId={activeRideId || ''} 
+  currentRole="driver" 
+  currentUserPhoto={profileImageUrl} 
+  otherUserName={displayPassengerName} 
+  otherUserPhoto={formatImageUrl(incomingRide?.passengerPhoto)} 
+/>
 
     <StartRideOtpModal visible={showOtpModal} onCancel={() => setShowOtpModal(false)} onSubmitOtp={handleStartRideWithOtp} />
     <CancelModal visible={showCancelModal} userType="DRIVER" isPenaltyApplicable={false} onClose={() => setShowCancelModal(false)} onConfirm={handleConfirmCancel} />
@@ -2519,7 +2611,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0F172A',
   },
-
+voiceToggleHeaderBtn: {
+  width: 42,
+  height: 42,
+  borderRadius: 21,
+  alignItems: 'center',
+  justifyContent: 'center',
+  borderWidth: 1,
+  borderColor: '#334155',
+  elevation: 6,
+},
   // MARCADORES DO MAPA
   carMarkerContainer: {
     backgroundColor: '#EAB308',
