@@ -9,6 +9,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Socket } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
 import { AudioModule, RecordingPresets, useAudioRecorder, createAudioPlayer } from 'expo-audio';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system';
 import { api } from '../services/api';
 
 export interface ChatMessage {
@@ -72,7 +74,17 @@ export function ChatModal({
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activePlayerRef = useRef<any>(null);
 
-  // 1. Limpeza ao desmontar
+  // Chave única no AsyncStorage para persistir o chat da corrida
+  const storageKey = `@bai245:chat_${rideId}`;
+
+  // 1. Salva mensagens no AsyncStorage sempre que a lista for alterada
+  useEffect(() => {
+    if (messages.length > 0 && rideId) {
+      AsyncStorage.setItem(storageKey, JSON.stringify(messages)).catch(() => {});
+    }
+  }, [messages, rideId, storageKey]);
+
+  // 2. Limpeza ao desmontar
   useEffect(() => {
     return () => {
       if (activePlayerRef.current) {
@@ -84,7 +96,63 @@ export function ChatModal({
     };
   }, []);
 
-  // 2. Escuta de mensagens via Socket com trava antiduplicação
+  // 3. Carrega do Cache Local e em seguida sincroniza com o Histórico HTTP
+  useEffect(() => {
+    if (visible && rideId) {
+      // Tenta restaurar do armazenamento local primeiro
+      AsyncStorage.getItem(storageKey).then((cached) => {
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setMessages(parsed);
+            }
+          } catch (e) {}
+        }
+      });
+
+      // Busca dados atualizados no servidor
+      api.get(`/rides/${rideId}/chat`)
+        .then(response => {
+          const data = response?.data;
+          const rawList = Array.isArray(data) 
+            ? data 
+            : Array.isArray(data?.messages) 
+              ? data.messages 
+              : Array.isArray(data?.history) 
+                ? data.history 
+                : [];
+
+          if (rawList.length > 0) {
+            const history: ChatMessage[] = rawList.map((msg: any) => ({
+              id: String(msg.id || Math.random()),
+              sender: (msg.senderType === 'PASSENGER' || msg.sender === 'passenger') ? 'passenger' : 'driver',
+              text: msg.message || msg.text || '',
+              audioUrl: msg.audioUrl || msg.audio || null,
+              audioDuration: msg.audioDuration || 0,
+              createdAt: msg.createdAt || new Date().toISOString(),
+            }));
+
+            setMessages((prev) => {
+              const map = new Map<string, ChatMessage>();
+              [...prev, ...history].forEach(m => map.set(m.id, m));
+              return Array.from(map.values());
+            });
+          }
+        })
+        .catch(error => {
+          console.warn("⚠️ [CHAT MOTORISTA] Erro ao carregar histórico do chat:", error?.response?.data || error?.message);
+        });
+    } else if (!visible) {
+      if (activePlayerRef.current) {
+        try { activePlayerRef.current.pause(); } catch (e) {}
+        activePlayerRef.current = null;
+        setPlayingAudioId(null);
+      }
+    }
+  }, [visible, rideId, storageKey]);
+
+  // 4. Escuta de mensagens via Socket com trava antiduplicação
   useEffect(() => {
     if (!socket || !visible) return;
 
@@ -106,10 +174,8 @@ export function ChatModal({
       };
 
       setMessages((prev) => {
-        // Checa duplicação por ID exato
         if (prev.some((item) => item.id === formattedMsg.id)) return prev;
 
-        // Checa duplicação de mensagem enviada localmente (evita dobrar)
         if (formattedMsg.sender === currentRole) {
           const isOptimisticDuplicate = prev.some(
             (item) => item.sender === currentRole && 
@@ -137,46 +203,7 @@ export function ChatModal({
     };
   }, [socket, visible, currentRole]);
 
-  // 3. Busca histórico HTTP
-  useEffect(() => {
-    if (visible && rideId) {
-      api.get(`/rides/${rideId}/chat`)
-        .then(response => {
-          const data = response?.data;
-          const rawList = Array.isArray(data) 
-            ? data 
-            : Array.isArray(data?.messages) 
-              ? data.messages 
-              : Array.isArray(data?.history) 
-                ? data.history 
-                : [];
-
-          const history: ChatMessage[] = rawList.map((msg: any) => ({
-            id: String(msg.id || Math.random()),
-            sender: (msg.senderType === 'PASSENGER' || msg.sender === 'passenger') ? 'passenger' : 'driver',
-            text: msg.message || msg.text || '',
-            audioUrl: msg.audioUrl || msg.audio || null,
-            audioDuration: msg.audioDuration || 0,
-            createdAt: msg.createdAt,
-          }));
-
-          setMessages(history);
-        })
-        .catch(error => {
-          console.warn("⚠️ Erro ao carregar histórico do chat:", error?.response?.data || error?.message);
-          setMessages([]);
-        });
-    } else if (!visible) {
-      setMessages([]);
-      if (activePlayerRef.current) {
-        try { activePlayerRef.current.pause(); } catch (e) {}
-        activePlayerRef.current = null;
-        setPlayingAudioId(null);
-      }
-    }
-  }, [visible, rideId]);
-
-  // 4. Envio de mensagem de texto
+  // 5. Envio de mensagem de texto
   const sendMessage = () => {
     if (!inputText.trim() || !socket) return;
 
@@ -192,11 +219,11 @@ export function ChatModal({
     };
 
     setMessages((prev) => [...prev, newMsg]);
-    socket.emit('chat:send_message', { rideId, text, id: uniqueId });
+    socket.emit('chat:send_message', { rideId, text, id: uniqueId, sender: currentRole });
     setInputText('');
   };
 
-  // 5. Iniciar gravação de áudio com expo-audio
+  // 6. Iniciar gravação de áudio com expo-audio
   const startRecording = async () => {
     try {
       const permission = await AudioModule.requestRecordingPermissionsAsync();
@@ -226,7 +253,7 @@ export function ChatModal({
     }
   };
 
-  // 6. Parar e enviar gravação de áudio
+  // 7. Parar e enviar gravação de áudio em Base64
   const stopAndSendRecording = async (finalDuration?: number) => {
     if (recordTimerRef.current) {
       clearInterval(recordTimerRef.current);
@@ -243,10 +270,19 @@ export function ChatModal({
       const durationSec = finalDuration || recordDuration || 1;
       const uniqueId = `audio-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
 
+      // Codifica arquivo de áudio para Base64 Data URI
+      let audioPayload = uri;
+      try {
+        const base64Audio = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+        audioPayload = `data:audio/m4a;base64,${base64Audio}`;
+      } catch (b64Err) {
+        console.warn('⚠️ Não foi possível converter áudio para base64:', b64Err);
+      }
+
       const newMsg: ChatMessage = {
         id: uniqueId,
         sender: currentRole,
-        audioUrl: uri,
+        audioUrl: audioPayload,
         audioDuration: durationSec,
         senderPhoto: currentUserPhoto,
         createdAt: new Date().toISOString(),
@@ -256,9 +292,10 @@ export function ChatModal({
 
       socket.emit('chat:send_message', { 
         rideId, 
-        audioUrl: uri, 
+        audioUrl: audioPayload, 
         audioDuration: durationSec, 
-        id: uniqueId 
+        id: uniqueId,
+        sender: currentRole
       });
 
       setRecordDuration(0);
@@ -268,7 +305,7 @@ export function ChatModal({
     }
   };
 
-  // 7. Cancelar gravação
+  // 8. Cancelar gravação
   const cancelRecording = async () => {
     if (recordTimerRef.current) {
       clearInterval(recordTimerRef.current);
@@ -281,7 +318,7 @@ export function ChatModal({
     setRecordDuration(0);
   };
 
-  // 8. Reproduzir ou Pausar Mensagem de Voz (expo-audio)
+  // 9. Reproduzir ou Pausar Mensagem de Voz (expo-audio)
   const togglePlayAudio = async (msgId: string, audioUrl?: string | null) => {
     if (!audioUrl) return;
 

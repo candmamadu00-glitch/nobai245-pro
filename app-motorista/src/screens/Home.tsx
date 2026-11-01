@@ -31,6 +31,7 @@ import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { createAudioPlayer } from 'expo-audio';
 import { useBilingualVoice } from '../hooks/useBilingualVoice';
 import { updateOngoingRideNotification, dismissOngoingRideNotification } from '../services/ongoingNotification';
+import { speakText, triggerHapticFeedback } from '../utils/accessibility';
 // 🛡️ Token Mapbox
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
 if (MAPBOX_TOKEN) {
@@ -525,6 +526,24 @@ useEffect(() => {
     if (heartbeatInterval) clearInterval(heartbeatInterval);
   };
 }, [isOnline, syncActiveRideWithServer]);
+// 🔊 LEITURA AUTOMÁTICA DE AÇÕES PARA O MOTORISTA
+useEffect(() => {
+  if (rideState === 'idle') return;
+
+  if (rideState === 'accepted') {
+    speakText(
+      `Corrida aceita. Vá ao local de embarque: ${incomingRide?.originAddress || 'Endereço de partida'}.`,
+      true
+    );
+    triggerHapticFeedback('NEW_OFFER');
+  } else if (rideState === 'arrived') {
+    speakText('Você chegou ao local. Aguarde o passageiro ou solicite o PIN de confirmação.');
+    triggerHapticFeedback('ARRIVED');
+  } else if (rideState === 'in_progress') {
+    speakText(`Viagem iniciada para: ${incomingRide?.destinationAddress || 'Destino final'}.`);
+    triggerHapticFeedback('BUTTON_PRESS');
+  }
+}, [rideState, incomingRide?.originAddress, incomingRide?.destinationAddress]);
 // 📦 MÓDULO DE MAPA OFFLINE (BISSAU - SETOR AUTÓNOMO)
 const setupBissauOfflineMap = async () => {
   try {
@@ -1907,7 +1926,7 @@ const formattedStops = useMemo(() => {
                 )}
               </View>
 
-              {/* 📍 ROTA E PARADAS NA CORRIDA ATIVA */}
+          {/* 📍 ROTA E PARADAS NA CORRIDA ATIVA (SEM DUPLICAÇÕES) */}
 <View style={styles.routeAddressesContainer}>
   
   {/* 🟡 1. ORIGEM / EMBARQUE */}
@@ -1953,7 +1972,7 @@ const formattedStops = useMemo(() => {
           <Text style={styles.addressValue} numberOfLines={2}>
             {stop.address}
           </Text>
-          {Boolean(stop.referencePoint) && (
+          {Boolean(stop.referencePoint || stop.extraStopReferencePoint) && (
             <View style={{
               flexDirection: 'row',
               alignItems: 'center',
@@ -1967,7 +1986,7 @@ const formattedStops = useMemo(() => {
             }}>
               <Ionicons name="compass-outline" size={14} color="#3B82F6" style={{ marginRight: 4 }} />
               <Text style={{ color: '#3B82F6', fontSize: 12, fontWeight: '700', flex: 1 }}>
-                Ref. Parada: {stop.referencePoint}
+                Ref. Parada: {stop.referencePoint || stop.extraStopReferencePoint}
               </Text>
             </View>
           )}
@@ -2011,8 +2030,12 @@ const formattedStops = useMemo(() => {
         {incomingRide?.destinationAddress || 'Local de Desembarque'}
       </Text>
 
-      {/* Ref. de Desembarque / Destino */}
-      {Boolean((incomingRide as any)?.dropoffReferencePoint) && (
+      {/* Ref. de Desembarque / Destino com Fallbacks */}
+      {Boolean(
+        (incomingRide as any)?.dropoffReferencePoint || 
+        (incomingRide as any)?.destinationReferencePoint ||
+        ((incomingRide as any)?.referencePoint && !((incomingRide as any)?.pickupReferencePoint))
+      ) && (
         <View style={{
           flexDirection: 'row',
           alignItems: 'center',
@@ -2026,7 +2049,11 @@ const formattedStops = useMemo(() => {
         }}>
           <Ionicons name="flag" size={14} color="#EF4444" style={{ marginRight: 4 }} />
           <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '700', flex: 1 }}>
-            Ref. Destino: {(incomingRide as any).dropoffReferencePoint}
+            Ref. Destino: {
+              (incomingRide as any).dropoffReferencePoint || 
+              (incomingRide as any).destinationReferencePoint || 
+              (incomingRide as any).referencePoint
+            }
           </Text>
         </View>
       )}
@@ -2035,97 +2062,73 @@ const formattedStops = useMemo(() => {
 
 </View>
 
-                {/* 🟢 TODAS AS PARADAS INTERMEDIÁRIAS */}
-                {formattedStops.length > 0 && formattedStops.map((stop: any, idx: number) => (
-                  <View key={`active-stop-${idx}`} style={[styles.addressItem, { backgroundColor: 'rgba(59, 130, 246, 0.08)', padding: 6, borderRadius: 8, marginVertical: 3 }]}>
-                    <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
-                    <View style={styles.addressTextWrapper}>
-                      <Text style={[styles.addressLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>
-                        Parada {idx + 1} de {formattedStops.length}:
-                      </Text>
-                      <Text style={styles.addressValue} numberOfLines={1}>
-                        {stop.address}
-                      </Text>
-                    </View>
-                  </View>
-                ))}
+{/* DETALHES DE ENTREGA */}
+{incomingRide?.serviceType === 'DELIVERY' && (
+  <View style={styles.deliveryDetailsCard}>
+    <Text style={styles.deliveryDetailsTitle}>📦 Instruções da Encomenda:</Text>
+    <Text style={styles.deliveryDetailsText}>Destinatário: {incomingRide.recipientName || 'Não especificado'}</Text>
+    {incomingRide.deliveryNotes ? <Text style={styles.deliveryNotes}>Nota: {incomingRide.deliveryNotes}</Text> : null}
+  </View>
+)}
 
-                {/* DESTINO FINAL */}
-              <View style={styles.addressItem}>
-                <Ionicons name="flag" size={16} color="#EF4444" />
-                <View style={styles.addressTextWrapper}>
-                  <Text style={[styles.addressLabel, { color: '#EF4444' }]}>Destino Final:</Text>
-                  <Text style={styles.addressValue} numberOfLines={1}>
-                    {incomingRide?.destinationAddress || 'Local de Desembarque'}
-                  </Text>
-                </View>
-              </View>
+{/* BOTAO DE AÇÕES DA CORRIDA */}
+{rideState !== 'in_progress' && (
+  <View style={styles.actionRow}>
+    <TouchableOpacity style={styles.actionButtonSecondary} onPress={() => setIsChatVisible(true)}>
+      <Ionicons name="chatbubbles-outline" size={16} color="#EAB308" />
+      <Text style={styles.actionButtonSecondaryText}>Chat</Text>
+    </TouchableOpacity>
 
-              {incomingRide.serviceType === 'DELIVERY' && (
-                <View style={styles.deliveryDetailsCard}>
-                  <Text style={styles.deliveryDetailsTitle}>📦 Instruções da Encomenda:</Text>
-                  <Text style={styles.deliveryDetailsText}>Destinatário: {incomingRide.recipientName || 'Não especificado'}</Text>
-                  {incomingRide.deliveryNotes ? <Text style={styles.deliveryNotes}>Nota: {incomingRide.deliveryNotes}</Text> : null}
-                </View>
-              )}
+    <TouchableOpacity style={styles.actionButtonSecondary} onPress={handleCallPassenger}>
+      <Ionicons name="call-outline" size={16} color="#10B981" />
+      <Text style={[styles.actionButtonSecondaryText, { color: '#10B981' }]}>Ligar</Text>
+    </TouchableOpacity>
 
-              {rideState !== 'in_progress' && (
-                <View style={styles.actionRow}>
-                  <TouchableOpacity style={styles.actionButtonSecondary} onPress={() => setIsChatVisible(true)}>
-                    <Ionicons name="chatbubbles-outline" size={16} color="#EAB308" />
-                    <Text style={styles.actionButtonSecondaryText}>Chat</Text>
-                  </TouchableOpacity>
+    {canCancelNoShow ? (
+      <TouchableOpacity style={styles.noShowBtnDanger} onPress={handleNoShowCancel}>
+        <Ionicons name="alert-circle" size={16} color="#FFFFFF" />
+        <Text style={styles.noShowBtnText}>No-Show</Text>
+      </TouchableOpacity>
+    ) : (
+      <TouchableOpacity style={styles.cancelButtonDanger} onPress={() => setShowCancelModal(true)} activeOpacity={0.85}>
+        <Ionicons name="close-circle-outline" size={16} color="#EF4444" />
+        <Text style={styles.cancelButtonText}>Cancelar</Text>
+      </TouchableOpacity>
+    )}
+  </View>
+)}
 
-                  <TouchableOpacity style={styles.actionButtonSecondary} onPress={handleCallPassenger}>
-                    <Ionicons name="call-outline" size={16} color="#10B981" />
-                    <Text style={[styles.actionButtonSecondaryText, { color: '#10B981' }]}>Ligar</Text>
-                  </TouchableOpacity>
+{rideState === 'accepted' && (
+  <TouchableOpacity 
+    style={[styles.actionBtnPrimary, { backgroundColor: '#3B82F6' }, isLoading && { opacity: 0.75 }]} 
+    onPress={handleArrived} 
+    disabled={isLoading}
+    activeOpacity={0.85}
+  >
+    <Text style={styles.actionBtnText}>{isLoading ? 'Enviando...' : 'CHEGUEI AO LOCAL'}</Text>
+  </TouchableOpacity>
+)}
 
-                  {canCancelNoShow ? (
-                    <TouchableOpacity style={styles.noShowBtnDanger} onPress={handleNoShowCancel}>
-                      <Ionicons name="alert-circle" size={16} color="#FFFFFF" />
-                      <Text style={styles.noShowBtnText}>No-Show</Text>
-                    </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity style={styles.cancelButtonDanger} onPress={() => setShowCancelModal(true)} activeOpacity={0.85}>
-                      <Ionicons name="close-circle-outline" size={16} color="#EF4444" />
-                      <Text style={styles.cancelButtonText}>Cancelar</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              )}
+{rideState === 'arrived' && (
+  <TouchableOpacity 
+    style={[styles.actionBtnPrimary, { backgroundColor: '#10B981' }]} 
+    onPress={() => setShowOtpModal(true)}
+    activeOpacity={0.85}
+  >
+    <Text style={styles.actionBtnText}>INSERIR PIN / INICIAR</Text>
+  </TouchableOpacity>
+)}
 
-              {rideState === 'accepted' && (
-                <TouchableOpacity 
-                  style={[styles.actionBtnPrimary, { backgroundColor: '#3B82F6' }, isLoading && { opacity: 0.75 }]} 
-                  onPress={handleArrived} 
-                  disabled={isLoading}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.actionBtnText}>{isLoading ? 'Enviando...' : 'CHEGUEI AO LOCAL'}</Text>
-                </TouchableOpacity>
-              )}
-
-              {rideState === 'arrived' && (
-                <TouchableOpacity 
-                  style={[styles.actionBtnPrimary, { backgroundColor: '#10B981' }]} 
-                  onPress={() => setShowOtpModal(true)}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.actionBtnText}>INSERIR PIN / INICIAR</Text>
-                </TouchableOpacity>
-              )}
-
-              {rideState === 'in_progress' && (
-                <TouchableOpacity 
-                  style={[styles.actionBtnPrimary, { backgroundColor: '#EAB308' }, isLoading && { opacity: 0.75 }]} 
-                  onPress={handleFinishRide} 
-                  disabled={isLoading}
-                  activeOpacity={0.85}
-                >
-                  <Text style={[styles.actionBtnText, { color: '#0F172A' }]}>{isLoading ? 'Processando...' : 'FINALIZAR E COBRAR'}</Text>
-                </TouchableOpacity>
-              )}
+{rideState === 'in_progress' && (
+  <TouchableOpacity 
+    style={[styles.actionBtnPrimary, { backgroundColor: '#EAB308' }, isLoading && { opacity: 0.75 }]} 
+    onPress={handleFinishRide} 
+    disabled={isLoading}
+    activeOpacity={0.85}
+  >
+    <Text style={[styles.actionBtnText, { color: '#0F172A' }]}>{isLoading ? 'Processando...' : 'FINALIZAR E COBRAR'}</Text>
+  </TouchableOpacity>
+)}
             </View>
           )}
         </ScrollView>
@@ -2468,7 +2471,29 @@ const formattedStops = useMemo(() => {
         </View>
       </View>
     </Modal>
-
+{/* 🔊 BOTÃO DE OUVR ROTAS E ENDEREÇOS NO MOTORISTA */}
+<TouchableOpacity
+  onPress={() => {
+    triggerHapticFeedback('BUTTON_PRESS');
+    speakText(
+      `Passageiro ${incomingRide?.passengerName || 'Passageiro'}. Embarque em: ${incomingRide?.originAddress || ''}. Destino: ${incomingRide?.destinationAddress || ''}. Valor a cobrar: ${incomingRide?.priceXof || 0} XOF.`
+    );
+  }}
+  style={{
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EAB308',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginVertical: 6,
+    alignSelf: 'flex-start'
+  }}
+  accessibilityLabel="Ouvir detalhes da viagem em voz alta"
+>
+  <Ionicons name="volume-high" size={18} color="#0F172A" style={{ marginRight: 6 }} />
+  <Text style={{ color: '#0F172A', fontWeight: '700', fontSize: 13 }}>Ouvir Endereço e Valor</Text>
+</TouchableOpacity>
     {/* 💬 CHAT INTERNO */}
     <ChatModal 
       visible={isChatVisible} 

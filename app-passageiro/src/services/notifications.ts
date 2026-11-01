@@ -10,40 +10,27 @@ const isExpoGo =
   Constants.executionEnvironment === ExecutionEnvironment.StoreClient ||
   (Constants as any).appOwnership === 'expo';
 
-if (!isExpoGo) {
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowBanner: true,
-      shouldShowList: true,
-      shouldPlaySound: true,
-      shouldSetBadge: true,
-    }),
-  });
-}
+// Configuração para exibir alertas em primeiro e segundo plano
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
 
 export async function registerAndSendPushToken(accessToken?: string): Promise<string | null> {
   if (isExpoGo || !Device.isDevice) {
-    console.warn('⚠️ [PUSH PASSAGEIRO] Notificações remotas requerem um dispositivo físico (fora do Expo Go).');
+    console.warn('⚠️ [PUSH] Notificações remotas requerem um dispositivo físico.');
     return null;
   }
 
   try {
-    const userStored = await AsyncStorage.getItem('@bai245:user');
-    if (!userStored && !accessToken) {
-      console.warn('⚠️ [PUSH PASSAGEIRO] Usuário não autenticado no storage local.');
-      return null;
-    }
-
-    // 1️⃣ Configuração dos Canais para Android
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync('default', {
         name: 'Geral',
-        importance: Notifications.AndroidImportance.DEFAULT,
-        sound: 'default',
-      });
-
-      await Notifications.setNotificationChannelAsync('ride-updates', {
-        name: 'Atualizações da Viagem',
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
         lightColor: '#EAB308',
@@ -52,13 +39,12 @@ export async function registerAndSendPushToken(accessToken?: string): Promise<st
 
       await Notifications.setNotificationChannelAsync('chat-messages', {
         name: 'Mensagens do Chat',
-        importance: Notifications.AndroidImportance.HIGH,
-        vibrationPattern: [0, 150, 150, 150],
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 200, 200, 200],
         sound: 'default',
       });
     }
 
-    // 2️⃣ Solicitação de Permissão
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
 
@@ -67,60 +53,26 @@ export async function registerAndSendPushToken(accessToken?: string): Promise<st
       finalStatus = status;
     }
 
-    if (finalStatus !== 'granted') {
-      console.warn('⚠️ [PUSH PASSAGEIRO] Permissão de notificação negada pelo usuário.');
-      return null;
-    }
+    if (finalStatus !== 'granted') return null;
 
-    // 3️⃣ Obtenção do Expo Push Token
     const projectId =
       Constants.expoConfig?.extra?.eas?.projectId ||
       Constants.easConfig?.projectId;
 
-    if (!projectId) {
-      console.warn('⚠️ [PUSH PASSAGEIRO] projectId não configurado no app.json.');
-      return null;
-    }
+    if (!projectId) return null;
 
     const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
     const pushToken = tokenData?.data;
 
-    if (!pushToken) {
-      console.warn('⚠️ [PUSH PASSAGEIRO] Não foi possível gerar o token da Expo.');
-      return null;
-    }
-
-    console.log('📱 [PUSH PASSAGEIRO TOKEN GENERATED]:', pushToken);
-
-    // 4️⃣ Envio via HTTP REST
-    try {
-      await api.put('/passengers/device-token', { deviceToken: pushToken });
-      console.log('✅ [PUSH PASSAGEIRO DB] Token salvo via HTTP com sucesso no banco!');
-    } catch (httpErr: any) {
-      console.error(
-        '❌ [PUSH PASSAGEIRO HTTP ERR] Erro ao salvar token via HTTP:',
-        httpErr?.response?.status,
-        httpErr?.response?.data || httpErr?.message
-      );
-    }
-
-    // 5️⃣ Envio via Socket
-    const emitSocketToken = () => {
+    if (pushToken) {
+      await api.put('/passengers/device-token', { deviceToken: pushToken }).catch(() => {});
       if (socket && socket.connected) {
         socket.emit('passenger:update_device_token', { deviceToken: pushToken });
-        console.log('⚡ [PUSH PASSAGEIRO SOCKET] Token emitido via Socket!');
       }
-    };
-
-    if (socket && socket.connected) {
-      emitSocketToken();
-    } else if (socket) {
-      socket.once('connect', emitSocketToken);
     }
 
     return pushToken;
   } catch (error) {
-    console.error('❌ [PUSH PASSAGEIRO] Erro inesperado ao registrar token:', error);
     return null;
   }
 }
@@ -131,8 +83,6 @@ export function setupNotificationListeners(
   onNotificationReceived?: (notification: Notifications.Notification) => void,
   onNotificationResponse?: (response: Notifications.NotificationResponse) => void
 ) {
-  if (isExpoGo) return () => {};
-
   const subReceived = Notifications.addNotificationReceivedListener((notification) => {
     if (onNotificationReceived) onNotificationReceived(notification);
   });
@@ -143,15 +93,9 @@ export function setupNotificationListeners(
 
   return () => {
     try {
-      if (subReceived && typeof subReceived.remove === 'function') {
-        subReceived.remove();
-      }
-      if (subResponse && typeof subResponse.remove === 'function') {
-        subResponse.remove();
-      }
-    } catch (e) {
-      // Ignora falhas na limpeza
-    }
+      subReceived?.remove();
+      subResponse?.remove();
+    } catch (e) {}
   };
 }
 

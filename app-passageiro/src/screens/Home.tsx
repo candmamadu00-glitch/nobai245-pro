@@ -29,6 +29,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { registerAndSendPushToken } from '../services/notifications';
 import { updateOngoingRideNotification, dismissOngoingRideNotification } from '../services/ongoingNotification';
 import * as Notifications from 'expo-notifications';
+import { speakRideStatusUpdate, speakText, triggerHapticFeedback } from '../utils/accessibility';
 
 // Token Mapbox
 const MAPBOX_ACCESS_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_KEY || 'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZTRyc3NmMDBzMTJ5cTA1anJvYjFsOSJ9.pUAoGXwZS8FtYNr85VD1TA';
@@ -562,6 +563,20 @@ const [interpolatedCoords, setInterpolatedCoords] = useState<[number, number]>([
     animationFrame = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(animationFrame);
   }, [driverLocation?.latitude, driverLocation?.longitude]);
+  // 🔊 LEITURA EM VOZ ALTA AUTOMÁTICA E HÁPTICA QUANDO O STATUS MUDAR
+useEffect(() => {
+  if (rideStatus === 'idle') return;
+
+  speakRideStatusUpdate(rideStatus, {
+    driverName: driverInfo?.name || 'Motorista',
+    carModel: driverInfo?.carModel || '',
+    carColor: driverInfo?.carColor || '',
+    plate: driverInfo?.licensePlate || '',
+    price: estimatedPrice || 0,
+    destination: dropoffAddress || 'seu destino',
+    origin: pickupAddress || 'seu local de embarque',
+  });
+}, [rideStatus, driverInfo, estimatedPrice, dropoffAddress, pickupAddress]);
 // 📦 MÓDULO DE MAPA OFFLINE (BISSAU - SETOR AUTÓNOMO)
 const setupBissauOfflineMap = async () => {
   try {
@@ -2952,6 +2967,42 @@ return (
         </ScrollView>
       </Animated.View>
     </KeyboardAvoidingView>
+    {/* 🚗 CARTÃO DE INFORMAÇÕES DO MOTORISTA E CORRIDA */}
+{rideStatus !== 'idle' && (
+  <View style={styles.driverInfoCard} accessibilityRole="summary">
+    
+    {/* Título e Botão de Leitura do Cartão */}
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+      <Text style={styles.cardTitle}>Status da Viagem</Text>
+      
+      {/* 🔊 Botão Ouvir Resumo */}
+      <TouchableOpacity
+        onPress={() => {
+          triggerHapticFeedback('BUTTON_PRESS');
+          speakText(
+            `Motorista ${driverInfo?.name || ''}, veículo ${driverInfo?.carModel || ''} ${driverInfo?.carColor || ''}, matrícula ${driverInfo?.licensePlate || ''}. Valor da corrida: ${estimatedPrice || 0} XOF.`
+          );
+        }}
+        accessibilityLabel="Ouvir informações do motorista e valor da corrida"
+        accessibilityRole="button"
+        style={{ padding: 6, backgroundColor: 'rgba(234, 179, 8, 0.2)', borderRadius: 20 }}
+      >
+        <Ionicons name="volume-medium" size={20} color="#EAB308" />
+      </TouchableOpacity>
+    </View>
+
+    {/* Valor com Ícone de Som */}
+    <TouchableOpacity
+      onPress={() => speakText(`Valor total: ${estimatedPrice || 0} XOF`)}
+      style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 6 }}
+      accessibilityLabel={`Valor total de ${estimatedPrice || 0} XOF. Toque para ouvir.`}
+    >
+      <Text style={styles.priceText}>{estimatedPrice || 0} XOF</Text>
+      <Ionicons name="volume-high-outline" size={16} color="#EAB308" style={{ marginLeft: 6 }} />
+    </TouchableOpacity>
+
+  </View>
+)}
     {/* MODAL DE IDIOMAS */}
     <Modal visible={langModalVisible} transparent animationType="slide" onRequestClose={() => setLangModalVisible(false)}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
@@ -5098,5 +5149,24 @@ referenceTextInput: {
   color: '#F8FAFC',
   fontSize: 13,
   padding: 0,
+},
+// 🟢 ADICIONAR NO FINAL DE styles EM Home.tsx (app-passageiro)
+driverInfoCard: {
+  backgroundColor: '#1E293B',
+  borderRadius: 12,
+  padding: 14,
+  marginVertical: 8,
+  borderWidth: 1,
+  borderColor: '#334155',
+},
+cardTitle: {
+  fontSize: 14,
+  fontWeight: '700',
+  color: '#F8FAFC',
+},
+priceText: {
+  fontSize: 18,
+  fontWeight: '800',
+  color: '#EAB308',
 },
 });

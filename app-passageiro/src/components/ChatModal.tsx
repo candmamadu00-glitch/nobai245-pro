@@ -9,6 +9,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Socket } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
 import { AudioModule, RecordingPresets, useAudioRecorder, createAudioPlayer } from 'expo-audio';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system';
 import { api } from '../services/api';
 
 export interface ChatMessage {
@@ -70,6 +72,16 @@ export function ChatModal({
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activePlayerRef = useRef<any>(null);
 
+  // Key de storage por viagem para manter persistência
+  const storageKey = `@bai245:chat_${rideId}`;
+
+  // 💾 Salva a lista de mensagens no AsyncStorage sempre que for atualizada
+  useEffect(() => {
+    if (messages.length > 0 && rideId) {
+      AsyncStorage.setItem(storageKey, JSON.stringify(messages)).catch(() => {});
+    }
+  }, [messages, rideId, storageKey]);
+
   useEffect(() => {
     return () => {
       if (activePlayerRef.current) {
@@ -81,6 +93,64 @@ export function ChatModal({
     };
   }, []);
 
+  // 🔄 Carrega mensagens do Cache Local primeiro e depois da API
+  useEffect(() => {
+    if (visible && rideId) {
+      // 1. Carrega do armazenamento local (restaura se fechar a janela)
+      AsyncStorage.getItem(storageKey).then((cached) => {
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setMessages(parsed);
+            }
+          } catch (e) {}
+        }
+      });
+
+      // 2. Sincroniza com a API do Backend
+      api.get(`/rides/${rideId}/chat`)
+        .then(response => {
+          const data = response?.data;
+          const rawList = Array.isArray(data) 
+            ? data 
+            : Array.isArray(data?.messages) 
+              ? data.messages 
+              : Array.isArray(data?.history) 
+                ? data.history 
+                : [];
+
+          if (rawList.length > 0) {
+            const history: ChatMessage[] = rawList.map((msg: any) => ({
+              id: String(msg.id || Math.random()),
+              sender: (msg.senderType === 'PASSENGER' || msg.sender === 'passenger') ? 'passenger' : 'driver',
+              text: msg.message || msg.text || '',
+              audioUrl: msg.audioUrl || msg.audio || null,
+              audioDuration: msg.audioDuration || 0,
+              createdAt: msg.createdAt || new Date().toISOString(),
+            }));
+
+            setMessages((prev) => {
+              // Unifica o histórico da API sem duplicar os itens locais
+              const map = new Map<string, ChatMessage>();
+              [...prev, ...history].forEach(m => map.set(m.id, m));
+              return Array.from(map.values());
+            });
+          }
+        })
+        .catch(error => {
+          console.warn("⚠️ [CHAT] Erro ao carregar histórico da API:", error?.response?.data || error?.message);
+        });
+    } else if (!visible) {
+      if (activePlayerRef.current) {
+        try { activePlayerRef.current.pause(); } catch (e) {}
+        activePlayerRef.current = null;
+        setPlayingAudioId(null);
+      }
+    }
+  }, [visible, rideId, storageKey]);
+
+  // ⚡ Socket Listeners
   useEffect(() => {
     if (!socket || !visible) return;
 
@@ -131,44 +201,6 @@ export function ChatModal({
     };
   }, [socket, visible, currentRole]);
 
-  useEffect(() => {
-    if (visible && rideId) {
-      api.get(`/rides/${rideId}/chat`)
-        .then(response => {
-          const data = response?.data;
-          const rawList = Array.isArray(data) 
-            ? data 
-            : Array.isArray(data?.messages) 
-              ? data.messages 
-              : Array.isArray(data?.history) 
-                ? data.history 
-                : [];
-
-          const history: ChatMessage[] = rawList.map((msg: any) => ({
-            id: String(msg.id || Math.random()),
-            sender: (msg.senderType === 'PASSENGER' || msg.sender === 'passenger') ? 'passenger' : 'driver',
-            text: msg.message || msg.text || '',
-            audioUrl: msg.audioUrl || msg.audio || null,
-            audioDuration: msg.audioDuration || 0,
-            createdAt: msg.createdAt,
-          }));
-
-          setMessages(history);
-        })
-        .catch(error => {
-          console.warn("⚠️ Erro ao carregar histórico do chat:", error?.response?.data || error?.message);
-          setMessages([]);
-        });
-    } else if (!visible) {
-      setMessages([]);
-      if (activePlayerRef.current) {
-        try { activePlayerRef.current.pause(); } catch (e) {}
-        activePlayerRef.current = null;
-        setPlayingAudioId(null);
-      }
-    }
-  }, [visible, rideId]);
-
   const sendMessage = () => {
     if (!inputText.trim() || !socket) return;
 
@@ -184,7 +216,7 @@ export function ChatModal({
     };
 
     setMessages((prev) => [...prev, newMsg]);
-    socket.emit('chat:send_message', { rideId, text, id: uniqueId });
+    socket.emit('chat:send_message', { rideId, text, id: uniqueId, sender: currentRole });
     setInputText('');
   };
 
@@ -233,10 +265,19 @@ export function ChatModal({
       const durationSec = finalDuration || recordDuration || 1;
       const uniqueId = `audio-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
 
+      // 🎙️ Converte o arquivo de áudio para Base64 para enviar via Socket/API
+      let audioPayload = uri;
+      try {
+        const base64Audio = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+        audioPayload = `data:audio/m4a;base64,${base64Audio}`;
+      } catch (b64Err) {
+        console.warn('⚠️ Não foi possível converter áudio para base64:', b64Err);
+      }
+
       const newMsg: ChatMessage = {
         id: uniqueId,
         sender: currentRole,
-        audioUrl: uri,
+        audioUrl: audioPayload,
         audioDuration: durationSec,
         senderPhoto: currentUserPhoto,
         createdAt: new Date().toISOString(),
@@ -246,9 +287,10 @@ export function ChatModal({
 
       socket.emit('chat:send_message', { 
         rideId, 
-        audioUrl: uri, 
+        audioUrl: audioPayload, 
         audioDuration: durationSec, 
-        id: uniqueId 
+        id: uniqueId,
+        sender: currentRole
       });
 
       setRecordDuration(0);
@@ -302,7 +344,7 @@ export function ChatModal({
       setPlayingAudioId(null);
     }
   };
- 
+
   const renderAvatar = (photoUrl?: string | null) => {
     if (photoUrl) {
       return <Image source={{ uri: photoUrl }} style={styles.avatarImage} />;
@@ -333,7 +375,7 @@ export function ChatModal({
               {renderAvatar(otherUserPhoto)}
               <View>
                 <Text style={styles.chatTitle}>
-                  {otherUserName || t('chat_with_user', 'Chat com Motorista')}
+                  {otherUserName || t('chat_with_user', 'Chat de Suporte / Viagem')}
                 </Text>
                 <Text style={styles.chatSubtitle}>
                   {currentRole === 'passenger' ? t('driver', 'Motorista') : t('passenger', 'Passageiro')}
@@ -650,7 +692,7 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     backgroundColor: '#450A0A',
     borderWidth: 1,
     borderColor: '#991B1B',
