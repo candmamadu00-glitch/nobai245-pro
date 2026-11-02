@@ -87,7 +87,7 @@ const server = http.createServer(app);
 // -----------------------------------------------------------------------------
 app.set('trust proxy', 1); 
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
-app.use('/api', locationRoutes);
+
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()) 
   : '*'; 
@@ -130,7 +130,7 @@ app.use('/api/passengers', passengerRoutes);
 app.use('/api/drivers', driverRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/rides', rideRoutes);
-
+app.use('/api', locationRoutes);
 app.get('/health', (_req, res) => {
   res.json({
     status: 'online',
