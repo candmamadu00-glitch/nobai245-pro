@@ -29,7 +29,7 @@ import {
 } from './services/rideRulesService';
 import { createRideAndInitiateEscrow, submitRatingLogic } from './services/rideService';
 import { startCronJobs } from './jobs/reconciliationJob';
-
+import locationRoutes from './routes/locationRoutes';
 declare global {
   namespace Express {
     interface Request {
@@ -87,7 +87,7 @@ const server = http.createServer(app);
 // -----------------------------------------------------------------------------
 app.set('trust proxy', 1); 
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
-
+app.use('/api', locationRoutes);
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()) 
   : '*'; 
@@ -1610,166 +1610,159 @@ handleSocketEvent(socket, 'passenger:rejoin_ride', async (data) => {
     }
   });
 
-  // --- CHAT DA CORRIDA ---
-  handleSocketEvent(socket, 'chat:send_message', async (data) => {
-    if (isSocketRateLimited(socket, 'chat:send_message', 2000, 5)) return;
-    const { rideId, text } = data || {};
+ // =============================================================================
+// 💬 EVENTO DE CHAT UNIFICADO (TEXTO, ÁUDIO E PUSH NOTIFICATION)
+// =============================================================================
+handleSocketEvent(socket, 'chat:send_message', async (data) => {
+  try {
+    const { rideId, text, audioUrl, audioDuration, id } = data || {};
+    const senderRole = data?.sender || data?.senderRole || 'passenger';
 
-    if (!rideId || !isUuid(rideId) || typeof text !== 'string') return;
+    if (!rideId) return;
 
-    const sanitizedText = text.trim().slice(0, 500);
-    if (!sanitizedText) return;
+    const ride = await prisma.ride.findUnique({
+      where: { id: rideId },
+      include: { driver: true, passenger: true }
+    });
 
-    const user = socket.data.user;
-    if (!user?.id) return;
+    if (!ride) return;
 
-    const senderRole = String(user?.role || user?.userType).toLowerCase().includes('driver') ? 'driver' : 'passenger';
-    const senderTypeDb = senderRole === 'driver' ? 'DRIVER' : 'PASSENGER'; 
+    const messagePayload = {
+      id: id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      rideId,
+      sender: senderRole,
+      senderType: senderRole === 'driver' ? 'DRIVER' : 'PASSENGER',
+      text: text || '',
+      message: text || '',
+      audioUrl: audioUrl || null,
+      audioDuration: audioDuration || 0,
+      createdAt: new Date().toISOString()
+    };
 
-    try {
-      const ride = await prisma.ride.findUnique({
-        where: { id: rideId },
-        select: {
-          id: true,
-          passengerId: true,
-          driverId: true,
-          passenger: { select: { id: true, deviceToken: true, fullName: true } },
-          driver: { select: { id: true, deviceToken: true, fullName: true } }
-        }
-      });
+    const targetRooms = [
+      rideId,
+      `ride_${rideId}`,
+      ride.passengerId,
+      `passenger_${ride.passengerId}`,
+      `passenger:${ride.passengerId}`,
+      ride.driverId,
+      `driver_${ride.driverId}`,
+      `driver:${ride.driverId}`
+    ].filter(Boolean) as string[];
 
-      if (!ride) return;
+    targetRooms.forEach(room => {
+      io.to(room).emit('chat:receive_message', messagePayload);
+      io.to(room).emit('chat:message', messagePayload);
+    });
 
-      socket.join(rideId);
+    const recipientToken = senderRole === 'driver'
+      ? (ride.passenger?.pushToken || (ride.passenger as any)?.deviceToken)
+      : (ride.driver?.pushToken || (ride.driver as any)?.deviceToken);
 
-      const savedMessage = await prisma.rideChatMessage.create({
-        data: { 
+    const senderName = senderRole === 'driver'
+      ? (ride.driver?.fullName || 'Motorista')
+      : (ride.passenger?.fullName || 'Passageiro');
+
+    const notificationBody = audioUrl ? '🎤 Mensagem de áudio recebida' : (text || 'Nova mensagem no chat');
+
+    if (recipientToken) {
+      sendPushNotification(
+        recipientToken,
+        `💬 ${senderName}`,
+        notificationBody,
+        { 
           rideId, 
-          senderId: user.id, 
-          senderType: senderTypeDb as any, 
-          message: sanitizedText,
-          isRead: false 
-        }
-      });
-
-      console.log(`💬 [CHAT RIDE ${rideId}] De: ${senderRole} (${user.id}) | Msg: "${sanitizedText}"`);
-
-      const messagePayload = {
-        id: savedMessage.id, 
-        rideId,
-        sender: senderRole, 
-        text: sanitizedText,
-        message: sanitizedText,
-        senderName: senderRole === 'driver' ? (ride.driver?.fullName || 'Motorista') : (ride.passenger?.fullName || 'Passageiro'),
-        senderPhoto: user?.profilePicture || null, 
-        createdAt: savedMessage.createdAt.toISOString(),
-      };
-
-      const targetUserId = senderTypeDb === 'PASSENGER' ? ride.driverId : ride.passengerId;
-      const targetPrefix = senderTypeDb === 'PASSENGER' ? 'driver' : 'passenger';
-
-      const targetRooms = [
-        rideId,
-        targetUserId,
-        `${targetPrefix}_${targetUserId}`,
-        `${targetPrefix}:${targetUserId}`
-      ].filter(Boolean) as string[];
-
-      targetRooms.forEach(room => {
-        io.to(room).emit('chat:receive_message', messagePayload);
-        io.to(room).emit('chat:message', messagePayload);
-        io.to(room).emit('chat:new_message', messagePayload);
-      });
-
-      io.to('admin_dashboard').emit('admin:chat_monitor', { rideId, message: messagePayload });
-
-      const targetToken = senderTypeDb === 'PASSENGER' 
-        ? ride.driver?.deviceToken 
-        : ride.passenger?.deviceToken;
-
-      if (targetToken) {
-        sendPushNotification(
-          targetToken,
-          `💬 Nova mensagem de ${messagePayload.senderName}`,
-          sanitizedText,
-          { type: 'CHAT_MESSAGE', rideId, sender: senderRole },
-          PUSH_CHANNELS.CHAT
-        ).catch(() => null);
-      }
-    } catch (err) { 
-      console.warn('Falha no processamento do chat:', err); 
+          type: 'CHAT_MESSAGE', 
+          channelId: 'chat-messages' 
+        },
+        PUSH_CHANNELS.RIDE_UPDATE
+      ).catch(err => console.error('❌ Erro ao enviar Push de Chat:', err));
     }
-  });
+  } catch (err) {
+    console.error('❌ Erro no processamento da mensagem do chat:', err);
+  }
+});
 
-  // --- CANCELAMENTO DE CORRIDA ---
-  handleSocketEvent(socket, 'ride:cancel', async (data) => {
-    if (isSocketRateLimited(socket, 'ride:cancel', 2000, 2)) return;
-    const { rideId, userId, userType, reason } = data || {};
+// =============================================================================
+// 🛑 CANCELAMENTO DE CORRIDA SINCRONIZADO
+// =============================================================================
+handleSocketEvent(socket, 'ride:cancel', async (data) => {
+  if (isSocketRateLimited(socket, 'ride:cancel', 2000, 2)) return;
+  const { rideId, userId, userType, reason } = data || {};
 
-    console.log(`⚠️ [SOLICITAÇÃO CANCELAMENTO] Corrida: ${rideId} | Por: ${userType} (${userId}) | Motivo: "${reason}"`);
+  if (!isUuid(rideId) || !isAuthorizedUser(socket, userId)) {
+    socket.emit('error', { message: 'Ação não autorizada.' });
+    return;
+  }
 
-    if (!isUuid(rideId) || !isAuthorizedUser(socket, userId)) {
-      socket.emit('error', { message: 'Ação não autorizada.' });
-      return;
+  try {
+    const rideToCancel = await prisma.ride.findUnique({ 
+      where: { id: rideId },
+      include: { passenger: true, driver: true }
+    });
+
+    if (!rideToCancel) return;
+
+    const previousStatus = rideToCancel.status;
+    const cleanReason = typeof reason === 'string' ? reason.trim().slice(0, 250) : 'Corrida cancelada';
+    const normalizedUserType = userType === 'DRIVER' ? 'DRIVER' : 'PASSENGER';
+
+    const result = await cancelRideLogic(rideId, userId, normalizedUserType, cleanReason);
+
+    await safeRedis.del(`active_ride:${rideId}`);
+    if (rideToCancel.driverId) {
+      await safeRedis.del(`driver_active_ride:${rideToCancel.driverId}`);
     }
 
-    try {
-      const rideToCancel = await prisma.ride.findUnique({ where: { id: rideId } });
-      const previousStatus = rideToCancel?.status;
-      const cleanReason = typeof reason === 'string' ? reason.trim().slice(0, 250) : undefined;
-      const normalizedUserType = userType === 'DRIVER' ? 'DRIVER' : 'PASSENGER';
+    const cancelPayload = {
+      rideId,
+      status: 'CANCELLED',
+      cancelledBy: normalizedUserType,
+      reason: cleanReason,
+      appliedPenalty: Boolean(result?.appliedPenalty),
+      penaltyAmount: Number(result?.penaltyAmount || 0)
+    };
 
-      const result = await cancelRideLogic(rideId, userId, normalizedUserType, cleanReason);
+    // Broadcast amplo para garantir sincronização instantânea em ambos os apps
+    const targetRooms = [
+      rideId,
+      `ride_${rideId}`,
+      rideToCancel.passengerId,
+      `passenger_${rideToCancel.passengerId}`,
+      `passenger:${rideToCancel.passengerId}`,
+      rideToCancel.driverId,
+      `driver_${rideToCancel.driverId}`,
+      `driver:${rideToCancel.driverId}`
+    ].filter(Boolean) as string[];
 
-      console.log(`❌ [CORRIDA CANCELADA SUCESSO] ID: ${rideId} | Penalidade Aplicada: ${Boolean(result?.appliedPenalty)}`);
+    targetRooms.forEach(room => {
+      io.to(room).emit('ride:cancelled', cancelPayload);
+    });
 
-      await safeRedis.del(`active_ride:${rideId}`);
-      if (rideToCancel?.driverId) {
-        await safeRedis.del(`driver_active_ride:${rideToCancel.driverId}`);
-      }
-
-      const cancelPayload = {
-        rideId,
-        cancelledBy: normalizedUserType,
-        reason: cleanReason,
-        appliedPenalty: Boolean(result?.appliedPenalty),
-        penaltyAmount: Number(result?.penaltyAmount || 0)
-      };
-
-      const targetRooms = [
-        rideId,
-        rideToCancel?.passengerId,
-        `passenger_${rideToCancel?.passengerId}`,
-        `passenger:${rideToCancel?.passengerId}`,
-        rideToCancel?.driverId,
-        `driver_${rideToCancel?.driverId}`,
-        `driver:${rideToCancel?.driverId}`
-      ].filter(Boolean);
-
-      targetRooms.forEach(room => {
-        io.to(room).emit('ride:cancelled', cancelPayload);
-      });
-
-      if (previousStatus === 'SEARCHING') {
-        io.to('available_drivers').emit('ride:cancelled_by_passenger', { rideId });
-      }
-
-      io.to('admin_dashboard').emit('admin:ride_update', {
-        rideId, status: 'CANCELLED', cancelledBy: normalizedUserType, reason: cleanReason
-      });
-
-      const socketsInRoom = await io.in(rideId).fetchSockets();
-      for (const s of socketsInRoom) {
-        s.leave(rideId);
-        if (rideToCancel?.driverId && s.data?.user?.id === rideToCancel.driverId) {
-          s.join('available_drivers');
-        }
-      }
-    } catch (err: any) {
-      console.error(`❌ [ERRO CANCELAMENTO CORRIDA] ID: ${rideId}:`, err?.message || err);
-      socket.emit('error', { message: err.message || 'Erro ao cancelar corrida.' });
+    if (previousStatus === 'SEARCHING') {
+      io.to('available_drivers').emit('ride:cancelled_by_passenger', { rideId });
     }
-  });
+
+    // Push notification para quem não originou o cancelamento
+    const recipientToken = normalizedUserType === 'DRIVER'
+      ? (rideToCancel.passenger?.pushToken || (rideToCancel.passenger as any)?.deviceToken)
+      : (rideToCancel.driver?.pushToken || (rideToCancel.driver as any)?.deviceToken);
+
+    if (recipientToken) {
+      sendPushNotification(
+        recipientToken,
+        '⚠️ Corrida Cancelada',
+        normalizedUserType === 'DRIVER' ? 'O motorista cancelou a viagem.' : 'O passageiro cancelou a viagem.',
+        { rideId, type: 'RIDE_CANCELLED' },
+        PUSH_CHANNELS.RIDE_UPDATE
+      ).catch(() => {});
+    }
+
+  } catch (err: any) {
+    console.error(`❌ [ERRO CANCELAMENTO CORRIDA] ID: ${rideId}:`, err?.message || err);
+    socket.emit('error', { message: err.message || 'Erro ao cancelar corrida.' });
+  }
+});
 
   // --- AVALIAÇÃO DE CORRIDA ---
   handleSocketEvent(socket, 'ride:rate', async (data) => {

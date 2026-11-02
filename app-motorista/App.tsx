@@ -19,6 +19,8 @@ import { SupportHelp } from './src/screens/SupportHelp';
 import { VehicleSettings } from './src/screens/VehicleSettings';
 import { Wallet } from './src/screens/Wallet';
 import { ForgotPassword } from './src/screens/ForgotPassword';
+// 📍 IMPORTAÇÃO DA TELA DE MAPEAMENTO DE BAIRROS
+import CollectorScreen from './src/screens/CollectorScreen';
 
 import './src/services/locationTask';
 import './src/services/i18n';
@@ -39,8 +41,8 @@ if (Platform.OS === 'android') {
     importance: Notifications.AndroidImportance.MAX,
     vibrationPattern: [0, 1000, 500, 1000],
     lightColor: '#059669',
-    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC, // 🔓 Exibe banner na tela de bloqueio
-    bypassDnd: true, // 🔔 Atravessa o modo "Não Perturbe" se estiver ativo
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    bypassDnd: true,
     audioAttributes: {
       usage: Notifications.AndroidAudioUsage.ALARM,
       contentType: Notifications.AndroidAudioContentType.SONIFICATION,
@@ -54,11 +56,13 @@ if (Platform.OS === 'android') {
     lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
   });
 }
+
 if (!__DEV__) {
   console.log = () => {};
   console.warn = () => {};
   console.info = () => {};
 }
+
 const Stack = createNativeStackNavigator();
 export const navigationRef = createNavigationContainerRef<any>();
 
@@ -121,6 +125,8 @@ function AppContent() {
           <Stack.Screen name="SupportHelp" component={SupportHelp} />
           <Stack.Screen name="VehicleSettings" component={VehicleSettings} />
           <Stack.Screen name="Wallet" component={Wallet} />
+          {/* 📍 ROTA PARA CADASTRO DE BAIRROS E PONTOS EM CAMPO */}
+          <Stack.Screen name="Collector" component={CollectorScreen} />
         </>
       ) : (
         <>

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { 
   View, Text, StyleSheet, TouchableOpacity, Alert, 
-  FlatList, Platform, StatusBar, BackHandler, Linking, 
+  FlatList, Platform, StatusBar, BackHandler, Linking,Vibration,
   Share, AppState, KeyboardAvoidingView, Modal, TextInput, 
   ActivityIndicator, Image, Animated, PanResponder, Dimensions, ScrollView, TouchableWithoutFeedback, Keyboard
 } from 'react-native';
@@ -29,6 +29,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { registerAndSendPushToken } from '../services/notifications';
 import { updateOngoingRideNotification, dismissOngoingRideNotification } from '../services/ongoingNotification';
 import * as Notifications from 'expo-notifications';
+import * as Haptics from 'expo-haptics';
 import { ChatModal } from '../components/ChatModal';
 import { speakRideStatusUpdate, speakText, triggerHapticFeedback } from '../utils/accessibility';
 
@@ -387,7 +388,8 @@ export function Home() {
   const [searchResults, setSearchResults] = useState<MapboxGeocodingFeature[]>([]);
   const [isSearchingMapbox, setIsSearchingMapbox] = useState(false);
   const [isVoiceAssistEnabled, setIsVoiceAssistEnabled] = useState<boolean>(true);
-  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState<boolean>(false);
+  const handleCloseCancelModal = useCallback(() => setShowCancelModal(false), []);
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [isChatVisible, setIsChatVisible] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -409,6 +411,7 @@ export function Home() {
   const [nearbyDrivers, setNearbyDrivers] = useState<Array<{ id: string; lat: number; lng: number; heading?: number }>>([]);
   const [isSearchingRide, setIsSearchingRide] = useState(false);
   const [isAppInBackground, setIsAppInBackground] = useState(false);
+  const [unreadCount, setUnreadCount] = useState<number>(0);
   const floatingPan = useRef(new Animated.ValueXY({ x: Dimensions.get('window').width - 70, y: 180 })).current;
 
   const radarScale1 = radarAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 3.2] });
@@ -478,6 +481,34 @@ const [interpolatedCoords, setInterpolatedCoords] = useState<[number, number]>([
       },
     })
   ).current;
+ const resetRideState = useCallback(() => {
+  if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+  persistRideState(null, 'idle');
+  setRideStatus('idle');
+  setBookingStep('ADDRESS');
+  setActiveRideId(null);
+  activeRideIdRef.current = null;
+  setDriverLocation(null);
+  setDriverInfo(null);
+  setStartOtp('');
+  setAcceptedAt(null);
+  setDropoffAddress('');
+  setDropoffCoords(null);
+  setExtraStopAddress('');
+  setExtraStopCoords(null);
+  setShowExtraStop(false);
+  setIsForAnotherPerson(false);
+  
+  // 🟢 Limpeza de todos os pontos de referência
+  setPickupReferencePoint('');
+  setExtraStopReferencePoint('');
+  setDropoffReferencePoint('');
+  
+  setMessages([]); 
+  setDriverEta(null);
+  setRouteGeometry(null);
+  isManualPickupRef.current = false;
+}, []);
 
   const calculateEstimate = useCallback((pickup: any, dropoff: any, extra?: any) => {
     if (
@@ -536,6 +567,13 @@ const [interpolatedCoords, setInterpolatedCoords] = useState<[number, number]>([
       radarAnim.setValue(0);
     }
   }, [rideStatus, radarAnim]);
+  // Sincroniza a ref com o estado do modal e zera a contagem ao abrir
+useEffect(() => {
+  isChatVisibleRef.current = isChatVisible;
+  if (isChatVisible) {
+    setUnreadCount(0);
+  }
+}, [isChatVisible]);
   // 💾 Carrega a preferência de voz do passageiro do AsyncStorage
   useEffect(() => {
     AsyncStorage.getItem('@nobai245:voice_assist').then((val) => {
@@ -554,6 +592,28 @@ const [interpolatedCoords, setInterpolatedCoords] = useState<[number, number]>([
       speakText('Assistência de voz ativada');
     }
   };
+  useEffect(() => {
+  if (!socket) return;
+
+  const handleChatMessage = (data: any) => {
+    // Se a mensagem foi enviada pelo próprio passageiro, ignora
+    if (data?.sender === 'passenger' || data?.senderRole === 'passenger') return;
+
+    // Se o chat estiver FECHADO, incrementa o contador e vibra
+    if (!isChatVisibleRef.current) {
+      setUnreadCount((prev) => prev + 1);
+      try {
+        Vibration.vibrate(200);
+      } catch (e) {}
+    }
+  };
+
+  socket.on('chat:receive_message', handleChatMessage);
+
+  return () => {
+    socket.off('chat:receive_message', handleChatMessage);
+  };
+}, [socket]);
 // 🟢 Animação suave a 60 FPS
   useEffect(() => {
     if (!driverLocation?.latitude || !driverLocation?.longitude) return;
@@ -940,7 +1000,75 @@ const handleIncomingChatMessage = useCallback((data: any) => {
       console.warn('⚠️ [PASSENGER] Erro na rede - mantendo cache local:', err);
     }
   }, [fetchMapboxRoute, fitMapBounds, extraStopCoords]);
+// 🟢 1. OUVINTE DE CANCELAMENTO EM TEMPO REAL NO PASSAGEIRO
+useEffect(() => {
+  if (!socket) return;
 
+  const handleRideCancelled = async (data: { rideId?: string; cancelledBy?: string; reason?: string }) => {
+    if (!data.rideId || data.rideId === activeRideId) {
+      Vibration.vibrate([0, 400, 200, 400]);
+
+      Alert.alert(
+        'Corrida Cancelada ⚠️',
+        data.reason || (data.cancelledBy === 'DRIVER' ? 'O motorista cancelou a corrida.' : 'A corrida foi encerrada.'),
+        [{ text: 'OK', onPress: () => resetRideState() }]
+      );
+
+      await AsyncStorage.multiRemove([
+        '@nobai245:active_ride_id',
+        '@nobai245:active_ride_data',
+        '@bai245:active_ride',
+        STORAGE_RIDE_KEY
+      ]).catch(() => {});
+
+      resetRideState();
+    }
+  };
+
+  socket.on('ride:cancelled', handleRideCancelled);
+
+  return () => {
+    socket.off('ride:cancelled', handleRideCancelled);
+  };
+}, [socket, activeRideId, resetRideState]);
+
+// 🟢 2. SINCRONIZAÇÃO DE FUNDO DO PASSAGEIRO COM O SERVIDOR
+const syncActiveRideWithServer = useCallback(async () => {
+  try {
+    const response = await api.get('/rides/active').catch(() => null);
+    const activeRide = response?.data?.ride || response?.data;
+
+    if (!activeRide || activeRide.status === 'CANCELLED' || activeRide.status === 'COMPLETED') {
+      if (rideStatus !== 'idle') {
+        resetRideState();
+      }
+      return;
+    }
+  } catch (err) {}
+}, [rideStatus, resetRideState]);
+ 
+// 🟢 3. ESCUTA DE PUSH NOTIFICATION PARA ABRIR O CHAT
+useEffect(() => {
+  const notificationSubscription = Notifications.addNotificationReceivedListener((notification) => {
+    const { data } = notification.request.content;
+
+    if ((data?.channelId === 'chat-messages' || data?.type === 'CHAT_MESSAGE') && !isChatVisibleRef.current) {
+      try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch (e) {}
+    }
+  });
+
+  const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
+    const data = response.notification.request.content.data;
+    if (data?.rideId || data?.channelId === 'chat-messages' || data?.type === 'CHAT_MESSAGE') {
+      setIsChatVisible(true);
+    }
+  });
+
+  return () => {
+    notificationSubscription.remove();
+    responseSubscription.remove();
+  };
+}, []); 
   const handleMapboxSearch = async (text: string) => {
     setSearchQuery(text);
     if (!text || text.trim().length < 2) {
@@ -1348,35 +1476,6 @@ const handleIncomingChatMessage = useCallback((data: any) => {
     const interval = setInterval(fetchNearby, 5000);
     return () => clearInterval(interval);
   }, [pickupCoords, passengerLocation]);
-
- const resetRideState = useCallback(() => {
-  if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-  persistRideState(null, 'idle');
-  setRideStatus('idle');
-  setBookingStep('ADDRESS');
-  setActiveRideId(null);
-  activeRideIdRef.current = null;
-  setDriverLocation(null);
-  setDriverInfo(null);
-  setStartOtp('');
-  setAcceptedAt(null);
-  setDropoffAddress('');
-  setDropoffCoords(null);
-  setExtraStopAddress('');
-  setExtraStopCoords(null);
-  setShowExtraStop(false);
-  setIsForAnotherPerson(false);
-  
-  // 🟢 Limpeza de todos os pontos de referência
-  setPickupReferencePoint('');
-  setExtraStopReferencePoint('');
-  setDropoffReferencePoint('');
-  
-  setMessages([]); 
-  setDriverEta(null);
-  setRouteGeometry(null);
-  isManualPickupRef.current = false;
-}, []);
 
   useEffect(() => {
     async function initAppAndPermissions() {
@@ -1935,31 +2034,31 @@ return () => {
     return (new Date().getTime() - acceptedAt.getTime()) > 2 * 60 * 1000;
   }
 
-  const handleCloseCancelModal = useCallback(() => setShowCancelModal(false), []);
+ // ✅ MANTENHA ESTA VERSÃO (Adequada para o aplicativo do Passageiro)
+const handleConfirmCancel = useCallback((reason: string) => {
+  setShowCancelModal(false);
 
-  const handleConfirmCancel = useCallback((reason: string) => {
-    setShowCancelModal(false);
+  if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-
-    if (!activeRideId || !user?.id) {
-      resetRideState();
-      return;
-    }
-    
-    cancelRideByPassenger(activeRideId, user.id, reason);
-    
-    persistRideState(null, 'idle');
-    setActiveRideId(null);
-    setRideStatus('idle');
-    setBookingStep('ADDRESS');
-    setDriverInfo(null);
-    setDriverLocation(null);
-    setStartOtp('');
-    
-    if (activeRideIdRef.current) activeRideIdRef.current = null;
+  if (!activeRideId || !user?.id) {
     resetRideState();
-  }, [activeRideId, user?.id, resetRideState]);
+    return;
+  }
+  
+  // Emite o cancelamento via serviço dedicado do passageiro
+  cancelRideByPassenger(activeRideId, user.id, reason);
+  
+  persistRideState(null, 'idle');
+  setActiveRideId(null);
+  setRideStatus('idle');
+  setBookingStep('ADDRESS');
+  setDriverInfo(null);
+  setDriverLocation(null);
+  setStartOtp('');
+  
+  if (activeRideIdRef.current) activeRideIdRef.current = null;
+  resetRideState();
+}, [activeRideId, user?.id, resetRideState]);
 
   const onMapRegionDidChange = useCallback(async (feature: any) => {
     setIsMapMoving(false);
@@ -2110,7 +2209,46 @@ const handleShareTrip = async () => {
 
     setIsSearchModalVisible(false);
   };
+// 🟢 BUSCA HÍBRIDA: BANCO NOBAI245 PRIMEIRO -> MAPBOX FALLBACK
+const handleSearchLocation = async (text: string) => {
+  setSearchQuery(text);
 
+  if (text.trim().length < 2) {
+    setSearchResults([]);
+    return;
+  }
+
+  try {
+    // 1. Consulta o teu banco de dados local de Bissau
+    const response = await api.get(`/landmarks/search?q=${encodeURIComponent(text)}`);
+    const localPlaces = response.data || [];
+
+    // 2. Se encontrar pontos registados no teu banco, prioriza-os
+    if (localPlaces.length > 0) {
+      setSearchResults(localPlaces);
+      return;
+    }
+
+    // 3. Caso não encontre no banco local, faz o fallback para o Mapbox
+    const mapboxRes = await fetch(
+      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(text)}.json?country=gw&access_token=${MAPBOX_TOKEN}`
+    );
+    const mapboxData = await mapboxRes.json();
+
+    const formattedMapbox = (mapboxData.features || []).map((item: any) => ({
+      id: item.id,
+      title: item.text,
+      subtitle: item.place_name,
+      displayText: item.place_name,
+      latitude: item.geometry.coordinates[1],
+      longitude: item.geometry.coordinates[0],
+    }));
+
+    setSearchResults(formattedMapbox);
+  } catch (error) {
+    console.error('Erro ao pesquisar local:', error);
+  }
+};
   const handleSosPress = () => {
     Alert.alert(
       t('emergency_sos', 'SOS / Emergência 🚨'),
@@ -3012,8 +3150,8 @@ return (
                 <View style={{ flex: 1, marginLeft: 12 }}>
                   <Text style={styles.driverNameCompact}>{driverInfo.name}</Text>
                   <Text style={styles.vehicleModelCompact}>
-                    {driverInfo.carModel || 'Veículo'} • {driverInfo.carColor || ''}
-                  </Text>
+  {driverInfo.carModel || 'Veículo'} {driverInfo.carColor ? `• ${driverInfo.carColor}` : ''}
+</Text>
                   <View style={styles.plateBadgeCompact}>
                     <Text style={styles.plateTextCompact}>{driverInfo.licensePlate?.toUpperCase() || 'SEM PLACA'}</Text>
                   </View>
@@ -3042,10 +3180,27 @@ return (
                   <Text style={[styles.actionBtnText, { color: '#3B82F6' }]}>Partilhar</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.actionBtnPrimary} onPress={() => setIsChatVisible(true)} activeOpacity={0.85}>
-                  <Ionicons name="chatbubble-ellipses" size={18} color="#0F172A" />
-                  <Text style={styles.actionBtnPrimaryText}>Chat</Text>
-                </TouchableOpacity>
+                {/* ✅ POR ISTO: */}
+<TouchableOpacity 
+  style={styles.actionBtnPrimary} 
+  onPress={() => {
+    setUnreadCount(0);
+    setIsChatVisible(true);
+  }} 
+  activeOpacity={0.85}
+>
+  <Ionicons name="chatbubble-ellipses" size={18} color="#0F172A" />
+  <Text style={styles.actionBtnPrimaryText}>Chat</Text>
+
+  {/* 🔴 BADGE DE MENSAGENS NÃO LIDAS */}
+  {unreadCount > 0 && (
+    <View style={styles.chatBadgeContainer}>
+      <Text style={styles.chatBadgeText}>
+        {unreadCount > 9 ? '9+' : unreadCount}
+      </Text>
+    </View>
+  )}
+</TouchableOpacity>
               </View>
 
               <TouchableOpacity style={styles.cancelRideLink} onPress={() => setShowCancelModal(true)} activeOpacity={0.7}>
@@ -4780,7 +4935,31 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-
+chatBadgeContainer: {
+  position: 'absolute',
+  top: -6,
+  right: -6,
+  backgroundColor: '#EF4444',
+  borderRadius: 10,
+  minWidth: 20,
+  height: 20,
+  justifyContent: 'center',
+  alignItems: 'center',
+  paddingHorizontal: 4,
+  borderWidth: 2,
+  borderColor: '#0F172A',
+  elevation: 4, // Sombra no Android
+  shadowColor: '#000', // Sombra no iOS
+  shadowOffset: { width: 0, height: 2 },
+  shadowOpacity: 0.25,
+  shadowRadius: 3.84,
+},
+chatBadgeText: {
+  color: '#FFFFFF',
+  fontSize: 10,
+  fontWeight: '900',
+  textAlign: 'center',
+},
   // BUSCA MAPBOX
   searchModalContainer: {
     flex: 1,

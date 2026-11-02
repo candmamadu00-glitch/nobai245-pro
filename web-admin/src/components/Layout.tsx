@@ -6,6 +6,7 @@ import {
   Radio,
   Car,
   ShieldAlert,
+  MapPin, // 📍 Ícone para Bairros e Pontos
   UserCheck,
   Users,
   UserX,
@@ -129,6 +130,13 @@ export function Layout() {
               <Car size={18} />
               <span>Gestão de Corridas</span>
             </NavLink>
+
+            {/* 📍 NOVO LINK: MAPEAMENTO TERRITORIAL (BAIRROS & PONTOS) */}
+            <NavLink to="/landmarks" className={({ isActive }) => `menu-link ${isActive ? 'active' : ''}`}>
+              <MapPin size={18} />
+              <span>Bairros & Pontos</span>
+            </NavLink>
+
             <NavLink to="/sos" className={({ isActive }) => `menu-link ${isActive ? 'active' : ''}`}>
               <ShieldAlert size={18} />
               <span>Alertas SOS</span>
@@ -200,4 +208,4 @@ export function Layout() {
       </main>
     </div>
   );
-  }
+}

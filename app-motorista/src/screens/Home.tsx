@@ -402,7 +402,8 @@ const fitMapBounds = useCallback((
   const [canCancelNoShow, setCanCancelNoShow] = useState(false);
   const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
   const [isLowBattery, setIsLowBattery] = useState(false);
-
+const [unreadCount, setUnreadCount] = useState<number>(0);
+const isChatVisibleRef = useRef(isChatVisible);
   const cameraRef = useRef<Mapbox.Camera>(null);
   const locationWatcherRef = useRef<Location.LocationSubscription | null>(null);
   const acceptTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -435,67 +436,124 @@ const fitMapBounds = useCallback((
       address: isHeadingToDestination ? (incomingRide.destinationAddress || 'Destino do Passageiro') : (incomingRide.originAddress || 'Ponto de Encontro'),
     };
   }, [incomingRide, rideState]);
-
+const resetDriverState = useCallback(async () => {
+    Vibration.cancel();
+    if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
+    await AsyncStorage.multiRemove([STORAGE_ACTIVE_RIDE_ID, STORAGE_ACTIVE_RIDE_DATA, STORAGE_ACTIVE_RIDE_STATE]);
+    if (!isMountedRef.current) return;
+    setRideState('idle'); 
+    setActiveRideId(null);
+    setIncomingRide(null); 
+    setQueuedOfferData(null);
+    setCompletedInfo(null);
+    setFinishedRideSummary(null);
+    setDriverEta(null);
+    setRouteCoordinates(null);
+    setShowCancelModal(false);
+    setShowRatingModal(false);
+    setShowReceiptModal(false);
+    setShowOtpModal(false);
+    setIsLoading(false);
+    setShowNavSheet(false);
+    snapToState(true);
+  }, [snapToState]);
   const profileImageUrl = formatImageUrl(driver?.profilePicture || undefined);
   const syncActiveRideWithServer = useCallback(async () => {
-    try {
-      if (!api || typeof api.get !== 'function') return;
-      const response = await api.get('/drivers/active-ride').catch(() => null);
-      if (response?.data?.ride && isMountedRef.current) {
-        const activeRide = response.data.ride;
-        const mappedState: RideState = 
-          activeRide.status === 'ACCEPTED' ? 'accepted' :
-          activeRide.status === 'ARRIVED' ? 'arrived' :
-          activeRide.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
+  try {
+    if (!api || typeof api.get !== 'function') return;
+    const response = await api.get('/drivers/active-ride').catch(() => null);
+    
+    if (isMountedRef.current) {
+      const activeRide = response?.data?.ride;
 
-        if (mappedState !== 'idle') {
-          let rawStops = activeRide.stops;
-          if (typeof rawStops === 'string') {
-            try { rawStops = JSON.parse(rawStops); } catch { rawStops = []; }
-          }
-
-          let stopsArray: any[] = [];
-          if (Array.isArray(rawStops) && rawStops.length > 0) {
-            stopsArray = rawStops.map((s: any, idx: number) => ({
-              ...s,
-              id: s.id || `stop_${idx}`,
-              lat: Number(s.lat ?? s.latitude),
-              lng: Number(s.lng ?? s.longitude),
-              address: s.address || s.name || `Parada ${idx + 1}`,
-              status: s.status || 'PENDING'
-            }));
-          }
-
-          setActiveRideId(activeRide.id);
-          setRideState(mappedState);
-          setIncomingRide({
-            rideId: activeRide.id,
-            // 🟢 Mapeia os pontos de referência sincronizados do banco
-            pickupReferencePoint: (activeRide as any)?.pickupReferencePoint || (activeRide as any)?.referencePoint || (activeRide as any)?.reference_point || '',
-            dropoffReferencePoint: (activeRide as any)?.dropoffReferencePoint || '',
-            referencePoint: (activeRide as any)?.referencePoint || (activeRide as any)?.reference_point || '',
-            
-            passengerId: activeRide.passengerId,
-            passengerName: activeRide.passenger?.fullName || 'Passageiro',
-            passengerPhone: activeRide.passenger?.phone,
-            passengerPhoto: activeRide.passenger?.profilePicture,
-            passengerRating: activeRide.passenger?.ratingAverage || 5.0,
-            pickupLat: Number(activeRide.originLat),
-            pickupLng: Number(activeRide.originLng),
-            originAddress: activeRide.originAddress,
-            destinationLat: Number(activeRide.destinationLat),
-            destinationLng: Number(activeRide.destinationLng),
-            destinationAddress: activeRide.destinationAddress,
-            priceXof: Number(activeRide.priceXof),
-            paymentMethod: activeRide.paymentMethod,
-            stops: stopsArray,
-          } as any);
-          persistActiveRideState(activeRide, mappedState, activeRide.id);
+      // 🔴 SE NÃO HÁ CORRIDA ATIVA OU SE ELA FOI CANCELADA/CONCLUÍDA NO SERVIDOR, RESETA O ESTADO LOCAL INSTANTANEAMENTE
+      if (!activeRide || activeRide.status === 'CANCELLED' || activeRide.status === 'COMPLETED') {
+        if (rideStateRef.current !== 'idle' || activeRideIdRef.current !== null) {
+          await resetDriverState();
         }
+        return;
       }
-    } catch (err) {}
-  }, []);
 
+      const mappedState: RideState = 
+        activeRide.status === 'ACCEPTED' ? 'accepted' :
+        activeRide.status === 'ARRIVED' ? 'arrived' :
+        activeRide.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
+
+      if (mappedState !== 'idle') {
+        let rawStops = activeRide.stops;
+        if (typeof rawStops === 'string') {
+          try { rawStops = JSON.parse(rawStops); } catch { rawStops = []; }
+        }
+
+        let stopsArray: any[] = [];
+        if (Array.isArray(rawStops) && rawStops.length > 0) {
+          stopsArray = rawStops.map((s: any, idx: number) => ({
+            ...s,
+            id: s.id || `stop_${idx}`,
+            lat: Number(s.lat ?? s.latitude),
+            lng: Number(s.lng ?? s.longitude),
+            address: s.address || s.name || `Parada ${idx + 1}`,
+            status: s.status || 'PENDING'
+          }));
+        }
+
+        setActiveRideId(activeRide.id);
+        setRideState(mappedState);
+        setIncomingRide({
+          rideId: activeRide.id,
+          pickupReferencePoint: (activeRide as any)?.pickupReferencePoint || (activeRide as any)?.referencePoint || (activeRide as any)?.reference_point || '',
+          dropoffReferencePoint: (activeRide as any)?.dropoffReferencePoint || '',
+          referencePoint: (activeRide as any)?.referencePoint || (activeRide as any)?.reference_point || '',
+          passengerId: activeRide.passengerId,
+          passengerName: activeRide.passenger?.fullName || 'Passageiro',
+          passengerPhone: activeRide.passenger?.phone,
+          passengerPhoto: activeRide.passenger?.profilePicture,
+          passengerRating: activeRide.passenger?.ratingAverage || 5.0,
+          pickupLat: Number(activeRide.originLat),
+          pickupLng: Number(activeRide.originLng),
+          originAddress: activeRide.originAddress,
+          destinationLat: Number(activeRide.destinationLat),
+          destinationLng: Number(activeRide.destinationLng),
+          destinationAddress: activeRide.destinationAddress,
+          priceXof: Number(activeRide.priceXof),
+          paymentMethod: activeRide.paymentMethod,
+          stops: stopsArray,
+        } as any);
+        persistActiveRideState(activeRide, mappedState, activeRide.id);
+      }
+    }
+  } catch (err) {}
+}, [resetDriverState]);
+// 🟢 OUVINTE DE CANCELAMENTO UNIFICADO NO MOTORISTA (MANTER ESTA VERSÃO)
+const handleRideCancelled = useCallback(async (data: { cancelledBy?: string; rideId?: string; reason?: string }) => {
+  if (!isMountedRef.current) return;
+  setIsLoading(false);
+
+  if (data.rideId && queuedOfferDataRef.current && data.rideId === queuedOfferDataRef.current.rideId) {
+    setQueuedOfferData(null);
+    return;
+  }
+
+  if (!data.rideId || data.rideId === activeRideIdRef.current) {
+    Vibration.vibrate([0, 300, 100, 300]);
+    
+    await AsyncStorage.multiRemove([
+      STORAGE_ACTIVE_RIDE_ID,
+      STORAGE_ACTIVE_RIDE_DATA,
+      STORAGE_ACTIVE_RIDE_STATE
+    ]).catch(() => {});
+
+    resetDriverState();
+
+    if (data.cancelledBy === 'PASSENGER') {
+      Alert.alert(
+        'Corrida Cancelada ⚠️',
+        data.reason || 'O passageiro cancelou a corrida.',
+        [{ text: 'OK', style: 'default' }]
+      );
+    }
+  }
+}, [resetDriverState]);
   const fetchTodayEarnings = useCallback(async () => {
     try {
       if (!api || typeof api.get !== 'function') return;
@@ -536,6 +594,35 @@ const fitMapBounds = useCallback((
     checkBattery();
     return () => { if (sub?.remove) sub.remove(); };
   }, []);
+  // Sincroniza a ref com o estado do modal e zera a contagem ao abrir
+useEffect(() => {
+  isChatVisibleRef.current = isChatVisible;
+  if (isChatVisible) {
+    setUnreadCount(0);
+  }
+}, [isChatVisible]);
+useEffect(() => {
+  if (!socket) return;
+
+  const handleChatMessage = (data: any) => {
+    // Se a mensagem foi enviada pelo próprio motorista, ignora
+    if (data?.sender === 'driver' || data?.senderRole === 'driver') return;
+
+    // Se o chat estiver FECHADO, incrementa o contador e vibra
+    if (!isChatVisibleRef.current) {
+      setUnreadCount((prev) => prev + 1);
+      try {
+        Vibration.vibrate(200);
+      } catch (e) {}
+    }
+  };
+
+  socket.on('chat:receive_message', handleChatMessage);
+
+  return () => {
+    socket.off('chat:receive_message', handleChatMessage);
+  };
+}, [socket]);
   // 🟢 MONITORE E RECONECTE O MOTORISTA AUTOMATICAMENTE (HEARTBEAT)
 useEffect(() => {
   let heartbeatInterval: ReturnType<typeof setInterval>;
@@ -819,28 +906,6 @@ useEffect(() => {
       }
     } catch (err) {}
   };
-
-  const resetDriverState = useCallback(async () => {
-    Vibration.cancel();
-    if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
-    await AsyncStorage.multiRemove([STORAGE_ACTIVE_RIDE_ID, STORAGE_ACTIVE_RIDE_DATA, STORAGE_ACTIVE_RIDE_STATE]);
-    if (!isMountedRef.current) return;
-    setRideState('idle'); 
-    setActiveRideId(null);
-    setIncomingRide(null); 
-    setQueuedOfferData(null);
-    setCompletedInfo(null);
-    setFinishedRideSummary(null);
-    setDriverEta(null);
-    setRouteCoordinates(null);
-    setShowCancelModal(false);
-    setShowRatingModal(false);
-    setShowReceiptModal(false);
-    setShowOtpModal(false);
-    setIsLoading(false);
-    setShowNavSheet(false);
-    snapToState(true);
-  }, [snapToState]);
 
   useEffect(() => {
     async function restoreLocalState() {
@@ -1162,57 +1227,46 @@ useEffect(() => {
     snapToState(true);
     await syncActiveRideWithServer();
   };
-
-  const handleRideCancelled = (data: { cancelledBy?: string; rideId?: string }) => {
-    if (!isMountedRef.current) return;
-    setIsLoading(false);
-
-    if (data.rideId && queuedOfferDataRef.current && data.rideId === queuedOfferDataRef.current.rideId) {
-      setQueuedOfferData(null);
-      return;
+// 🟢 3. REGISTRO LIMPO DOS EVENTOS DO SOCKET
+useEffect(() => {
+  const handleConnect = async () => {
+    if (driver?.id) {
+      await processOfflineQueue(socket);
+      socket.emit('driver:request_state');
+      
+      if (isOnlineRef.current && location?.coords) {
+        socket.emit('driver:online', { 
+          driverId: driver.id, 
+          lat: location.coords.latitude, 
+          lng: location.coords.longitude 
+        });
+      }
     }
-    resetDriverState();
   };
 
-  useEffect(() => {
-    const handleConnect = async () => {
-      if (driver?.id) {
-        await processOfflineQueue(socket);
-        socket.emit('driver:request_state');
-        
-        if (isOnlineRef.current && location?.coords) {
-          socket.emit('driver:online', { 
-            driverId: driver.id, 
-            lat: location.coords.latitude, 
-            lng: location.coords.longitude 
-          });
-        }
-      }
-    };
+  if (socket && !socket.connected) socket.connect();
 
-    if (socket && !socket.connected) socket.connect();
+  socket.on('connect', handleConnect);
+  socket.on('ride:new_request', handleNewRideRequest);
+  socket.on('ride:accepted', handleRideAccepted);
+  socket.on('driver:accept_ride_success', handleRideAccepted);
+  socket.on('ride:started', handleRideStarted);
+  socket.on('ride:finished', handleRideFinished);
+  socket.on('ride:queued_now_active', handleQueuedNowActive);
+  socket.on('ride:cancelled', handleRideCancelled);
 
-    socket.on('connect', handleConnect);
-    socket.on('ride:new_request', handleNewRideRequest);
-    socket.on('ride:accepted', handleRideAccepted);
-    socket.on('driver:accept_ride_success', handleRideAccepted);
-    socket.on('ride:started', handleRideStarted);
-    socket.on('ride:finished', handleRideFinished);
-    socket.on('ride:queued_now_active', handleQueuedNowActive);
-    socket.on('ride:cancelled', handleRideCancelled);
-
-    return () => {
-      Vibration.cancel();
-      socket.off('connect', handleConnect);
-      socket.off('ride:new_request', handleNewRideRequest);
-      socket.off('ride:accepted', handleRideAccepted);
-      socket.off('driver:accept_ride_success', handleRideAccepted);
-      socket.off('ride:started', handleRideStarted);
-      socket.off('ride:finished', handleRideFinished);
-      socket.off('ride:queued_now_active', handleQueuedNowActive);
-      socket.off('ride:cancelled', handleRideCancelled);
-    };
-  }, [driver?.id, resetDriverState, snapToState, syncActiveRideWithServer]);
+  return () => {
+    Vibration.cancel();
+    socket.off('connect', handleConnect);
+    socket.off('ride:new_request', handleNewRideRequest);
+    socket.off('ride:accepted', handleRideAccepted);
+    socket.off('driver:accept_ride_success', handleRideAccepted);
+    socket.off('ride:started', handleRideStarted);
+    socket.off('ride:finished', handleRideFinished);
+    socket.off('ride:queued_now_active', handleQueuedNowActive);
+    socket.off('ride:cancelled', handleRideCancelled);
+  };
+}, [driver?.id, resetDriverState, snapToState, syncActiveRideWithServer, handleRideCancelled]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
@@ -2168,10 +2222,27 @@ const formattedStops = useMemo(() => {
 {/* BOTAO DE AÇÕES DA CORRIDA */}
 {rideState !== 'in_progress' && (
   <View style={styles.actionRow}>
-    <TouchableOpacity style={styles.actionButtonSecondary} onPress={() => setIsChatVisible(true)}>
-      <Ionicons name="chatbubbles-outline" size={16} color="#EAB308" />
-      <Text style={styles.actionButtonSecondaryText}>Chat</Text>
-    </TouchableOpacity>
+    {/* ✅ POR ISTO: */}
+<TouchableOpacity 
+  style={styles.actionButtonSecondary} 
+  onPress={() => {
+    setUnreadCount(0);
+    setIsChatVisible(true);
+  }}
+  activeOpacity={0.8}
+>
+  <Ionicons name="chatbubbles-outline" size={16} color="#EAB308" />
+  <Text style={styles.actionButtonSecondaryText}>Chat</Text>
+
+  {/* 🔴 BADGE DE MENSAGENS NÃO LIDAS */}
+  {unreadCount > 0 && (
+    <View style={styles.chatBadgeContainer}>
+      <Text style={styles.chatBadgeText}>
+        {unreadCount > 9 ? '9+' : unreadCount}
+      </Text>
+    </View>
+  )}
+</TouchableOpacity>
 
     <TouchableOpacity style={styles.actionButtonSecondary} onPress={handleCallPassenger}>
       <Ionicons name="call-outline" size={16} color="#10B981" />
@@ -2598,8 +2669,20 @@ const formattedStops = useMemo(() => {
   otherUserPhoto={formatImageUrl(incomingRide?.passengerPhoto)} 
 />
 
-    <StartRideOtpModal visible={showOtpModal} onCancel={() => setShowOtpModal(false)} onSubmitOtp={handleStartRideWithOtp} />
-    <CancelModal visible={showCancelModal} userType="DRIVER" isPenaltyApplicable={false} onClose={() => setShowCancelModal(false)} onConfirm={handleConfirmCancel} />
+   <StartRideOtpModal 
+  visible={showOtpModal} 
+  onCancel={() => setShowOtpModal(false)} 
+  onSubmitOtp={handleStartRideWithOtp} 
+/>
+
+{/* 🛑 MODAL DE CANCELAMENTO UNIFICADA */}
+<CancelModal 
+  visible={showCancelModal} 
+  userType="DRIVER"
+  isPenaltyApplicable={false}
+  onClose={() => setShowCancelModal(false)} 
+  onConfirm={handleConfirmCancel} 
+/>
   </View>
 );
 }
@@ -2807,7 +2890,31 @@ voiceToggleHeaderBtn: {
     fontSize: 11,
     fontWeight: '800',
   },
-
+chatBadgeContainer: {
+  position: 'absolute',
+  top: -6,
+  right: -6,
+  backgroundColor: '#EF4444',
+  borderRadius: 10,
+  minWidth: 20,
+  height: 20,
+  justifyContent: 'center',
+  alignItems: 'center',
+  paddingHorizontal: 4,
+  borderWidth: 2,
+  borderColor: '#0F172A',
+  elevation: 4, // Sombra no Android
+  shadowColor: '#000', // Sombra no iOS
+  shadowOffset: { width: 0, height: 2 },
+  shadowOpacity: 0.25,
+  shadowRadius: 3.84,
+},
+chatBadgeText: {
+  color: '#FFFFFF',
+  fontSize: 10,
+  fontWeight: '900',
+  textAlign: 'center',
+},
   // SLIDING BOTTOM SHEET
   bottomSheetWrapper: {
     position: 'absolute',

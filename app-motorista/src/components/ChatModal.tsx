@@ -290,13 +290,16 @@ export function ChatModal({
 
       setMessages((prev) => [...prev, newMsg]);
 
-      socket.emit('chat:send_message', { 
-        rideId, 
-        audioUrl: audioPayload, 
-        audioDuration: durationSec, 
-        id: uniqueId,
-        sender: currentRole
-      });
+      // Substitua o trecho do socket.emit no stopAndSendRecording do ChatModal.tsx:
+socket.emit('chat:send_message', { 
+  rideId, 
+  audioUrl: audioPayload, 
+  audioDuration: durationSec, 
+  id: uniqueId,
+  sender: currentRole,
+  senderRole: currentRole,
+  text: ''
+});
 
       setRecordDuration(0);
     } catch (error) {

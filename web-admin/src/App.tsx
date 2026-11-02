@@ -16,6 +16,7 @@ import { Settings } from './pages/Settings';
 import { SOSMonitor } from './pages/SOSMonitor';
 import { TrackRide } from './pages/TrackRide';
 import { Admins } from './pages/Admins';
+import Landmarks from './pages/Landmarks'; // 📍 Importação da página de Mapeamento
 
 import './App.css';
 
@@ -57,6 +58,7 @@ function AppRoutes() {
         <Route path="finance" element={<Financial />} />
         <Route path="ratings" element={<RatingsPage />} />
         <Route path="tickets" element={<Tickets />} />
+        <Route path="landmarks" element={<Landmarks />} /> {/* 📍 Rota cadastrada */}
         <Route path="settings" element={<Settings />} />
       </Route>
       
