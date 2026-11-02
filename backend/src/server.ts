@@ -109,9 +109,6 @@ app.use(cors({
   optionsSuccessStatus: 200
 }));
 
-// Permite requisições preflight (OPTIONS) para todas as rotas
-app.options('*', cors());
-
 app.use(express.json({
   limit: '10mb',
   verify: (req: Request, _res: Response, buf: Buffer) => {
