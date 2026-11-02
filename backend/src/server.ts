@@ -29,7 +29,7 @@ import {
 } from './services/rideRulesService';
 import { createRideAndInitiateEscrow, submitRatingLogic } from './services/rideService';
 import { startCronJobs } from './jobs/reconciliationJob';
-import locationRoutes from './routes/locationRoutes';
+import locationRoutes from './routes/location.routes';
 declare global {
   namespace Express {
     interface Request {
@@ -1655,9 +1655,10 @@ handleSocketEvent(socket, 'chat:send_message', async (data) => {
       io.to(room).emit('chat:message', messagePayload);
     });
 
+    // 🛡️ CORREÇÃO: Usa apenas 'deviceToken' (atributo oficial do modelo Prisma)
     const recipientToken = senderRole === 'driver'
-      ? (ride.passenger?.pushToken || (ride.passenger as any)?.deviceToken)
-      : (ride.driver?.pushToken || (ride.driver as any)?.deviceToken);
+      ? ride.passenger?.deviceToken
+      : ride.driver?.deviceToken;
 
     const senderName = senderRole === 'driver'
       ? (ride.driver?.fullName || 'Motorista')
@@ -1743,10 +1744,10 @@ handleSocketEvent(socket, 'ride:cancel', async (data) => {
       io.to('available_drivers').emit('ride:cancelled_by_passenger', { rideId });
     }
 
-    // Push notification para quem não originou o cancelamento
+    // 🛡️ CORREÇÃO: Usa apenas 'deviceToken' (atributo oficial do modelo Prisma)
     const recipientToken = normalizedUserType === 'DRIVER'
-      ? (rideToCancel.passenger?.pushToken || (rideToCancel.passenger as any)?.deviceToken)
-      : (rideToCancel.driver?.pushToken || (rideToCancel.driver as any)?.deviceToken);
+      ? rideToCancel.passenger?.deviceToken
+      : rideToCancel.driver?.deviceToken;
 
     if (recipientToken) {
       sendPushNotification(
@@ -1763,40 +1764,6 @@ handleSocketEvent(socket, 'ride:cancel', async (data) => {
     socket.emit('error', { message: err.message || 'Erro ao cancelar corrida.' });
   }
 });
-
-  // --- AVALIAÇÃO DE CORRIDA ---
-  handleSocketEvent(socket, 'ride:rate', async (data) => {
-    if (isSocketRateLimited(socket, 'ride:rate', 3000, 2)) return;
-    const { rideId, receiverId, stars, tags, comment, reviewerType } = data || {};
-
-    const numericStars = Number(stars);
-    if (!isUuid(rideId) || !receiverId || isNaN(numericStars) || numericStars < 1 || numericStars > 5) {
-      socket.emit('error', { message: 'Dados de avaliação inválidos. A nota deve ser entre 1 e 5.' });
-      return;
-    }
-
-    try {
-      const userRole = socket.data.user?.role || socket.data.user?.userType;
-      const finalReviewerType = reviewerType === 'DRIVER' || userRole === 'DRIVER' ? 'DRIVER' : 'PASSENGER';
-      const cleanComment = typeof comment === 'string' ? comment.trim().slice(0, 500) : undefined;
-      const safeTags = Array.isArray(tags) ? tags.map(t => String(t).slice(0, 50)) : [];
-
-      const newRating = await submitRatingLogic({
-        rideId,
-        reviewerId: socket.data.user.id,
-        reviewerType: finalReviewerType,
-        receiverId,
-        stars: numericStars,
-        tags: safeTags,
-        comment: cleanComment
-      });
-
-      socket.emit('ride:rated_success', { message: 'Avaliação registrada!' });
-      io.to('admin_dashboard').emit('admin:new_rating', newRating);
-    } catch (error: any) {
-      socket.emit('error', { message: error?.message || 'Falha ao processar a avaliação.' });
-    }
-  });
 });
 
 // -----------------------------------------------------------------------------
