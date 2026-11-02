@@ -1,8 +1,7 @@
 import { Router, Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../config/prisma';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 // 🟢 1. CADASTRAR PONTO DE REFERÊNCIA EM CAMPO (EQUIPE)
 router.post('/landmarks', async (req: Request, res: Response) => {
@@ -22,8 +21,8 @@ router.post('/landmarks', async (req: Request, res: Response) => {
       neighborhood = await prisma.neighborhood.create({
         data: {
           name: neighborhoodName.trim(),
-          centerLat: latitude,
-          centerLng: longitude
+          centerLat: parseFloat(latitude),
+          centerLng: parseFloat(longitude)
         }
       });
     }
@@ -80,7 +79,7 @@ router.get('/landmarks/search', async (req: Request, res: Response) => {
     });
 
     // Formatação de exibição hierárquica clara para o passageiro
-    const formattedResults = places.map((p) => ({
+    const formattedResults = places.map((p: any) => ({
       id: p.id,
       title: `${p.name}`,
       subtitle: `${p.neighborhood.name}${p.referenceNotes ? ` • ${p.referenceNotes}` : ''}`,
