@@ -88,16 +88,32 @@ const server = http.createServer(app);
 app.set('trust proxy', 1); 
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
-const allowedOrigins = process.env.ALLOWED_ORIGINS 
-  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()) 
-  : '*'; 
+// Sanitiza e remove aspas ou espaços acidentais vindos do .env
+const rawOrigins = process.env.ALLOWED_ORIGINS || '*';
+const allowedOrigins = rawOrigins
+  .replace(/["']/g, '')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
 
-app.use(cors({ 
-  origin: allowedOrigins, 
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    // Permite requisições sem origin (apps mobile, cURL) ou se estiver na lista/wildcard
+    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.warn(`⚠️ [CORS Rejeitado]: Origem não permitida -> ${origin}`);
+      callback(null, false);
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  credentials: true
-}));
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // Permite requisições preflight (OPTIONS) para todas as rotas
 app.options('*', cors());
