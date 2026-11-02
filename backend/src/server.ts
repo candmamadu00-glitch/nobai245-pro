@@ -1825,7 +1825,6 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
   console.error('💥 [ALERTA CRÍTICO] PROMISE REJEITADA:', reason);
 });
-
 // -----------------------------------------------------------------------------
 // 8. BOOT DO SERVIDOR
 // -----------------------------------------------------------------------------

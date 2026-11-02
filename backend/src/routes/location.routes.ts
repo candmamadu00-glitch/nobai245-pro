@@ -3,7 +3,7 @@ import { prisma } from '../config/prisma';
 
 const router = Router();
 
-// 🟢 1. CADASTRAR PONTO DE REFERÊNCIA EM CAMPO (EQUIPE)
+// 🟢 1. CADASTRAR PONTO DE REFERÊNCIA
 router.post('/landmarks', async (req: Request, res: Response) => {
   try {
     const { neighborhoodName, name, popularName, referenceNotes, latitude, longitude, createdById } = req.body;
@@ -12,7 +12,6 @@ router.post('/landmarks', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Bairro, Nome do Local, Latitude e Longitude são obrigatórios.' });
     }
 
-    // Busca ou cria o bairro automaticamente
     let neighborhood = await prisma.neighborhood.findUnique({
       where: { name: neighborhoodName.trim() }
     });
@@ -27,7 +26,6 @@ router.post('/landmarks', async (req: Request, res: Response) => {
       });
     }
 
-    // Gera lista de termos de busca
     const terms = [
       name.toLowerCase(),
       popularName ? popularName.toLowerCase() : '',
@@ -50,12 +48,39 @@ router.post('/landmarks', async (req: Request, res: Response) => {
 
     return res.status(201).json({ success: true, place });
   } catch (error) {
-    console.error('❌ Erro ao cadastrar ponto de referência:', error);
+    console.error('❌ Erro ao cadastrar ponto:', error);
     return res.status(500).json({ error: 'Erro interno ao salvar local.' });
   }
 });
 
-// 🟢 2. BUSCA HÍBRIDA HIERÁRQUICA (PASSAGEIRO)
+// 🟢 2. LISTAR TODOS OS PONTOS (PAINEL DE ADMINISTRAÇÃO)
+router.get('/landmarks', async (_req: Request, res: Response) => {
+  try {
+    const places = await prisma.customPlace.findMany({
+      include: { neighborhood: true },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const formattedResults = places.map((p: any) => ({
+      id: p.id,
+      name: p.name,
+      popularName: p.popularName,
+      neighborhood: p.neighborhood.name,
+      referenceNotes: p.referenceNotes,
+      latitude: p.latitude,
+      longitude: p.longitude,
+      isActive: p.isActive,
+      createdAt: p.createdAt
+    }));
+
+    return res.json(formattedResults);
+  } catch (error) {
+    console.error('❌ Erro ao listar pontos:', error);
+    return res.status(500).json({ error: 'Erro interno ao consultar pontos.' });
+  }
+});
+
+// 🟢 3. BUSCA HÍBRIDA (PASSAGEIRO / APP)
 router.get('/landmarks/search', async (req: Request, res: Response) => {
   try {
     const query = String(req.query.q || '').trim().toLowerCase();
@@ -78,7 +103,6 @@ router.get('/landmarks/search', async (req: Request, res: Response) => {
       take: 15
     });
 
-    // Formatação de exibição hierárquica clara para o passageiro
     const formattedResults = places.map((p: any) => ({
       id: p.id,
       title: `${p.name}`,
@@ -92,6 +116,62 @@ router.get('/landmarks/search', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('❌ Erro na busca de locais:', error);
     return res.status(500).json({ error: 'Erro na consulta de locais.' });
+  }
+});
+
+// 🟢 4. ATUALIZAR PONTO DE REFERÊNCIA
+router.put('/landmarks/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { neighborhoodName, name, popularName, referenceNotes, latitude, longitude } = req.body;
+
+    let neighborhood = await prisma.neighborhood.findUnique({
+      where: { name: neighborhoodName.trim() }
+    });
+
+    if (!neighborhood) {
+      neighborhood = await prisma.neighborhood.create({
+        data: {
+          name: neighborhoodName.trim(),
+          centerLat: parseFloat(latitude),
+          centerLng: parseFloat(longitude)
+        }
+      });
+    }
+
+    const updatedPlace = await prisma.customPlace.update({
+      where: { id },
+      data: {
+        neighborhoodId: neighborhood.id,
+        name: name.trim(),
+        popularName: popularName ? popularName.trim() : null,
+        referenceNotes: referenceNotes ? referenceNotes.trim() : null,
+        latitude: parseFloat(latitude),
+        longitude: parseFloat(longitude),
+        searchKeywords: [
+          name.toLowerCase(),
+          popularName ? popularName.toLowerCase() : '',
+          neighborhoodName.toLowerCase()
+        ].filter(Boolean)
+      }
+    });
+
+    return res.json({ success: true, place: updatedPlace });
+  } catch (error) {
+    console.error('❌ Erro ao atualizar ponto:', error);
+    return res.status(500).json({ error: 'Erro ao atualizar ponto.' });
+  }
+});
+
+// 🟢 5. REMOVER PONTO DE REFERÊNCIA
+router.delete('/landmarks/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    await prisma.customPlace.delete({ where: { id } });
+    return res.json({ success: true, message: 'Ponto removido com sucesso.' });
+  } catch (error) {
+    console.error('❌ Erro ao apagar ponto:', error);
+    return res.status(500).json({ error: 'Erro ao apagar ponto de referência.' });
   }
 });
 
