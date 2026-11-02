@@ -122,7 +122,7 @@ router.get('/landmarks/search', async (req: Request, res: Response) => {
 // 🟢 4. ATUALIZAR PONTO DE REFERÊNCIA
 router.put('/landmarks/:id', async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const id = String(req.params.id);
     const { neighborhoodName, name, popularName, referenceNotes, latitude, longitude } = req.body;
 
     let neighborhood = await prisma.neighborhood.findUnique({
@@ -166,7 +166,7 @@ router.put('/landmarks/:id', async (req: Request, res: Response) => {
 // 🟢 5. REMOVER PONTO DE REFERÊNCIA
 router.delete('/landmarks/:id', async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const id = String(req.params.id);
     await prisma.customPlace.delete({ where: { id } });
     return res.json({ success: true, message: 'Ponto removido com sucesso.' });
   } catch (error) {
@@ -174,5 +174,4 @@ router.delete('/landmarks/:id', async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Erro ao apagar ponto de referência.' });
   }
 });
-
 export default router;
