@@ -1078,6 +1078,7 @@ useEffect(() => {
 
     const normalizedQuery = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
+    // 1. Busca na lista fixa local de bairros
     const localMatches = GUINEA_BISSAU_BAIRROS.filter(item => {
       const normDesc = item.description.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
       return normDesc.includes(normalizedQuery);
@@ -1086,11 +1087,16 @@ useEffect(() => {
     setIsSearchingMapbox(true);
 
     try {
+      // 2. Consulta a API do Nobai245 (Banco de Dados PostgreSQL)
+      const dbPromise = api.get(`/landmarks/search?q=${encodeURIComponent(text)}`).catch(() => null);
+
+      // 3. URLs dos geocodificadores externos
       const photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&lat=${BISSAU_CENTER.latitude}&lon=${BISSAU_CENTER.longitude}&limit=15`;
       const osmUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(text)}&countrycodes=gw&viewbox=-15.85,11.70,-15.40,12.05&bounded=0&format=json&addressdetails=1&limit=10`;
       const mapboxUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(text)}.json?country=gw&proximity=${BISSAU_CENTER.longitude},${BISSAU_CENTER.latitude}&types=poi,address,neighborhood,locality,place,street&autocomplete=true&limit=10&language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`;
 
-      const [resPhoton, resOsm, resMapbox] = await Promise.allSettled([
+      const [resDb, resPhoton, resOsm, resMapbox] = await Promise.allSettled([
+        dbPromise,
         fetch(photonUrl),
         fetch(osmUrl, {
           headers: {
@@ -1103,6 +1109,21 @@ useEffect(() => {
 
       let apiResults: MapboxGeocodingFeature[] = [];
 
+      // 🟢 PROCESSA RESULTADOS DO BANCO DE DADOS NOBAI245 (PRIORIDADE ALTA)
+      if (resDb.status === 'fulfilled' && resDb.value?.data) {
+        const dbLandmarks = (resDb.value.data || []).map((item: any) => ({
+          id: `db_${item.id}`,
+          description: item.popularName 
+            ? `${item.name} (${item.popularName}) - ${item.neighborhood}` 
+            : `${item.name} - ${item.neighborhood}`,
+          longitude: Number(item.longitude),
+          latitude: Number(item.latitude),
+          isLocalBairro: true,
+        }));
+        apiResults.push(...dbLandmarks);
+      }
+
+      // Processa resultados do Photon
       if (resPhoton.status === 'fulfilled' && resPhoton.value.ok) {
         const photonData = await resPhoton.value.json();
         const features = photonData?.features || [];
@@ -1131,6 +1152,7 @@ useEffect(() => {
         apiResults.push(...photonFeatures);
       }
 
+      // Processa resultados do OSM Nominatim
       if (resOsm.status === 'fulfilled' && resOsm.value.ok) {
         const osmData = await resOsm.value.json();
         if (Array.isArray(osmData)) {
@@ -1145,6 +1167,7 @@ useEffect(() => {
         }
       }
 
+      // Processa resultados do Mapbox
       if (resMapbox.status === 'fulfilled' && resMapbox.value.ok) {
         const mapboxData = await resMapbox.value.json();
         const features = mapboxData?.features || [];
@@ -1162,7 +1185,8 @@ useEffect(() => {
       }
 
       if (isMountedRef.current) {
-        const combined = [...localMatches, ...apiResults];
+        // Unifica os resultados mantendo os pontos do banco no topo
+        const combined = [...apiResults, ...localMatches];
         const uniqueResults = combined.filter((v, i, a) => 
           v.latitude && v.longitude &&
           a.findIndex(t => t.description.toLowerCase().trim() === v.description.toLowerCase().trim()) === i
@@ -2209,44 +2233,66 @@ const handleShareTrip = async () => {
 
     setIsSearchModalVisible(false);
   };
-// 🟢 BUSCA HÍBRIDA: BANCO NOBAI245 PRIMEIRO -> MAPBOX FALLBACK
+// 🟢 BUSCA HÍBRIDA CORRIGIDA: BANCO NOBAI245 PRIMEIRO -> MAPBOX FALLBACK
 const handleSearchLocation = async (text: string) => {
   setSearchQuery(text);
 
-  if (text.trim().length < 2) {
+  if (!text || text.trim().length < 2) {
     setSearchResults([]);
     return;
   }
 
-  try {
-    // 1. Consulta o teu banco de dados local de Bissau
-    const response = await api.get(`/landmarks/search?q=${encodeURIComponent(text)}`);
-    const localPlaces = response.data || [];
+  setIsSearchingMapbox(true);
 
-    // 2. Se encontrar pontos registados no teu banco, prioriza-os
-    if (localPlaces.length > 0) {
-      setSearchResults(localPlaces);
+  try {
+    // 1. Consulta o banco de dados local do Nobai245
+    const response = await api.get(`/landmarks/search?q=${encodeURIComponent(text)}`).catch(() => null);
+    
+    let dbResults: MapboxGeocodingFeature[] = [];
+
+    if (response?.data && Array.isArray(response.data)) {
+      dbResults = response.data.map((item: any) => ({
+        id: `db_${item.id}`,
+        description: item.popularName 
+          ? `${item.name} (${item.popularName}) - ${item.neighborhood}` 
+          : `${item.name} - ${item.neighborhood}`,
+        latitude: Number(item.latitude),
+        longitude: Number(item.longitude),
+        isLocalBairro: true,
+      }));
+    }
+
+    // 2. Se o banco encontrou resultados, exibe-os diretamente
+    if (dbResults.length > 0) {
+      setSearchResults(dbResults);
+      setIsSearchingMapbox(false);
       return;
     }
 
-    // 3. Caso não encontre no banco local, faz o fallback para o Mapbox
+    // 3. Fallback Mapbox (Usando MAPBOX_ACCESS_TOKEN correto)
     const mapboxRes = await fetch(
-      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(text)}.json?country=gw&access_token=${MAPBOX_TOKEN}`
+      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(text)}.json?country=gw&proximity=${BISSAU_CENTER.longitude},${BISSAU_CENTER.latitude}&language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`
     );
-    const mapboxData = await mapboxRes.json();
 
-    const formattedMapbox = (mapboxData.features || []).map((item: any) => ({
-      id: item.id,
-      title: item.text,
-      subtitle: item.place_name,
-      displayText: item.place_name,
-      latitude: item.geometry.coordinates[1],
-      longitude: item.geometry.coordinates[0],
-    }));
+    if (mapboxRes.ok) {
+      const mapboxData = await mapboxRes.json();
+      const formattedMapbox: MapboxGeocodingFeature[] = (mapboxData.features || []).map((item: any) => ({
+        id: item.id,
+        description: (item.place_name || item.text || '').replace(/, Guiné-Bissau/gi, ''),
+        latitude: item.geometry.coordinates[1],
+        longitude: item.geometry.coordinates[0],
+        isLocalBairro: false,
+      }));
 
-    setSearchResults(formattedMapbox);
+      setSearchResults(formattedMapbox);
+    } else {
+      setSearchResults([]);
+    }
   } catch (error) {
     console.error('Erro ao pesquisar local:', error);
+    setSearchResults([]);
+  } finally {
+    setIsSearchingMapbox(false);
   }
 };
   const handleSosPress = () => {

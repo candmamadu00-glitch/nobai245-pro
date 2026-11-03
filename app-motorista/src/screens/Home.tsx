@@ -502,6 +502,7 @@ const resetDriverState = useCallback(async () => {
         setIncomingRide({
           rideId: activeRide.id,
           pickupReferencePoint: (activeRide as any)?.pickupReferencePoint || (activeRide as any)?.referencePoint || (activeRide as any)?.reference_point || '',
+          extraStopReferencePoint: (activeRide as any)?.extraStopReferencePoint || '',
           dropoffReferencePoint: (activeRide as any)?.dropoffReferencePoint || '',
           referencePoint: (activeRide as any)?.referencePoint || (activeRide as any)?.reference_point || '',
           passengerId: activeRide.passengerId,
