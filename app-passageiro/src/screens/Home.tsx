@@ -1109,19 +1109,34 @@ useEffect(() => {
 
       let apiResults: MapboxGeocodingFeature[] = [];
 
-      // 🟢 PROCESSA RESULTADOS DO BANCO DE DADOS NOBAI245 (PRIORIDADE ALTA)
-      if (resDb.status === 'fulfilled' && resDb.value?.data) {
-        const dbLandmarks = (resDb.value.data || []).map((item: any) => ({
-          id: `db_${item.id}`,
-          description: item.popularName 
-            ? `${item.name} (${item.popularName}) - ${item.neighborhood}` 
-            : `${item.name} - ${item.neighborhood}`,
-          longitude: Number(item.longitude),
-          latitude: Number(item.latitude),
-          isLocalBairro: true,
-        }));
-        apiResults.push(...dbLandmarks);
-      }
+      // 🟢 PROCESSA RESULTADOS DO BANCO DE DADOS NOBAI245 (TRATAMENTO SEGURO)
+if (resDb.status === 'fulfilled' && resDb.value?.data) {
+  const dbLandmarks = (resDb.value.data || []).map((item: any) => {
+    // 1. Extrai o nome do ponto
+    const placeName = item.name || item.placeName || item.title || 'Ponto de Referência';
+
+    // 2. Extrai o nome do bairro (se for objeto do Prisma { name: "..." } ou string direta)
+    const neighborhoodName = 
+      typeof item.neighborhood === 'object' && item.neighborhood?.name
+        ? item.neighborhood.name
+        : (typeof item.neighborhood === 'string' 
+            ? item.neighborhood 
+            : (item.neighborhoodName || item.bairro || 'Bissau'));
+
+    // 3. Extrai o nome popular (se existir)
+    const popular = item.popularName ? ` (${item.popularName})` : '';
+
+    return {
+      id: `db_${item.id || Math.random()}`,
+      description: `${placeName}${popular} - ${neighborhoodName}`,
+      longitude: Number(item.longitude),
+      latitude: Number(item.latitude),
+      isLocalBairro: true,
+    };
+  });
+
+  apiResults.push(...dbLandmarks);
+}
 
       // Processa resultados do Photon
       if (resPhoton.status === 'fulfilled' && resPhoton.value.ok) {
