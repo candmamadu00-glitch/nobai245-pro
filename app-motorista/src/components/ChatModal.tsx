@@ -34,6 +34,16 @@ interface ChatModalProps {
   otherUserPhoto?: string | null;
 }
 
+const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com').replace(/\/api\/?$/, '');
+
+const formatPhotoUrl = (path?: string | null) => {
+  if (!path || typeof path !== 'string') return null;
+  if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('data:')) return path;
+  const cleanBase = API_URL.replace(/\/$/, '');
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  return `${cleanBase}${cleanPath}`;
+};
+
 const formatTime = (isoString?: string) => {
   if (!isoString) return '';
   try {
@@ -77,14 +87,21 @@ export function ChatModal({
   // Chave única no AsyncStorage para persistir o chat da corrida
   const storageKey = `@bai245:chat_${rideId}`;
 
-  // 1. Salva mensagens no AsyncStorage sempre que a lista for alterada
+  // 1. Limpa mensagens ao mudar de corrida
+  useEffect(() => {
+    if (!rideId) {
+      setMessages([]);
+    }
+  }, [rideId]);
+
+  // 2. Salva mensagens no AsyncStorage sempre que a lista for alterada
   useEffect(() => {
     if (messages.length > 0 && rideId) {
       AsyncStorage.setItem(storageKey, JSON.stringify(messages)).catch(() => {});
     }
   }, [messages, rideId, storageKey]);
 
-  // 2. Limpeza ao desmontar
+  // 3. Limpeza ao desmontar
   useEffect(() => {
     return () => {
       if (activePlayerRef.current) {
@@ -96,7 +113,7 @@ export function ChatModal({
     };
   }, []);
 
-  // 3. Carrega do Cache Local e em seguida sincroniza com o Histórico HTTP
+  // 4. Carrega do Cache Local e em seguida sincroniza com o Histórico HTTP
   useEffect(() => {
     if (visible && rideId) {
       // Tenta restaurar do armazenamento local primeiro
@@ -125,11 +142,12 @@ export function ChatModal({
 
           if (rawList.length > 0) {
             const history: ChatMessage[] = rawList.map((msg: any) => ({
-              id: String(msg.id || Math.random()),
+              id: String(msg.id || `hist-${Math.random().toString(36).substring(2, 7)}`),
               sender: (msg.senderType === 'PASSENGER' || msg.sender === 'passenger') ? 'passenger' : 'driver',
               text: msg.message || msg.text || '',
               audioUrl: msg.audioUrl || msg.audio || null,
-              audioDuration: msg.audioDuration || 0,
+              audioDuration: msg.audioDuration || msg.duration || 0,
+              senderPhoto: formatPhotoUrl(msg.senderPhoto || msg.userPhoto),
               createdAt: msg.createdAt || new Date().toISOString(),
             }));
 
@@ -141,7 +159,7 @@ export function ChatModal({
           }
         })
         .catch(error => {
-          console.warn("⚠️ [CHAT MOTORISTA] Erro ao carregar histórico do chat:", error?.response?.data || error?.message);
+          console.warn("⚠️ [CHAT] Erro ao carregar histórico do chat:", error?.response?.data || error?.message);
         });
     } else if (!visible) {
       if (activePlayerRef.current) {
@@ -152,7 +170,7 @@ export function ChatModal({
     }
   }, [visible, rideId, storageKey]);
 
-  // 4. Escuta de mensagens via Socket com trava antiduplicação
+  // 5. Escuta de mensagens via Socket com trava antiduplicação
   useEffect(() => {
     if (!socket || !visible) return;
 
@@ -164,12 +182,12 @@ export function ChatModal({
       const msgAudio = msg.audioUrl || msg.audio || null;
 
       const formattedMsg: ChatMessage = {
-        id: String(msg.id || `msg-${Date.now()}-${Math.random()}`),
+        id: String(msg.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`),
         sender: msgSender,
         text: msgText,
         audioUrl: msgAudio,
-        audioDuration: msg.audioDuration || 0,
-        senderPhoto: msg.senderPhoto,
+        audioDuration: msg.audioDuration || msg.duration || 0,
+        senderPhoto: formatPhotoUrl(msg.senderPhoto),
         createdAt: msg.createdAt || new Date().toISOString(),
       };
 
@@ -203,27 +221,37 @@ export function ChatModal({
     };
   }, [socket, visible, currentRole]);
 
-  // 5. Envio de mensagem de texto
+  // 6. Envio de mensagem de texto
   const sendMessage = () => {
     if (!inputText.trim() || !socket) return;
 
     const text = inputText.trim();
-    const uniqueId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+    const uniqueId = `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
     const newMsg: ChatMessage = {
       id: uniqueId,
       sender: currentRole,
       text,
-      senderPhoto: currentUserPhoto,
+      senderPhoto: formatPhotoUrl(currentUserPhoto),
       createdAt: new Date().toISOString(),
     };
 
     setMessages((prev) => [...prev, newMsg]);
-    socket.emit('chat:send_message', { rideId, text, id: uniqueId, sender: currentRole });
+    
+    // Payload universal compatível com ambas as pontas do backend
+    socket.emit('chat:send_message', { 
+      rideId, 
+      text, 
+      message: text,
+      id: uniqueId, 
+      sender: currentRole,
+      senderRole: currentRole
+    });
+    
     setInputText('');
   };
 
-  // 6. Iniciar gravação de áudio com expo-audio
+  // 7. Iniciar gravação de áudio com expo-audio
   const startRecording = async () => {
     try {
       const permission = await AudioModule.requestRecordingPermissionsAsync();
@@ -237,14 +265,20 @@ export function ChatModal({
       setIsRecording(true);
       setRecordDuration(0);
 
+      if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+
+      let currentSec = 0;
       recordTimerRef.current = setInterval(() => {
-        setRecordDuration((prev) => {
-          if (prev >= 9) {
-            stopAndSendRecording(10);
-            return 10;
+        currentSec += 1;
+        setRecordDuration(currentSec);
+
+        if (currentSec >= 10) {
+          if (recordTimerRef.current) {
+            clearInterval(recordTimerRef.current);
+            recordTimerRef.current = null;
           }
-          return prev + 1;
-        });
+          stopAndSendRecording(10);
+        }
       }, 1000);
 
     } catch (err) {
@@ -253,7 +287,7 @@ export function ChatModal({
     }
   };
 
-  // 7. Parar e enviar gravação de áudio em Base64
+  // 8. Parar e enviar gravação de áudio em Base64
   const stopAndSendRecording = async (finalDuration?: number) => {
     if (recordTimerRef.current) {
       clearInterval(recordTimerRef.current);
@@ -268,9 +302,8 @@ export function ChatModal({
       if (!uri) return;
 
       const durationSec = finalDuration || recordDuration || 1;
-      const uniqueId = `audio-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+      const uniqueId = `audio-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
-      // Codifica arquivo de áudio para Base64 Data URI
       let audioPayload = uri;
       try {
         const base64Audio = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
@@ -284,22 +317,24 @@ export function ChatModal({
         sender: currentRole,
         audioUrl: audioPayload,
         audioDuration: durationSec,
-        senderPhoto: currentUserPhoto,
+        senderPhoto: formatPhotoUrl(currentUserPhoto),
         createdAt: new Date().toISOString(),
       };
 
       setMessages((prev) => [...prev, newMsg]);
 
-      // Substitua o trecho do socket.emit no stopAndSendRecording do ChatModal.tsx:
-socket.emit('chat:send_message', { 
-  rideId, 
-  audioUrl: audioPayload, 
-  audioDuration: durationSec, 
-  id: uniqueId,
-  sender: currentRole,
-  senderRole: currentRole,
-  text: ''
-});
+      socket.emit('chat:send_message', { 
+        rideId, 
+        audioUrl: audioPayload,
+        audio: audioPayload, 
+        audioDuration: durationSec, 
+        duration: durationSec,
+        id: uniqueId,
+        sender: currentRole,
+        senderRole: currentRole,
+        text: '',
+        message: ''
+      });
 
       setRecordDuration(0);
     } catch (error) {
@@ -308,7 +343,7 @@ socket.emit('chat:send_message', {
     }
   };
 
-  // 8. Cancelar gravação
+  // 9. Cancelar gravação
   const cancelRecording = async () => {
     if (recordTimerRef.current) {
       clearInterval(recordTimerRef.current);
@@ -321,7 +356,7 @@ socket.emit('chat:send_message', {
     setRecordDuration(0);
   };
 
-  // 9. Reproduzir ou Pausar Mensagem de Voz (expo-audio)
+  // 10. Reproduzir ou Pausar Mensagem de Voz
   const togglePlayAudio = async (msgId: string, audioUrl?: string | null) => {
     if (!audioUrl) return;
 
@@ -356,8 +391,9 @@ socket.emit('chat:send_message', {
   };
  
   const renderAvatar = (photoUrl?: string | null) => {
-    if (photoUrl) {
-      return <Image source={{ uri: photoUrl }} style={styles.avatarImage} />;
+    const formatted = formatPhotoUrl(photoUrl);
+    if (formatted) {
+      return <Image source={{ uri: formatted }} style={styles.avatarImage} />;
     }
     return (
       <View style={styles.avatarPlaceholder}>
@@ -405,7 +441,7 @@ socket.emit('chat:send_message', {
           <FlatList
             ref={flatListRef}
             data={messages}
-            keyExtractor={(item, index) => item.id || String(index)}
+            keyExtractor={(item, index) => item.id ? `${item.id}-${index}` : `msg-${index}`}
             contentContainerStyle={styles.messageList}
             keyboardShouldPersistTaps="handled"
             onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
@@ -458,7 +494,7 @@ socket.emit('chat:send_message', {
                     )}
                   </View>
 
-                  {isMe && renderAvatar(currentUserPhoto)}
+                  {isMe && renderAvatar(item.senderPhoto || currentUserPhoto)}
                 </View>
               );
             }}
@@ -529,10 +565,10 @@ socket.emit('chat:send_message', {
 const styles = StyleSheet.create({
   chatOverlay: {
     flex: 1,
-    justifyContent: 'flex-end',
+    justify: 'flex-end',
   },
   backdrop: {
-    ...StyleSheet.absoluteFill,
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(15, 23, 42, 0.4)', 
   },
   chatContainer: {
@@ -675,7 +711,7 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 24,
     alignItems: 'center',
-    justifyContent: 'center',
+    justify: 'center',
   },
   micButton: {
     backgroundColor: '#EF4444',
@@ -683,7 +719,7 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 24,
     alignItems: 'center',
-    justifyContent: 'center',
+    justify: 'center',
   },
   sendIcon: {
     marginLeft: 2, 
@@ -712,7 +748,7 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justify: 'space-between',
     backgroundColor: '#FEF2F2',
     borderWidth: 1,
     borderColor: '#FCA5A5',
@@ -745,6 +781,6 @@ const styles = StyleSheet.create({
     height: 36,
     borderRadius: 18,
     alignItems: 'center',
-    justifyContent: 'center',
+    justify: 'center',
   },
 });

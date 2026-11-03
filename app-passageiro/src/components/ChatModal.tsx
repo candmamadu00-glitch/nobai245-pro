@@ -34,6 +34,16 @@ interface ChatModalProps {
   otherUserPhoto?: string | null;
 }
 
+const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com').replace(/\/api\/?$/, '');
+
+const formatPhotoUrl = (path?: string | null) => {
+  if (!path || typeof path !== 'string') return null;
+  if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('data:')) return path;
+  const cleanBase = API_URL.replace(/\/$/, '');
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  return `${cleanBase}${cleanPath}`;
+};
+
 const formatTime = (isoString?: string) => {
   if (!isoString) return '';
   try {
@@ -72,16 +82,23 @@ export function ChatModal({
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activePlayerRef = useRef<any>(null);
 
-  // Key de storage por viagem para manter persistência
   const storageKey = `@bai245:chat_${rideId}`;
 
-  // 💾 Salva a lista de mensagens no AsyncStorage sempre que for atualizada
+  // 1. Limpa o chat ao alternar ID da viagem
+  useEffect(() => {
+    if (!rideId) {
+      setMessages([]);
+    }
+  }, [rideId]);
+
+  // 2. Persiste mensagens localmente
   useEffect(() => {
     if (messages.length > 0 && rideId) {
       AsyncStorage.setItem(storageKey, JSON.stringify(messages)).catch(() => {});
     }
   }, [messages, rideId, storageKey]);
 
+  // 3. Limpeza ao desmontar
   useEffect(() => {
     return () => {
       if (activePlayerRef.current) {
@@ -93,10 +110,9 @@ export function ChatModal({
     };
   }, []);
 
-  // 🔄 Carrega mensagens do Cache Local primeiro e depois da API
+  // 4. Carrega do Cache e Histórico da API
   useEffect(() => {
     if (visible && rideId) {
-      // 1. Carrega do armazenamento local (restaura se fechar a janela)
       AsyncStorage.getItem(storageKey).then((cached) => {
         if (cached) {
           try {
@@ -108,7 +124,6 @@ export function ChatModal({
         }
       });
 
-      // 2. Sincroniza com a API do Backend
       api.get(`/rides/${rideId}/chat`)
         .then(response => {
           const data = response?.data;
@@ -122,16 +137,16 @@ export function ChatModal({
 
           if (rawList.length > 0) {
             const history: ChatMessage[] = rawList.map((msg: any) => ({
-              id: String(msg.id || Math.random()),
-              sender: (msg.senderType === 'PASSENGER' || msg.sender === 'passenger') ? 'passenger' : 'driver',
+              id: String(msg.id || `hist-${Math.random().toString(36).substring(2, 7)}`),
+              sender: (msg.senderType === 'PASSENGER' || msg.sender === 'passenger' || msg.senderRole === 'passenger') ? 'passenger' : 'driver',
               text: msg.message || msg.text || '',
               audioUrl: msg.audioUrl || msg.audio || null,
-              audioDuration: msg.audioDuration || 0,
+              audioDuration: msg.audioDuration || msg.duration || 0,
+              senderPhoto: formatPhotoUrl(msg.senderPhoto || msg.userPhoto),
               createdAt: msg.createdAt || new Date().toISOString(),
             }));
 
             setMessages((prev) => {
-              // Unifica o histórico da API sem duplicar os itens locais
               const map = new Map<string, ChatMessage>();
               [...prev, ...history].forEach(m => map.set(m.id, m));
               return Array.from(map.values());
@@ -139,7 +154,7 @@ export function ChatModal({
           }
         })
         .catch(error => {
-          console.warn("⚠️ [CHAT] Erro ao carregar histórico da API:", error?.response?.data || error?.message);
+          console.warn("⚠️ [CHAT PASSAGEIRO] Erro ao carregar histórico da API:", error?.response?.data || error?.message);
         });
     } else if (!visible) {
       if (activePlayerRef.current) {
@@ -150,24 +165,24 @@ export function ChatModal({
     }
   }, [visible, rideId, storageKey]);
 
-  // ⚡ Socket Listeners
+  // 5. Socket Listeners com Antiduplicação
   useEffect(() => {
     if (!socket || !visible) return;
 
     const handleReceiveMessage = (msg: any) => {
       if (!msg) return;
 
-      const msgSender = (msg.sender === 'passenger' || msg.senderType === 'PASSENGER') ? 'passenger' : 'driver';
+      const msgSender = (msg.sender === 'passenger' || msg.senderType === 'PASSENGER' || msg.senderRole === 'passenger') ? 'passenger' : 'driver';
       const msgText = msg.text || msg.message || '';
       const msgAudio = msg.audioUrl || msg.audio || null;
 
       const formattedMsg: ChatMessage = {
-        id: String(msg.id || `msg-${Date.now()}-${Math.random()}`),
+        id: String(msg.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`),
         sender: msgSender,
         text: msgText,
         audioUrl: msgAudio,
-        audioDuration: msg.audioDuration || 0,
-        senderPhoto: msg.senderPhoto,
+        audioDuration: msg.audioDuration || msg.duration || 0,
+        senderPhoto: formatPhotoUrl(msg.senderPhoto),
         createdAt: msg.createdAt || new Date().toISOString(),
       };
 
@@ -201,25 +216,36 @@ export function ChatModal({
     };
   }, [socket, visible, currentRole]);
 
+  // 6. Envio de Texto
   const sendMessage = () => {
     if (!inputText.trim() || !socket) return;
 
     const text = inputText.trim();
-    const uniqueId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+    const uniqueId = `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
     const newMsg: ChatMessage = {
       id: uniqueId,
       sender: currentRole,
       text,
-      senderPhoto: currentUserPhoto,
+      senderPhoto: formatPhotoUrl(currentUserPhoto),
       createdAt: new Date().toISOString(),
     };
 
     setMessages((prev) => [...prev, newMsg]);
-    socket.emit('chat:send_message', { rideId, text, id: uniqueId, sender: currentRole });
+
+    socket.emit('chat:send_message', { 
+      rideId, 
+      text, 
+      message: text,
+      id: uniqueId, 
+      sender: currentRole,
+      senderRole: currentRole
+    });
+
     setInputText('');
   };
 
+  // 7. Iniciar Gravação de Áudio
   const startRecording = async () => {
     try {
       const permission = await AudioModule.requestRecordingPermissionsAsync();
@@ -233,14 +259,20 @@ export function ChatModal({
       setIsRecording(true);
       setRecordDuration(0);
 
+      if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+
+      let currentSec = 0;
       recordTimerRef.current = setInterval(() => {
-        setRecordDuration((prev) => {
-          if (prev >= 9) {
-            stopAndSendRecording(10);
-            return 10;
+        currentSec += 1;
+        setRecordDuration(currentSec);
+
+        if (currentSec >= 10) {
+          if (recordTimerRef.current) {
+            clearInterval(recordTimerRef.current);
+            recordTimerRef.current = null;
           }
-          return prev + 1;
-        });
+          stopAndSendRecording(10);
+        }
       }, 1000);
 
     } catch (err) {
@@ -249,6 +281,7 @@ export function ChatModal({
     }
   };
 
+  // 8. Finalizar e Enviar Áudio Base64
   const stopAndSendRecording = async (finalDuration?: number) => {
     if (recordTimerRef.current) {
       clearInterval(recordTimerRef.current);
@@ -263,9 +296,8 @@ export function ChatModal({
       if (!uri) return;
 
       const durationSec = finalDuration || recordDuration || 1;
-      const uniqueId = `audio-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+      const uniqueId = `audio-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
-      // 🎙️ Converte o arquivo de áudio para Base64 para enviar via Socket/API
       let audioPayload = uri;
       try {
         const base64Audio = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
@@ -279,7 +311,7 @@ export function ChatModal({
         sender: currentRole,
         audioUrl: audioPayload,
         audioDuration: durationSec,
-        senderPhoto: currentUserPhoto,
+        senderPhoto: formatPhotoUrl(currentUserPhoto),
         createdAt: new Date().toISOString(),
       };
 
@@ -287,10 +319,15 @@ export function ChatModal({
 
       socket.emit('chat:send_message', { 
         rideId, 
-        audioUrl: audioPayload, 
+        audioUrl: audioPayload,
+        audio: audioPayload, 
         audioDuration: durationSec, 
+        duration: durationSec,
         id: uniqueId,
-        sender: currentRole
+        sender: currentRole,
+        senderRole: currentRole,
+        text: '',
+        message: ''
       });
 
       setRecordDuration(0);
@@ -300,6 +337,7 @@ export function ChatModal({
     }
   };
 
+  // 9. Cancelar Gravação
   const cancelRecording = async () => {
     if (recordTimerRef.current) {
       clearInterval(recordTimerRef.current);
@@ -312,6 +350,7 @@ export function ChatModal({
     setRecordDuration(0);
   };
 
+  // 10. Player de Áudio
   const togglePlayAudio = async (msgId: string, audioUrl?: string | null) => {
     if (!audioUrl) return;
 
@@ -346,8 +385,9 @@ export function ChatModal({
   };
 
   const renderAvatar = (photoUrl?: string | null) => {
-    if (photoUrl) {
-      return <Image source={{ uri: photoUrl }} style={styles.avatarImage} />;
+    const formatted = formatPhotoUrl(photoUrl);
+    if (formatted) {
+      return <Image source={{ uri: formatted }} style={styles.avatarImage} />;
     }
     return (
       <View style={styles.avatarPlaceholder}>
@@ -395,7 +435,7 @@ export function ChatModal({
           <FlatList
             ref={flatListRef}
             data={messages}
-            keyExtractor={(item, index) => item.id || String(index)}
+            keyExtractor={(item, index) => item.id ? `${item.id}-${index}` : `msg-${index}`}
             contentContainerStyle={styles.messageList}
             keyboardShouldPersistTaps="handled"
             onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
@@ -444,13 +484,13 @@ export function ChatModal({
                     )}
                   </View>
 
-                  {isMe && renderAvatar(currentUserPhoto)}
+                  {isMe && renderAvatar(item.senderPhoto || currentUserPhoto)}
                 </View>
               );
             }}
           />
 
-          {/* INPUT + BOTÃO DE ÁUDIO/MIC */}
+          {/* INPUT + CONTROLE DE ÁUDIO */}
           <View style={[styles.chatInputContainer, { paddingBottom: dynamicBottomPadding }]}>
             {isRecording ? (
               <View style={styles.recordingBar}>
@@ -516,7 +556,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   backdrop: {
-    ...StyleSheet.absoluteFill,
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(15, 23, 42, 0.6)', 
   },
   chatContainer: {
@@ -655,7 +695,7 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 24,
     alignItems: 'center',
-    justifyContent: 'center',
+    justify: 'center',
   },
   micButton: {
     backgroundColor: '#EAB308',
@@ -663,7 +703,7 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 24,
     alignItems: 'center',
-    justifyContent: 'center',
+    justify: 'center',
   },
   sendIcon: {
     marginLeft: 2, 
@@ -692,7 +732,7 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justify: 'space-between',
     backgroundColor: '#450A0A',
     borderWidth: 1,
     borderColor: '#991B1B',
@@ -725,6 +765,6 @@ const styles = StyleSheet.create({
     height: 36,
     borderRadius: 18,
     alignItems: 'center',
-    justifyContent: 'center',
+    justify: 'center',
   },
 });

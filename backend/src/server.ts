@@ -30,6 +30,7 @@ import {
 import { createRideAndInitiateEscrow, submitRatingLogic } from './services/rideService';
 import { startCronJobs } from './jobs/reconciliationJob';
 import locationRoutes from './routes/location.routes';
+
 declare global {
   namespace Express {
     interface Request {
@@ -143,6 +144,7 @@ app.use('/api/drivers', driverRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/rides', rideRoutes);
 app.use('/api', locationRoutes);
+
 app.get('/health', (_req, res) => {
   res.json({
     status: 'online',
@@ -200,7 +202,7 @@ export const safeRedis = {
   async zRem(key: string, member: string) {
     if (!redisClient.isOpen) return;
     try { await redisClient.zRem(key, member); }
-    catch (e) { console.error(`⚠️ [REDIS ZREM ERR] Key: ${key}`, e); }
+    catch (e) { console.error(`⚠️ [REDIS ZREM ERR] Key: ${key}`, e); return; }
   }
 };
 
@@ -229,8 +231,8 @@ app.get('/api/passengers/drivers/nearby', async (req: Request, res: Response) =>
         if (pos && pos[0]) {
           return {
             id: driverId,
-            lng: pos[0].longitude,
-            lat: pos[0].latitude,
+            lng: Number(pos[0].longitude),
+            lat: Number(pos[0].latitude),
           };
         }
         return null;
@@ -279,6 +281,7 @@ app.get('/track/:rideId/data', async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Erro ao buscar dados do rastreamento' });
   }
 });
+
 // =============================================================================
 // 🌐 ROTA PÚBLICA DE RASTREAMENTO WEB DA VIAGEM
 // =============================================================================
@@ -588,7 +591,7 @@ export const getIo = () => {
 
 const disconnectTimers = new Map<string, NodeJS.Timeout>();
 
-io.use((socket: any, next: any) =>{
+io.use((socket: any, next: any) => {
   const token = socket.handshake.auth?.token;
   
   if (!token) return next(new Error('Acesso negado. Token não fornecido.'));
@@ -690,39 +693,70 @@ io.on('connection', (socket: any) => {
     }
   });
 
- // ARQUIVO: src/server.ts (Dentro do io.on('connection', (socket) => { ... }))
+  // 📌 ATUALIZAÇÃO DO DEVICE TOKEN DO PASSAGEIRO
+  handleSocketEvent(socket, 'passenger:update_device_token', async (data) => {
+    const { deviceToken } = data || {};
+    const userId = socket.data.user?.id;
 
-// 📌 ATUALIZAÇÃO DO DEVICE TOKEN DO PASSAGEIRO
-handleSocketEvent(socket, 'passenger:update_device_token', async (data) => {
-  const { deviceToken } = data || {};
-  const userId = socket.data.user?.id;
+    if (userId && deviceToken && typeof deviceToken === 'string') {
+      await prisma.passenger.update({
+        where: { id: userId },
+        data: { deviceToken }
+      }).catch(err => console.error('⚠️ [PUSH TOKEN ERR] Falha ao atualizar token do passageiro:', err?.message));
+      console.log(`📱 [PUSH TOKEN] deviceToken atualizado para o Passageiro ID: ${userId}`);
+    }
+  });
 
-  if (userId && deviceToken && typeof deviceToken === 'string') {
-    await prisma.passenger.update({
-      where: { id: userId },
-      data: { deviceToken }
-    }).catch(err => console.error('⚠️ [PUSH TOKEN ERR] Falha ao atualizar token do passageiro:', err?.message));
-    console.log(`📱 [PUSH TOKEN] deviceToken atualizado para o Passageiro ID: ${userId}`);
-  }
-});
+  // 📌 ATUALIZAÇÃO DO DEVICE TOKEN DO MOTORISTA
+  handleSocketEvent(socket, 'driver:update_device_token', async (data) => {
+    const { deviceToken } = data || {};
+    const userId = socket.data.user?.id;
 
-// 📌 REINGRESSO GARANTIDO EM SALAS DA CORRIDA E DO PASSAGEIRO
-handleSocketEvent(socket, 'passenger:rejoin_ride', async (data) => {
-  const { rideId } = data || {};
-  const userId = socket.data.user?.id;
+    if (userId && deviceToken && typeof deviceToken === 'string') {
+      await prisma.driver.update({
+        where: { id: userId },
+        data: { deviceToken }
+      }).catch(err => console.error('⚠️ [PUSH TOKEN ERR] Falha ao atualizar token do motorista:', err?.message));
+      console.log(`📱 [PUSH TOKEN] deviceToken atualizado para o Motorista ID: ${userId}`);
+    }
+  });
 
-  if (userId) {
-    socket.join(userId);
-    socket.join(`user_${userId}`);
-    socket.join(`passenger_${userId}`);
-    socket.join(`passenger:${userId}`);
-  }
+  // 📌 REINGRESSO GARANTIDO EM SALAS DA CORRIDA E DO PASSAGEIRO
+  handleSocketEvent(socket, 'passenger:rejoin_ride', async (data) => {
+    const { rideId } = data || {};
+    const userId = socket.data.user?.id;
 
-  if (rideId && isUuid(rideId)) {
-    socket.join(rideId);
-    console.log(`📡 [SOCKET ROOM] Passageiro ${userId} reingressou na sala da corrida: ${rideId}`);
-  }
-});
+    if (userId) {
+      socket.join(userId);
+      socket.join(`user_${userId}`);
+      socket.join(`passenger_${userId}`);
+      socket.join(`passenger:${userId}`);
+    }
+
+    if (rideId && isUuid(rideId)) {
+      socket.join(rideId);
+      console.log(`📡 [SOCKET ROOM] Passageiro ${userId} reingressou na sala da corrida: ${rideId}`);
+    }
+  });
+
+  // 📌 REINGRESSO GARANTIDO EM SALAS DA CORRIDA DO MOTORISTA
+  handleSocketEvent(socket, 'driver:rejoin_ride', async (data) => {
+    const { rideId } = data || {};
+    const userId = socket.data.user?.id;
+
+    if (userId) {
+      socket.join(userId);
+      socket.join(`user_${userId}`);
+      socket.join(`driver_${userId}`);
+      socket.join(`driver:${userId}`);
+    }
+
+    if (rideId && isUuid(rideId)) {
+      socket.join(rideId);
+      console.log(`📡 [SOCKET ROOM] Motorista ${userId} reingressou na sala da corrida: ${rideId}`);
+    }
+  });
+
   socket.on('disconnect', () => {
     console.log(`[-] Cliente desconectado: ${socket.id} (ID: ${socket.data.user?.id})`);
 
@@ -778,11 +812,10 @@ handleSocketEvent(socket, 'passenger:rejoin_ride', async (data) => {
     
     console.log(`✅ [MOTORISTA OFFLINE CONCLUÍDO] Motorista ${driverId} removido do Redis e salas Socket.`);
   });
-
   // --- LOCAL INACESSÍVEL ---
   handleSocketEvent(socket, 'driver:alert_inaccessible_location', (data) => {
     const { rideId, passengerId } = data || {};
-    if (!rideId) return;
+    if (!rideId || !isUuid(rideId)) return;
 
     console.log(`📢 [LOCAL INACESSÍVEL] Motorista informou local inacessível. Corrida: ${rideId}, Passageiro: ${passengerId}`);
     
@@ -790,7 +823,8 @@ handleSocketEvent(socket, 'passenger:rejoin_ride', async (data) => {
       rideId,
       passengerId,
       `passenger_${passengerId}`,
-      `passenger:${passengerId}`
+      `passenger:${passengerId}`,
+      `user_${passengerId}`
     ].filter(Boolean);
 
     targetRooms.forEach(room => {
@@ -830,8 +864,8 @@ handleSocketEvent(socket, 'passenger:rejoin_ride', async (data) => {
       data: {
         rideId: rideId && isUuid(rideId) ? rideId : null,
         userType: userTypeEnum as any,
-        passengerId: !isDrv ? userId : null,
-        driverId: isDrv ? userId : null,
+        passengerId: !isDrv && userId ? userId : null,
+        driverId: isDrv && userId ? userId : null,
         lat: latNum,
         lng: lngNum,
         status: 'ACTIVE'
@@ -890,7 +924,7 @@ handleSocketEvent(socket, 'passenger:rejoin_ride', async (data) => {
     const currentBalance = Number(driver.walletBalance || 0);
 
     if (currentBalance < MIN_REQUIRED_BALANCE) {
-      console.warn(`🛑 [SALDO INSUFFICIENT] Driver ${driverId} tentou ficar online com ${currentBalance} XOF`);
+      console.warn(`🛑 [SALDO INSUFICIENTE] Driver ${driverId} tentou ficar online com ${currentBalance} XOF`);
 
       await prisma.driver.update({
         where: { id: driverId },
@@ -997,8 +1031,8 @@ handleSocketEvent(socket, 'passenger:rejoin_ride', async (data) => {
       return;
     }
 
-    const pLat = Number(rideData?.pickupLat);
-    const pLng = Number(rideData?.pickupLng);
+    const pLat = Number(rideData?.pickupLat || rideData?.originLat);
+    const pLng = Number(rideData?.pickupLng || rideData?.originLng);
     const dLat = Number(rideData?.destinationLat);
     const dLng = Number(rideData?.destinationLng);
 
@@ -1250,7 +1284,7 @@ handleSocketEvent(socket, 'passenger:rejoin_ride', async (data) => {
         });
       }
 
-      await (prisma as any).rideOffer.updateMany({
+      await (prisma as any).rideOffer?.updateMany({
         where: { rideId, driverId },
         data: { status: 'ACCEPTED' }
       }).catch(() => null);
@@ -1621,162 +1655,181 @@ handleSocketEvent(socket, 'passenger:rejoin_ride', async (data) => {
       socket.emit('error', { message: err.message || 'Erro ao cobrar passagem no Mobile Money.' });
     }
   });
+  // =============================================================================
+  // 💬 EVENTO DE CHAT UNIFICADO (TEXTO, ÁUDIO E PUSH NOTIFICATION)
+  // =============================================================================
+  handleSocketEvent(socket, 'chat:send_message', async (data) => {
+    try {
+      const { rideId, text, audioUrl, audioDuration, id } = data || {};
+      const senderRole = (data?.sender || data?.senderRole || 'passenger').toLowerCase();
 
- // =============================================================================
-// 💬 EVENTO DE CHAT UNIFICADO (TEXTO, ÁUDIO E PUSH NOTIFICATION)
-// =============================================================================
-handleSocketEvent(socket, 'chat:send_message', async (data) => {
-  try {
-    const { rideId, text, audioUrl, audioDuration, id } = data || {};
-    const senderRole = data?.sender || data?.senderRole || 'passenger';
+      if (!rideId || !isUuid(rideId)) return;
 
-    if (!rideId) return;
+      const ride = await prisma.ride.findUnique({
+        where: { id: rideId },
+        include: { driver: true, passenger: true }
+      });
 
-    const ride = await prisma.ride.findUnique({
-      where: { id: rideId },
-      include: { driver: true, passenger: true }
-    });
+      if (!ride) return;
 
-    if (!ride) return;
+      const messageText = text || (audioUrl ? '🎤 Mensagem de áudio' : '');
+      const senderTypeEnum = senderRole === 'driver' ? 'DRIVER' : 'PASSENGER';
+      const senderUserId = socket.data.user?.id || (senderRole === 'driver' ? ride.driverId : ride.passengerId);
 
-    const messagePayload = {
-      id: id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      rideId,
-      sender: senderRole,
-      senderType: senderRole === 'driver' ? 'DRIVER' : 'PASSENGER',
-      text: text || '',
-      message: text || '',
-      audioUrl: audioUrl || null,
-      audioDuration: audioDuration || 0,
-      createdAt: new Date().toISOString()
-    };
+      const messagePayload = {
+        id: id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        rideId,
+        sender: senderRole,
+        senderType: senderTypeEnum,
+        text: text || '',
+        message: text || '',
+        audioUrl: audioUrl || null,
+        audioDuration: audioDuration || 0,
+        createdAt: new Date().toISOString()
+      };
 
-    const targetRooms = [
-      rideId,
-      `ride_${rideId}`,
-      ride.passengerId,
-      `passenger_${ride.passengerId}`,
-      `passenger:${ride.passengerId}`,
-      ride.driverId,
-      `driver_${ride.driverId}`,
-      `driver:${ride.driverId}`
-    ].filter(Boolean) as string[];
+      // 💾 Persistência assíncrona no banco de dados (Modelo RideChatMessage - Schema V3.0)
+      if (senderUserId) {
+        prisma.rideChatMessage.create({
+          data: {
+            rideId,
+            senderId: senderUserId,
+            senderType: senderTypeEnum,
+            message: messageText
+          }
+        }).catch(err => console.error('❌ [CHAT DB ERR] Falha ao persistir mensagem no banco:', err?.message));
+      }
 
-    targetRooms.forEach(room => {
-      io.to(room).emit('chat:receive_message', messagePayload);
-      io.to(room).emit('chat:message', messagePayload);
-    });
+      // 📣 Broadcast de mensagens para todas as salas conectadas
+      const targetRooms = [
+        rideId,
+        `ride_${rideId}`,
+        ride.passengerId,
+        `passenger_${ride.passengerId}`,
+        `passenger:${ride.passengerId}`,
+        ride.driverId,
+        `driver_${ride.driverId}`,
+        `driver:${ride.driverId}`
+      ].filter(Boolean) as string[];
 
-    // 🛡️ CORREÇÃO: Usa apenas 'deviceToken' (atributo oficial do modelo Prisma)
-    const recipientToken = senderRole === 'driver'
-      ? ride.passenger?.deviceToken
-      : ride.driver?.deviceToken;
+      targetRooms.forEach(room => {
+        io.to(room).emit('chat:receive_message', messagePayload);
+        io.to(room).emit('chat:message', messagePayload);
+      });
 
-    const senderName = senderRole === 'driver'
-      ? (ride.driver?.fullName || 'Motorista')
-      : (ride.passenger?.fullName || 'Passageiro');
+      // 📱 Envio de Notificação Push
+      const recipientToken = senderRole === 'driver'
+        ? ride.passenger?.deviceToken
+        : ride.driver?.deviceToken;
 
-    const notificationBody = audioUrl ? '🎤 Mensagem de áudio recebida' : (text || 'Nova mensagem no chat');
+      const senderName = senderRole === 'driver'
+        ? (ride.driver?.fullName || 'Motorista')
+        : (ride.passenger?.fullName || 'Passageiro');
 
-    if (recipientToken) {
-      sendPushNotification(
-        recipientToken,
-        `💬 ${senderName}`,
-        notificationBody,
-        { 
-          rideId, 
-          type: 'CHAT_MESSAGE', 
-          channelId: 'chat-messages' 
-        },
-        PUSH_CHANNELS.RIDE_UPDATE
-      ).catch(err => console.error('❌ Erro ao enviar Push de Chat:', err));
+      const notificationBody = audioUrl ? '🎤 Mensagem de áudio recebida' : (text || 'Nova mensagem no chat');
+
+      if (recipientToken) {
+        sendPushNotification(
+          recipientToken,
+          `💬 ${senderName}`,
+          notificationBody,
+          { 
+            rideId, 
+            type: 'CHAT_MESSAGE', 
+            channelId: 'chat-messages' 
+          },
+          PUSH_CHANNELS.RIDE_UPDATE
+        ).catch(err => console.error('❌ Erro ao enviar Push de Chat:', err));
+      }
+    } catch (err) {
+      console.error('❌ Erro no processamento da mensagem do chat:', err);
     }
-  } catch (err) {
-    console.error('❌ Erro no processamento da mensagem do chat:', err);
-  }
-});
+  });
 
-// =============================================================================
-// 🛑 CANCELAMENTO DE CORRIDA SINCRONIZADO
-// =============================================================================
-handleSocketEvent(socket, 'ride:cancel', async (data) => {
-  if (isSocketRateLimited(socket, 'ride:cancel', 2000, 2)) return;
-  const { rideId, userId, userType, reason } = data || {};
+  // =============================================================================
+  // 🛑 CANCELAMENTO DE CORRIDA SINCRONIZADO
+  // =============================================================================
+  handleSocketEvent(socket, 'ride:cancel', async (data) => {
+    if (isSocketRateLimited(socket, 'ride:cancel', 2000, 2)) return;
+    const { rideId, userId, userType, reason } = data || {};
 
-  if (!isUuid(rideId) || !isAuthorizedUser(socket, userId)) {
-    socket.emit('error', { message: 'Ação não autorizada.' });
-    return;
-  }
+    const currentUserId = userId || socket.data.user?.id;
 
-  try {
-    const rideToCancel = await prisma.ride.findUnique({ 
-      where: { id: rideId },
-      include: { passenger: true, driver: true }
-    });
-
-    if (!rideToCancel) return;
-
-    const previousStatus = rideToCancel.status;
-    const cleanReason = typeof reason === 'string' ? reason.trim().slice(0, 250) : 'Corrida cancelada';
-    const normalizedUserType = userType === 'DRIVER' ? 'DRIVER' : 'PASSENGER';
-
-    const result = await cancelRideLogic(rideId, userId, normalizedUserType, cleanReason);
-
-    await safeRedis.del(`active_ride:${rideId}`);
-    if (rideToCancel.driverId) {
-      await safeRedis.del(`driver_active_ride:${rideToCancel.driverId}`);
-    }
-
-    const cancelPayload = {
-      rideId,
-      status: 'CANCELLED',
-      cancelledBy: normalizedUserType,
-      reason: cleanReason,
-      appliedPenalty: Boolean(result?.appliedPenalty),
-      penaltyAmount: Number(result?.penaltyAmount || 0)
-    };
-
-    // Broadcast amplo para garantir sincronização instantânea em ambos os apps
-    const targetRooms = [
-      rideId,
-      `ride_${rideId}`,
-      rideToCancel.passengerId,
-      `passenger_${rideToCancel.passengerId}`,
-      `passenger:${rideToCancel.passengerId}`,
-      rideToCancel.driverId,
-      `driver_${rideToCancel.driverId}`,
-      `driver:${rideToCancel.driverId}`
-    ].filter(Boolean) as string[];
-
-    targetRooms.forEach(room => {
-      io.to(room).emit('ride:cancelled', cancelPayload);
-    });
-
-    if (previousStatus === 'SEARCHING') {
-      io.to('available_drivers').emit('ride:cancelled_by_passenger', { rideId });
+    if (!isUuid(rideId) || !isAuthorizedUser(socket, currentUserId)) {
+      socket.emit('error', { message: 'Ação não autorizada.' });
+      return;
     }
 
-    // 🛡️ CORREÇÃO: Usa apenas 'deviceToken' (atributo oficial do modelo Prisma)
-    const recipientToken = normalizedUserType === 'DRIVER'
-      ? rideToCancel.passenger?.deviceToken
-      : rideToCancel.driver?.deviceToken;
+    try {
+      const rideToCancel = await prisma.ride.findUnique({ 
+        where: { id: rideId },
+        include: { passenger: true, driver: true }
+      });
 
-    if (recipientToken) {
-      sendPushNotification(
-        recipientToken,
-        '⚠️ Corrida Cancelada',
-        normalizedUserType === 'DRIVER' ? 'O motorista cancelou a viagem.' : 'O passageiro cancelou a viagem.',
-        { rideId, type: 'RIDE_CANCELLED' },
-        PUSH_CHANNELS.RIDE_UPDATE
-      ).catch(() => {});
+      if (!rideToCancel) return;
+
+      const previousStatus = rideToCancel.status;
+      const cleanReason = typeof reason === 'string' ? reason.trim().slice(0, 250) : 'Corrida cancelada';
+      const normalizedUserType = (userType || socket.data.user?.role || socket.data.user?.userType) === 'DRIVER' ? 'DRIVER' : 'PASSENGER';
+
+      const result = await cancelRideLogic(rideId, currentUserId, normalizedUserType, cleanReason);
+
+      await safeRedis.del(`active_ride:${rideId}`);
+      if (rideToCancel.driverId) {
+        await safeRedis.del(`driver_active_ride:${rideToCancel.driverId}`);
+      }
+
+      const cancelPayload = {
+        rideId,
+        status: 'CANCELLED',
+        cancelledBy: normalizedUserType,
+        reason: cleanReason,
+        appliedPenalty: Boolean(result?.appliedPenalty),
+        penaltyAmount: Number(result?.penaltyAmount || 0)
+      };
+
+      // Broadcast amplo para garantir sincronização instantânea em ambos os apps
+      const targetRooms = [
+        rideId,
+        `ride_${rideId}`,
+        rideToCancel.passengerId,
+        `passenger_${rideToCancel.passengerId}`,
+        `passenger:${rideToCancel.passengerId}`,
+        rideToCancel.driverId,
+        `driver_${rideToCancel.driverId}`,
+        `driver:${rideToCancel.driverId}`
+      ].filter(Boolean) as string[];
+
+      targetRooms.forEach(room => {
+        io.to(room).emit('ride:cancelled', cancelPayload);
+      });
+
+      if (previousStatus === 'SEARCHING') {
+        io.to('available_drivers').emit('ride:cancelled_by_passenger', { rideId });
+      }
+
+      // 📱 Notificação Push para a outra parte
+      const recipientToken = normalizedUserType === 'DRIVER'
+        ? rideToCancel.passenger?.deviceToken
+        : rideToCancel.driver?.deviceToken;
+
+      if (recipientToken) {
+        sendPushNotification(
+          recipientToken,
+          '⚠️ Corrida Cancelada',
+          normalizedUserType === 'DRIVER' ? 'O motorista cancelou a viagem.' : 'O passageiro cancelou a viagem.',
+          { rideId, type: 'RIDE_CANCELLED' },
+          PUSH_CHANNELS.RIDE_UPDATE
+        ).catch(() => {});
+      }
+
+    } catch (err: any) {
+      console.error(`❌ [ERRO CANCELAMENTO CORRIDA] ID: ${rideId}:`, err?.message || err);
+      socket.emit('error', { message: err.message || 'Erro ao cancelar corrida.' });
     }
+  });
 
-  } catch (err: any) {
-    console.error(`❌ [ERRO CANCELAMENTO CORRIDA] ID: ${rideId}:`, err?.message || err);
-    socket.emit('error', { message: err.message || 'Erro ao cancelar corrida.' });
-  }
-});
-});
+}); // 👈 Fechamento do io.on('connection', (socket) => { ... })
 
 // -----------------------------------------------------------------------------
 // 7. ENCERRAMENTO GRACIOSO DO SERVIDOR (SHUTDOWN)
@@ -1822,6 +1875,7 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
   console.error('💥 [ALERTA CRÍTICO] PROMISE REJEITADA:', reason);
 });
+
 // -----------------------------------------------------------------------------
 // 8. BOOT DO SERVIDOR
 // -----------------------------------------------------------------------------
