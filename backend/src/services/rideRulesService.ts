@@ -10,6 +10,7 @@ import {
 } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { payoutToDriverMobileMoney } from './mobileMoneyService';
+import { enqueuePayoutJob, enqueueRefundJob } from './payoutQueue';
 
 const CANCELLATION_FEE_XOF = 500;
 const FREE_CANCELLATION_MINUTES = 2;
@@ -116,18 +117,23 @@ export async function createRideAndInitiateEscrow(
     originAddress?: string;
     destinationAddress?: string;
     stops?: Prisma.InputJsonValue;
+    estimatedPrice?: number;
+    estimatedDistance?: number;
     customPriceXof?: number;
     idempotencyKey?: string;
   }
 ) {
-  const { distanceKm, durationMin } = await calculateRouteAndDistance(
+  const calcRoute = await calculateRouteAndDistance(
     data.originLat,
     data.originLng,
     data.destinationLat,
     data.destinationLng
   );
 
-  let priceXof = data.customPriceXof;
+  const distanceKm = data.estimatedDistance && data.estimatedDistance > 0 ? data.estimatedDistance : calcRoute.distanceKm;
+  const durationMin = calcRoute.durationMin;
+
+  let priceXof = data.customPriceXof || data.estimatedPrice;
   if (!priceXof || priceXof <= 0) {
     priceXof = await calculateRidePrice(
       distanceKm,
@@ -172,7 +178,7 @@ export async function createRideAndInitiateEscrow(
       },
     });
 
-    return { ride, transaction };
+    return { ride, transaction, pendingVerification: false };
   });
 }
 
@@ -277,7 +283,12 @@ export async function startRideLogic(rideId: string, driverId: string, otpInput:
   });
 }
 
-export async function finalizeRideAndCharge(rideId: string, finalLat: number, finalLng: number) {
+export async function finalizeRideAndCharge(
+  rideId: string, 
+  finalLat: number, 
+  finalLng: number,
+  _finishOtpInput?: string
+) {
   if (!isValidCoordinate(finalLat, finalLng)) {
     throw new Error('INVALID_COORDINATES: Coordenadas finais de destino inválidas.');
   }
@@ -391,26 +402,25 @@ export async function finalizeRideAndCharge(rideId: string, finalLat: number, fi
     };
   });
 
-  if (ride.paymentMethod !== PaymentMethod.CASH && ride.driver.phone) {
-    const payoutResult: any = await payoutToDriverMobileMoney({
+  const driverPhone = ride.driver?.phone || '';
+  if (ride.paymentMethod !== PaymentMethod.CASH && driverPhone) {
+    enqueuePayoutJob({
+      transactionId: result.payoutTxId,
       rideId: ride.id,
       driverId: ride.driverId!,
-      payoutId: result.payoutTxId,
-      amount: driverEarnings,
-      phone: ride.driver.phone,
-      provider: ride.paymentMethod,
-    }).catch((err) => {
-      console.error('❌ [REPASSE ERRO]:', err?.message || err);
-      return { success: false, details: err?.message, providerRef: undefined };
+      amountXOF: driverEarnings,
+      phone: driverPhone,
+      provider: (ride.paymentMethod || 'ORANGE_MONEY').toString().toUpperCase().includes('MTN') ? 'MTN_MOMO' : 'ORANGE_MONEY',
+    }).catch(() => {
+      payoutToDriverMobileMoney({
+        rideId: ride.id,
+        driverId: ride.driverId!,
+        payoutId: result.payoutTxId,
+        amount: driverEarnings,
+        phone: driverPhone,
+        provider: ride.paymentMethod,
+      }).catch(err => console.error('❌ [REPASSE ERRO]:', err?.message || err));
     });
-
-    if (payoutResult?.success && payoutResult?.providerRef) {
-      await prisma.transaction.update({
-        where: { id: result.payoutTxId },
-        data: { status: TransactionStatus.COMPLETED, externalRef: payoutResult.providerRef },
-      });
-      console.log(`💸 [REPASSE AUTOMÁTICO REALIZADO]: ${driverEarnings} XOF enviados para ${ride.driver.phone}`);
-    }
   }
 
   return {
@@ -462,7 +472,9 @@ export async function cancelRideLogic(
   const platformFee = Math.max(0, penaltyAmount - driverCompensation);
   const refundToPassenger = Math.max(0, ridePrice - penaltyAmount);
 
-  return await prisma.$transaction(async (tx) => {
+  let refundTxId: string | null = null;
+
+  const result = await prisma.$transaction(async (tx) => {
     const updatedRide = await tx.ride.updateMany({
       where: { id: rideId, status: { notIn: ['COMPLETED', 'CANCELLED'] } },
       data: {
@@ -510,7 +522,7 @@ export async function cancelRideLogic(
       });
 
       if (refundToPassenger > 0) {
-        await tx.transaction.create({
+        const refTx = await tx.transaction.create({
           data: {
             passengerId: ride.passengerId,
             rideId: ride.id,
@@ -522,6 +534,7 @@ export async function cancelRideLogic(
             description: 'Estorno do Escrow de corrida cancelada',
           },
         });
+        refundTxId = refTx.id;
       }
 
       if (applyPenalty && ride.driverId && driverCompensation > 0) {
@@ -553,6 +566,78 @@ export async function cancelRideLogic(
       penaltyAmount,
       refundAmount: refundToPassenger,
       driverCompensation,
+      refundTxId,
     };
   });
+
+  const passengerPhone = ride.passenger?.phone || '';
+  if (result.refundTxId && passengerPhone && refundToPassenger > 0) {
+    enqueueRefundJob({
+      transactionId: result.refundTxId,
+      rideId: ride.id,
+      passengerId: ride.passengerId,
+      phone: passengerPhone,
+      amountXOF: refundToPassenger,
+      provider: (ride.paymentMethod || 'ORANGE_MONEY').toString().toUpperCase().includes('MTN') ? 'MTN_MOMO' : 'ORANGE_MONEY',
+    }).catch(() => null);
+  }
+
+  return result;
+}
+
+export async function submitRatingLogic(
+  rideId: string,
+  userId: string,
+  rating: number,
+  comment?: string
+) {
+  const safeRating = Math.max(1, Math.min(5, Math.round(Number(rating))));
+  const ride = await prisma.ride.findUnique({ where: { id: rideId } });
+
+  if (!ride) throw new Error('Corrida não encontrada.');
+
+  const isPassengerRating = ride.passengerId === userId;
+  const isDriverRating = ride.driverId === userId;
+
+  if (!isPassengerRating && !isDriverRating) {
+    throw new Error('Acesso negado para avaliar esta corrida.');
+  }
+
+  if (isPassengerRating) {
+    await prisma.ride.update({
+      where: { id: rideId },
+      data: { passengerRating: safeRating, passengerComment: comment || null },
+    });
+
+    if (ride.driverId) {
+      const driverRides = await prisma.ride.aggregate({
+        where: { driverId: ride.driverId, passengerRating: { not: null } },
+        _avg: { passengerRating: true },
+      });
+
+      const newAvg = driverRides._avg.passengerRating || 5.0;
+      await prisma.driver.update({
+        where: { id: ride.driverId },
+        data: { ratingAverage: newAvg },
+      });
+    }
+  } else {
+    await prisma.ride.update({
+      where: { id: rideId },
+      data: { driverRating: safeRating, driverComment: comment || null },
+    });
+
+    const passengerRides = await prisma.ride.aggregate({
+      where: { passengerId: ride.passengerId, driverRating: { not: null } },
+      _avg: { driverRating: true },
+    });
+
+    const newAvg = passengerRides._avg.driverRating || 5.0;
+    await prisma.passenger.update({
+      where: { id: ride.passengerId },
+      data: { ratingAverage: newAvg },
+    });
+  }
+
+  return { success: true, rating: safeRating };
 }

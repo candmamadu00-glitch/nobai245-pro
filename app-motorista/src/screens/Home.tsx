@@ -1482,13 +1482,15 @@ useEffect(() => {
     Vibration.cancel();
     setIsLoading(true);
 
+    const targetOffer = queuedOfferDataRef.current || incomingRideRef.current || incomingRide;
+
     activeRideIdRef.current = rideId;
     rideStateRef.current = 'accepted';
     setQueuedOfferData(null);
 
     if (!socket || !socket.connected) {
       setIsLoading(false);
-      return Alert.alert('Sem Conexão', 'Sinal de internet insuficiente.');
+      return Alert.alert('Sem Conexão 📡', 'Verifique sua conexão com a internet e tente novamente.');
     }
 
     socket.timeout(8000).emit('driver:accept_ride', { 
@@ -1497,20 +1499,20 @@ useEffect(() => {
       if (!isMountedRef.current) return;
       setIsLoading(false);
 
-      if (err) return Alert.alert('Sinal Fraco 📡', 'Não foi possível confirmar a tempo.');
+      if (err) return Alert.alert('Sinal Fraco 📡', 'Não foi possível confirmar o aceite a tempo.');
       
       if (response?.error) {
         setQueuedOfferData(null); 
-        return Alert.alert('Aviso', response.message);
+        return Alert.alert('Aviso', response.message || 'Esta corrida já foi aceita por outro motorista.');
       }
 
       setActiveRideId(rideId);
       setRideState('accepted');
-      if (queuedOfferDataRef.current) {
-        setIncomingRide(queuedOfferDataRef.current);
-        persistActiveRideState(queuedOfferDataRef.current, 'accepted', rideId);
+
+      if (targetOffer) {
+        setIncomingRide(targetOffer);
+        persistActiveRideState(targetOffer, 'accepted', rideId);
       }
-      setQueuedOfferData(null);
       snapToState(true);
     });
   }
@@ -1520,51 +1522,42 @@ useEffect(() => {
     setIsLoading(true);
     const payload = { rideId: activeRideId };
 
-    const processOffline = async () => {
-      await saveActionToQueue('driver:arrived', payload);
-      if (isMountedRef.current) {
-        setRideState('arrived');
-        if (incomingRide) persistActiveRideState(incomingRide, 'arrived', activeRideId);
-        setDriverEta(null);
-        setIsLoading(false);
-      }
-    };
+    setRideState('arrived');
+    setDriverEta(null);
+    if (incomingRide) {
+      persistActiveRideState(incomingRide, 'arrived', activeRideId);
+    }
 
     if (socket && socket.connected) {
-      socket.timeout(4000).emit('driver:arrived', payload, async (err: any) => {
-        if (!isMountedRef.current) return;
-        if (err) {
-          await processOffline();
-        } else {
-          setRideState('arrived');
-          if (incomingRide) persistActiveRideState(incomingRide, 'arrived', activeRideId);
-          setDriverEta(null);
-          setIsLoading(false);
-        }
-      });
+      socket.emit('driver:arrived', payload);
     } else {
-      await processOffline();
+      await saveActionToQueue('driver:arrived', payload);
     }
+
+    setIsLoading(false);
   }
 
   function handleConfirmCancel(reason: string) {
     if (!activeRideId) return;
     setShowCancelModal(false);
+    
+    const rideIdToCancel = activeRideId;
     resetDriverState(); 
 
+    const payload = { rideId: rideIdToCancel, userId: driver?.id, userType: 'DRIVER', reason };
+
     if (socket && socket.connected) {
-      socket.timeout(3000).emit('ride:cancel', { rideId: activeRideId, userId: driver?.id, userType: 'DRIVER', reason }, (err: any) => {
-        if (err) saveActionToQueue('ride:cancel', { rideId: activeRideId, userId: driver?.id, userType: 'DRIVER', reason });
-      });
+      socket.emit('ride:cancel', payload);
     } else {
-      saveActionToQueue('ride:cancel', { rideId: activeRideId, userId: driver?.id, userType: 'DRIVER', reason });
+      saveActionToQueue('ride:cancel', payload);
     }
   }
 
   async function handleStartRideWithOtp(otp: string) {
     if (!activeRideId) return;
     setIsLoading(true);
-    const payload = { rideId: activeRideId, otp };
+    const cleanOtp = String(otp || '').trim();
+    const payload = { rideId: activeRideId, otp: cleanOtp, otpInput: cleanOtp };
 
     const processOfflineStart = async () => {
       await saveActionToQueue('driver:start_ride', payload);
@@ -1582,7 +1575,7 @@ useEffect(() => {
         if (err) {
           await processOfflineStart();
         } else if (response?.error) {
-          Alert.alert('Erro no PIN', response.message || 'PIN incorreto. Tente novamente.');
+          Alert.alert('PIN Incorreto 🔑', response.message || 'O código informado não confere com o do passageiro.');
           setIsLoading(false);
         } else {
           setRideState('in_progress');
@@ -1596,47 +1589,54 @@ useEffect(() => {
     }
   }
 
-  async function handleFinishRide() {
-  if (!activeRideId) return;
-  setIsLoading(true);
+  async function handleFinishRide(finishOtpInput?: string) {
+    if (!activeRideId) return;
+    setIsLoading(true);
 
-  const fallbackLat = Number(location?.coords?.latitude || incomingRide?.destinationLat || BISSAU_CENTER_LAT);
-  const fallbackLng = Number(location?.coords?.longitude || incomingRide?.destinationLng || BISSAU_CENTER_LNG);
-  const payload = { rideId: activeRideId, dropoffLat: fallbackLat, dropoffLng: fallbackLng };
+    const fallbackLat = Number(location?.coords?.latitude || incomingRide?.destinationLat || BISSAU_CENTER_LAT);
+    const fallbackLng = Number(location?.coords?.longitude || incomingRide?.destinationLng || BISSAU_CENTER_LNG);
+    
+    const payload = { 
+      rideId: activeRideId, 
+      dropoffLat: fallbackLat, 
+      dropoffLng: fallbackLng,
+      finalLat: fallbackLat,
+      finalLng: fallbackLng,
+      finishOtp: finishOtpInput || undefined,
+      finishOtpInput: finishOtpInput || undefined
+    };
 
-  // 🟢 Captura o valor final e a forma de pagamento do objeto de corrida
-  const finalPrice = Number(incomingRide?.priceXof || incomingRide?.estimatedPrice || 0);
-  const paymentMethod = incomingRide?.paymentMethod || 'CASH';
-  const transactionId = incomingRide?.transactionId || `TRX-${Date.now().toString().slice(-6)}`;
+    const finalPrice = Number(incomingRide?.priceXof || incomingRide?.estimatedPrice || 0);
+    const paymentMethod = incomingRide?.paymentMethod || 'CASH';
+    const transactionId = incomingRide?.transactionId || `TRX-${Date.now().toString().slice(-6)}`;
 
-  // 🟢 Preenche o estado do recibo antes de abrir o modal
-  setFinishedRideSummary({
-    rideId: activeRideId,
-    passengerName: displayPassengerName,
-    totalAmount: finalPrice,
-    paymentMethod: paymentMethod,
-    transactionId: transactionId,
-  });
+    setFinishedRideSummary({
+      rideId: activeRideId,
+      passengerName: displayPassengerName,
+      totalAmount: finalPrice,
+      paymentMethod: paymentMethod,
+      transactionId: transactionId,
+    });
 
-  setFinishedRideId(activeRideId);
-  setFinishedTargetName(displayPassengerName);
+    setFinishedRideId(activeRideId);
+    setFinishedTargetName(displayPassengerName);
 
-  if (socket && socket.connected) {
-    socket.emit('driver:finish_ride', payload);
-  } else {
-    await saveActionToQueue('driver:finish_ride', payload);
+    if (socket && socket.connected) {
+      socket.emit('driver:finish_ride', payload);
+    } else {
+      await saveActionToQueue('driver:finish_ride', payload);
+    }
+
+    setIsLoading(false);
+    setShowReceiptModal(true);
   }
-
-  setIsLoading(false);
-  setShowReceiptModal(true);
-}
 
   function handleNoShowCancel() {
     Alert.alert(
       'Cancelar por Ausência?',
-      'O tempo limite de espera expirou. Deseja cancelar esta corrida e receber a taxa de cancelamento?',
+      'O tempo limite de espera de 5 minutos expirou. Deseja cancelar esta corrida e receber a taxa de retenção?',
       [
-        { text: 'Aguardar mais um pouco', style: 'cancel' },
+        { text: 'Aguardar mais', style: 'cancel' },
         { text: 'Confirmar No-Show', style: 'destructive', onPress: () => handleConfirmCancel('PASSENGER_NO_SHOW') }
       ]
     );
@@ -1645,7 +1645,7 @@ useEffect(() => {
   function handleSubmitRating(stars: number, tags: string[], comment: string) {
     const rideToRate = finishedRideId || activeRideId;
     if (rideToRate && incomingRide && socket && socket.connected) {
-      socket.emit('ride:rate', { 
+      socket.emit('rating:submit', { 
         rideId: rideToRate, 
         reviewerId: driver?.id, 
         reviewerType: 'DRIVER', 
@@ -1693,239 +1693,238 @@ useEffect(() => {
   const topHeaderInset = Math.max((insets?.top || 0) + 10, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 16);
   const bottomInset = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 24 : 16);
 
- // 1º Declare activeOffer PRIMEIRO:
-const activeOffer = (queuedOfferData && queuedOfferData.rideId !== activeRideId) 
-  ? queuedOfferData 
-  : (rideState === 'idle' ? incomingRide : null);
+  const activeOffer = (queuedOfferData && queuedOfferData.rideId !== activeRideId) 
+    ? queuedOfferData 
+    : (rideState === 'idle' ? incomingRide : null);
 
-// 2º Mapeamento limpo das Paradas com Pontos de Referência
-const formattedStops = useMemo(() => {
-  const stopsSource = activeOffer?.stops || incomingRide?.stops;
-  if (!stopsSource) return [];
-  let raw = stopsSource;
-  if (typeof raw === 'string') {
-    try { raw = JSON.parse(raw); } catch { raw = []; }
-  }
-  if (!Array.isArray(raw)) return [];
-  return raw.map((s: any, idx: number) => ({
-    id: s.id || `stop_${idx}`,
-    address: s.address || s.name || s.extraStopAddress || `Parada ${idx + 1}`,
-    referencePoint: s.referencePoint || s.extraStopReferencePoint || activeOffer?.extraStopReferencePoint || incomingRide?.extraStopReferencePoint || '',
-    lat: Number(s.lat ?? s.latitude ?? 0),
-    lng: Number(s.lng ?? s.longitude ?? 0),
-    status: s.status || 'PENDING'
-  }));
-}, [activeOffer?.stops, activeOffer?.extraStopReferencePoint, incomingRide?.stops, incomingRide?.extraStopReferencePoint]);
+  const formattedStops = useMemo(() => {
+    const stopsSource = activeOffer?.stops || incomingRide?.stops;
+    if (!stopsSource) return [];
+    let raw = stopsSource;
+    if (typeof raw === 'string') {
+      try { raw = JSON.parse(raw); } catch { raw = []; }
+    }
+    if (!Array.isArray(raw)) return [];
+    return raw.map((s: any, idx: number) => ({
+      id: s.id || `stop_${idx}`,
+      address: s.address || s.name || s.extraStopAddress || `Parada ${idx + 1}`,
+      referencePoint: s.referencePoint || s.extraStopReferencePoint || activeOffer?.extraStopReferencePoint || incomingRide?.extraStopReferencePoint || '',
+      lat: Number(s.lat ?? s.latitude ?? 0),
+      lng: Number(s.lng ?? s.longitude ?? 0),
+      status: s.status || 'PENDING'
+    }));
+  }, [activeOffer?.stops, activeOffer?.extraStopReferencePoint, incomingRide?.stops, incomingRide?.extraStopReferencePoint]);
+
   return (
-  <View style={styles.container}>
-    <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-    
-    {/* 🗺️ MAPA DE NAVEGAÇÃO MAPBOX */}
-    <Mapbox.MapView 
-      style={StyleSheet.absoluteFill} 
-      styleURL={mapStyle}
-      logoEnabled={false}
-      compassEnabled={false}
-      scaleBarEnabled={false}
-      attributionEnabled={false}
-      onDidFinishLoadingMap={() => setIsMapReady(true)}
-    >
-      <Mapbox.Camera
-        ref={cameraRef}
-        defaultSettings={{
-          centerCoordinate: [
-            Number(location?.coords.longitude || BISSAU_CENTER_LNG), 
-            Number(location?.coords.latitude || BISSAU_CENTER_LAT)
-          ],
-          zoomLevel: 16,
-        }}
-        animationMode="flyTo"
-        animationDuration={1000}
-      />
-
-      {/* 🔴 ZONAS DE ALTA DEMANDA */}
-      {isOnline && !isRideActive && (
-        <Mapbox.ShapeSource id="demandZonesSource" shape={demandZonesData as any}>
-          <Mapbox.CircleLayer 
-            id="demandZonesLayer" 
-            style={{ 
-              circleRadius: 40, 
-              circleColor: '#FF3300', 
-              circleOpacity: 0.2, 
-              circleBlur: 0.6 
-            }} 
-          />
-        </Mapbox.ShapeSource>
-      )}
-
-      {/* 🏎️ MARCADOR VEICULAR 3D */}
-      {isOnline && location?.coords && (
-        <Mapbox.PointAnnotation 
-          key={`driver-car-${driver?.id || 'active'}`}
-          id="car-location" 
-          coordinate={[
-            Number(location.coords.longitude || 0), 
-            Number(location.coords.latitude || 0)
-          ]}
-          anchor={{ x: 0.5, y: 0.5 }}
-        >
-          <View style={styles.vehicle3DContainer}>
-            <View 
-              style={[
-                styles.vehicle3DRotator,
-                { 
-                  transform: [
-                    { 
-                      rotate: `${Math.round(
-                        Number(lastDriverCoordsRef.current?.heading) || 
-                        Number(location.coords.heading) || 0
-                      )}deg` 
-                    }
-                  ]
-                }
-              ]}
-            >
-              <Image
-                source={getVehicle3DIconAsset(
-                  (driver as any)?.vehicleType || incomingRide?.vehicleType || 'PARTICULAR',
-                  (driver as any)?.carColor || 'BRANCO'
-                )}
-                style={styles.vehicle3DImage}
-                fadeDuration={0}
-                resizeMode="contain"
-              />
-            </View>
-          </View>
-        </Mapbox.PointAnnotation>
-      )}
-
-      {/* 🛣️ LINHA DA ROTA */}
-      {routeCoordinates && routeCoordinates.length > 0 && (
-        <Mapbox.ShapeSource 
-          id="routeSource" 
-          shape={{ 
-            type: 'Feature', 
-            properties: {}, 
-            geometry: { type: 'LineString', coordinates: routeCoordinates } 
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      
+      {/* 🗺️ MAPA DE NAVEGAÇÃO MAPBOX */}
+      <Mapbox.MapView 
+        style={StyleSheet.absoluteFill} 
+        styleURL={mapStyle}
+        logoEnabled={false}
+        compassEnabled={false}
+        scaleBarEnabled={false}
+        attributionEnabled={false}
+        onDidFinishLoadingMap={() => setIsMapReady(true)}
+      >
+        <Mapbox.Camera
+          ref={cameraRef}
+          defaultSettings={{
+            centerCoordinate: [
+              Number(location?.coords.longitude || BISSAU_CENTER_LNG), 
+              Number(location?.coords.latitude || BISSAU_CENTER_LAT)
+            ],
+            zoomLevel: 16,
           }}
-        >
-          <Mapbox.LineLayer 
-            id="routeLine" 
-            style={{ 
-              lineColor: rideState === 'in_progress' ? '#3B82F6' : '#EAB308', 
-              lineWidth: 5, 
-              lineCap: 'round', 
-              lineJoin: 'round' 
-            }} 
-          />
-        </Mapbox.ShapeSource>
-      )}
+          animationMode="flyTo"
+          animationDuration={1000}
+        />
 
-      {/* 📍 PARADAS INTERMEDIÁRIAS NO MAPA */}
-      {formattedStops.length > 0 && formattedStops.map((stop: any, index: number) => {
-        if (!stop.lng || !stop.lat) return null;
-        const isPassed = index < currentStopIndex;
-        return (
-          <Mapbox.PointAnnotation key={`stop-${stop.id || index}`} id={`stop-${stop.id || index}`} coordinate={[stop.lng, stop.lat]}>
-            <View style={[styles.carMarkerContainer, { backgroundColor: isPassed ? '#64748B' : '#3B82F6' }]}>
-              <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '900' }}>P{index + 1}</Text>
+        {/* 🔴 ZONAS DE ALTA DEMANDA */}
+        {isOnline && !isRideActive && (
+          <Mapbox.ShapeSource id="demandZonesSource" shape={demandZonesData as any}>
+            <Mapbox.CircleLayer 
+              id="demandZonesLayer" 
+              style={{ 
+                circleRadius: 40, 
+                circleColor: '#FF3300', 
+                circleOpacity: 0.2, 
+                circleBlur: 0.6 
+              }} 
+            />
+          </Mapbox.ShapeSource>
+        )}
+
+        {/* 🏎️ MARCADOR VEICULAR 3D */}
+        {isOnline && location?.coords && (
+          <Mapbox.PointAnnotation 
+            key={`driver-car-${driver?.id || 'active'}`}
+            id="car-location" 
+            coordinate={[
+              Number(location.coords.longitude || 0), 
+              Number(location.coords.latitude || 0)
+            ]}
+            anchor={{ x: 0.5, y: 0.5 }}
+          >
+            <View style={styles.vehicle3DContainer}>
+              <View 
+                style={[
+                  styles.vehicle3DRotator,
+                  { 
+                    transform: [
+                      { 
+                        rotate: `${Math.round(
+                          Number(lastDriverCoordsRef.current?.heading) || 
+                          Number(location.coords.heading) || 0
+                        )}deg` 
+                      }
+                    ]
+                  }
+                ]}
+              >
+                <Image
+                  source={getVehicle3DIconAsset(
+                    (driver as any)?.vehicleType || incomingRide?.vehicleType || 'PARTICULAR',
+                    (driver as any)?.carColor || 'BRANCO'
+                  )}
+                  style={styles.vehicle3DImage}
+                  fadeDuration={0}
+                  resizeMode="contain"
+                />
+              </View>
             </View>
           </Mapbox.PointAnnotation>
-        );
-      })}
+        )}
 
-      {/* 🏁 PONTO DE DESEMBARQUE */}
-      {incomingRide?.destinationLng != null && incomingRide?.destinationLat != null && !isNaN(Number(incomingRide.destinationLng)) && !isNaN(Number(incomingRide.destinationLat)) && (
-        <Mapbox.PointAnnotation id="dropoffMarker" coordinate={[Number(incomingRide.destinationLng), Number(incomingRide.destinationLat)]}>
-          <View style={styles.markerDestination}>
-            <Ionicons name="flag" size={18} color="#FFFFFF" />
+        {/* 🛣️ LINHA DA ROTA */}
+        {routeCoordinates && routeCoordinates.length > 0 && (
+          <Mapbox.ShapeSource 
+            id="routeSource" 
+            shape={{ 
+              type: 'Feature', 
+              properties: {}, 
+              geometry: { type: 'LineString', coordinates: routeCoordinates } 
+            }}
+          >
+            <Mapbox.LineLayer 
+              id="routeLine" 
+              style={{ 
+                lineColor: rideState === 'in_progress' ? '#3B82F6' : '#EAB308', 
+                lineWidth: 5, 
+                lineCap: 'round', 
+                lineJoin: 'round' 
+              }} 
+            />
+          </Mapbox.ShapeSource>
+        )}
+
+        {/* 📍 PARADAS INTERMEDIÁRIAS NO MAPA */}
+        {formattedStops.length > 0 && formattedStops.map((stop: any, index: number) => {
+          if (!stop.lng || !stop.lat) return null;
+          const isPassed = index < currentStopIndex;
+          return (
+            <Mapbox.PointAnnotation key={`stop-${stop.id || index}`} id={`stop-${stop.id || index}`} coordinate={[stop.lng, stop.lat]}>
+              <View style={[styles.carMarkerContainer, { backgroundColor: isPassed ? '#64748B' : '#3B82F6' }]}>
+                <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '900' }}>P{index + 1}</Text>
+              </View>
+            </Mapbox.PointAnnotation>
+          );
+        })}
+
+        {/* 🏁 PONTO DE DESEMBARQUE */}
+        {incomingRide?.destinationLng != null && incomingRide?.destinationLat != null && !isNaN(Number(incomingRide.destinationLng)) && !isNaN(Number(incomingRide.destinationLat)) && (
+          <Mapbox.PointAnnotation id="dropoffMarker" coordinate={[Number(incomingRide.destinationLng), Number(incomingRide.destinationLat)]}>
+            <View style={styles.markerDestination}>
+              <Ionicons name="flag" size={18} color="#FFFFFF" />
+            </View>
+          </Mapbox.PointAnnotation>
+        )}
+      </Mapbox.MapView>
+
+      {/* 📊 HEADER SUPERIOR FLUTUANTE */}
+      <View style={[styles.headerContainer, { top: topHeaderInset }]} pointerEvents="box-none">
+        <View style={styles.headerRow}>
+          <TouchableOpacity 
+            style={[styles.statusPill, isOnline ? styles.pillOnline : styles.pillOffline]} 
+            onPress={isOnline ? stopTracking : startTracking} 
+            disabled={rideState !== 'idle' || isLoading}
+            activeOpacity={0.85}
+          >
+            <View style={[styles.statusDot, isOnline ? styles.dotGreen : styles.dotRed]} />
+            <Text style={[styles.statusPillText, { color: isOnline ? '#0F172A' : '#FFFFFF' }]}>
+              {isOnline ? 'Online' : 'Offline'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.earningsPill} onPress={() => navigation.navigate('Earnings')} activeOpacity={0.85}>
+            <Ionicons name="wallet-outline" size={15} color="#10B981" />
+            <Text style={styles.earningsPillText}>{formatCurrency(todayEarnings)} XOF</Text>
+          </TouchableOpacity>
+
+          {/* 🔊 BOTÃO TOGGLE DA ASSISTÊNCIA DE VOZ DO MOTORISTA */}
+          <TouchableOpacity 
+            style={[
+              styles.voiceToggleHeaderBtn, 
+              { backgroundColor: isVoiceAssistEnabled ? '#EAB308' : '#1E293B' }
+            ]} 
+            onPress={toggleVoiceAssist}
+            activeOpacity={0.85}
+          >
+            <Ionicons 
+              name={isVoiceAssistEnabled ? "volume-high" : "volume-mute"} 
+              size={18} 
+              color={isVoiceAssistEnabled ? "#0F172A" : "#94A3B8"} 
+            />
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.filterPill} onPress={() => setShowFilterModal(true)} activeOpacity={0.85}>
+            <Ionicons name="options-outline" size={18} color="#EAB308" />
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.profilePill} onPress={() => navigation.navigate('Profile')} activeOpacity={0.85}>
+            {profileImageUrl ? (
+              <Image source={{ uri: profileImageUrl }} style={styles.headerProfileImage} />
+            ) : (
+              <Ionicons name="person-circle-outline" size={24} color="#EAB308" />
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {isLowBattery && !isRideActive && (
+          <View style={styles.lowBatteryBanner}>
+            <Ionicons name="battery-dead" size={13} color="#FFFFFF" />
+            <Text style={styles.lowBatteryText}>
+              Bateria Fraca ({Math.round((batteryLevel || 0) * 100)}%) - Modo Economia Ativo
+            </Text>
           </View>
-        </Mapbox.PointAnnotation>
-      )}
-    </Mapbox.MapView>
+        )}
+      </View>
 
-    {/* 📊 HEADER SUPERIOR FLUTUANTE */}
-<View style={[styles.headerContainer, { top: topHeaderInset }]} pointerEvents="box-none">
-  <View style={styles.headerRow}>
-    <TouchableOpacity 
-      style={[styles.statusPill, isOnline ? styles.pillOnline : styles.pillOffline]} 
-      onPress={isOnline ? stopTracking : startTracking} 
-      disabled={rideState !== 'idle' || isLoading}
-      activeOpacity={0.85}
-    >
-      <View style={[styles.statusDot, isOnline ? styles.dotGreen : styles.dotRed]} />
-      <Text style={[styles.statusPillText, { color: isOnline ? '#0F172A' : '#FFFFFF' }]}>
-        {isOnline ? 'Online' : 'Offline'}
-      </Text>
-    </TouchableOpacity>
-
-    <TouchableOpacity style={styles.earningsPill} onPress={() => navigation.navigate('Earnings')} activeOpacity={0.85}>
-      <Ionicons name="wallet-outline" size={15} color="#10B981" />
-      <Text style={styles.earningsPillText}>{formatCurrency(todayEarnings)} XOF</Text>
-    </TouchableOpacity>
-
-    {/* 🔊 BOTÃO TOGGLE DA ASSISTÊNCIA DE VOZ DO MOTORISTA */}
-    <TouchableOpacity 
-      style={[
-        styles.voiceToggleHeaderBtn, 
-        { backgroundColor: isVoiceAssistEnabled ? '#EAB308' : '#1E293B' }
-      ]} 
-      onPress={toggleVoiceAssist}
-      activeOpacity={0.85}
-    >
-      <Ionicons 
-        name={isVoiceAssistEnabled ? "volume-high" : "volume-mute"} 
-        size={18} 
-        color={isVoiceAssistEnabled ? "#0F172A" : "#94A3B8"} 
-      />
-    </TouchableOpacity>
-
-    <TouchableOpacity style={styles.filterPill} onPress={() => setShowFilterModal(true)} activeOpacity={0.85}>
-      <Ionicons name="options-outline" size={18} color="#EAB308" />
-    </TouchableOpacity>
-
-    <TouchableOpacity style={styles.profilePill} onPress={() => navigation.navigate('Profile')} activeOpacity={0.85}>
-      {profileImageUrl ? (
-        <Image source={{ uri: profileImageUrl }} style={styles.headerProfileImage} />
-      ) : (
-        <Ionicons name="person-circle-outline" size={24} color="#EAB308" />
-      )}
-    </TouchableOpacity>
-  </View>
-
-  {isLowBattery && !isRideActive && (
-    <View style={styles.lowBatteryBanner}>
-      <Ionicons name="battery-dead" size={13} color="#FFFFFF" />
-      <Text style={styles.lowBatteryText}>
-        Bateria Fraca ({Math.round((batteryLevel || 0) * 100)}%) - Modo Economia Ativo
-      </Text>
-    </View>
-  )}
-</View>
-
-    {/* 🎛️ BOTÕES FLUTUANTES */}
-    <View style={styles.floatingButtonsWrapper} pointerEvents="box-none">
-      <TouchableOpacity style={styles.recenterButton} onPress={handleRecenterMap} activeOpacity={0.85}>
-        <Ionicons name="locate" size={20} color="#EAB308" />
-      </TouchableOpacity>
-
-      {isOnline && (
-        <TouchableOpacity style={styles.sosButton} onPress={() => setShowSosModal(true)} activeOpacity={0.85}>
-          <Text style={styles.sosText}>🚨 SOS</Text>
+      {/* 🎛️ BOTÕES FLUTUANTES */}
+      <View style={styles.floatingButtonsWrapper} pointerEvents="box-none">
+        <TouchableOpacity style={styles.recenterButton} onPress={handleRecenterMap} activeOpacity={0.85}>
+          <Ionicons name="locate" size={20} color="#EAB308" />
         </TouchableOpacity>
-      )}
 
-      {rideState === 'in_progress' && (
-        <TouchableOpacity 
-          style={[styles.audioRecordButton, audioRecorder.isRecording && styles.audioRecordButtonActive]} 
-          onPress={toggleAudioRecording}
-          activeOpacity={0.85}
-        >
-          <Ionicons name={audioRecorder.isRecording ? 'mic' : 'mic-outline'} size={16} color="#FFFFFF" />
-          <Text style={styles.audioRecordText}>{audioRecorder.isRecording ? 'Gravando...' : 'Gravar Áudio'}</Text>
-        </TouchableOpacity>
-      )}
-    </View>
+        {isOnline && (
+          <TouchableOpacity style={styles.sosButton} onPress={() => setShowSosModal(true)} activeOpacity={0.85}>
+            <Text style={styles.sosText}>🚨 SOS</Text>
+          </TouchableOpacity>
+        )}
+
+        {rideState === 'in_progress' && (
+          <TouchableOpacity 
+            style={[styles.audioRecordButton, audioRecorder.isRecording && styles.audioRecordButtonActive]} 
+            onPress={toggleAudioRecording}
+            activeOpacity={0.85}
+          >
+            <Ionicons name={audioRecorder.isRecording ? 'mic' : 'mic-outline'} size={16} color="#FFFFFF" />
+            <Text style={styles.audioRecordText}>{audioRecorder.isRecording ? 'Gravando...' : 'Gravar Áudio'}</Text>
+          </TouchableOpacity>
+        )}
+      </View>
 
     {/* 🛡️ MODAIS DE SEGURANÇA E AVALIAÇÃO */}
     <DriverSOSModal visible={showSosModal} onClose={() => setShowSosModal(false)} currentRideId={activeRideId} />

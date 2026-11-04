@@ -9,7 +9,17 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { createClient } from 'redis';
 import { prisma } from './config/prisma';
-import { getRouteDistanceAndDuration, isWithinGuineaBissau } from './services/rideService';
+import { 
+  getRouteDistanceAndDuration, 
+  isWithinGuineaBissau,
+  createRideAndInitiateEscrow, 
+  submitRatingLogic,
+  acceptRideLogic, 
+  driverArrivedLogic, 
+  startRideLogic, 
+  finalizeRideAndCharge, 
+  cancelRideLogic 
+} from './services/rideService';
 import { passengerRoutes } from './routes/passengerRoutes'; 
 import { driverRoutes } from './routes/driverRoutes'; 
 import { adminRoutes } from './routes/adminRoutes';
@@ -18,16 +28,7 @@ import rideRoutes from './routes/rideRoutes';
 import { createAdapter } from '@socket.io/redis-adapter';
 import { setupTicketSocketHandlers } from './sockets/ticketSocket';
 import { sendPushNotification, PUSH_CHANNELS } from './services/pushNotifications';
-import { 
-  calculateDistance, 
-  calculateRidePrice, 
-  acceptRideLogic, 
-  driverArrivedLogic, 
-  startRideLogic, 
-  finalizeRideAndCharge, 
-  cancelRideLogic, 
-} from './services/rideRulesService';
-import { createRideAndInitiateEscrow, submitRatingLogic } from './services/rideService';
+import { calculateDistance, calculateRidePrice } from './services/rideRulesService';
 import { startCronJobs } from './jobs/reconciliationJob';
 import locationRoutes from './routes/location.routes';
 
@@ -812,6 +813,7 @@ io.on('connection', (socket: any) => {
     
     console.log(`✅ [MOTORISTA OFFLINE CONCLUÍDO] Motorista ${driverId} removido do Redis e salas Socket.`);
   });
+
   // --- LOCAL INACESSÍVEL ---
   handleSocketEvent(socket, 'driver:alert_inaccessible_location', (data) => {
     const { rideId, passengerId } = data || {};
@@ -836,7 +838,7 @@ io.on('connection', (socket: any) => {
     });
   });
 
-  // --- ALERTA SOS (SCHEMA V3.0 - Tabela SosAlert) ---
+  // --- ALERTA SOS ---
   handleSocketEvent(socket, 'sos:triggered', async (data) => {
     if (isSocketRateLimited(socket, 'sos:triggered', 5000, 2)) return;
     
@@ -901,7 +903,6 @@ io.on('connection', (socket: any) => {
 
     console.log(`🟢 [MOTORISTA ONLINE INICIADO] ID: ${driverId} | Coords enviadas: ${lat}, ${lng}`);
 
-    // 🔍 1. Busca os dados atualizados do motorista no banco de dados
     const driver = await prisma.driver.findUnique({
       where: { id: driverId },
       select: { 
@@ -919,7 +920,6 @@ io.on('connection', (socket: any) => {
       return;
     }
 
-    // 🛑 2. TRAVA DE SEGURANÇA: Verifica saldo mínimo de 1.000 XOF
     const MIN_REQUIRED_BALANCE = 1000;
     const currentBalance = Number(driver.walletBalance || 0);
 
@@ -1011,7 +1011,11 @@ io.on('connection', (socket: any) => {
         destinationLat: Number(pendingRide.destinationLat),
         destinationLng: Number(pendingRide.destinationLng),
         destinationAddress: pendingRide.destinationAddress,
+        distanceKm: Number(pendingRide.distanceKm || 0),
+        estimatedDistance: Number(pendingRide.distanceKm || 0),
+        durationMin: Number(pendingRide.durationMin || 0),
         fareXOF: Number(pendingRide.priceXof),
+        priceXof: Number(pendingRide.priceXof),
         vehicleType: pendingRide.requestedVehicleType,
         serviceType: pendingRide.serviceType,
         paymentMethod: pendingRide.paymentMethod || 'ORANGE_MONEY'
@@ -1050,6 +1054,7 @@ io.on('connection', (socket: any) => {
     }
 
     const estimatedPrice = rideData?.estimatedPrice ?? rideData?.priceXof;
+    const estimatedDistance = rideData?.estimatedDistance ?? rideData?.distanceKm;
 
     let rawStops = Array.isArray(rideData?.stops) ? rideData.stops : [];
     if (rawStops.length === 0 && rideData?.extraStopLat && rideData?.extraStopLng) {
@@ -1067,6 +1072,7 @@ io.on('connection', (socket: any) => {
     socket.emit('ride:payment_processing', { message: 'Iniciando retenção de fundos (Escrow)...' });
 
     try {
+      // 🟢 TRANSMITINDO DISTÂNCIA ESTIMADA COMPLETA DO PASSAGEIRO AO SERVICE
       const { pendingVerification, ride } = await createRideAndInitiateEscrow(passengerId, {
         originLat: pLat,
         originLng: pLng,
@@ -1078,6 +1084,7 @@ io.on('connection', (socket: any) => {
         serviceType: rideData.serviceType || 'RIDE',
         paymentMethod: rideData.paymentMethod,
         estimatedPrice: estimatedPrice ? Number(estimatedPrice) : undefined,
+        estimatedDistance: estimatedDistance ? Number(estimatedDistance) : undefined,
         stops: rawStops
       });
       
@@ -1093,10 +1100,11 @@ io.on('connection', (socket: any) => {
       const rideId = ride.id;
       socket.join(rideId);
 
-      console.log(`✅ [CORRIDA CRIADA] ID: ${rideId} | Passageiro: ${passengerId} | Valor: ${ride.priceXof} XOF`);
+      console.log(`✅ [CORRIDA CRIADA] ID: ${rideId} | Passageiro: ${passengerId} | Distância: ${ride.distanceKm} km | Valor: ${ride.priceXof} XOF`);
 
       await safeRedis.set(`active_ride:${rideId}`, JSON.stringify({
         rideId, passengerId, pickupLat: pLat, pickupLng: pLng,
+        distanceKm: Number(ride.distanceKm),
         fareXOF: Number(ride.priceXof), status: 'PENDING',
       }));
 
@@ -1155,6 +1163,7 @@ io.on('connection', (socket: any) => {
         select: { fullName: true, phone: true, profilePicture: true, ratingAverage: true }
       });
 
+      // 🟢 PAYLOAD SINCRONIZADO: DISTÂNCIA E TEMPO INCLUÍDOS
       const requestPayload = {
         rideId, 
         passengerId: ride.passengerId,
@@ -1170,6 +1179,9 @@ io.on('connection', (socket: any) => {
         destinationLat: dLat,
         destinationLng: dLng, 
         destinationAddress: rideData.destinationAddress,
+        distanceKm: Number(ride.distanceKm || 0),
+        estimatedDistance: Number(ride.distanceKm || 0),
+        durationMin: Number(ride.durationMin || 0),
         stops: ride.stops || rawStops,
         referencePoint: rideData.referencePoint || null,
         fareXOF: Number(ride.priceXof), 
@@ -1189,7 +1201,7 @@ io.on('connection', (socket: any) => {
           create: { rideId, driverId: d.id, status: 'PENDING', expiresAt: new Date(Date.now() + 15000) }
         }).catch(() => null);
 
-        console.log(`📡 [DISPARANDO OFERTA] Para motorista ID: ${d.id} (Em fila: ${isQueuedOffer})`);
+        console.log(`📡 [DISPARANDO OFERTA] Para motorista ID: ${d.id} (${ride.distanceKm} km | ${ride.priceXof} XOF)`);
 
         io.to(d.id)
           .to(`driver_${d.id}`)
@@ -1198,8 +1210,8 @@ io.on('connection', (socket: any) => {
 
         if (d.deviceToken) {
           const pushTitle = isQueuedOffer 
-            ? `🚗 Próxima Corrida em Fila (Valor: ${ride.priceXof} XOF)` 
-            : `🚕 Nova Corrida (Valor: ${ride.priceXof} XOF)`;
+            ? `🚗 Próxima Corrida (${ride.distanceKm} km - ${ride.priceXof} XOF)` 
+            : `🚕 Nova Corrida (${ride.distanceKm} km - ${ride.priceXof} XOF)`;
 
           sendPushNotification(
             d.deviceToken,
@@ -1269,20 +1281,7 @@ io.on('connection', (socket: any) => {
         return;
       }
 
-      let updatedRide;
-      if (typeof acceptRideLogic === 'function') {
-        updatedRide = await acceptRideLogic(rideId, driverId);
-      } else {
-        updatedRide = await prisma.ride.update({
-          where: { id: rideId },
-          data: {
-            driverId: driverId,
-            status: 'ACCEPTED',
-            acceptedAt: new Date()
-          },
-          include: { passenger: true, driver: true }
-        });
-      }
+      const updatedRide = await acceptRideLogic(rideId, driverId);
 
       await (prisma as any).rideOffer?.updateMany({
         where: { rideId, driverId },
@@ -1303,6 +1302,7 @@ io.on('connection', (socket: any) => {
       const passengerUser = updatedRide.passenger || ride.passenger;
       const driverUser = updatedRide.driver || await prisma.driver.findUnique({ where: { id: driverId } });
 
+      // 🟢 PAYLOAD DE ACEITE CORRIGIDO: ENVIANDO QUILOMETRAGEM E DURAÇÃO
       const acceptPayload = {
         rideId: ride.id,
         driverId: driverId,
@@ -1326,13 +1326,16 @@ io.on('connection', (socket: any) => {
         pickupLng: Number(updatedRide.originLng || ride.originLng),
         destinationLat: Number(updatedRide.destinationLat || ride.destinationLat),
         destinationLng: Number(updatedRide.destinationLng || ride.destinationLng),
+        
+        distanceKm: Number(updatedRide.distanceKm || ride.distanceKm || 0),
+        estimatedDistance: Number(updatedRide.distanceKm || ride.distanceKm || 0),
+        durationMin: Number(updatedRide.durationMin || ride.durationMin || 0),
         priceXof: Number(updatedRide.priceXof || ride.priceXof),
         isQueuedRide
       };
 
       console.log(`🎉 [CORRIDA ACEITA] Motorista ${driverId} assumiu a corrida ${rideId} (Fila: ${isQueuedRide})`);
 
-      // 📣 MULTI-BROADCAST COMPLETO PARA O PASSAGEIRO
       const passengerRooms = [
         rideId,
         passengerId,
@@ -1478,9 +1481,13 @@ io.on('connection', (socket: any) => {
 
     const ride = await driverArrivedLogic(rideId, driverId);
 
-    const arrivedPayload = { rideId, status: 'ARRIVED', startOtp: ride?.startOtp };
+    const arrivedPayload = { 
+      rideId, 
+      status: 'ARRIVED', 
+      startOtp: ride?.startOtp,
+      distanceKm: Number(ride?.distanceKm || 0)
+    };
     
-    // 📣 MULTI-BROADCAST DUPLO
     const targetRooms = [
       rideId,
       ride?.passengerId,
@@ -1528,9 +1535,13 @@ io.on('connection', (socket: any) => {
       
       console.log(`✅ [CORRIDA INICIADA COM SUCESSO] ID: ${rideId}`);
 
-      const startPayload = { rideId, status: 'IN_PROGRESS', startedAt: updatedRide?.startedAt };
+      const startPayload = { 
+        rideId, 
+        status: 'IN_PROGRESS', 
+        startedAt: updatedRide?.startedAt,
+        distanceKm: Number(updatedRide?.distanceKm || 0)
+      };
 
-      // 📣 MULTI-BROADCAST COMPLETO
       const targetRooms = [
         rideId,
         updatedRide?.passengerId,
@@ -1579,12 +1590,7 @@ io.on('connection', (socket: any) => {
     }
 
     try {
-      const result = await (finalizeRideAndCharge as (
-        rideId: string, 
-        finalLat: number, 
-        finalLng: number, 
-        finishOtpInput?: string
-      ) => Promise<any>)(
+      const result = await finalizeRideAndCharge(
         rideId, 
         Number(dropoffLat), 
         Number(dropoffLng), 
@@ -1618,9 +1624,14 @@ io.on('connection', (socket: any) => {
       socket.join(`driver_${driverId}`);
       socket.leave(rideId);
 
-      const finishedPayload = { rideId, status: 'FINISHED', fareXOF: result?.fareXOF, priceXof: result?.fareXOF, distanceKm: result?.distanceKm };
+      const finishedPayload = { 
+        rideId, 
+        status: 'FINISHED', 
+        fareXOF: result?.fareXOF, 
+        priceXof: result?.fareXOF, 
+        distanceKm: result?.distanceKm 
+      };
 
-      // 📣 MULTI-BROADCAST DUPLO
       const rideInfo = await prisma.ride.findUnique({
         where: { id: rideId },
         select: { passengerId: true, passenger: { select: { deviceToken: true } } }
@@ -1655,8 +1666,9 @@ io.on('connection', (socket: any) => {
       socket.emit('error', { message: err.message || 'Erro ao cobrar passagem no Mobile Money.' });
     }
   });
+
   // =============================================================================
-  // 💬 EVENTO DE CHAT UNIFICADO (TEXTO, ÁUDIO E PUSH NOTIFICATION)
+  // 💬 EVENTO DE CHAT UNIFICADO
   // =============================================================================
   handleSocketEvent(socket, 'chat:send_message', async (data) => {
     try {
@@ -1688,7 +1700,6 @@ io.on('connection', (socket: any) => {
         createdAt: new Date().toISOString()
       };
 
-      // 💾 Persistência assíncrona no banco de dados (Modelo RideChatMessage - Schema V3.0)
       if (senderUserId) {
         prisma.rideChatMessage.create({
           data: {
@@ -1700,7 +1711,6 @@ io.on('connection', (socket: any) => {
         }).catch(err => console.error('❌ [CHAT DB ERR] Falha ao persistir mensagem no banco:', err?.message));
       }
 
-      // 📣 Broadcast de mensagens para todas as salas conectadas
       const targetRooms = [
         rideId,
         `ride_${rideId}`,
@@ -1717,7 +1727,6 @@ io.on('connection', (socket: any) => {
         io.to(room).emit('chat:message', messagePayload);
       });
 
-      // 📱 Envio de Notificação Push
       const recipientToken = senderRole === 'driver'
         ? ride.passenger?.deviceToken
         : ride.driver?.deviceToken;
@@ -1788,7 +1797,6 @@ io.on('connection', (socket: any) => {
         penaltyAmount: Number(result?.penaltyAmount || 0)
       };
 
-      // Broadcast amplo para garantir sincronização instantânea em ambos os apps
       const targetRooms = [
         rideId,
         `ride_${rideId}`,
@@ -1808,7 +1816,6 @@ io.on('connection', (socket: any) => {
         io.to('available_drivers').emit('ride:cancelled_by_passenger', { rideId });
       }
 
-      // 📱 Notificação Push para a outra parte
       const recipientToken = normalizedUserType === 'DRIVER'
         ? rideToCancel.passenger?.deviceToken
         : rideToCancel.driver?.deviceToken;
@@ -1829,7 +1836,7 @@ io.on('connection', (socket: any) => {
     }
   });
 
-}); // 👈 Fechamento do io.on('connection', (socket) => { ... })
+});
 
 // -----------------------------------------------------------------------------
 // 7. ENCERRAMENTO GRACIOSO DO SERVIDOR (SHUTDOWN)

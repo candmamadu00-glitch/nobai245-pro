@@ -110,9 +110,15 @@ export function ChatModal({
     };
   }, []);
 
-  // 4. Carrega do Cache e Histórico da API
+  // 4. Entra na sala Socket e Carrega Cache / Histórico da API
   useEffect(() => {
     if (visible && rideId) {
+      // 🟢 GARANTE ENTRADA NA SALA SOCKET DA CORRIDA
+      if (socket && socket.connected) {
+        socket.emit('chat:join', { rideId, role: currentRole });
+        socket.emit('passenger:rejoin_ride', { rideId });
+      }
+
       AsyncStorage.getItem(storageKey).then((cached) => {
         if (cached) {
           try {
@@ -163,11 +169,11 @@ export function ChatModal({
         setPlayingAudioId(null);
       }
     }
-  }, [visible, rideId, storageKey]);
+  }, [visible, rideId, storageKey, socket, currentRole]);
 
   // 5. Socket Listeners com Antiduplicação
   useEffect(() => {
-    if (!socket || !visible) return;
+    if (!socket) return;
 
     const handleReceiveMessage = (msg: any) => {
       if (!msg) return;
@@ -214,7 +220,7 @@ export function ChatModal({
       socket.off('chat:message', handleReceiveMessage);
       socket.off('chat:new_message', handleReceiveMessage);
     };
-  }, [socket, visible, currentRole]);
+  }, [socket, currentRole]);
 
   // 6. Envio de Texto
   const sendMessage = () => {
@@ -695,7 +701,7 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 24,
     alignItems: 'center',
-    justify: 'center',
+    justifyContent: 'center',
   },
   micButton: {
     backgroundColor: '#EAB308',
@@ -703,7 +709,7 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 24,
     alignItems: 'center',
-    justify: 'center',
+    justifyContent: 'center',
   },
   sendIcon: {
     marginLeft: 2, 
@@ -732,7 +738,7 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    justify: 'space-between',
+    justifyContent: 'space-between',
     backgroundColor: '#450A0A',
     borderWidth: 1,
     borderColor: '#991B1B',
@@ -765,6 +771,6 @@ const styles = StyleSheet.create({
     height: 36,
     borderRadius: 18,
     alignItems: 'center',
-    justify: 'center',
+    justifyContent: 'center',
   },
 });

@@ -83,7 +83,6 @@ const processPayoutBlindado = async (job: Job<PayoutJobData>) => {
     return { success: false, reason: 'REVISE_MANUALMENTE', driverId, amountXOF, provider };
   }
 
-  // Reconciliação passiva se houver tentativas anteriores
   if (job.attemptsMade > 0 || currentTx.status === 'PENDING_VERIFICATION' || currentTx.status === 'PROCESSING') {
     try {
       console.log(`🔍 [JOB PAYOUT RECONCILIAÇÃO]: Verificando status da Tx ${transactionId}...`);
@@ -112,7 +111,7 @@ const processPayoutBlindado = async (job: Job<PayoutJobData>) => {
           where: { id: transactionId },
           data: { status: 'FAILED_MANUAL_REVIEW', failureReason: 'Transação confirmada com falha pela operadora' },
         });
-        console.error(`❌ [JOB PAYOUT RECONCILIÇÃO FALHOU]: Confirmada falha pela operadora.`);
+        console.error(`❌ [JOB PAYOUT RECONCILIAÇÃO FALHOU]: Confirmada falha pela operadora.`);
         throw new UnrecoverableError('REJEITADO_OPERADORA: Confirmada falha na reconciliação.');
       }
     } catch (verifErr: any) {
@@ -276,7 +275,7 @@ const processRefundBlindado = async (job: Job<RefundJobData>) => {
 };
 
 // -----------------------------------------------------------------------------
-// 3. WORKERS E EVENTOS
+// 3. WORKERS E EVENTOS WEBSOCKET
 // -----------------------------------------------------------------------------
 export const orangePayoutWorker = new Worker<PayoutJobData>('orange-payout', processPayoutBlindado, {
   connection: redisConnection,

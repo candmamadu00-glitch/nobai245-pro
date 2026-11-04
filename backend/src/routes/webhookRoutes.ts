@@ -2,14 +2,14 @@ import { Router, Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import { prisma } from '../config/prisma';
 import { getIo } from '../server';
-import { processWebhookConfirmation } from '../services/mobileMoneyService';
+import { processWebhookConfirmation, processSmsGatewayWebhook } from '../services/mobileMoneyService';
 import { notifyDriversNewRide } from '../services/rideService';
 
 const router = Router();
 
 const ORANGE_WEBHOOK_SECRET = process.env.ORANGE_WEBHOOK_SECRET || '';
 const MTN_WEBHOOK_SECRET = process.env.MTN_WEBHOOK_SECRET || '';
-const SMS_GATEWAY_SECRET = process.env.SMS_GATEWAY_SECRET || 'bai245_sms_gateway_secret_2026_key';
+const SMS_GATEWAY_SECRET = process.env.SMS_GATEWAY_SECRET || process.env.GATEWAY_SECRET_KEY || 'bai245_sms_gateway_secret_2026_key';
 
 const ALLOWED_IPS = (process.env.ALLOWED_WEBHOOK_IPS || '127.0.0.1,192.168.1.1')
   .split(',')
@@ -53,11 +53,11 @@ async function emitSuccessSockets(rideId?: string | null, passengerId?: string |
 
   if (rideId) {
     const updateResult = await prisma.ride.updateMany({
-      where: { id: rideId, status: 'AWAITING_PAYMENT' },
+      where: { id: rideId, status: { in: ['AWAITING_PAYMENT', 'PENDING'] } },
       data: { status: 'SEARCHING' }
     });
 
-    if (updateResult.count > 0) {
+    if (updateResult.count >= 0) {
       if (io) {
         io.to(rideId).emit('payment:confirmed', {
           rideId,
@@ -81,26 +81,56 @@ async function emitSuccessSockets(rideId?: string | null, passengerId?: string |
 }
 
 // -----------------------------------------------------------------------------
-// 🤖 GAMBIARRA AUTOMÁTICA: RECARGA DE MOTORISTA VIA LEITURA DE SMS (ANDROID)
+// 🤖 GATEWAY AUTOMÁTICO: RECTIFICAÇÃO E LEITURA DE SMS (ANDROID)
 // -----------------------------------------------------------------------------
 router.post('/sms-gateway', async (req: Request, res: Response): Promise<any> => {
   try {
-    const secret = (req.headers['x-secret'] || req.body.secret || req.query.secret) as string;
+    const secret = (req.headers['x-secret'] || req.headers['x-gateway-secret'] || req.body.secret || req.query.secret) as string;
 
     if (!secureCompare(secret, SMS_GATEWAY_SECRET)) {
       console.warn('🚨 [SMS GATEWAY] Tentativa de acesso com secret inválido.');
       return res.status(401).json({ error: 'Secret de autenticação inválido.' });
     }
 
-    const { message, sender } = req.body;
+    const message = req.body.message || req.body.smsText || req.body.text;
+    const sender = req.body.sender || req.body.senderHeader || req.body.from;
+
     if (!message) {
       return res.status(400).json({ error: 'Mensagem do SMS não informada.' });
     }
 
-    console.log(`📩 [SMS RECEBIDO] De: ${sender || 'Desconhecido'} | Conteúdo: "${message}"`);
+    console.log(`📩 [SMS GATEWAY RECEBIDO] De: ${sender || 'Desconhecido'} | Conteúdo: "${message}"`);
 
-    // RegEx para extrair valor (ex: "5000 XOF", "5.000 XOF" ou "5000XOF") e telefone do remetente
-    const amountMatch = message.match(/(\d+[\d\.]*)\s*XOF/i);
+    // 1. Tenta processar como Pagamento de Corrida de Passageiro
+    const ridePaymentResult = await processSmsGatewayWebhook({
+      smsText: message,
+      senderHeader: sender,
+      gatewaySecret: SMS_GATEWAY_SECRET
+    }).catch((err) => {
+      console.warn('⚠️ [SMS GATEWAY] Erro ao processar pagamento de corrida:', err?.message);
+      return null;
+    });
+
+    if (ridePaymentResult && ridePaymentResult.success) {
+      if (ridePaymentResult.duplicated) {
+        return res.status(200).json({ status: 'ok', message: 'SMS duplicado já processado anteriormente.' });
+      }
+
+      // Notifica o app do passageiro e spamma os motoristas próximos
+      if (ridePaymentResult.rideId) {
+        await emitSuccessSockets(ridePaymentResult.rideId, null);
+      }
+
+      return res.status(200).json({
+        success: true,
+        type: 'RIDE_PAYMENT',
+        rideId: ridePaymentResult.rideId,
+        amount: ridePaymentResult.amount
+      });
+    }
+
+    // 2. Se não era corrida de passageiro, tenta processar como Recarga de Carteira do Motorista
+    const amountMatch = message.match(/(\d+[\d\.]*)\s*(?:XOF|FCFA|CFA)/i) || message.match(/(\d+[\d\.]*)/);
     const phoneMatch = message.match(/(?:de|from)\s+(\d{7,12})/i);
 
     if (!amountMatch) {
@@ -111,7 +141,6 @@ router.post('/sms-gateway', async (req: Request, res: Response): Promise<any> =>
     const amountXOF = Number(amountMatch[1].replace(/\./g, ''));
     let driverPhone = phoneMatch ? phoneMatch[1].replace(/\D/g, '') : '';
 
-    // Se o número não veio no texto do SMS, pega do campo sender
     if (!driverPhone && sender) {
       driverPhone = String(sender).replace(/\D/g, '');
     }
@@ -120,7 +149,6 @@ router.post('/sms-gateway', async (req: Request, res: Response): Promise<any> =>
       return res.status(400).json({ error: 'Não foi possível identificar o telefone do remetente.' });
     }
 
-    // Pega os últimos 8 dígitos do telefone para buscar no banco
     const last8Digits = driverPhone.slice(-8);
 
     const driver = await prisma.driver.findFirst({
@@ -130,11 +158,11 @@ router.post('/sms-gateway', async (req: Request, res: Response): Promise<any> =>
     });
 
     if (!driver) {
-      console.warn(`⚠️ [SMS GATEWAY] Nenhum motorista encontrado com o telefone contendo: ${last8Digits}`);
-      return res.status(404).json({ error: 'Motorista não encontrado no sistema.' });
+      console.warn(`⚠️ [SMS GATEWAY] Nenhum motorista ou corrida encontrada para o telefone contendo: ${last8Digits}`);
+      return res.status(404).json({ error: 'Nenhum motorista ou corrida pendente localizada.' });
     }
 
-    // Executa a recarga transacional no banco
+    // Executa a recarga de carteira do motorista
     const result = await prisma.$transaction(async (tx) => {
       const currentBalance = Number(driver.walletBalance || 0);
       const newBalance = currentBalance + amountXOF;
@@ -161,9 +189,8 @@ router.post('/sms-gateway', async (req: Request, res: Response): Promise<any> =>
       return { driverId: driver.id, newBalance, fullName: driver.fullName };
     });
 
-    console.log(`✅ [RECARGA SMS CONCLUÍDA] Motorista: ${result.fullName} | Saldo Anterior: -> Novo Saldo: ${result.newBalance} XOF`);
+    console.log(`✅ [RECARGA MOTORISTA CONCLUÍDA] Motorista: ${result.fullName} | Saldo Anterior: -> Novo Saldo: ${result.newBalance} XOF`);
 
-    // Notifica o app do motorista em tempo real via Socket
     const io = getIo();
     if (io) {
       io.to(driver.id)
@@ -177,7 +204,8 @@ router.post('/sms-gateway', async (req: Request, res: Response): Promise<any> =>
 
     return res.status(200).json({
       success: true,
-      message: 'Recarga processada com sucesso!',
+      type: 'DRIVER_RECHARGE',
+      message: 'Recarga do motorista processada com sucesso!',
       driverName: result.fullName,
       creditedAmount: amountXOF,
       newBalance: result.newBalance
@@ -185,12 +213,12 @@ router.post('/sms-gateway', async (req: Request, res: Response): Promise<any> =>
 
   } catch (error: any) {
     console.error('❌ [SMS GATEWAY ERR]:', error);
-    return res.status(500).json({ error: 'Erro ao processar recarga.' });
+    return res.status(500).json({ error: 'Erro interno ao processar SMS no Gateway.' });
   }
 });
 
 // -----------------------------------------------------------------------------
-// WEBHOOK ORANGE MONEY
+// WEBHOOK ORANGE MONEY (OFICIAL)
 // -----------------------------------------------------------------------------
 router.post('/orange', ipWhitelistMiddleware, async (req: Request, res: Response): Promise<any> => {
   try {
@@ -242,7 +270,7 @@ router.post('/orange', ipWhitelistMiddleware, async (req: Request, res: Response
 });
 
 // -----------------------------------------------------------------------------
-// WEBHOOK MTN MOMO
+// WEBHOOK MTN MOMO (OFICIAL)
 // -----------------------------------------------------------------------------
 router.post('/mtn', ipWhitelistMiddleware, async (req: Request, res: Response): Promise<any> => {
   try {

@@ -26,37 +26,33 @@ async function main() {
   });
 
   // -----------------------------------------------------------------------------
-  // 1.1. CONFIGURAÇÃO FINANCEIRA ADMINISTRATIVA (NÚMEROS DE RECEBIMENTO DA EMPRESA)
+  // 1.1. CONFIGURAÇÃO FINANCEIRA (LÊ DIRETAMENTE DO .ENV)
   // -----------------------------------------------------------------------------
+  const adminOrange = process.env.ADMIN_ORANGE_PHONE || '245957330790';
+  const adminMtn = process.env.ADMIN_MTN_PHONE || '245960000000';
+
   await prisma.systemConfig.upsert({
     where: { id: 'bai245-system-config' },
     update: {
-      adminOrangeNumber: '245957330790', // 👈 EDITE AQUI: Número Orange Money oficial da empresa
-      adminMtnNumber: '245960000000',    // 👈 EDITE AQUI: Número MTN MoMo oficial da empresa
+      adminOrangeNumber: adminOrange,
+      adminMtnNumber: adminMtn,
     },
     create: {
       id: 'bai245-system-config',
-      adminOrangeNumber: '245957330790', // 👈 EDITE AQUI: Número Orange Money oficial da empresa
-      adminMtnNumber: '245960000000',    // 👈 EDITE AQUI: Número MTN MoMo oficial da empresa
+      adminOrangeNumber: adminOrange,
+      adminMtnNumber: adminMtn,
     },
   });
-  console.log('✅ Números administrativos de recebimento configurados no SystemConfig!');
+  console.log(`✅ Números administrativos configurados no SystemConfig: Orange (${adminOrange}) | MTN (${adminMtn})`);
 
-  // 2. Configuração de Tarifas em Francos CFA (XOF) para Guiné-Bissau
+  // 2. Configuração de Tarifas em Francos CFA (XOF)
   const tariffs = [
-    // --- TÁXI TRADICIONAL ---
     { vehicleType: VehicleType.TAXI, serviceType: ServiceType.RIDE, baseFare: 300, perKmFare: 250, perMinuteFare: 20, minimumFare: 1000, commissionRate: 10 },
     { vehicleType: VehicleType.TAXI, serviceType: ServiceType.DELIVERY, baseFare: 400, perKmFare: 300, perMinuteFare: 25, minimumFare: 1200, commissionRate: 12 },
-
-    // --- CARRO PARTICULAR ---
     { vehicleType: VehicleType.PARTICULAR, serviceType: ServiceType.RIDE, baseFare: 500, perKmFare: 350, perMinuteFare: 30, minimumFare: 1500, commissionRate: 15 },
     { vehicleType: VehicleType.PARTICULAR, serviceType: ServiceType.DELIVERY, baseFare: 600, perKmFare: 400, perMinuteFare: 35, minimumFare: 1800, commissionRate: 15 },
-
-    // --- MOTO TÁXI ---
     { vehicleType: VehicleType.MOTO, serviceType: ServiceType.RIDE, baseFare: 200, perKmFare: 150, perMinuteFare: 15, minimumFare: 500, commissionRate: 8 },
     { vehicleType: VehicleType.MOTO, serviceType: ServiceType.DELIVERY, baseFare: 250, perKmFare: 200, perMinuteFare: 15, minimumFare: 600, commissionRate: 10 },
-
-    // --- MOTO CARRO (CANDONGA / CARGA) ---
     { vehicleType: VehicleType.MOTO_CARRO, serviceType: ServiceType.DELIVERY, baseFare: 500, perKmFare: 350, perMinuteFare: 25, minimumFare: 1500, commissionRate: 12 },
   ];
 
@@ -74,7 +70,7 @@ async function main() {
   }
   console.log('✅ Tarifas e Carteira da Empresa configuradas com sucesso!');
 
-  // 3. 🛡️ Criação dos Administradores do Sistema
+  // 3. Administradores do Sistema
   console.log('🛡️ Criando contas de Super Administradores...');
   const admins = [
     { name: 'Demba', email: 'demba245@nobai.gb', password: 'Demba@Admin2026!', role: 'SUPER_ADMIN' },
@@ -172,7 +168,7 @@ async function main() {
     },
   });
 
-  // 6. Corridas de Teste (Histórico para o Dashboard)
+  // 6. Corridas de Teste
   console.log('🚗 Gerando corridas de teste...');
   const sampleRides = [
     {
@@ -243,7 +239,7 @@ async function main() {
     await prisma.ride.create({ data: ride });
   }
 
-  console.log('🚀 Semeio concluído com sucesso. Todos os dados prontos!');
+  console.log('🚀 Semeio concluído com sucesso. Todos os dados prontos e alinhados com o .env!');
 }
 
 main()

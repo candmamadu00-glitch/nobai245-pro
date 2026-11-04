@@ -290,7 +290,6 @@ const findNearestLocalBairro = (lat: number, lng: number) => {
   return null;
 };
 
-// 🟢 GEOCODIFICAÇÃO REVERSA PRECISA PARA GUINÉ-BISSAU
 const reverseGeocodeBissau = async (latitude: number, longitude: number, userRefPoint?: string): Promise<string> => {
   try {
     const localBairro = findNearestLocalBairro(latitude, longitude);
@@ -1109,13 +1108,13 @@ useEffect(() => {
 
       let apiResults: MapboxGeocodingFeature[] = [];
 
-      // 🟢 PROCESSA RESULTADOS DO BANCO DE DADOS NOBAI245 (TRATAMENTO SEGURO)
+// 🟢 PROCESSA RESULTADOS DO BANCO DE DADOS NOBAI245 (TRATAMENTO SEGURO)
 if (resDb.status === 'fulfilled' && resDb.value?.data) {
   const dbLandmarks = (resDb.value.data || []).map((item: any) => {
     // 1. Extrai o nome do ponto
     const placeName = item.name || item.placeName || item.title || 'Ponto de Referência';
 
-    // 2. Extrai o nome do bairro (se for objeto do Prisma { name: "..." } ou string direta)
+    // 2. Extrai o nome do bairro
     const neighborhoodName = 
       typeof item.neighborhood === 'object' && item.neighborhood?.name
         ? item.neighborhood.name
@@ -1128,7 +1127,7 @@ if (resDb.status === 'fulfilled' && resDb.value?.data) {
 
     return {
       id: `db_${item.id || Math.random()}`,
-      description: `${placeName}${popular} - ${neighborhoodName}`,
+      description: `${placeName}${popular} • ${neighborhoodName}`,
       longitude: Number(item.longitude),
       latitude: Number(item.latitude),
       isLocalBairro: true,

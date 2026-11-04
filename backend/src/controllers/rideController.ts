@@ -9,11 +9,11 @@ import {
   startRideLogic,
   finalizeRideAndCharge,
   cancelRideLogic,
-  calculateDistance
-} from '../services/rideRulesService';
+  calculateDistance,
+  calculateRouteAndDistance,
+  submitRatingLogic
+} from '../services/rideService';
 import { sendPushNotification, PUSH_CHANNELS } from '../services/pushNotifications';
-import { getRouteDistanceAndDuration, submitRatingLogic } from '../services/rideService';
-import { refundPassengerOnCancellation } from '../services/mobileMoneyService';
 
 // -----------------------------------------------------------------------------
 // HELPERS DE VALIDAÇÃO E SANITIZAÇÃO
@@ -100,7 +100,7 @@ export const estimateRidePrice = async (req: Request, res: Response): Promise<vo
     const dLat = Number(dropoffLat);
     const dLng = Number(dropoffLng);
 
-    const { distanceKm, durationMin } = await getRouteDistanceAndDuration(pLat, pLng, dLat, dLng);
+    const { distanceKm, durationMin } = await calculateRouteAndDistance(pLat, pLng, dLat, dLng);
 
     const activeTariffs = await prisma.tariffConfig.findMany({
       where: { serviceType, isActive: true }
@@ -474,15 +474,13 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
 
     const otpInput = finishOtp || otp;
     
-    // Finaliza a corrida no motor de regras (executa o split e o repasse automático ao motorista)
-    const result: any = await (finalizeRideAndCharge as any)(
+    const result: any = await finalizeRideAndCharge(
       currentRide.id, 
       Number(finalLat), 
       Number(finalLng),
       otpInput
     );
 
-    // Limpeza no Redis
     await safeRedis.del(`active_ride:${currentRide.id}`).catch(() => null);
 
     if (result?.hasQueuedRide && result?.nextRideId) {
@@ -581,18 +579,7 @@ export const cancelRide = async (req: Request, res: Response): Promise<void> => 
 
     const cleanReason = sanitizeText(reason || `Cancelado pelo ${userRole === 'DRIVER' ? 'motorista' : 'passageiro'}`, 200);
     
-    // 1. Atualiza status da corrida no banco de dados
     const cancelResult = await cancelRideLogic(currentRide.id, userId, userRole as any, cleanReason);
-    
-    // 2. 💸 DISPARO DO ESTORNO AUTOMÁTICO SE HOUVER FUNDOS EM CAUÇÃO (MOBILE MONEY)
-    const refundResult = await refundPassengerOnCancellation(currentRide.id, cleanReason).catch((refundErr: any) => {
-      console.error(`❌ [ESTORNO AUTOMÁTICO] Erro ao devolver dinheiro ao passageiro:`, refundErr?.message || refundErr);
-      return null;
-    });
-
-    if (refundResult?.success) {
-      console.log(`💸 [ESTORNO SUCESSO] Valor devolvido com sucesso para o Mobile Money do passageiro!`);
-    }
 
     try {
       const io = getIo();
@@ -611,7 +598,7 @@ export const cancelRide = async (req: Request, res: Response): Promise<void> => 
       success: true, 
       message: 'Corrida cancelada com sucesso.', 
       penaltyApplied: cancelResult?.appliedPenalty || false,
-      refundExecuted: refundResult?.success || false
+      refundExecuted: (cancelResult?.refundAmount || 0) > 0
     });
   } catch (error: any) {
     console.error(`❌ [CANCELAR_CORRIDA] Erro: ${error?.message || error}`);
@@ -695,7 +682,7 @@ export const uploadChatAudio = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    const baseUrl = process.env.APP_URL ? process.env.APP_URL.replace(/\/$/, '') : `${req.protocol}://${req.get('host')}`;
+    const baseUrl = process.env.EXPO_PUBLIC_API_URL ? process.env.EXPO_PUBLIC_API_URL.replace(/\/$/, '') : `${req.protocol}://${req.get('host')}`;
     const safeFilename = encodeURIComponent(file.filename);
     const audioUrl = `${baseUrl}/uploads/${safeFilename}`;
     const formattedMessage = `[AUDIO]${audioUrl}`;
@@ -754,15 +741,14 @@ export const uploadChatAudio = async (req: Request, res: Response): Promise<void
 export const rateRide = async (req: Request, res: Response): Promise<void> => {
   try {
     const reviewerId = (req as any).user?.id;
-    const reviewerType = (req as any).user?.role === 'DRIVER' ? 'DRIVER' : 'PASSENGER';
-    const { rideId, receiverId, stars, tags, comment } = req.body;
+    const { rideId, stars, comment } = req.body;
 
     if (!reviewerId) {
       res.status(401).json({ success: false, error: 'Sessão expirada.' });
       return;
     }
 
-    if (!rideId || !receiverId || stars === undefined || stars === null) {
+    if (!rideId || stars === undefined || stars === null) {
       res.status(400).json({ success: false, error: 'Campos obrigatórios ausentes para avaliação.' });
       return;
     }
@@ -773,15 +759,12 @@ export const rateRide = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const rating = await submitRatingLogic({
-      rideId: String(rideId),
+    const rating = await submitRatingLogic(
+      String(rideId),
       reviewerId,
-      reviewerType: reviewerType as any,
-      receiverId: String(receiverId),
-      stars: numericStars,
-      tags: Array.isArray(tags) ? tags.map(t => String(t).slice(0, 50)) : [],
-      comment: sanitizeText(comment, 500)
-    });
+      numericStars,
+      sanitizeText(comment, 500)
+    );
 
     res.json({ success: true, message: 'Avaliação enviada com sucesso!', rating });
   } catch (error: any) {
