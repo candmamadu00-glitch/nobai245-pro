@@ -760,12 +760,40 @@ export const rateRide = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const rating = await submitRatingLogic(
-      String(rideId),
+    const currentRide = await prisma.ride.findUnique({
+      where: { id: String(rideId) },
+      select: { passengerId: true, driverId: true }
+    });
+
+    if (!currentRide) {
+      res.status(404).json({ success: false, error: 'Corrida não encontrada.' });
+      return;
+    }
+
+    const isPassenger = currentRide.passengerId === reviewerId;
+    const isDriver = currentRide.driverId === reviewerId;
+
+    if (!isPassenger && !isDriver) {
+      res.status(403).json({ success: false, error: 'Você não tem permissão para avaliar esta corrida.' });
+      return;
+    }
+
+    const reviewerType = isPassenger ? 'PASSENGER' : 'DRIVER';
+    const receiverId = isPassenger ? currentRide.driverId : currentRide.passengerId;
+
+    if (!receiverId) {
+      res.status(400).json({ success: false, error: 'Usuário a ser avaliado não encontrado nesta corrida.' });
+      return;
+    }
+
+    const rating = await submitRatingLogic({
+      rideId: String(rideId),
       reviewerId,
-      numericStars,
-      sanitizeText(comment, 500)
-    );
+      reviewerType,
+      receiverId,
+      stars: numericStars,
+      comment: sanitizeText(comment, 500)
+    });
 
     res.json({ success: true, message: 'Avaliação enviada com sucesso!', rating });
   } catch (error: any) {
