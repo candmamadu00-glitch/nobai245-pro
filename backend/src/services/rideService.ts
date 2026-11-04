@@ -1448,45 +1448,67 @@ export async function notifyNewChatMessage(data: {
   const ride = await prisma.ride.findUnique({
     where: { id: data.rideId },
     select: {
+      id: true,
       passengerId: true,
       driverId: true,
-      passenger: { select: { deviceToken: true } },
-      driver: { select: { deviceToken: true } },
+      passenger: { select: { deviceToken: true, fullName: true, phone: true } },
+      driver: { select: { deviceToken: true, fullName: true, phone: true } },
     },
   });
 
+  if (!ride) return chatMessage;
+
+  const messagePayload = {
+    id: chatMessage.id,
+    rideId: data.rideId,
+    sender: data.senderType.toLowerCase(),
+    senderId: data.senderId,
+    senderType: data.senderType,
+    senderName: data.senderName,
+    text: data.message,
+    message: data.message,
+    createdAt: chatMessage.createdAt.toISOString(),
+  };
+
   try {
-    const { getIo } = require('../server');
     const io = getIo();
     if (io) {
-      const messagePayload = {
-        id: chatMessage.id,
-        sender: data.senderType.toLowerCase(),
-        text: data.message,
-        createdAt: chatMessage.createdAt.toISOString(),
-      };
-      io.to(data.rideId).emit('chat:receive_message', messagePayload);
+      // 💬 Envia para TODAS as salas possíveis de passageiro e motorista
+      const chatRooms = [
+        data.rideId,
+        ride.passengerId,
+        `passenger_${ride.passengerId}`,
+        `passenger:${ride.passengerId}`,
+        `user_${ride.passengerId}`,
+        ride.driverId || '',
+        `driver_${ride.driverId}`,
+        `driver:${ride.driverId}`,
+        `user_${ride.driverId}`
+      ].filter(Boolean);
+
+      chatRooms.forEach(room => {
+        io.to(room).emit('chat:receive_message', messagePayload);
+        io.to(room).emit('chat:message', messagePayload);
+        io.to(room).emit('chat:new_message', messagePayload);
+      });
     }
   } catch (wsErr) {
     console.warn('⚠️ [SOCKET] Erro ao emitir evento de chat:', wsErr);
   }
 
   try {
-    if (ride) {
-      const recipientToken = data.senderType === 'DRIVER'
-        ? ride.passenger?.deviceToken
-        : ride.driver?.deviceToken;
+    const recipientToken = data.senderType === 'DRIVER'
+      ? ride.passenger?.deviceToken
+      : ride.driver?.deviceToken;
 
-      if (recipientToken) {
-        const { sendPushNotification, PUSH_CHANNELS } = require('./pushNotifications');
-        sendPushNotification(
-          recipientToken,
-          `💬 Nova mensagem de ${data.senderName}`,
-          data.message,
-          { type: 'CHAT_MESSAGE', rideId: data.rideId },
-          PUSH_CHANNELS.CHAT
-        ).catch(() => null);
-      }
+    if (recipientToken) {
+      sendPushNotification(
+        recipientToken,
+        `💬 Nova mensagem de ${data.senderName}`,
+        data.message,
+        { type: 'CHAT_MESSAGE', rideId: data.rideId },
+        PUSH_CHANNELS.CHAT
+      ).catch(() => null);
     }
   } catch (pushErr) {
     console.warn('⚠️ [PUSH] Erro ao enviar push de chat:', pushErr);

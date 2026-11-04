@@ -18,7 +18,7 @@ import {
   driverArrivedLogic, 
   startRideLogic, 
   finalizeRideAndCharge, 
-  cancelRideLogic 
+  cancelRideLogic,notifyNewChatMessage
 } from './services/rideService';
 import { passengerRoutes } from './routes/passengerRoutes'; 
 import { driverRoutes } from './routes/driverRoutes'; 
@@ -681,9 +681,32 @@ io.on('connection', (socket: any) => {
     if (userRole === 'DRIVER') {
       socket.join(`driver_${userId}`);
       socket.join(`driver:${userId}`);
+
+      // 🚗 Preserva o estado da corrida ativa do motorista mesmo trocando de tela
+      prisma.driver.findUnique({
+        where: { id: userId },
+        select: { currentRideId: true }
+      }).then(driver => {
+        if (driver?.currentRideId) {
+          socket.join(driver.currentRideId);
+          console.log(`🚗 [SOCKET AUTO-JOIN] Motorista ${userId} mantido na sala da corrida: ${driver.currentRideId}`);
+        }
+      }).catch(() => null);
+
     } else {
       socket.join(`passenger_${userId}`);
       socket.join(`passenger:${userId}`);
+
+      // 👤 Preserva o estado da corrida ativa do passageiro
+      prisma.passenger.findUnique({
+        where: { id: userId },
+        select: { currentRideId: true }
+      }).then(passenger => {
+        if (passenger?.currentRideId) {
+          socket.join(passenger.currentRideId);
+          console.log(`👤 [SOCKET AUTO-JOIN] Passageiro ${userId} mantido na sala da corrida: ${passenger.currentRideId}`);
+        }
+      }).catch(() => null);
     }
   }
 
@@ -1023,7 +1046,7 @@ io.on('connection', (socket: any) => {
     }
   });
 
-  // --- PASSAGEIRO SOLICITA CORRIDA ---
+  // --- PASSAGEIRO SOLICITA CORRIDA (COM MULTI-SALAS COMPLETO) ---
   handleSocketEvent(socket, 'passenger:request_ride', async (rideData) => {
     console.log(`🔴 [SOLICITAÇÃO DE CORRIDA] Socket ID: ${socket.id}`, rideData);
 
@@ -1072,7 +1095,6 @@ io.on('connection', (socket: any) => {
     socket.emit('ride:payment_processing', { message: 'Iniciando retenção de fundos (Escrow)...' });
 
     try {
-      // 🟢 TRANSMITINDO DISTÂNCIA ESTIMADA COMPLETA DO PASSAGEIRO AO SERVICE
       const { pendingVerification, ride } = await createRideAndInitiateEscrow(passengerId, {
         originLat: pLat,
         originLng: pLng,
@@ -1163,7 +1185,6 @@ io.on('connection', (socket: any) => {
         select: { fullName: true, phone: true, profilePicture: true, ratingAverage: true }
       });
 
-      // 🟢 PAYLOAD SINCRONIZADO: DISTÂNCIA E TEMPO INCLUÍDOS
       const requestPayload = {
         rideId, 
         passengerId: ride.passengerId,
@@ -1203,9 +1224,11 @@ io.on('connection', (socket: any) => {
 
         console.log(`📡 [DISPARANDO OFERTA] Para motorista ID: ${d.id} (${ride.distanceKm} km | ${ride.priceXof} XOF)`);
 
+        // 🟢 INCLUSÃO DA SALA user_${d.id}
         io.to(d.id)
           .to(`driver_${d.id}`)
           .to(`driver:${d.id}`)
+          .to(`user_${d.id}`)
           .emit('ride:new_request', { ...requestPayload, isQueuedOffer });
 
         if (d.deviceToken) {
@@ -1667,92 +1690,47 @@ io.on('connection', (socket: any) => {
     }
   });
 
-  // =============================================================================
-  // 💬 EVENTO DE CHAT UNIFICADO
-  // =============================================================================
+  // --- CHAT EM TEMPO REAL (ENVIO E RECEBIMENTO DE MENSAGENS) ---
   handleSocketEvent(socket, 'chat:send_message', async (data) => {
-    try {
-      const { rideId, text, audioUrl, audioDuration, id } = data || {};
-      const senderRole = (data?.sender || data?.senderRole || 'passenger').toLowerCase();
+    const { rideId, message, text, senderType, senderName } = data || {};
+    const userId = socket.data.user?.id;
 
-      if (!rideId || !isUuid(rideId)) return;
+    if (!userId || !rideId || (!message && !text && !data?.audioUrl)) return;
 
-      const ride = await prisma.ride.findUnique({
-        where: { id: rideId },
-        include: { driver: true, passenger: true }
-      });
+    const effectiveMessage = String(message || text || (data?.audioUrl ? '🎤 Mensagem de áudio' : '')).trim();
+    if (!effectiveMessage) return;
 
-      if (!ride) return;
+    const userRole = socket.data.user?.role || socket.data.user?.userType;
+    const effectiveSenderType = senderType || (userRole === 'DRIVER' ? 'DRIVER' : 'PASSENGER');
 
-      const messageText = text || (audioUrl ? '🎤 Mensagem de áudio' : '');
-      const senderTypeEnum = senderRole === 'driver' ? 'DRIVER' : 'PASSENGER';
-      const senderUserId = socket.data.user?.id || (senderRole === 'driver' ? ride.driverId : ride.passengerId);
+    await notifyNewChatMessage({
+      rideId,
+      senderId: userId,
+      senderType: effectiveSenderType as 'PASSENGER' | 'DRIVER',
+      senderName: senderName || (userRole === 'DRIVER' ? 'Motorista' : 'Passageiro'),
+      message: effectiveMessage
+    });
+  });
 
-      const messagePayload = {
-        id: id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-        rideId,
-        sender: senderRole,
-        senderType: senderTypeEnum,
-        text: text || '',
-        message: text || '',
-        audioUrl: audioUrl || null,
-        audioDuration: audioDuration || 0,
-        createdAt: new Date().toISOString()
-      };
+  handleSocketEvent(socket, 'chat:message', async (data) => {
+    const { rideId, message, text, senderType, senderName } = data || {};
+    const userId = socket.data.user?.id;
 
-      if (senderUserId) {
-        prisma.rideChatMessage.create({
-          data: {
-            rideId,
-            senderId: senderUserId,
-            senderType: senderTypeEnum,
-            message: messageText
-          }
-        }).catch(err => console.error('❌ [CHAT DB ERR] Falha ao persistir mensagem no banco:', err?.message));
-      }
+    if (!userId || !rideId || (!message && !text && !data?.audioUrl)) return;
 
-      const targetRooms = [
-        rideId,
-        `ride_${rideId}`,
-        ride.passengerId,
-        `passenger_${ride.passengerId}`,
-        `passenger:${ride.passengerId}`,
-        ride.driverId,
-        `driver_${ride.driverId}`,
-        `driver:${ride.driverId}`
-      ].filter(Boolean) as string[];
+    const effectiveMessage = String(message || text || (data?.audioUrl ? '🎤 Mensagem de áudio' : '')).trim();
+    if (!effectiveMessage) return;
 
-      targetRooms.forEach(room => {
-        io.to(room).emit('chat:receive_message', messagePayload);
-        io.to(room).emit('chat:message', messagePayload);
-      });
+    const userRole = socket.data.user?.role || socket.data.user?.userType;
+    const effectiveSenderType = senderType || (userRole === 'DRIVER' ? 'DRIVER' : 'PASSENGER');
 
-      const recipientToken = senderRole === 'driver'
-        ? ride.passenger?.deviceToken
-        : ride.driver?.deviceToken;
-
-      const senderName = senderRole === 'driver'
-        ? (ride.driver?.fullName || 'Motorista')
-        : (ride.passenger?.fullName || 'Passageiro');
-
-      const notificationBody = audioUrl ? '🎤 Mensagem de áudio recebida' : (text || 'Nova mensagem no chat');
-
-      if (recipientToken) {
-        sendPushNotification(
-          recipientToken,
-          `💬 ${senderName}`,
-          notificationBody,
-          { 
-            rideId, 
-            type: 'CHAT_MESSAGE', 
-            channelId: 'chat-messages' 
-          },
-          PUSH_CHANNELS.RIDE_UPDATE
-        ).catch(err => console.error('❌ Erro ao enviar Push de Chat:', err));
-      }
-    } catch (err) {
-      console.error('❌ Erro no processamento da mensagem do chat:', err);
-    }
+    await notifyNewChatMessage({
+      rideId,
+      senderId: userId,
+      senderType: effectiveSenderType as 'PASSENGER' | 'DRIVER',
+      senderName: senderName || (userRole === 'DRIVER' ? 'Motorista' : 'Passageiro'),
+      message: effectiveMessage
+    });
   });
 
   // =============================================================================
