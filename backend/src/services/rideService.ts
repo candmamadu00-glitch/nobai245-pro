@@ -3,11 +3,10 @@ import {
   ServiceType, 
   RideStatus, 
   PaymentMethod, 
-  PaymentProvider,
-  PaymentStatus,
   TransactionStatus, 
   TransactionType, 
-  UserType
+  UserType,
+  Prisma
 } from '@prisma/client';
 import axios from 'axios';
 import { prisma } from '../config/prisma';
@@ -22,7 +21,17 @@ const CANCELLATION_PENALTY_XOF = 500;
 const MIN_DRIVER_BALANCE_FOR_CASH = -2000;
 const MIN_DRIVER_BALANCE_FOR_ONLINE = 1000;
 const RideOfferStatus = { PENDING: 'PENDING', ACCEPTED: 'ACCEPTED' } as any;
-
+// 🟢 EXPORTAÇÃO NECESSÁRIA PARA O RIDECONTROLLER
+export async function calculateRouteAndDistance(
+  pLat: number,
+  pLng: number,
+  dLat: number,
+  dLng: number
+): Promise<{ distanceKm: number; durationMin: number }> {
+  const distanceKm = calculateDistance(pLat, pLng, dLat, dLng);
+  const durationMin = Math.max(3, Math.ceil((distanceKm / 25) * 60));
+  return { distanceKm, durationMin };
+}
 export interface FinalizeRideResult {
   success: boolean;
   fareXOF: number;

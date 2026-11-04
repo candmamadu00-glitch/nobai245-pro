@@ -415,28 +415,23 @@ export async function chargePassengerMobileMoney(
   const platformFee = Math.round(cleanAmount * 0.15);
   const driverAmount = cleanAmount - platformFee;
 
-  if (params.rideId) {
+ if (params.rideId) {
     const paymentTx = await prisma.transaction.upsert({
       where: { id: params.transactionId || `tx-${params.rideId}` },
       create: {
         id: params.transactionId || `tx-${params.rideId}`,
         rideId: params.rideId,
-        passengerPhone: formattedPhone,
         paymentMethod: enumProvider,
         type: TransactionType.RIDE_PAYMENT,
         amount: new Prisma.Decimal(cleanAmount),
-        platformFee: new Prisma.Decimal(platformFee),
-        driverAmount: new Prisma.Decimal(driverAmount),
-        status: TransactionStatus.PENDING
-      },
+        status: TransactionStatus.PENDING,
+        description: `Cobrança Mobile Money passageiro (${formattedPhone})`
+      } as any,
       update: {
-        passengerPhone: formattedPhone,
         paymentMethod: enumProvider,
         amount: new Prisma.Decimal(cleanAmount),
-        platformFee: new Prisma.Decimal(platformFee),
-        driverAmount: new Prisma.Decimal(driverAmount),
         status: TransactionStatus.PENDING
-      }
+      } as any
     });
 
     const destNumber = enumProvider === PaymentMethod.ORANGE_MONEY ? ADMIN_ORANGE_PHONE : ADMIN_MTN_PHONE;

@@ -114,9 +114,10 @@ export const estimateRidePrice = async (req: Request, res: Response): Promise<vo
     const estimates = await Promise.all(
       activeTariffs.map(async (tariff) => {
         const totalPrice = await calculateRidePrice(distanceKm, durationMin, tariff.vehicleType as any, serviceType as any);
+        const priceNum = typeof totalPrice === 'number' ? totalPrice : Number((totalPrice as any)?.totalPrice || totalPrice || 0);
         return { 
           vehicleType: tariff.vehicleType, 
-          priceXOF: Math.max(0, Math.round(totalPrice))
+          priceXOF: Math.max(0, Math.round(priceNum))
         };
       })
     );
