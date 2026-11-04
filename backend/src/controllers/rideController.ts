@@ -383,7 +383,7 @@ export const driverArrived = async (req: Request, res: Response): Promise<void> 
 
     const sanitizedRide = sanitizeRide(updatedRide);
 
-    try {
+    try { 
       const io = getIo();
       if (io) {
         io.to(sanitizedRide.id).emit('ride:arrived', { rideId: sanitizedRide.id });

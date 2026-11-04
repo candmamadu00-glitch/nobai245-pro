@@ -554,9 +554,10 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
   if (driver.currentRideId) {
     const currentActiveRide = await prisma.ride.findUnique({
       where: { id: driver.currentRideId },
-      select: { status: true }
+      select: { id: true, status: true }
     });
 
+    // Se a corrida não existir ou já estiver cancelada/concluída, limpa automaticamente
     if (!currentActiveRide || ['CANCELLED', 'COMPLETED'].includes(currentActiveRide.status)) {
       await prisma.driver.update({
         where: { id: driverId },
