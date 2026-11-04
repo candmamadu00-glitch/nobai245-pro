@@ -1556,9 +1556,9 @@ io.on('connection', (socket: any) => {
 
       io.to('admin_dashboard').emit('admin:ride_update', { rideId, status: 'IN_PROGRESS', driverId });
 
-      if (updatedRide?.passenger?.deviceToken) {
+      if ((updatedRide as any)?.passenger?.deviceToken) {
         sendPushNotification(
-          updatedRide.passenger.deviceToken,
+          (updatedRide as any).passenger.deviceToken, 
           '🚕 Viagem Iniciada!',
           'Tenha uma excelente viagem com o Nô Bai 245!',
           { type: 'RIDE_STARTED', rideId },

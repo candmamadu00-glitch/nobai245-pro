@@ -2287,7 +2287,7 @@ useEffect(() => {
 {rideState === 'in_progress' && (
   <TouchableOpacity 
     style={[styles.actionBtnPrimary, { backgroundColor: '#EAB308' }, isLoading && { opacity: 0.75 }]} 
-    onPress={handleFinishRide} 
+    onPress={() => handleFinishRide()} 
     disabled={isLoading}
     activeOpacity={0.85}
   >

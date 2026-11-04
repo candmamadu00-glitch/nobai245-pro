@@ -79,7 +79,7 @@ export function ChatModal({
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
 
   const flatListRef = useRef<FlatList>(null);
-  recordTimerRef.current = null;
+const recordTimerRef = useRef<any>(null);
   const activePlayerRef = useRef<any>(null);
 
   const storageKey = `@bai245:chat_${rideId}`;
@@ -545,7 +545,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(15, 23, 42, 0.6)', 
   },
   chatContainer: {
@@ -754,6 +754,6 @@ const styles = StyleSheet.create({
     height: 36,
     borderRadius: 18,
     alignItems: 'center',
-    justify: 'center',
+    justifyContent: 'center',
   },
 });

@@ -11,7 +11,7 @@ import {
 import { prisma } from '../config/prisma';
 import { payoutToDriverMobileMoney } from './mobileMoneyService';
 import { enqueuePayoutJob, enqueueRefundJob } from './payoutQueue';
-
+export * from './rideService';
 const CANCELLATION_FEE_XOF = 500;
 const FREE_CANCELLATION_MINUTES = 2;
 const DRIVER_PENALTY_SHARE = 0.7;
@@ -638,6 +638,6 @@ export async function submitRatingLogic(
       data: { ratingAverage: newAvg },
     });
   }
-
+ 
   return { success: true, rating: safeRating };
 }
