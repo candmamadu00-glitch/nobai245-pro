@@ -21,7 +21,7 @@ const CANCELLATION_PENALTY_XOF = 500;
 const MIN_DRIVER_BALANCE_FOR_CASH = -2000;
 const MIN_DRIVER_BALANCE_FOR_ONLINE = 1000;
 const RideOfferStatus = { PENDING: 'PENDING', ACCEPTED: 'ACCEPTED' } as any;
-// 🟢 EXPORTAÇÃO NECESSÁRIA PARA O RIDECONTROLLER
+
 export async function calculateRouteAndDistance(
   pLat: number,
   pLng: number,
@@ -32,6 +32,7 @@ export async function calculateRouteAndDistance(
   const durationMin = Math.max(3, Math.ceil((distanceKm / 25) * 60));
   return { distanceKm, durationMin };
 }
+
 export interface FinalizeRideResult {
   success: boolean;
   fareXOF: number;
@@ -63,7 +64,7 @@ function safeSocketEmit(room: string, event: string, payload: any): void {
 }
 
 // -----------------------------------------------------------------------------
-// HELPER PARA DISPARO DE NOVAS CORRIDAS PARA MOTORISTAS
+// HELPER PARA DISPARO DE NOVAS CORRIDAS PARA MOTORISTAS (COM MULTI-SALAS)
 // -----------------------------------------------------------------------------
 export async function notifyDriversNewRide(rideId: string): Promise<void> {
   console.log(`\n🚨 [RIDE DISPATCH] Buscando motoristas para notificar sobre a corrida ${rideId}...`);
@@ -130,31 +131,32 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
 
     console.log(`🔍 [RIDE DISPATCH] ${qualifiedDrivers.length} motoristas qualificados no raio de 5km.`);
 
-    // 🟢 PAYLOAD CORRIGIDO: ENVIANDO DISTÂNCIA E TEMPO EXATOS SINCROIZADOS COM O PASSAGEIRO
     const ridePayload = {
       rideId: ride.id,
+      id: ride.id,
       passengerName: ride.passenger?.fullName || 'Passageiro',
       passengerPhoto: ride.passenger?.profilePicture,
       passengerRating: Number(ride.passenger?.ratingAverage || 5.0),
       originAddress: ride.originAddress,
       originLat: Number(ride.originLat),
       originLng: Number(ride.originLng),
+      pickupLat: Number(ride.originLat),
+      pickupLng: Number(ride.originLng),
       destinationAddress: ride.destinationAddress,
       destinationLat: Number(ride.destinationLat),
       destinationLng: Number(ride.destinationLng),
       
-      // 🟢 QUILOMETRAGEM E TEMPO SINCRONIZADOS DA FONTE DA VERDADE (BANCO)
       distanceKm: Number(ride.distanceKm || 0),
       estimatedDistance: Number(ride.distanceKm || 0),
       durationMin: Number(ride.durationMin || 0),
 
-      // 🟢 PONTOS DE REFERÊNCIA INDIVIDUAIS
       pickupReferencePoint: (ride as any).pickupReferencePoint || ride.referencePoint || '',
       dropoffReferencePoint: (ride as any).dropoffReferencePoint || '',
       extraStopReferencePoint: (ride as any).extraStopReferencePoint || '',
       referencePoint: ride.referencePoint || '',
 
       priceXof: Number(ride.priceXof),
+      estimatedPrice: Number(ride.priceXof),
       serviceType: ride.serviceType,
       paymentMethod: ride.paymentMethod,
       stops: ride.stops || [],
@@ -169,9 +171,20 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
         create: { rideId: ride.id, driverId: driver.id, status: RideOfferStatus.PENDING, expiresAt: offerExpiresAt }
       }).catch((err: any) => console.warn(`⚠️ [RIDE OFFER CREATION FAIL] Driver: ${driver.id}`, err?.message));
 
-      safeSocketEmit(`driver_${driver.id}`, 'ride:new_request', {
-        ...ridePayload,
-        isQueuedOffer: false
+      // 🟢 EMISSÃO MULTI-SALAS PARA GARANTIR CHEGADA AO SOCKET NO MOBILE
+      const driverRooms = [
+        driver.id,
+        `driver_${driver.id}`,
+        `driver:${driver.id}`,
+        `user_${driver.id}`
+      ];
+
+      driverRooms.forEach(room => {
+        safeSocketEmit(room, 'ride:new_request', {
+          ...ridePayload,
+          isQueuedOffer: false
+        });
+        safeSocketEmit(room, 'ride:offer', ridePayload);
       });
 
       if (driver.deviceToken) {
@@ -385,7 +398,6 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     originLat, originLng, destinationLat, destinationLng, routeWaypoints
   );
 
-  // 🟢 PRIORIZA A DISTÂNCIA CALCULADA PELO PASSAGEIRO PARA GARANTIR SINCRONISMO PERFECT
   const distanceKm = (estimatedDistance && estimatedDistance > 0) ? Number(estimatedDistance.toFixed(2)) : routeCalc.distanceKm;
   const durationMin = routeCalc.durationMin;
   
@@ -543,7 +555,7 @@ export async function searchLandmarks(query: string) {
 }
 
 // -----------------------------------------------------------------------------
-// 2. ACEITAR CORRIDA (COM AUTO-LIMPEZA DE ESTADOS PRESOS)
+// 2. ACEITAR CORRIDA (COM AUTO-LIMPEZA E EMISSÃO UNIFICADA)
 // -----------------------------------------------------------------------------
 export async function acceptRideLogic(rideId: string, driverId: string) {
   const driver = await prisma.driver.findUnique({ where: { id: driverId } });
@@ -551,7 +563,6 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     throw new Error('DRIVER_UNAVAILABLE: Motorista indisponível ou conta não aprovada.');
   }
 
-  // 🧹 Auto-limpeza inteligente de corridas antigas ou presas
   if (driver.currentRideId && driver.currentRideId !== rideId) {
     const currentActiveRide = await prisma.ride.findUnique({
       where: { id: driver.currentRideId },
@@ -561,15 +572,16 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     const isStuckOrFinished = 
       !currentActiveRide || 
       ['CANCELLED', 'COMPLETED', 'SEARCHING'].includes(currentActiveRide.status) ||
-      (Date.now() - new Date(currentActiveRide.updatedAt).getTime() > 30 * 60 * 1000); // 30 mins sem atualização
+      (Date.now() - new Date(currentActiveRide.updatedAt).getTime() > 30 * 60 * 1000);
 
     if (isStuckOrFinished) {
-      if (currentActiveRide && !['CANCELLED', 'COMPLETED'].includes(currentActiveRide.status)) {
-        await prisma.ride.update({
-          where: { id: driver.currentRideId },
-          data: { status: RideStatus.CANCELLED, cancelReason: 'AUTO_CLEANUP_ORPHANED_RIDE' }
-        }).catch(() => null);
-      }
+      // ✅ Corrigido para bater 100% com o schema.prisma:
+if (currentActiveRide && !['CANCELLED', 'COMPLETED'].includes(currentActiveRide.status)) {
+  await prisma.ride.update({
+    where: { id: driver.currentRideId },
+    data: { status: RideStatus.CANCELLED, cancellationReason: 'AUTO_CLEANUP_ORPHANED_RIDE' }
+  }).catch(() => null);
+}
 
       await prisma.driver.update({
         where: { id: driverId },
@@ -662,29 +674,22 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     pickupReferencePoint: (result as any).pickupReferencePoint || result.referencePoint || ''
   };
 
-  try {
-    const io = getIo();
-    if (io) {
-      const allRooms = [
-        result.id,
-        result.passengerId,
-        `passenger_${result.passengerId}`,
-        `passenger:${result.passengerId}`,
-        `user_${result.passengerId}`,
-        result.driverId!,
-        `driver_${result.driverId}`,
-        `driver:${result.driverId}`,
-        `user_${result.driverId}`
-      ];
+  const allRooms = [
+    result.id,
+    result.passengerId,
+    `passenger_${result.passengerId}`,
+    `passenger:${result.passengerId}`,
+    `user_${result.passengerId}`,
+    result.driverId!,
+    `driver_${result.driverId}`,
+    `driver:${result.driverId}`,
+    `user_${result.driverId}`
+  ];
 
-      allRooms.forEach(room => {
-        io.to(room).emit('ride:accepted', fullPayload);
-        io.to(room).emit('driver:accept_ride_success', fullPayload);
-      });
-    }
-  } catch (wsErr) {
-    console.warn('⚠️ [SOCKET] Erro ao emitir aceite de corrida:', wsErr);
-  }
+  allRooms.forEach(room => {
+    safeSocketEmit(room, 'ride:accepted', fullPayload);
+    safeSocketEmit(room, 'driver:accept_ride_success', fullPayload);
+  });
 
   if (result.passenger?.deviceToken) {
     sendPushNotification(
@@ -702,7 +707,7 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
 export const acceptRide = acceptRideLogic;
 
 // -----------------------------------------------------------------------------
-// 2. CHEGADA DO MOTORISTA
+// 3. CHEGADA DO MOTORISTA
 // -----------------------------------------------------------------------------
 export async function driverArrivedLogic(rideId: string, driverId: string) {
   const ride = await prisma.ride.findUnique({ where: { id: rideId } });
@@ -770,7 +775,7 @@ export async function driverArrivedLogic(rideId: string, driverId: string) {
 }
 
 // -----------------------------------------------------------------------------
-// 3. INÍCIO DA VIAGEM
+// 4. INÍCIO DA VIAGEM
 // -----------------------------------------------------------------------------
 export async function startRideLogic(rideId: string, driverId: string, otpInput: string) {
   const ride = await prisma.ride.findUnique({ 
@@ -838,7 +843,7 @@ export async function startRideLogic(rideId: string, driverId: string, otpInput:
 }
 
 // -----------------------------------------------------------------------------
-// 4. PROXIMIDADE DO MOTORISTA
+// 5. PROXIMIDADE DO MOTORISTA
 // -----------------------------------------------------------------------------
 export async function notifyDriverNearbyIfClose(rideId: string, distanceMeters: number) {
   if (distanceMeters > 300) return;
@@ -874,7 +879,7 @@ export async function notifyDriverNearbyIfClose(rideId: string, distanceMeters: 
 }
 
 // -----------------------------------------------------------------------------
-// 5. FINALIZAÇÃO DA CORRIDA E LIQUIDAÇÃO
+// 6. FINALIZAÇÃO DA CORRIDA E LIQUIDAÇÃO
 // -----------------------------------------------------------------------------
 export async function finalizeRideAndCharge(
   rideId: string, 
@@ -1112,7 +1117,13 @@ export async function finalizeRideAndCharge(
     safeSocketEmit(room, 'ride:finished', completedPayload);
   });
 
-  const driverRooms = [ride.driverId!, `driver_${ride.driverId}`, `driver:${ride.driverId}`];
+  const driverRooms = [
+    ride.driverId!, 
+    `driver_${ride.driverId}`, 
+    `driver:${ride.driverId}`,
+    `user_${ride.driverId}`
+  ];
+  
   driverRooms.forEach(room => {
     safeSocketEmit(room, 'wallet:updated', { balance: finalDriverBalance });
     if (wasForcedOfflineDueToBalance) {
@@ -1170,9 +1181,8 @@ export async function finalizeRideAndCharge(
   };
 }
 
-
 // -----------------------------------------------------------------------------
-// 6. CANCELAMENTO DE CORRIDA
+// 7. CANCELAMENTO DE CORRIDA
 // -----------------------------------------------------------------------------
 export async function cancelRideLogic(
   rideId: string, 
@@ -1225,7 +1235,6 @@ export async function cancelRideLogic(
       throw new Error('STATE_CONFLICT: A corrida já foi alterada por outra operação.');
     }
 
-    // ✅ Para:
     if ((ride as any).paymentTransaction?.id) {
       await (tx as any).paymentTransaction.update({
         where: { id: (ride as any).paymentTransaction.id },
@@ -1313,23 +1322,44 @@ export async function cancelRideLogic(
     }
   }
 
-  safeSocketEmit(`passenger_${ride.passengerId}`, 'ride:cancelled', {
-    rideId: ride.id,
-    cancelledBy: userType,
-    reason: cleanReason
-  });
+  const cancelRooms = [
+    ride.passengerId,
+    `passenger_${ride.passengerId}`,
+    `passenger:${ride.passengerId}`,
+    `user_${ride.passengerId}`
+  ];
 
-  if (ride.driverId) {
-    safeSocketEmit(`driver_${ride.driverId}`, 'ride:cancelled', {
+  cancelRooms.forEach(room => {
+    safeSocketEmit(room, 'ride:cancelled', {
       rideId: ride.id,
       cancelledBy: userType,
       reason: cleanReason
+    });
+  });
+
+  if (ride.driverId) {
+    const driverCancelRooms = [
+      ride.driverId,
+      `driver_${ride.driverId}`,
+      `driver:${ride.driverId}`,
+      `user_${ride.driverId}`
+    ];
+
+    driverCancelRooms.forEach(room => {
+      safeSocketEmit(room, 'ride:cancelled', {
+        rideId: ride.id,
+        cancelledBy: userType,
+        reason: cleanReason
+      });
     });
   }
 
   return dbResult;
 }
 
+// -----------------------------------------------------------------------------
+// 8. AVALIAÇÕES E MENSAGENS DE CHAT
+// -----------------------------------------------------------------------------
 export async function submitRatingLogic(data: {
   rideId: string;
   reviewerId: string;
@@ -1397,6 +1427,7 @@ export async function submitRatingLogic(data: {
 
   return newRating;
 }
+
 export async function notifyNewChatMessage(data: {
   rideId: string;
   senderId: string;
