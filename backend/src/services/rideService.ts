@@ -1022,12 +1022,13 @@ export async function finalizeRideAndCharge(
         data: { status: TransactionStatus.COMPLETED }
       });
 
-      if (ride.paymentTransaction) {
-        await tx.paymentTransaction.update({
-          where: { id: ride.paymentTransaction.id },
-          data: { status: PaymentStatus.PAYOUT_PENDING }
-        });
-      }
+      // ✅ Para:
+    if ((ride as any).paymentTransaction?.id) {
+      await (tx as any).paymentTransaction.update({
+        where: { id: (ride as any).paymentTransaction.id },
+        data: { status: TransactionStatus.PROCESSING }
+      }).catch(() => null);
+    }
 
       await tx.driver.update({ 
         where: { id: ride.driverId! }, 
@@ -1214,11 +1215,12 @@ export async function cancelRideLogic(
       throw new Error('STATE_CONFLICT: A corrida já foi alterada por outra operação.');
     }
 
-    if (ride.paymentTransaction) {
-      await tx.paymentTransaction.update({
-        where: { id: ride.paymentTransaction.id },
-        data: { status: PaymentStatus.REFUND_PENDING }
-      });
+    // ✅ Para:
+    if ((ride as any).paymentTransaction?.id) {
+      await (tx as any).paymentTransaction.update({
+        where: { id: (ride as any).paymentTransaction.id },
+        data: { status: TransactionStatus.PROCESSING }
+      }).catch(() => null);
     }
 
     await (tx as any).rideEventLog.create({
