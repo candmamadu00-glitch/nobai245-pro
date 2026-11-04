@@ -98,7 +98,7 @@ function isUuid(str?: string): boolean {
 // -----------------------------------------------------------------------------
 
 export interface ParsedSms {
-  provider: PaymentProvider;
+  provider: PaymentMethod;
   amount: number;
   senderPhone: string;
   txRef: string;
@@ -117,8 +117,6 @@ export function parseIncomingSms(smsText: string, senderHeader?: string): Parsed
 
   // 1. IDENTIFICAÇÃO DE ORANGE MONEY GUINÉ-BISSAU
   if (header.includes('ORANGE') || cleanText.includes('Orange Money') || cleanText.includes('OM') || cleanText.includes('FCFA')) {
-    // Ex: "Vous avez recu 2500 FCFA de 245955123456. Ref: OM240510.1234.A12345"
-    // Ex: "Recebeu 2500 XOF de 955123456. Ref: OM98765"
     const amountMatch = cleanText.match(/(?:recu|recebeu|transfert|valor:?)\s*(\d+(?:\.\d+)?)\s*(?:FCFA|XOF|CFA)/i) ||
                         cleanText.match(/(\d+(?:\.\d+)?)\s*(?:FCFA|XOF|CFA)/i);
     
@@ -133,7 +131,7 @@ export function parseIncomingSms(smsText: string, senderHeader?: string): Parsed
       const txRef = refMatch ? refMatch[1] : `OM-SMS-${Date.now()}`;
 
       return {
-        provider: PaymentProvider.ORANGE_MONEY,
+        provider: PaymentMethod.ORANGE_MONEY,
         amount,
         senderPhone,
         txRef,
@@ -145,7 +143,6 @@ export function parseIncomingSms(smsText: string, senderHeader?: string): Parsed
 
   // 2. IDENTIFICAÇÃO DE MTN MOMO GUINÉ-BISSAU
   if (header.includes('MTN') || header.includes('MOMO') || cleanText.includes('MoMo') || cleanText.includes('MTN')) {
-    // Ex: "You have received 2500 FCFA from 245966123456. Financial Transaction Id: 987654321."
     const amountMatch = cleanText.match(/(?:received|recebeu|amount:?)\s*(\d+(?:\.\d+)?)\s*(?:FCFA|XOF|CFA)/i) ||
                         cleanText.match(/(\d+(?:\.\d+)?)\s*(?:FCFA|XOF|CFA)/i);
     
@@ -160,7 +157,7 @@ export function parseIncomingSms(smsText: string, senderHeader?: string): Parsed
       const txRef = refMatch ? refMatch[1] : `MTN-SMS-${Date.now()}`;
 
       return {
-        provider: PaymentProvider.MTN_MOMO,
+        provider: PaymentMethod.MTN_MOMO,
         amount,
         senderPhone,
         txRef,
@@ -191,9 +188,14 @@ export async function processSmsGatewayWebhook(payload: {
   }
 
   return await prisma.$transaction(async (tx) => {
-    // 1. Antiduplicação (Idempotência via txRef)
+    // 1. Antiduplicação (Idempotência)
     const existingTx = await tx.transaction.findFirst({
-      where: { txRef: parsed.txRef }
+      where: {
+        OR: [
+          { reference: parsed.txRef },
+          { id: parsed.txRef }
+        ]
+      }
     });
 
     if (existingTx) {
@@ -220,8 +222,7 @@ export async function processSmsGatewayWebhook(payload: {
       where: { id: pendingPayment.id },
       data: {
         status: TransactionStatus.HELD_IN_ESCROW,
-        txRef: parsed.txRef,
-        rawSms: parsed.rawSms,
+        reference: parsed.txRef,
         paymentMethod: parsed.provider
       }
     });
@@ -250,16 +251,15 @@ export async function processSmsGatewayWebhook(payload: {
 export function generateUssdCommand(
   targetPhone: string,
   amount: number,
-  provider: PaymentProvider
+  provider: PaymentMethod | string
 ): string {
   const cleanPhone = formatPhoneNumber(targetPhone).replace(/^\+245/, '').replace(/^\+/, '');
   const cleanAmount = Math.round(amount);
+  const provStr = (provider || '').toString().toUpperCase();
 
-  if (provider === PaymentProvider.ORANGE_MONEY) {
-    // Formato padrão USSD Orange Money GB Transferência: *144*1*1*NUMERO*VALOR*PIN#
+  if (provStr.includes('ORANGE')) {
     return `*144*1*1*${cleanPhone}*${cleanAmount}*${ADMIN_ORANGE_PIN}#`;
   } else {
-    // Formato padrão USSD MTN MoMo GB Transferência: *135*1*1*NUMERO*VALOR*PIN#
     return `*135*1*1*${cleanPhone}*${cleanAmount}*${ADMIN_MTN_PIN}#`;
   }
 }
@@ -357,24 +357,39 @@ export async function getMtnToken(type: 'COLLECTION' | 'DISBURSEMENT'): Promise<
 }
 
 // -----------------------------------------------------------------------------
-// 2. SOLICITAÇÃO DE COBRANÇA (CRIA A PAYMENTTRANSACTION NO BANCO)
+// 2. SOLICITAÇÃO DE COBRANÇA (CRIA A TRANSACTION NO BANCO)
 // -----------------------------------------------------------------------------
 
 export interface ChargeParams {
   passengerId?: string;
   phone: string;
   amount: number;
-  provider: PaymentMethod | MobileMoneyProvider | PaymentProvider | string;
+  provider: PaymentMethod | string;
   rideId?: string;
   transactionId?: string;
   isWalletRecharge?: boolean;
 }
 
+export type ChargeResult = {
+  success: boolean;
+  status?: string;
+  paymentTransactionId?: string;
+  ussdCommand?: string;
+  targetPhone?: string;
+  amount?: number;
+  provider?: PaymentMethod | string;
+  instructions?: string;
+  paymentUrl?: string | null;
+  providerRef?: string;
+  error?: string;
+  details?: string;
+};
+
 export async function chargePassengerMobileMoney(
   phoneOrParams: string | ChargeParams,
   amount?: number,
   provider?: string
-) {
+): Promise<ChargeResult> {
   const params: ChargeParams = typeof phoneOrParams === 'object' ? phoneOrParams : {
     passengerId: '',
     phone: String(phoneOrParams || ''),
@@ -394,37 +409,37 @@ export async function chargePassengerMobileMoney(
 
   const targetProviderStr = (params.provider || PaymentMethod.ORANGE_MONEY).toString().toUpperCase();
   const enumProvider = targetProviderStr.includes('MTN') 
-    ? PaymentProvider.MTN_MOMO 
-    : PaymentProvider.ORANGE_MONEY;
+    ? PaymentMethod.MTN_MOMO 
+    : PaymentMethod.ORANGE_MONEY;
 
-  // Cálculo da comissão do admin (15%) e valor do motorista (85%)
   const platformFee = Math.round(cleanAmount * 0.15);
   const driverAmount = cleanAmount - platformFee;
 
   if (params.rideId) {
-    // Cria ou Atualiza a PaymentTransaction em PENDING
-    const paymentTx = await prisma.paymentTransaction.upsert({
-      where: { rideId: params.rideId },
+    const paymentTx = await prisma.transaction.upsert({
+      where: { id: params.transactionId || `tx-${params.rideId}` },
       create: {
+        id: params.transactionId || `tx-${params.rideId}`,
         rideId: params.rideId,
         passengerPhone: formattedPhone,
-        provider: enumProvider,
+        paymentMethod: enumProvider,
+        type: TransactionType.RIDE_PAYMENT,
         amount: new Prisma.Decimal(cleanAmount),
         platformFee: new Prisma.Decimal(platformFee),
         driverAmount: new Prisma.Decimal(driverAmount),
-        status: PaymentStatus.PENDING
+        status: TransactionStatus.PENDING
       },
       update: {
         passengerPhone: formattedPhone,
-        provider: enumProvider,
+        paymentMethod: enumProvider,
         amount: new Prisma.Decimal(cleanAmount),
         platformFee: new Prisma.Decimal(platformFee),
         driverAmount: new Prisma.Decimal(driverAmount),
-        status: PaymentStatus.PENDING
+        status: TransactionStatus.PENDING
       }
     });
 
-    const destNumber = enumProvider === PaymentProvider.ORANGE_MONEY ? ADMIN_ORANGE_PHONE : ADMIN_MTN_PHONE;
+    const destNumber = enumProvider === PaymentMethod.ORANGE_MONEY ? ADMIN_ORANGE_PHONE : ADMIN_MTN_PHONE;
     const ussdString = generateUssdCommand(destNumber, cleanAmount, enumProvider);
 
     return {
@@ -435,7 +450,9 @@ export async function chargePassengerMobileMoney(
       targetPhone: destNumber,
       amount: cleanAmount,
       provider: enumProvider,
-      instructions: `Por favor, faça a transferência de ${cleanAmount} XOF para o número ${destNumber} via ${enumProvider}.`
+      instructions: `Por favor, faça a transferência de ${cleanAmount} XOF para o número ${destNumber} via ${enumProvider}.`,
+      paymentUrl: null,
+      providerRef: ussdString
     };
   }
 
@@ -445,27 +462,28 @@ export async function chargePassengerMobileMoney(
 // -----------------------------------------------------------------------------
 // 3. RECONCILIAÇÃO E VERIFICAÇÃO DE STATUS DA TRANSAÇÃO
 // -----------------------------------------------------------------------------
+
 export async function verifyTransactionStatus(transactionId: string): Promise<{ 
   status: 'SUCCESS' | 'FAILED' | 'PENDING'; 
   ref?: string; 
 }> {
-  const paymentTx = await prisma.paymentTransaction.findFirst({
+  const paymentTx = await prisma.transaction.findFirst({
     where: {
       OR: [
         { id: isUuid(transactionId) ? transactionId : undefined },
         { rideId: isUuid(transactionId) ? transactionId : undefined },
-        { txRef: transactionId }
+        { reference: transactionId }
       ]
     }
   });
 
   if (!paymentTx) return { status: 'PENDING' };
 
-  if (paymentTx.status === PaymentStatus.CONFIRMED || paymentTx.status === PaymentStatus.PAID_OUT) {
-    return { status: 'SUCCESS', ref: paymentTx.txRef || paymentTx.id };
+  if (paymentTx.status === TransactionStatus.COMPLETED || paymentTx.status === TransactionStatus.HELD_IN_ESCROW) {
+    return { status: 'SUCCESS', ref: paymentTx.reference || paymentTx.id };
   }
 
-  if (paymentTx.status === PaymentStatus.FAILED) {
+  if (paymentTx.status === TransactionStatus.FAILED) {
     return { status: 'FAILED' };
   }
 
@@ -484,7 +502,7 @@ export interface DisbursementParams {
   refundId?: string;
   amount: number;
   phone: string;
-  provider: PaymentMethod | MobileMoneyProvider | PaymentProvider | string;
+  provider: PaymentMethod | string;
   transactionId?: string;
 }
 
@@ -504,16 +522,15 @@ export async function executeRideDisbursement(params: DisbursementParams): Promi
   }
 
   const providerEnum = (provider || '').toString().toUpperCase().includes('MTN')
-    ? PaymentProvider.MTN_MOMO
-    : PaymentProvider.ORANGE_MONEY;
+    ? PaymentMethod.MTN_MOMO
+    : PaymentMethod.ORANGE_MONEY;
 
-  // Gera a instrução USSD para o Celular Gateway executar a saída de dinheiro
   const ussdCommand = generateUssdCommand(cleanPhone, cleanAmount, providerEnum);
 
   if (rideId) {
-    await prisma.paymentTransaction.update({
+    await prisma.transaction.updateMany({
       where: { rideId },
-      data: { status: PaymentStatus.PAYOUT_PENDING }
+      data: { status: TransactionStatus.PROCESSING }
     }).catch(() => null);
   }
 
@@ -535,7 +552,7 @@ export async function refundPassengerMobileMoney(params: DisbursementParams) {
 
 export async function refundPassengerOnCancellation(
   rideIdOrParams: string | DisbursementParams,
-  reason?: string
+  _reason?: string
 ): Promise<{ success: boolean; providerRef?: string; ussdCommand?: string; error?: string; details?: string }> {
   if (typeof rideIdOrParams === 'string') {
     const ride = await prisma.ride.findUnique({
@@ -552,7 +569,7 @@ export async function refundPassengerOnCancellation(
       passengerId: ride.passengerId,
       amount: Number(ride.priceXof || 0),
       phone: ride.passenger.phone,
-      provider: ride.paymentMethod || 'ORANGE_MONEY'
+      provider: ride.paymentMethod || PaymentMethod.ORANGE_MONEY
     });
   }
   return await executeRideDisbursement(rideIdOrParams);
@@ -570,34 +587,35 @@ export async function processWebhookConfirmation(
   providerName: string = 'ORANGE_MONEY'
 ) {
   return await prisma.$transaction(async (tx) => {
-    const existingWebhook = await tx.webhookEvent.findUnique({
+    const existingWebhook = await (tx as any).webhookEvent?.findUnique({
       where: { eventId: providerRef }
-    });
+    }).catch(() => null);
 
     if (existingWebhook) {
       return { alreadyProcessed: true, duplicated: true };
     }
 
     try {
-      await tx.webhookEvent.create({
-        data: {
-          eventId: providerRef,
-          provider: providerName,
-          payload: rawPayload,
-          isProcessed: true
-        }
-      });
+      if ((tx as any).webhookEvent) {
+        await (tx as any).webhookEvent.create({
+          data: {
+            eventId: providerRef,
+            provider: providerName,
+            payload: rawPayload,
+            isProcessed: true
+          }
+        });
+      }
     } catch (err: any) {
       if (err.code === 'P2002') return { alreadyProcessed: true, duplicated: true };
-      throw err;
     }
 
-    const paymentTx = await tx.paymentTransaction.findFirst({
+    const paymentTx = await tx.transaction.findFirst({
       where: {
         OR: [
           { id: isUuid(transactionId) ? transactionId : undefined },
           { rideId: isUuid(transactionId) ? transactionId : undefined },
-          { txRef: transactionId }
+          { reference: transactionId }
         ]
       }
     });
@@ -607,22 +625,24 @@ export async function processWebhookConfirmation(
     }
 
     if (status === 'FAILED') {
-      await tx.paymentTransaction.update({
+      await tx.transaction.update({
         where: { id: paymentTx.id },
-        data: { status: PaymentStatus.FAILED }
+        data: { status: TransactionStatus.FAILED }
       });
       return { success: false, status: 'FAILED' };
     }
 
-    await tx.paymentTransaction.update({
+    await tx.transaction.update({
       where: { id: paymentTx.id },
-      data: { status: PaymentStatus.CONFIRMED, txRef: providerRef }
+      data: { status: TransactionStatus.HELD_IN_ESCROW, reference: providerRef }
     });
 
-    await tx.ride.update({
-      where: { id: paymentTx.rideId },
-      data: { status: RideStatus.SEARCHING }
-    });
+    if (paymentTx.rideId) {
+      await tx.ride.update({
+        where: { id: paymentTx.rideId },
+        data: { status: RideStatus.SEARCHING }
+      });
+    }
 
     return { 
       success: true, 
