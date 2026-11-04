@@ -543,7 +543,7 @@ export async function searchLandmarks(query: string) {
 }
 
 // -----------------------------------------------------------------------------
-// 1. ACEITAR CORRIDA
+// 2. ACEITAR CORRIDA (COM AUTO-LIMPEZA DE ESTADOS PRESOS)
 // -----------------------------------------------------------------------------
 export async function acceptRideLogic(rideId: string, driverId: string) {
   const driver = await prisma.driver.findUnique({ where: { id: driverId } });
@@ -551,14 +551,26 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     throw new Error('DRIVER_UNAVAILABLE: Motorista indisponível ou conta não aprovada.');
   }
 
-  if (driver.currentRideId) {
+  // 🧹 Auto-limpeza inteligente de corridas antigas ou presas
+  if (driver.currentRideId && driver.currentRideId !== rideId) {
     const currentActiveRide = await prisma.ride.findUnique({
       where: { id: driver.currentRideId },
-      select: { id: true, status: true }
+      select: { id: true, status: true, updatedAt: true }
     });
 
-    // Se a corrida não existir ou já estiver cancelada/concluída, limpa automaticamente
-    if (!currentActiveRide || ['CANCELLED', 'COMPLETED'].includes(currentActiveRide.status)) {
+    const isStuckOrFinished = 
+      !currentActiveRide || 
+      ['CANCELLED', 'COMPLETED', 'SEARCHING'].includes(currentActiveRide.status) ||
+      (Date.now() - new Date(currentActiveRide.updatedAt).getTime() > 30 * 60 * 1000); // 30 mins sem atualização
+
+    if (isStuckOrFinished) {
+      if (currentActiveRide && !['CANCELLED', 'COMPLETED'].includes(currentActiveRide.status)) {
+        await prisma.ride.update({
+          where: { id: driver.currentRideId },
+          data: { status: RideStatus.CANCELLED, cancelReason: 'AUTO_CLEANUP_ORPHANED_RIDE' }
+        }).catch(() => null);
+      }
+
       await prisma.driver.update({
         where: { id: driverId },
         data: { currentRideId: null, isAvailable: true }
@@ -604,20 +616,6 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
       throw new Error('RIDE_ALREADY_TAKEN: Esta corrida acabou de ser aceita por outro motorista.');
     }
 
-    await (tx as any).rideOffer?.updateMany({
-      where: { rideId, driverId },
-      data: { status: 'ACCEPTED' }
-    }).catch(() => null);
-
-    await (tx as any).rideEventLog?.create({
-      data: {
-        rideId,
-        status: targetStatus,
-        triggeredBy: UserType.DRIVER,
-        userId: driverId
-      }
-    }).catch(() => null);
-
     const res = await tx.ride.findUnique({ 
       where: { id: rideId }, 
       include: { 
@@ -637,7 +635,6 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
 
   console.log(`🚗 [RIDE ACCEPT] Motorista "${result.driver?.fullName}" aceitou a corrida ID: ${result.id}`);
 
-  // Payload unificado e compatível com ambos os aplicativos (Passageiro e Motorista)
   const fullPayload = {
     success: true,
     rideId: result.id,
@@ -658,16 +655,32 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     durationMin: Number(result.durationMin || 0),
     originAddress: result.originAddress,
     destinationAddress: result.destinationAddress,
+    pickupLat: Number(result.originLat),
+    pickupLng: Number(result.originLng),
+    destinationLat: Number(result.destinationLat),
+    destinationLng: Number(result.destinationLng),
     pickupReferencePoint: (result as any).pickupReferencePoint || result.referencePoint || ''
   };
 
   try {
     const io = getIo();
     if (io) {
-      // Dispara para a sala da corrida, do passageiro e do motorista simultaneamente
-      io.to(result.id).emit('ride:accepted', fullPayload);
-      io.to(`passenger_${result.passengerId}`).emit('ride:accepted', fullPayload);
-      io.to(`driver_${result.driverId}`).emit('ride:accepted', fullPayload);
+      const allRooms = [
+        result.id,
+        result.passengerId,
+        `passenger_${result.passengerId}`,
+        `passenger:${result.passengerId}`,
+        `user_${result.passengerId}`,
+        result.driverId!,
+        `driver_${result.driverId}`,
+        `driver:${result.driverId}`,
+        `user_${result.driverId}`
+      ];
+
+      allRooms.forEach(room => {
+        io.to(room).emit('ride:accepted', fullPayload);
+        io.to(room).emit('driver:accept_ride_success', fullPayload);
+      });
     }
   } catch (wsErr) {
     console.warn('⚠️ [SOCKET] Erro ao emitir aceite de corrida:', wsErr);
