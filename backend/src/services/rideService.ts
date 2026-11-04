@@ -834,7 +834,7 @@ export async function notifyDriverNearbyIfClose(rideId: string, distanceMeters: 
     where: { id: rideId },
     include: { passenger: { select: { deviceToken: true } } }
   });
-  if (!ride || ride.status !== 'ACCEPTED') return;
+  if (!ride || ride.status !== RideStatus.ACCEPTED) return;
 
   const nearbyPayload = { rideId: ride.id };
 
@@ -897,7 +897,6 @@ export async function finalizeRideAndCharge(
   }
 
   const calculatedFare = Math.round(Number(ride.priceXof || 0));
-  // Preserva a distância contratada originalmente
   const distanceKm = Number(ride.distanceKm || 0.1);
 
   const tariff = await prisma.tariffConfig.findUnique({
@@ -947,7 +946,7 @@ export async function finalizeRideAndCharge(
         lat: finalLat,
         lng: finalLng
       }
-    });
+    }).catch(() => null);
 
     await tx.passenger.update({ where: { id: ride.passengerId }, data: { currentRideId: null } });
   
@@ -993,7 +992,6 @@ export async function finalizeRideAndCharge(
         data: { status: TransactionStatus.COMPLETED }
       });
 
-      // 🟢 SINTAXE CORRIGIDA DO CÁLCULO DE PORCENTAGEM DA COMISSÃO
       const commTx = await tx.transaction.create({
         data: {
           rideId: ride.id,
@@ -1003,7 +1001,7 @@ export async function finalizeRideAndCharge(
           paymentMethod: PaymentMethod.CASH,
           amount: platformFee,
           reference: `COMM-CASH-${ride.id.slice(0, 8)}-${Date.now()}`,
-          description: `Comissão da taxa de plataforma (${Math.round(commissionRate)}%) sobre corrida em dinheiro de ${calculatedFare} XOF`
+          description: `Comissão da taxa de plataforma (${Math.round(commissionRate * 100)}%) sobre corrida em dinheiro de ${calculatedFare} XOF`
         }
       });
       commissionTransactionId = commTx.id;
@@ -1017,13 +1015,12 @@ export async function finalizeRideAndCharge(
         data: { status: TransactionStatus.COMPLETED }
       });
 
-      // ✅ Para:
-    if ((ride as any).paymentTransaction?.id) {
-      await (tx as any).paymentTransaction.update({
-        where: { id: (ride as any).paymentTransaction.id },
-        data: { status: TransactionStatus.PROCESSING }
-      }).catch(() => null);
-    }
+      if ((ride as any).paymentTransaction?.id) {
+        await (tx as any).paymentTransaction.update({
+          where: { id: (ride as any).paymentTransaction.id },
+          data: { status: TransactionStatus.PROCESSING }
+        }).catch(() => null);
+      }
 
       await tx.driver.update({ 
         where: { id: ride.driverId! }, 
@@ -1085,15 +1082,19 @@ export async function finalizeRideAndCharge(
     forcedOffline: wasForcedOfflineDueToBalance
   };
 
-  const passengerRooms = [
+  const allRooms = [
     ride.id,
     ride.passengerId,
     `passenger_${ride.passengerId}`,
     `passenger:${ride.passengerId}`,
-    `user_${ride.passengerId}`
+    `user_${ride.passengerId}`,
+    ride.driverId!,
+    `driver_${ride.driverId}`,
+    `driver:${ride.driverId}`,
+    `user_${ride.driverId}`
   ];
 
-  passengerRooms.forEach(room => {
+  allRooms.forEach(room => {
     safeSocketEmit(room, 'ride:completed', completedPayload);
     safeSocketEmit(room, 'ride:finished', completedPayload);
   });
@@ -1155,6 +1156,7 @@ export async function finalizeRideAndCharge(
     nextRideId: queuedRideToPromote?.id || null 
   };
 }
+
 
 // -----------------------------------------------------------------------------
 // 6. CANCELAMENTO DE CORRIDA
