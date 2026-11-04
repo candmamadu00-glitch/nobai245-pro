@@ -1302,12 +1302,12 @@ io.on('connection', (socket: any) => {
       const passengerUser = updatedRide.passenger || ride.passenger;
       const driverUser = updatedRide.driver || await prisma.driver.findUnique({ where: { id: driverId } });
 
-      // 🟢 PAYLOAD DE ACEITE CORRIGIDO: ENVIANDO QUILOMETRAGEM E DURAÇÃO
+     // 🟢 PAYLOAD DE ACEITE CORRIGIDO: ENVIANDO QUILOMETRAGEM E DURAÇÃO
       const acceptPayload = {
         rideId: ride.id,
         driverId: driverId,
-        driverLat: Number(driverLat || driverUser?.lastLat || 0),
-        driverLng: Number(driverLng || driverUser?.lastLng || 0),
+        driverLat: Number(driverLat || (driverUser as any)?.lastLat || 0),
+        driverLng: Number(driverLng || (driverUser as any)?.lastLng || 0),
         driverName: driverUser?.fullName || 'Motorista',
         driverPhoto: driverUser?.profilePicture || null,
         carModel: driverUser?.vehicleBrand || 'Veículo Padrão',

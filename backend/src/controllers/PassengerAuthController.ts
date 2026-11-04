@@ -535,14 +535,16 @@ export class PassengerAuthController {
         });
       }
 
+      const safeResult = chargeResult as any;
+
       return res.status(200).json({
         success: true,
         message: String(selectedProvider).toUpperCase().includes('ORANGE') 
           ? 'Confirme o débito digitando seu PIN no celular ou acessando o link.' 
           : 'Solicitação enviada ao seu telefone. Digite o seu PIN do Mobile Money.',
-        paymentUrl: chargeResult.paymentUrl || null,
-        providerRef: chargeResult.providerRef,
-        status: chargeResult.status
+        paymentUrl: safeResult.paymentUrl || null,
+        providerRef: safeResult.providerRef || null,
+        status: safeResult.status
       });
     } catch (error: any) {
       console.error('❌ [ERRO COBRANÇA DIRETA PASSAGEIRO]:', error?.message || error);

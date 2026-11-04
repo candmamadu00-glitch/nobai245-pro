@@ -79,7 +79,7 @@ export function ChatModal({
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
 
   const flatListRef = useRef<FlatList>(null);
-  const recordTimerRef.current = null;
+  recordTimerRef.current = null;
   const activePlayerRef = useRef<any>(null);
 
   const storageKey = `@bai245:chat_${rideId}`;

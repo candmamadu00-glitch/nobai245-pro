@@ -998,10 +998,8 @@ export async function finalizeRideAndCharge(
           status: TransactionStatus.COMPLETED,
           paymentMethod: PaymentMethod.CASH,
           amount: platformFee,
-          balanceBefore: currentDriverBalance,
-          balanceAfter: finalDriverBalance,
           reference: `COMM-CASH-${ride.id.slice(0, 8)}-${Date.now()}`,
-          description: `Comissão da taxa de plataforma (${Math.round(commissionRate * 100)}%) sobre corrida em dinheiro de ${calculatedFare} XOF`
+          description: `Comissão da taxa de plataforma (${Math.round(commissionRate)}%) sobre corrida em dinheiro de ${calculatedFare} XOF`
         }
       });
       commissionTransactionId = commTx.id;
@@ -1309,73 +1307,6 @@ export async function cancelRideLogic(
   }
 
   return dbResult;
-}
-
-// -----------------------------------------------------------------------------
-// 7. NOTIFICAÇÕES DE CHAT E AVALIAÇÕES
-// -----------------------------------------------------------------------------
-export async function notifyNewChatMessage(data: {
-  rideId: string;
-  senderId: string;
-  senderType: 'PASSENGER' | 'DRIVER';
-  senderName: string;
-  message: string;
-}) {
-  try {
-    const { rideId, senderId, senderType, senderName, message } = data;
-
-    const ride = await prisma.ride.findUnique({
-      where: { id: rideId },
-      include: {
-        passenger: { select: { id: true, fullName: true, deviceToken: true } },
-        driver: { select: { id: true, fullName: true, deviceToken: true } }
-      }
-    });
-
-    if (!ride) return;
-
-    const isPassenger = senderType === 'PASSENGER';
-    const targetUserId = isPassenger ? ride.driverId : ride.passengerId;
-    const targetToken = isPassenger ? ride.driver?.deviceToken : ride.passenger?.deviceToken;
-
-    const chatPayload = {
-      id: `msg-${Date.now()}`,
-      rideId,
-      senderId,
-      sender: isPassenger ? 'passenger' : 'driver',
-      senderType,
-      senderName,
-      message,
-      text: message,
-      createdAt: new Date().toISOString()
-    };
-
-    const targetRooms = [
-      rideId,
-      targetUserId,
-      `passenger_${ride.passengerId}`,
-      `passenger:${ride.passengerId}`,
-      `driver_${ride.driverId}`,
-      `driver:${ride.driverId}`
-    ].filter(Boolean) as string[];
-
-    targetRooms.forEach(room => {
-      safeSocketEmit(room, 'chat:receive_message', chatPayload);
-      safeSocketEmit(room, 'chat:new_message', chatPayload);
-    });
-
-    if (targetToken) {
-      sendPushNotification(
-        targetToken,
-        `💬 ${senderName}`,
-        message,
-        { type: 'CHAT_MESSAGE', rideId, sender: isPassenger ? 'passenger' : 'driver' },
-        PUSH_CHANNELS.CHAT
-      ).catch(err => console.warn('⚠️ [PUSH CHAT ERR]:', err?.message));
-    }
-  } catch (err) {
-    console.error('💥 [CHAT NOTIFY ERROR]:', err);
-  }
 }
 
 export async function submitRatingLogic(data: {

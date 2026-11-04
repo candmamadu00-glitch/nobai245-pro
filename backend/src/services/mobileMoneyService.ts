@@ -2,10 +2,6 @@ import axios, { AxiosError } from 'axios';
 import crypto from 'crypto';
 import { 
   PaymentMethod, 
-  MobileMoneyProvider, 
-  PaymentProvider,
-  PaymentStatus,
-  PaymentIntentStatus, 
   TransactionType, 
   TransactionStatus,
   RideStatus,
@@ -196,7 +192,7 @@ export async function processSmsGatewayWebhook(payload: {
 
   return await prisma.$transaction(async (tx) => {
     // 1. Antiduplicação (Idempotência via txRef)
-    const existingTx = await tx.paymentTransaction.findUnique({
+    const existingTx = await tx.transaction.findFirst({
       where: { txRef: parsed.txRef }
     });
 
@@ -205,10 +201,10 @@ export async function processSmsGatewayWebhook(payload: {
     }
 
     // 2. Busca transação pendente compatível com o número do passageiro e valor
-    const pendingPayment = await tx.paymentTransaction.findFirst({
+    const pendingPayment = await tx.transaction.findFirst({
       where: {
         passengerPhone: parsed.senderPhone,
-        status: PaymentStatus.PENDING,
+        status: TransactionStatus.PENDING,
         amount: new Prisma.Decimal(parsed.amount)
       },
       orderBy: { createdAt: 'desc' }
@@ -219,22 +215,24 @@ export async function processSmsGatewayWebhook(payload: {
       return { success: false, reason: 'NO_MATCHING_PENDING_RIDE' };
     }
 
-    // 3. Atualiza a transação de pagamento para CONFIRMED
-    const updatedPayment = await tx.paymentTransaction.update({
+    // 3. Atualiza a transação de pagamento para HELD_IN_ESCROW
+    const updatedPayment = await tx.transaction.update({
       where: { id: pendingPayment.id },
       data: {
-        status: PaymentStatus.CONFIRMED,
+        status: TransactionStatus.HELD_IN_ESCROW,
         txRef: parsed.txRef,
         rawSms: parsed.rawSms,
-        provider: parsed.provider
+        paymentMethod: parsed.provider
       }
     });
 
     // 4. Atualiza o status da corrida para SEARCHING (Liberada para motoristas)
-    await tx.ride.update({
-      where: { id: pendingPayment.rideId },
-      data: { status: RideStatus.SEARCHING }
-    });
+    if (pendingPayment.rideId) {
+      await tx.ride.update({
+        where: { id: pendingPayment.rideId },
+        data: { status: RideStatus.SEARCHING }
+      });
+    }
 
     return {
       success: true,
@@ -447,7 +445,6 @@ export async function chargePassengerMobileMoney(
 // -----------------------------------------------------------------------------
 // 3. RECONCILIAÇÃO E VERIFICAÇÃO DE STATUS DA TRANSAÇÃO
 // -----------------------------------------------------------------------------
-
 export async function verifyTransactionStatus(transactionId: string): Promise<{ 
   status: 'SUCCESS' | 'FAILED' | 'PENDING'; 
   ref?: string; 

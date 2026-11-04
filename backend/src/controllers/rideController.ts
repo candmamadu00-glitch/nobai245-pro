@@ -579,7 +579,7 @@ export const cancelRide = async (req: Request, res: Response): Promise<void> => 
 
     const cleanReason = sanitizeText(reason || `Cancelado pelo ${userRole === 'DRIVER' ? 'motorista' : 'passageiro'}`, 200);
     
-    const cancelResult = await cancelRideLogic(currentRide.id, userId, userRole as any, cleanReason);
+    const cancelResult: any = await cancelRideLogic(currentRide.id, userId, userRole as any, cleanReason);
 
     try {
       const io = getIo();
@@ -598,7 +598,7 @@ export const cancelRide = async (req: Request, res: Response): Promise<void> => 
       success: true, 
       message: 'Corrida cancelada com sucesso.', 
       penaltyApplied: cancelResult?.appliedPenalty || false,
-      refundExecuted: (cancelResult?.refundAmount || 0) > 0
+      refundExecuted: Number(cancelResult?.refundAmount || cancelResult?.penaltyAmount || 0) > 0
     });
   } catch (error: any) {
     console.error(`❌ [CANCELAR_CORRIDA] Erro: ${error?.message || error}`);
