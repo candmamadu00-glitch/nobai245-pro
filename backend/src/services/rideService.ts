@@ -563,7 +563,7 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
         data: { currentRideId: null, isAvailable: true }
       });
     } else {
-      throw new Error('DRIVER_BUSY: Você já possui uma corrida em andamento. Conclua-a antes de aceitar uma nova.');
+      throw new Error('DRIVER_BUSY: Você já possui uma corrida em andamento.');
     }
   }
 
@@ -600,22 +600,22 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     });
 
     if (updatedRide.count === 0) {
-      throw new Error('RIDE_ALREADY_TAKEN: Esta corrida acabou de ser aceita por outro colega.');
+      throw new Error('RIDE_ALREADY_TAKEN: Esta corrida acabou de ser aceita por outro motorista.');
     }
 
-    await (tx as any).rideOffer.updateMany({
+    await (tx as any).rideOffer?.updateMany({
       where: { rideId, driverId },
-      data: { status: RideOfferStatus.ACCEPTED }
+      data: { status: 'ACCEPTED' }
     }).catch(() => null);
 
-    await (tx as any).rideEventLog.create({
+    await (tx as any).rideEventLog?.create({
       data: {
         rideId,
         status: targetStatus,
         triggeredBy: UserType.DRIVER,
         userId: driverId
       }
-    });
+    }).catch(() => null);
 
     const res = await tx.ride.findUnique({ 
       where: { id: rideId }, 
@@ -634,11 +634,14 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     return res;
   });
 
-  console.log(`🚗 [RIDE LOG - ACCEPT] Motorista "${result.driver?.fullName}" aceitou a corrida ID: ${result.id} (Status: ${targetStatus})`);
+  console.log(`🚗 [RIDE ACCEPT] Motorista "${result.driver?.fullName}" aceitou a corrida ID: ${result.id}`);
 
-  const passengerAcceptedPayload = {
+  // Payload unificado e compatível com ambos os aplicativos (Passageiro e Motorista)
+  const fullPayload = {
+    success: true,
     rideId: result.id,
     status: targetStatus,
+    ride: result,
     driverId: result.driverId,
     driverName: result.driver?.fullName || 'Motorista',
     driverPhone: result.driver?.phone || null,
@@ -651,28 +654,23 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     startOtp: result.startOtp || null,
     priceXof: Number(result.priceXof || 0),
     distanceKm: Number(result.distanceKm || 0),
-    estimatedDistance: Number(result.distanceKm || 0),
     durationMin: Number(result.durationMin || 0),
-    
     originAddress: result.originAddress,
     destinationAddress: result.destinationAddress,
-    pickupReferencePoint: (result as any).pickupReferencePoint || result.referencePoint || '',
-    dropoffReferencePoint: (result as any).dropoffReferencePoint || '',
-    
-    isQueuedRide: false
+    pickupReferencePoint: (result as any).pickupReferencePoint || result.referencePoint || ''
   };
 
-  const passengerRooms = [
-    result.id,
-    result.passengerId,
-    `passenger_${result.passengerId}`,
-    `passenger:${result.passengerId}`,
-    `user_${result.passengerId}`
-  ];
-
-  passengerRooms.forEach(room => {
-    safeSocketEmit(room, 'ride:accepted', passengerAcceptedPayload);
-  });
+  try {
+    const io = getIo();
+    if (io) {
+      // Dispara para a sala da corrida, do passageiro e do motorista simultaneamente
+      io.to(result.id).emit('ride:accepted', fullPayload);
+      io.to(`passenger_${result.passengerId}`).emit('ride:accepted', fullPayload);
+      io.to(`driver_${result.driverId}`).emit('ride:accepted', fullPayload);
+    }
+  } catch (wsErr) {
+    console.warn('⚠️ [SOCKET] Erro ao emitir aceite de corrida:', wsErr);
+  }
 
   if (result.passenger?.deviceToken) {
     sendPushNotification(
@@ -684,11 +682,7 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     ).catch(err => console.error('❌ Erro no Push de Aceite:', err));
   }
 
-  return {
-    ...result,
-    passenger: result.passenger ? { ...result.passenger, phone: maskPhoneNumber(result.passenger.phone) } : null,
-    driver: result.driver ? { ...result.driver, phone: maskPhoneNumber(result.driver.phone) } : null
-  };
+  return result;
 }
 
 export const acceptRide = acceptRideLogic;
