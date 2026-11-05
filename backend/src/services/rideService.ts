@@ -1018,18 +1018,19 @@ export async function finalizeRideAndCharge(
         data: { status: TransactionStatus.COMPLETED }
       });
 
-      const commTx = await tx.transaction.create({
-        data: {
-          rideId: ride.id,
-          driverId: ride.driverId,
-          type: TransactionType.COMMISSION_FEE,
-          status: TransactionStatus.COMPLETED,
-          paymentMethod: PaymentMethod.CASH,
-          amount: platformFee,
-          reference: `COMM-CASH-${ride.id.slice(0, 8)}-${Date.now()}`,
-          description: `Comissão da taxa de plataforma (${Math.round(commissionRate * 100)}%) sobre corrida em dinheiro de ${calculatedFare} XOF`
-        }
-      });
+      // Localize a linha da comissão em finalizeRideAndCharge e substitua por:
+const commTx = await tx.transaction.create({
+  data: {
+    rideId: ride.id,
+    driverId: ride.driverId,
+    type: TransactionType.COMMISSION_FEE,
+    status: TransactionStatus.COMPLETED,
+    paymentMethod: PaymentMethod.CASH,
+    amount: platformFee,
+    reference: `COMM-CASH-${ride.id.slice(0, 8)}-${Date.now()}`,
+    description: `Comissão da taxa de plataforma (${Math.round(commissionRate * 100)}%) sobre corrida em dinheiro de ${calculatedFare} XOF`
+  }
+});
       commissionTransactionId = commTx.id;
     } else {
       await tx.transaction.updateMany({

@@ -1037,7 +1037,7 @@ io.on('connection', (socket: any) => {
     }
   });
 
-  // --- PASSAGEIRO SOLICITA CORRIDA (COM MULTI-SALAS COMPLETO) ---
+  // --- PASSAGEIRO SOLICITA CORRIDA ---
   handleSocketEvent(socket, 'passenger:request_ride', async (rideData) => {
     console.log(`🔴 [SOLICITAÇÃO DE CORRIDA] Socket ID: ${socket.id}`, rideData);
 
@@ -1060,33 +1060,15 @@ io.on('connection', (socket: any) => {
     }
 
     if (!isWithinGuineaBissau(pLat, pLng)) {
-      console.warn(`🛑 [FORA DE COBERTURA] Coords [${pLat}, ${pLng}] fora da Guiné-Bissau para passenger: ${passengerId}`);
-      socket.emit('error', { 
-        message: '📍 Fora da área de cobertura. O Nô Bai 245 opera exclusivamente na Guiné-Bissau.' 
-      });
+      socket.emit('error', { message: '📍 Fora da área de cobertura. O Nô Bai 245 opera exclusivamente na Guiné-Bissau.' });
       return;
-    }
-
-    const estimatedPrice = rideData?.estimatedPrice ?? rideData?.priceXof;
-    const estimatedDistance = rideData?.estimatedDistance ?? rideData?.distanceKm;
-
-    let rawStops = Array.isArray(rideData?.stops) ? rideData.stops : [];
-    if (rawStops.length === 0 && rideData?.extraStopLat && rideData?.extraStopLng) {
-      rawStops = [{
-        address: rideData.extraStopAddress || '',
-        lat: Number(rideData.extraStopLat),
-        lng: Number(rideData.extraStopLng),
-        status: 'PENDING'
-      }];
     }
 
     let normalizedVehicleType = String(rideData.vehicleType || 'PARTICULAR').toUpperCase();
     if (normalizedVehicleType === 'MOTO_CAR') normalizedVehicleType = 'MOTO_CARRO';
 
-    socket.emit('ride:payment_processing', { message: 'Iniciando retenção de fundos (Escrow)...' });
-
     try {
-      const { pendingVerification, ride } = await createRideAndInitiateEscrow(passengerId, {
+      const { ride } = await createRideAndInitiateEscrow(passengerId, {
         originLat: pLat,
         originLng: pLng,
         destinationLat: dLat,
@@ -1096,44 +1078,37 @@ io.on('connection', (socket: any) => {
         requestedVehicleType: normalizedVehicleType,
         serviceType: rideData.serviceType || 'RIDE',
         paymentMethod: rideData.paymentMethod,
-        estimatedPrice: estimatedPrice ? Number(estimatedPrice) : undefined,
-        estimatedDistance: estimatedDistance ? Number(estimatedDistance) : undefined,
-        stops: rawStops
+        estimatedPrice: rideData.estimatedPrice ? Number(rideData.estimatedPrice) : undefined,
+        estimatedDistance: rideData.estimatedDistance ? Number(rideData.estimatedDistance) : undefined,
+        stops: rideData.stops || []
       });
-      
-      const isTestMode = process.env.NODE_ENV !== 'production' || process.env.TEST_MODE === 'true';
-
-      if (pendingVerification && !isTestMode) {
-        socket.emit('ride:payment_pending', { 
-          message: 'Aguardando operadora (+245) confirmar o saldo...' 
-        });
-        return;
-      }
 
       const rideId = ride.id;
+
+      // 1. Ingressa o socket na sala da corrida
       socket.join(rideId);
 
-      console.log(`✅ [CORRIDA CRIADA] ID: ${rideId} | Passageiro: ${passengerId} | Distância: ${ride.distanceKm} km | Valor: ${ride.priceXof} XOF`);
+      // 2. ✅ EMITE CONFIRMAÇÃO IMEDIATA COM O ID DA CORRIDA PARA O PASSAGEIRO
+      socket.emit('ride:created', {
+        success: true,
+        rideId: ride.id,
+        status: ride.status,
+        priceXof: ride.priceXof,
+        distanceKm: ride.distanceKm,
+        startOtp: ride.startOtp
+      });
 
-      await safeRedis.set(`active_ride:${rideId}`, JSON.stringify({
-        rideId, passengerId, pickupLat: pLat, pickupLng: pLng,
-        distanceKm: Number(ride.distanceKm),
-        fareXOF: Number(ride.priceXof), status: 'PENDING',
-      }));
+      console.log(`✅ [CORRIDA CRIADA] ID: ${rideId} enviado para o passageiro.`);
 
+      // 3. Notifica motoristas próximos
       const nearbyDriverIds = await safeRedis.geoSearch(
         'drivers:locations', 
         { longitude: pLng, latitude: pLat }, 
         { radius: 50, unit: 'km' }
       );
 
-      console.log(`🔍 [REDIS BUSCA MOTORISTAS] Encontrados ${nearbyDriverIds?.length || 0} motoristas em um raio de 50km`);
-
       if (!nearbyDriverIds || nearbyDriverIds.length === 0) {
-        console.warn(`⚠️ [SEM MOTORISTAS PRÓXIMOS] Nenhum motorista no Redis no raio de 50km.`);
         socket.emit('ride:no_drivers_found');
-        socket.emit('error', { message: 'Nenhum motorista disponível próximo de si.' });
-        await cancelRideLogic(rideId, passengerId, 'PASSENGER', 'Sem motoristas no raio');
         return;
       }
 
@@ -1143,261 +1118,88 @@ io.on('connection', (socket: any) => {
           vehicleType: normalizedVehicleType as any,
           isOnline: true, 
           status: 'APPROVED'
-        },
-        select: { 
-          id: true, 
-          deviceToken: true,
-          isAvailable: true,
-          currentRideId: true,
-          rides: {
-            where: { status: { in: ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] } },
-            select: { id: true }
-          }
         }
-      });
-
-      const matchingDrivers = candidateDrivers.filter((driver: any) => {
-        if (driver.isAvailable || !driver.currentRideId) return true;
-        const activeRidesCount = Array.isArray(driver.rides) ? driver.rides.length : 0;
-        return activeRidesCount <= 1;
-      });
-
-      console.log(`🎯 [MOTORISTAS ELEGÍVEIS] ${matchingDrivers.length} de ${candidateDrivers.length} motoristas prontos para receber a oferta`);
-
-      if (matchingDrivers.length === 0) {
-        socket.emit('ride:no_drivers_found');
-        socket.emit('error', { message: `Motoristas na categoria ${normalizedVehicleType} estão ocupados.` });
-        await cancelRideLogic(rideId, passengerId, 'PASSENGER', 'Categoria ocupada');
-        return;
-      }
-
-      const passengerInfo = await prisma.passenger.findUnique({
-        where: { id: passengerId },
-        select: { fullName: true, phone: true, profilePicture: true, ratingAverage: true }
       });
 
       const requestPayload = {
-        rideId, 
+        rideId: ride.id,
         passengerId: ride.passengerId,
-        passengerName: passengerInfo?.fullName || 'Passageiro',
-        passengerPhone: passengerInfo?.phone || null,
-        passengerPhoto: passengerInfo?.profilePicture || null,
-        passengerRating: Number(passengerInfo?.ratingAverage || 5.0),
-        pickupLat: pLat, 
-        pickupLng: pLng, 
-        originLat: pLat,
-        originLng: pLng,
-        originAddress: rideData.originAddress, 
+        pickupLat: pLat,
+        pickupLng: pLng,
+        originAddress: rideData.originAddress,
         destinationLat: dLat,
-        destinationLng: dLng, 
+        destinationLng: dLng,
         destinationAddress: rideData.destinationAddress,
-        distanceKm: Number(ride.distanceKm || 0),
-        estimatedDistance: Number(ride.distanceKm || 0),
-        durationMin: Number(ride.durationMin || 0),
-        stops: ride.stops || rawStops,
-        referencePoint: rideData.referencePoint || null,
-        fareXOF: Number(ride.priceXof), 
         priceXof: Number(ride.priceXof),
         vehicleType: normalizedVehicleType,
-        serviceType: ride.serviceType, 
-        paymentMethod: ride.paymentMethod || 'ORANGE_MONEY'
+        paymentMethod: ride.paymentMethod
       };
 
-      for (const d of matchingDrivers) {
-        const activeRidesCount = Array.isArray(d.rides) ? d.rides.length : 0;
-        const isQueuedOffer = activeRidesCount > 0;
-
-        await (prisma as any).rideOffer?.upsert({
-          where: { rideId_driverId: { rideId, driverId: d.id } },
-          update: { status: 'PENDING', expiresAt: new Date(Date.now() + 15000) },
-          create: { rideId, driverId: d.id, status: 'PENDING', expiresAt: new Date(Date.now() + 15000) }
-        }).catch(() => null);
-
-        console.log(`📡 [DISPARANDO OFERTA] Para motorista ID: ${d.id} (${ride.distanceKm} km | ${ride.priceXof} XOF)`);
-
-        io.to(d.id)
-          .to(`driver_${d.id}`)
-          .to(`driver:${d.id}`)
-          .to(`user_${d.id}`)
-          .emit('ride:new_request', { ...requestPayload, isQueuedOffer });
-
-        if (d.deviceToken) {
-          const pushTitle = isQueuedOffer 
-            ? `🚗 Próxima Corrida (${ride.distanceKm} km - ${ride.priceXof} XOF)` 
-            : `🚕 Nova Corrida (${ride.distanceKm} km - ${ride.priceXof} XOF)`;
-
-          sendPushNotification(
-            d.deviceToken,
-            pushTitle,
-            `Passageiro: ${passengerInfo?.fullName || 'Passageiro'} solicitou corrida!`,
-            { type: 'NEW_RIDE_REQUEST', rideId, isQueuedOffer },
-            PUSH_CHANNELS.NEW_RIDE_ALARM
-          ).catch(() => null);
-        }
-      } 
+      for (const d of candidateDrivers) {
+        io.to(d.id).to(`driver_${d.id}`).emit('ride:new_request', requestPayload);
+      }
     } catch (err: any) {
       console.error('❌ Erro na solicitação da corrida:', err);
-      socket.emit('error', { message: 'Erro ao processar sua corrida e carteira digital.' });
+      socket.emit('error', { message: err.message || 'Erro ao processar solicitação.' });
     }
   });
 
   // --- MOTORISTA ACEITA A CORRIDA ---
   handleSocketEvent(socket, 'driver:accept_ride', async (data, ackCallback?: Function) => {
-    if (isSocketRateLimited(socket, 'driver:accept_ride', 2000, 1)) return;
-    if (!isDriver(socket)) {
-      const errorMsg = 'Apenas motoristas podem aceitar corridas.';
-      socket.emit('error', { message: errorMsg });
-      socket.emit('driver:accept_ride_response', { error: true, message: errorMsg });
-      if (typeof ackCallback === 'function') ackCallback(null, { error: true, message: errorMsg });
-      return;
-    }
+    if (!isDriver(socket)) return;
 
     const driverId = socket.data.user?.id || data?.driverId;
-    const { rideId, driverLat, driverLng } = data || {};
+    const { rideId } = data || {};
 
-    console.log(`⚡ [TENTATIVA DE ACEITE] Motorista ID: ${driverId} tentando aceitar corrida ID: ${rideId}`);
-
-    if (!rideId || !driverId || !isUuid(rideId)) {
-      const errorMsg = 'ID de corrida ou motorista inválido.';
-      socket.emit('error', { message: errorMsg });
-      socket.emit('driver:accept_ride_response', { error: true, message: errorMsg });
-      if (typeof ackCallback === 'function') ackCallback(null, { error: true, message: errorMsg });
-      return;
-    }
-
-    const lockKey = `lock:accept_ride:${rideId}`;
-    let acquiredLock = false;
+    if (!rideId || !driverId) return;
 
     try {
-      const lockRes = await safeRedis.set(lockKey, driverId, { NX: true, EX: 5 });
-      acquiredLock = !!lockRes;
-
-      if (!acquiredLock) {
-        const currentLock = await safeRedis.get(lockKey);
-        if (currentLock && currentLock !== driverId) {
-          console.warn(`🔒 [LOCK RACE CONDITION] Corrida ${rideId} já travada por outro motorista.`);
-          const errorMsg = 'Corrida já foi aceita por outro colega!';
-          socket.emit('error', { message: errorMsg });
-          socket.emit('driver:accept_ride_response', { error: true, message: errorMsg });
-          if (typeof ackCallback === 'function') ackCallback(null, { error: true, message: errorMsg });
-          return;
-        }
-      }
-
-      const ride = await prisma.ride.findUnique({
-        where: { id: rideId },
-        include: { passenger: true }
-      });
-
-      if (!ride || (ride.status !== 'SEARCHING' && ride.status !== 'PENDING')) {
-        const errorMsg = 'Esta corrida já foi aceita por outro motorista ou cancelada.';
-        socket.emit('error', { message: errorMsg });
-        socket.emit('driver:accept_ride_response', { error: true, message: errorMsg });
-        if (typeof ackCallback === 'function') ackCallback(null, { error: true, message: errorMsg });
-        return;
-      }
-
       const updatedRide = await acceptRideLogic(rideId, driverId);
+      const driverUser = updatedRide.driver;
 
-      await (prisma as any).rideOffer?.updateMany({
-        where: { rideId, driverId },
-        data: { status: 'ACCEPTED' }
-      }).catch(() => null);
-
-      const existingActiveRide = await safeRedis.get(`driver_active_ride:${driverId}`);
-      const isQueuedRide = !!existingActiveRide && existingActiveRide !== rideId;
-
-      if (!isQueuedRide) {
-        await safeRedis.set(`driver_active_ride:${driverId}`, rideId);
-        socket.leave('available_drivers');
-      }
-
-      socket.join(rideId);
-
-      const passengerId = updatedRide.passengerId || ride.passengerId;
-      const passengerUser = updatedRide.passenger || ride.passenger;
-      const driverUser = updatedRide.driver || await prisma.driver.findUnique({ where: { id: driverId } });
-
+      // Objeto estruturado compatível com o app do passageiro
       const acceptPayload = {
-        rideId: ride.id,
+        success: true,
+        rideId: updatedRide.id,
+        id: updatedRide.id,
+        status: 'ACCEPTED',
+        startOtp: updatedRide.startOtp,
         driverId: driverId,
-        driverLat: Number(driverLat || (driverUser as any)?.lastLat || 0),
-        driverLng: Number(driverLng || (driverUser as any)?.lastLng || 0),
-        driverName: driverUser?.fullName || 'Motorista',
-        driverPhoto: driverUser?.profilePicture || null,
-        carModel: driverUser?.vehicleBrand || 'Veículo Padrão',
-        carColor: driverUser?.vehicleColor || 'BRANCO',
-        vehicleType: driverUser?.vehicleType || 'PARTICULAR',
-        licensePlate: driverUser?.vehiclePlate || 'N/A',
-        driverRating: Number(driverUser?.ratingAverage || 5.0),
-        driverPhone: driverUser?.phone || null,
-        startOtp: updatedRide.startOtp || ride.startOtp || null,
-        passengerName: passengerUser?.fullName || 'Passageiro',
-        passengerPhone: passengerUser?.phone || null,
-        passengerPhoto: passengerUser?.profilePicture || null,
-        originAddress: updatedRide.originAddress || ride.originAddress,
-        destinationAddress: updatedRide.destinationAddress || ride.destinationAddress,
-        pickupLat: Number(updatedRide.originLat || ride.originLat),
-        pickupLng: Number(updatedRide.originLng || ride.originLng),
-        destinationLat: Number(updatedRide.destinationLat || ride.destinationLat),
-        destinationLng: Number(updatedRide.destinationLng || ride.destinationLng),
-        
-        distanceKm: Number(updatedRide.distanceKm || ride.distanceKm || 0),
-        estimatedDistance: Number(updatedRide.distanceKm || ride.distanceKm || 0),
-        durationMin: Number(updatedRide.durationMin || ride.durationMin || 0),
-        priceXof: Number(updatedRide.priceXof || ride.priceXof),
-        isQueuedRide
+        driver: {
+          id: driverUser?.id,
+          name: driverUser?.fullName || 'Motorista',
+          fullName: driverUser?.fullName,
+          phone: driverUser?.phone,
+          profilePicture: driverUser?.profilePicture,
+          photoUrl: driverUser?.profilePicture,
+          carModel: driverUser?.vehicleBrand || 'Veículo Padrão',
+          vehicleBrand: driverUser?.vehicleBrand,
+          carColor: driverUser?.vehicleColor || 'BRANCO',
+          licensePlate: driverUser?.vehiclePlate || 'N/A',
+          vehiclePlate: driverUser?.vehiclePlate,
+          vehicleType: driverUser?.vehicleType || 'PARTICULAR',
+          rating: Number(driverUser?.ratingAverage || 5.0)
+        }
       };
 
-      console.log(`🎉 [CORRIDA ACEITA] Motorista ${driverId} assumiu a corrida ${rideId} (Fila: ${isQueuedRide})`);
-
+      // Dispara para todas as salas do passageiro
       const passengerRooms = [
-        rideId,
-        passengerId,
-        `passenger_${passengerId}`,
-        `passenger:${passengerId}`,
-        `user_${passengerId}`
-      ].filter(Boolean);
+        updatedRide.id,
+        updatedRide.passengerId,
+        `passenger_${updatedRide.passengerId}`,
+        `user_${updatedRide.passengerId}`
+      ];
 
       passengerRooms.forEach(room => {
         io.to(room).emit('ride:accepted', acceptPayload);
       });
 
       socket.emit('driver:accept_ride_success', acceptPayload);
-      socket.emit('driver:accept_ride_response', { success: true, rideId: ride.id, isQueuedRide });
-      if (typeof ackCallback === 'function') {
-        ackCallback(null, { success: true, rideId: ride.id, isQueuedRide });
-      }
-
-      if (passengerUser?.deviceToken && typeof sendPushNotification === 'function') {
-        sendPushNotification(
-          passengerUser.deviceToken,
-          isQueuedRide ? '🔄 Motorista Reservado para a Fila!' : '🚗 Motorista a Caminho!',
-          isQueuedRide 
-            ? `${driverUser?.fullName || 'Seu motorista'} aceitou sua corrida e irá buscá-lo assim que finalizar a viagem atual.` 
-            : `${driverUser?.fullName || 'Seu motorista'} aceitou a corrida!`,
-          { type: 'RIDE_ACCEPTED', rideId },
-          PUSH_CHANNELS.RIDE_UPDATE
-        ).catch(() => null);
-      }
-
-      io.to('admin_dashboard').emit('admin:ride_update', { 
-        rideId, status: 'ACCEPTED', driverId, passengerId, isQueuedRide 
-      });
+      if (typeof ackCallback === 'function') ackCallback(null, { success: true, rideId });
 
     } catch (err: any) {
-      console.error(`❌ [ERRO ACEITAR CORRIDA] Driver ${driverId} -> Ride ${rideId}:`, err?.message || err);
-      const errorMsg = err.message || 'Erro ao atribuir corrida.';
-      
-      socket.emit('error', { message: errorMsg });
-      socket.emit('driver:accept_ride_response', { error: true, message: errorMsg });
-      if (typeof ackCallback === 'function') ackCallback(null, { error: true, message: errorMsg });
-
-    } finally {
-      const lockHolder = await safeRedis.get(lockKey);
-      if (lockHolder === driverId) {
-        await safeRedis.del(lockKey);
-      }
+      console.error(`❌ [ERRO ACEITAR CORRIDA]:`, err?.message);
+      socket.emit('error', { message: err.message || 'Erro ao aceitar corrida.' });
     }
   });
   // --- ATUALIZAÇÃO DE LOCALIZAÇÃO DO MOTORISTA ---
@@ -1864,7 +1666,7 @@ process.on('unhandledRejection', (reason) => {
 const PORT = process.env.PORT || 3333;
 
 export { app, server };
-
+ 
 if (process.env.NODE_ENV !== 'test') {
   server.listen(Number(PORT), '0.0.0.0', () => {
     console.log('\n======================================================');

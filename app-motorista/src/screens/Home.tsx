@@ -1712,7 +1712,7 @@ export function Home() {
     }));
   }, [activeOffer?.stops, activeOffer?.extraStopReferencePoint, incomingRide?.stops, incomingRide?.extraStopReferencePoint]);
 
-  return (
+  return ( 
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       
