@@ -110,6 +110,7 @@ api.interceptors.response.use(
 
 // 📱 Função auxiliar para pagamento Mobile Money via API
 export const initiateMobileMoneyPayment = async (payload: {
+  rideId?: string; // 👈 Adicionado para aceitar o ID da corrida
   phone: string;
   amount: number;
   provider: 'ORANGE_MONEY' | 'MTN_MOMO';
