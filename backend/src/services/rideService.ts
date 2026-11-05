@@ -6,10 +6,12 @@ import {
   TransactionStatus, 
   TransactionType, 
   UserType,
+  RideOfferStatus,
   Prisma
 } from '@prisma/client';
 import axios from 'axios';
 import { prisma } from '../config/prisma';
+import { redis } from '../lib/redis';
 import { enqueuePayoutJob, enqueueRefundJob } from '../jobs/payoutQueue';
 import { chargePassengerMobileMoney, isValidBissauPhone, executeRideDisbursement } from './mobileMoneyService';
 import { sendPushNotification, PUSH_CHANNELS } from './pushNotifications';
@@ -17,10 +19,7 @@ import { getIo } from '../server';
 
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
 const IS_MOCK_MODE = process.env.ENABLE_MOCK_PAYMENTS === 'true' || process.env.NODE_ENV !== 'production';
-const CANCELLATION_PENALTY_XOF = 500;
 const MIN_DRIVER_BALANCE_FOR_CASH = -2000;
-const MIN_DRIVER_BALANCE_FOR_ONLINE = 1000;
-const RideOfferStatus = { PENDING: 'PENDING', ACCEPTED: 'ACCEPTED' } as any;
 
 export async function calculateRouteAndDistance(
   pLat: number,
@@ -171,7 +170,6 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
         create: { rideId: ride.id, driverId: driver.id, status: RideOfferStatus.PENDING, expiresAt: offerExpiresAt }
       }).catch((err: any) => console.warn(`⚠️ [RIDE OFFER CREATION FAIL] Driver: ${driver.id}`, err?.message));
 
-      // 🟢 EMISSÃO MULTI-SALAS PARA GARANTIR CHEGADA AO SOCKET NO MOBILE
       const driverRooms = [
         driver.id,
         `driver_${driver.id}`,
@@ -377,6 +375,9 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
         where: { id: passengerId },
         data: { currentRideId: null }
       });
+      
+      // ✅ LIMPEZA DE CACHE DO PASSAGEIRO NO REDIS
+      await redis.del(`active_ride:${passenger.currentRideId}`).catch(() => null);
     } else {
       throw new Error('ACTIVE_RIDE_EXISTS: Passageiro já possui corrida ativa em andamento.');
     }
@@ -555,7 +556,7 @@ export async function searchLandmarks(query: string) {
 }
 
 // -----------------------------------------------------------------------------
-// 2. ACEITAR CORRIDA (COM AUTO-LIMPEZA E EMISSÃO UNIFICADA)
+// 2. ACEITAR CORRIDA (COM AUTO-LIMPEZA, REDIS ATÔMICO E EMISSÃO UNIFICADA)
 // -----------------------------------------------------------------------------
 export async function acceptRideLogic(rideId: string, driverId: string) {
   const driver = await prisma.driver.findUnique({ where: { id: driverId } });
@@ -572,21 +573,23 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     const isStuckOrFinished = 
       !currentActiveRide || 
       ['CANCELLED', 'COMPLETED', 'SEARCHING'].includes(currentActiveRide.status) ||
-      (Date.now() - new Date(currentActiveRide.updatedAt).getTime() > 30 * 60 * 1000);
+      (Date.now() - new Date(currentActiveRide.updatedAt).getTime() > 15 * 60 * 1000);
 
     if (isStuckOrFinished) {
-      // ✅ Corrigido para bater 100% com o schema.prisma:
-if (currentActiveRide && !['CANCELLED', 'COMPLETED'].includes(currentActiveRide.status)) {
-  await prisma.ride.update({
-    where: { id: driver.currentRideId },
-    data: { status: RideStatus.CANCELLED, cancellationReason: 'AUTO_CLEANUP_ORPHANED_RIDE' }
-  }).catch(() => null);
-}
+      if (currentActiveRide && !['CANCELLED', 'COMPLETED'].includes(currentActiveRide.status)) {
+        await prisma.ride.update({
+          where: { id: driver.currentRideId },
+          data: { status: RideStatus.CANCELLED, cancellationReason: 'AUTO_CLEANUP_ORPHANED_RIDE' }
+        }).catch(() => null);
+      }
 
       await prisma.driver.update({
         where: { id: driverId },
         data: { currentRideId: null, isAvailable: true }
       });
+
+      // ✅ LIMPEZA DE CACHE DO MOTORISTA NO REDIS
+      await redis.del(`driver_active_ride:${driverId}`).catch(() => null);
     } else {
       throw new Error('DRIVER_BUSY: Você já possui uma corrida em andamento.');
     }
@@ -600,7 +603,7 @@ if (currentActiveRide && !['CANCELLED', 'COMPLETED'].includes(currentActiveRide.
   if (ride.paymentMethod === PaymentMethod.CASH) {
     const currentBalance = Number(driver.walletBalance || 0);
     if (currentBalance < MIN_DRIVER_BALANCE_FOR_CASH) {
-      throw new Error('INSUFFICIENT_DRIVER_BALANCE: Seu saldo de comissões está abaixo do mínimo exigido (1.000 XOF).');
+      throw new Error('INSUFFICIENT_DRIVER_BALANCE: Seu saldo de comissões está abaixo do mínimo exigido (-2.000 XOF).');
     }
   }
 
@@ -644,6 +647,10 @@ if (currentActiveRide && !['CANCELLED', 'COMPLETED'].includes(currentActiveRide.
 
     return res;
   });
+
+  // ✅ REDIS ATÔMICO: REGISTRA CORRIDA E REMOVE MOTORISTA DA BUSCA RADAR GEO
+  await redis.set(`driver_active_ride:${driverId}`, rideId).catch(() => null);
+  await redis.zrem('drivers:locations', driverId).catch(() => null);
 
   console.log(`🚗 [RIDE ACCEPT] Motorista "${result.driver?.fullName}" aceitou a corrida ID: ${result.id}`);
 
@@ -879,7 +886,7 @@ export async function notifyDriverNearbyIfClose(rideId: string, distanceMeters: 
 }
 
 // -----------------------------------------------------------------------------
-// 6. FINALIZAÇÃO DA CORRIDA E LIQUIDAÇÃO
+// 6. FINALIZAÇÃO DA CORRIDA E LIQUIDAÇÃO (COM PURGA DE CACHE ATÔMICA)
 // -----------------------------------------------------------------------------
 export async function finalizeRideAndCharge(
   rideId: string, 
@@ -971,7 +978,7 @@ export async function finalizeRideAndCharge(
     queuedRideToPromote = await tx.ride.findFirst({
       where: {
         driverId: ride.driverId!,
-        status: { in: [RideStatus.ACCEPTED, ('QUEUED' as any)] },
+        status: { in: [RideStatus.ACCEPTED, RideStatus.QUEUED] },
         id: { not: ride.id }
       }
     });
@@ -979,7 +986,7 @@ export async function finalizeRideAndCharge(
     const nextCurrentRideId = queuedRideToPromote ? queuedRideToPromote.id : null;
     const isDriverAvailable = !queuedRideToPromote;
 
-    if (queuedRideToPromote && queuedRideToPromote.status === ('QUEUED' as any)) {
+    if (queuedRideToPromote && queuedRideToPromote.status === RideStatus.QUEUED) {
       await tx.ride.update({
         where: { id: queuedRideToPromote.id },
         data: { status: RideStatus.ACCEPTED }
@@ -990,7 +997,8 @@ export async function finalizeRideAndCharge(
       const currentDriverBalance = Number(ride.driver?.walletBalance || 0);
       finalDriverBalance = currentDriverBalance - platformFee;
 
-      const shouldStayOnline = finalDriverBalance >= MIN_DRIVER_BALANCE_FOR_ONLINE;
+      const MIN_REQUIRED_ONLINE = 1000;
+      const shouldStayOnline = finalDriverBalance >= MIN_REQUIRED_ONLINE;
       if (!shouldStayOnline) {
         wasForcedOfflineDueToBalance = true;
       }
@@ -1036,7 +1044,7 @@ export async function finalizeRideAndCharge(
       if ((ride as any).paymentTransaction?.id) {
         await (tx as any).paymentTransaction.update({
           where: { id: (ride as any).paymentTransaction.id },
-          data: { status: TransactionStatus.PROCESSING }
+          data: { status: TransactionStatus.COMPLETED }
         }).catch(() => null);
       }
 
@@ -1087,6 +1095,17 @@ export async function finalizeRideAndCharge(
       }
     });
   }); 
+
+  // 🧹 PURGA IMEDIATA DO REDIS
+  await redis.del(`active_ride:${rideId}`).catch(() => null);
+  if (queuedRideToPromote) {
+    await redis.set(`driver_active_ride:${ride.driverId!}`, queuedRideToPromote.id).catch(() => null);
+  } else {
+    await redis.del(`driver_active_ride:${ride.driverId!}`).catch(() => null);
+    if (!wasForcedOfflineDueToBalance) {
+      await redis.geoadd('drivers:locations', finalLng, finalLat, ride.driverId!).catch(() => null);
+    }
+  }
 
   console.log(`🏁 [RIDE LOG - COMPLETED] Corrida ID: ${rideId} finalizada. Valor: ${calculatedFare} XOF. Saldo motorista: ${finalDriverBalance} XOF`);
 
@@ -1182,7 +1201,7 @@ export async function finalizeRideAndCharge(
 }
 
 // -----------------------------------------------------------------------------
-// 7. CANCELAMENTO DE CORRIDA
+// 7. CANCELAMENTO DE CORRIDA (COM PURGA TOTAL DE ESTADO NO REDIS)
 // -----------------------------------------------------------------------------
 export async function cancelRideLogic(
   rideId: string, 
@@ -1202,6 +1221,7 @@ export async function cancelRideLogic(
   }
 
   const isCash = ride.paymentMethod === PaymentMethod.CASH;
+  const CANCELLATION_PENALTY_XOF = 500;
 
   const originalPayment = await prisma.transaction.findFirst({
     where: { 
@@ -1238,7 +1258,7 @@ export async function cancelRideLogic(
     if ((ride as any).paymentTransaction?.id) {
       await (tx as any).paymentTransaction.update({
         where: { id: (ride as any).paymentTransaction.id },
-        data: { status: TransactionStatus.PROCESSING }
+        data: { status: TransactionStatus.CANCELLED }
       }).catch(() => null);
     }
 
@@ -1258,7 +1278,7 @@ export async function cancelRideLogic(
       const remainingQueuedRide = await tx.ride.findFirst({
         where: {
           driverId: ride.driverId,
-          status: { in: [RideStatus.ACCEPTED, 'QUEUED' as any] },
+          status: { in: [RideStatus.ACCEPTED, RideStatus.QUEUED] },
           id: { not: ride.id }
         }
       });
@@ -1299,6 +1319,17 @@ export async function cancelRideLogic(
     return { appliedPenalty: penaltyAmount > 0, penaltyAmount };
   });
 
+  // 🧹 PURGA TOTAL NO REDIS AO CANCELAR
+  await redis.del(`active_ride:${rideId}`).catch(() => null);
+  await redis.del(`lock:accept_ride:${rideId}`).catch(() => null);
+
+  if (ride.driverId) {
+    await redis.del(`driver_active_ride:${ride.driverId}`).catch(() => null);
+    if (ride.driver?.isOnline && ride.driver?.lastLat && ride.driver?.lastLng) {
+      await redis.geoadd('drivers:locations', Number(ride.driver.lastLng), Number(ride.driver.lastLat), ride.driverId).catch(() => null);
+    }
+  }
+
   if (!isCash && refundAmount > 0 && refundTransactionId && refundPhone && !IS_MOCK_MODE) {
     try {
       await executeRideDisbursement({
@@ -1323,6 +1354,7 @@ export async function cancelRideLogic(
   }
 
   const cancelRooms = [
+    ride.id,
     ride.passengerId,
     `passenger_${ride.passengerId}`,
     `passenger:${ride.passengerId}`,
@@ -1358,7 +1390,7 @@ export async function cancelRideLogic(
 }
 
 // -----------------------------------------------------------------------------
-// 8. AVALIAÇÕES E MENSAGENS DE CHAT
+// 8. AVALIAÇÕES E MENSAGENS DE CHAT (COM SUPORTE A ÁUDIO)
 // -----------------------------------------------------------------------------
 export async function submitRatingLogic(data: {
   rideId: string;
@@ -1434,6 +1466,8 @@ export async function notifyNewChatMessage(data: {
   senderType: 'PASSENGER' | 'DRIVER';
   senderName: string;
   message: string;
+  audioUrl?: string | null;
+  audioDuration?: number | null;
 }) {
   const chatMessage = await prisma.rideChatMessage.create({
     data: {
@@ -1441,6 +1475,8 @@ export async function notifyNewChatMessage(data: {
       senderId: data.senderId,
       senderType: data.senderType as any,
       message: data.message,
+      audioUrl: data.audioUrl || null,
+      audioDuration: data.audioDuration || 0,
       isRead: false,
     },
   });
@@ -1467,13 +1503,14 @@ export async function notifyNewChatMessage(data: {
     senderName: data.senderName,
     text: data.message,
     message: data.message,
+    audioUrl: data.audioUrl || null,
+    audioDuration: data.audioDuration || 0,
     createdAt: chatMessage.createdAt.toISOString(),
   };
 
   try {
     const io = getIo();
     if (io) {
-      // 💬 Envia para TODAS as salas possíveis de passageiro e motorista
       const chatRooms = [
         data.rideId,
         ride.passengerId,
@@ -1502,10 +1539,11 @@ export async function notifyNewChatMessage(data: {
       : ride.driver?.deviceToken;
 
     if (recipientToken) {
+      const pushBody = data.audioUrl ? '🎤 Mensagem de áudio recebida' : data.message;
       sendPushNotification(
         recipientToken,
         `💬 Nova mensagem de ${data.senderName}`,
-        data.message,
+        pushBody,
         { type: 'CHAT_MESSAGE', rideId: data.rideId },
         PUSH_CHANNELS.CHAT
       ).catch(() => null);

@@ -329,7 +329,7 @@ model Driver {
   accountDeletionRequests AccountDeletionRequest[]
   tickets              Ticket[]               @relation("DriverTickets")
   sosIncidents         SosIncident[]
-
+  @@index([vehicleType, status, isOnline, isAvailable])
   @@index([status, isOnline, isAvailable])
   @@index([lastLat, lastLng, isAvailable])
   @@index([phone])
@@ -430,6 +430,7 @@ model Ride {
   sosIncidents         SosIncident[]
 
   @@index([status])
+  @@index([status, updatedAt])
   @@index([passengerId, status, createdAt])
   @@index([driverId, status, createdAt])
 }
@@ -638,15 +639,17 @@ model Rating {
 }
 
 model RideChatMessage {
-  id        String   @id @default(uuid()) @db.Uuid
-  rideId    String   @db.Uuid
-  senderId  String   @db.Uuid
-  senderType UserType
-  message   String   @db.Text
-  isRead    Boolean  @default(false)
-  createdAt DateTime @default(now())
+  id            String   @id @default(uuid()) @db.Uuid
+  rideId        String   @db.Uuid
+  senderId      String   @db.Uuid
+  senderType    UserType
+  message       String   @db.Text
+  audioUrl      String?  @db.Text
+  audioDuration Int?     @default(0)
+  isRead        Boolean  @default(false)
+  createdAt     DateTime @default(now())
 
-  ride      Ride     @relation(fields: [rideId], references: [id], onDelete: Cascade)
+  ride          Ride     @relation(fields: [rideId], references: [id], onDelete: Cascade)
 
   @@index([rideId, createdAt])
 }

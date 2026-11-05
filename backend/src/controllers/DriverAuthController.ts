@@ -3,7 +3,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { prisma } from '../config/prisma';
-import { getIo } from '../server';
+import { getIo, safeRedis } from '../server';
 import { formatPhoneNumber, isValidBissauPhone } from '../services/mobileMoneyService';
 import { sendSmsOtp } from '../services/smsService';
 
@@ -304,6 +304,10 @@ export class DriverAuthController {
         return res.status(400).json({ success: false, error: 'A senha deve conter no mínimo 6 caracteres.' });
       }
 
+      // 🟢 NORMALIZAÇÃO DA CATEGORIA DO VEÍCULO (PARIDADE COM SCHEMA PRISMA E DISPATCH)
+      let normalizedVehicleType = String(vehicleType || 'TAXI').toUpperCase().trim();
+      if (normalizedVehicleType === 'MOTO_CAR') normalizedVehicleType = 'MOTO_CARRO';
+
       const [driverPhone, passengerPhone] = await Promise.all([
         prisma.driver.findFirst({ where: { phone: formattedPhone } }),
         prisma.passenger.findFirst({ where: { phone: formattedPhone } }),
@@ -346,7 +350,7 @@ export class DriverAuthController {
           passwordHash,
           vehiclePlate, 
           vehicleBrand: cleanVehicleBrand, 
-          vehicleType: vehicleType || 'TAXI', 
+          vehicleType: normalizedVehicleType as any, 
           vehicleColor: cleanVehicleColor, 
           documentType: documentType || 'BI',
           documentNumber,
@@ -572,7 +576,7 @@ export class DriverAuthController {
   }
 
   // ==========================================
-  // 🗑️ EXCLUSÃO DE CONTA
+  // 🗑️ EXCLUSÃO DE CONTA (COM PURGA REDIS)
   // ==========================================
   async deleteAccount(req: Request, res: Response): Promise<Response> {
     try {
@@ -585,6 +589,10 @@ export class DriverAuthController {
       });
 
       if (!driver) return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
+
+      // 🧹 PURGA IMEDIATA DO MOTORISTA NO REDIS (GEO & ACTIVE RIDE)
+      await safeRedis.zRem('drivers:locations', driverId).catch(() => null);
+      await safeRedis.del(`driver_active_ride:${driverId}`).catch(() => null);
 
       const hasHistory = driver.rides.length > 0 || driver.transactions.length > 0;
 

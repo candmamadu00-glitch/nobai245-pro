@@ -57,7 +57,8 @@ async function emitSuccessSockets(rideId?: string | null, passengerId?: string |
       data: { status: 'SEARCHING' }
     });
 
-    if (updateResult.count >= 0) {
+    // 🟢 CORREÇÃO CRÍTICA: Garante que só notifica se realmente alterou o status no banco
+    if (updateResult.count > 0) {
       if (io) {
         io.to(rideId).emit('payment:confirmed', {
           rideId,
@@ -116,7 +117,6 @@ router.post('/sms-gateway', async (req: Request, res: Response): Promise<any> =>
         return res.status(200).json({ status: 'ok', message: 'SMS duplicado já processado anteriormente.' });
       }
 
-      // Notifica o app do passageiro e spamma os motoristas próximos
       if (ridePaymentResult.rideId) {
         await emitSuccessSockets(ridePaymentResult.rideId, null);
       }
@@ -129,7 +129,7 @@ router.post('/sms-gateway', async (req: Request, res: Response): Promise<any> =>
       });
     }
 
-    // 2. Se não era corrida de passageiro, tenta processar como Recarga de Carteira do Motorista
+    // 2. Tenta processar como Recarga de Carteira do Motorista
     const amountMatch = message.match(/(\d+[\d\.]*)\s*(?:XOF|FCFA|CFA)/i) || message.match(/(\d+[\d\.]*)/);
     const phoneMatch = message.match(/(?:de|from)\s+(\d{7,12})/i);
 
@@ -162,7 +162,6 @@ router.post('/sms-gateway', async (req: Request, res: Response): Promise<any> =>
       return res.status(404).json({ error: 'Nenhum motorista ou corrida pendente localizada.' });
     }
 
-    // Executa a recarga de carteira do motorista
     const result = await prisma.$transaction(async (tx) => {
       const currentBalance = Number(driver.walletBalance || 0);
       const newBalance = currentBalance + amountXOF;
@@ -175,7 +174,7 @@ router.post('/sms-gateway', async (req: Request, res: Response): Promise<any> =>
       await tx.transaction.create({
         data: {
           driverId: driver.id,
-          type: 'MANUAL_RECHARGE',
+          type: 'MANUAL_RECHARGE' as any,
           status: 'COMPLETED',
           amount: amountXOF,
           balanceBefore: currentBalance,
@@ -186,10 +185,10 @@ router.post('/sms-gateway', async (req: Request, res: Response): Promise<any> =>
         }
       });
 
-      return { driverId: driver.id, newBalance, fullName: driver.fullName };
+      return { driverId: driver.id, newBalance, fullName: driver.fullName, currentBalance };
     });
 
-    console.log(`✅ [RECARGA MOTORISTA CONCLUÍDA] Motorista: ${result.fullName} | Saldo Anterior: -> Novo Saldo: ${result.newBalance} XOF`);
+    console.log(`✅ [RECARGA MOTORISTA CONCLUÍDA] Motorista: ${result.fullName} | Saldo Anterior: ${result.currentBalance} XOF -> Novo Saldo: ${result.newBalance} XOF`);
 
     const io = getIo();
     if (io) {

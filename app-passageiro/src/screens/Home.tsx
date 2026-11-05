@@ -319,6 +319,7 @@ const reverseGeocodeBissau = async (latitude: number, longitude: number, userRef
     }
 
     return finalAddress;
+  // 🟢 CORREÇÃO:
   } catch (error) {
     console.warn('⚠️ Erro na geocodificação reversa:', error);
     const fallbackBairro = findNearestLocalBairro(latitude, longitude) || 'Bissau, Guiné-Bissau';
@@ -1023,8 +1024,6 @@ useEffect(() => {
       resetRideState();
     }
   };
-
-  socket.on('ride:cancelled', handleRideCancelled);
 
   return () => {
     socket.off('ride:cancelled', handleRideCancelled);
@@ -1766,7 +1765,7 @@ socket.on('ride:driver_arrived', handleDriverArrived);
 socket.on('ride:started', handleRideStarted);
 socket.on('ride:finished', handleRideFinished);
 socket.on('ride:completed', handleRideFinished);
-socket.on('ride:cancelled', handleRideCancelled);
+
 
 // 🟢 Mantido apenas 1 ouvinte do chat para evitar multiplicações de notificações
 socket.on('chat:message', handleIncomingChatMessage);
@@ -2072,32 +2071,20 @@ return () => {
     return (new Date().getTime() - acceptedAt.getTime()) > 2 * 60 * 1000;
   }
 
- // ✅ MANTENHA ESTA VERSÃO (Adequada para o aplicativo do Passageiro)
 const handleConfirmCancel = useCallback((reason: string) => {
   setShowCancelModal(false);
 
   if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
-  if (!activeRideId || !user?.id) {
-    resetRideState();
-    return;
+  if (activeRideId && user?.id) {
+    // Emite o cancelamento via serviço dedicado do passageiro
+    cancelRideByPassenger(activeRideId, user.id, reason);
   }
-  
-  // Emite o cancelamento via serviço dedicado do passageiro
-  cancelRideByPassenger(activeRideId, user.id, reason);
-  
-  persistRideState(null, 'idle');
-  setActiveRideId(null);
-  setRideStatus('idle');
-  setBookingStep('ADDRESS');
-  setDriverInfo(null);
-  setDriverLocation(null);
-  setStartOtp('');
-  
-  if (activeRideIdRef.current) activeRideIdRef.current = null;
+
+  // resetRideState já limpa o AsyncStorage, reseta os estados e zera as referências de rideId
   resetRideState();
 }, [activeRideId, user?.id, resetRideState]);
-
+  
   const onMapRegionDidChange = useCallback(async (feature: any) => {
     setIsMapMoving(false);
     if (rideStatus !== 'idle' || bookingStep !== 'ADDRESS') return;
@@ -2259,31 +2246,34 @@ const handleSearchLocation = async (text: string) => {
   setIsSearchingMapbox(true);
 
   try {
-    // 1. Consulta o banco de dados local do Nobai245
     const response = await api.get(`/landmarks/search?q=${encodeURIComponent(text)}`).catch(() => null);
     
     let dbResults: MapboxGeocodingFeature[] = [];
 
     if (response?.data && Array.isArray(response.data)) {
-      dbResults = response.data.map((item: any) => ({
-        id: `db_${item.id}`,
-        description: item.popularName 
-          ? `${item.name} (${item.popularName}) - ${item.neighborhood}` 
-          : `${item.name} - ${item.neighborhood}`,
-        latitude: Number(item.latitude),
-        longitude: Number(item.longitude),
-        isLocalBairro: true,
-      }));
+      dbResults = response.data.map((item: any) => {
+        const neighborhoodName = typeof item.neighborhood === 'object' && item.neighborhood?.name
+          ? item.neighborhood.name
+          : (typeof item.neighborhood === 'string' ? item.neighborhood : 'Bissau');
+
+        return {
+          id: `db_${item.id}`,
+          description: item.popularName 
+            ? `${item.name} (${item.popularName}) • ${neighborhoodName}` 
+            : `${item.name} • ${neighborhoodName}`,
+          latitude: Number(item.latitude),
+          longitude: Number(item.longitude),
+          isLocalBairro: true,
+        };
+      });
     }
 
-    // 2. Se o banco encontrou resultados, exibe-os diretamente
     if (dbResults.length > 0) {
       setSearchResults(dbResults);
       setIsSearchingMapbox(false);
       return;
     }
 
-    // 3. Fallback Mapbox (Usando MAPBOX_ACCESS_TOKEN correto)
     const mapboxRes = await fetch(
       `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(text)}.json?country=gw&proximity=${BISSAU_CENTER.longitude},${BISSAU_CENTER.latitude}&language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`
     );
@@ -2831,8 +2821,8 @@ return (
       </View>
     </View>
 
+    {/* CONTEÚDO ROLÁVEL DE OPÇÕES */}
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16 }}>
-      {/* TIPO DE SERVIÇO */}
       <Text style={styles.sectionLabel}>{t('service_type', 'Tipo de Serviço')}</Text>
       <View style={styles.serviceTypesContainer}>
         <TouchableOpacity 
@@ -2860,7 +2850,6 @@ return (
         </TouchableOpacity>
       </View>
 
-      {/* VEÍCULOS DISPONÍVEIS */}
       {serviceType === 'aluguel' ? (
         <View style={{ marginTop: 12 }}>
           <Text style={styles.sectionLabel}>{t('select_coverage_region', 'Selecione a Região de Cobertura')}</Text>
@@ -2909,23 +2898,24 @@ return (
           </View>
         </View>
       )}
-
-      {/* BOTÃO FIXO DE CONFIRMAÇÃO */}
-      <View style={{
-        paddingVertical: 16,
-        borderTopWidth: 1,
-        borderTopColor: '#1E293B',
-        backgroundColor: '#0F172A'
-      }}>
-        <TouchableOpacity 
-          style={[styles.requestButton, { height: 52 }]} 
-          onPress={() => setBookingStep('PAYMENT')}
-          activeOpacity={0.85}
-        >
-          <Text style={[styles.requestButtonText, { fontSize: 16 }]}>Continuar para Pagamento ➔</Text>
-        </TouchableOpacity>
-      </View>
     </ScrollView>
+
+    {/* BOTÃO FIXO NO RODAPÉ FORA DA SCROLLVIEW */}
+    <View style={{
+      paddingHorizontal: 16,
+      paddingVertical: 16,
+      borderTopWidth: 1,
+      borderTopColor: '#1E293B',
+      backgroundColor: '#0F172A'
+    }}>
+      <TouchableOpacity 
+        style={[styles.requestButton, { height: 52 }]} 
+        onPress={() => setBookingStep('PAYMENT')}
+        activeOpacity={0.85}
+      >
+        <Text style={[styles.requestButtonText, { fontSize: 16 }]}>Continuar para Pagamento ➔</Text>
+      </TouchableOpacity>
+    </View>
   </SafeAreaView>
 </Modal>
 {/* 💳 SELEÇÃO DE FORMA DE PAGAMENTO */}
@@ -3066,25 +3056,25 @@ return (
   </View>
 )}
 
-          {/* 🔑 PIN DE EMBARQUE DE SEGURANÇA */}
-          {(rideStatus === 'accepted' || rideStatus === 'arrived') && Boolean(activeOtpPin) && (
-            <View style={styles.pinCardContainer}>
-              <View style={styles.pinHeader}>
-                <Ionicons name="shield-checkmark-sharp" size={18} color="#10B981" />
-                <Text style={styles.pinTitle}>{t('boarding_pin_title', 'PIN DE EMBARQUE')}</Text>
-              </View>
-              <Text style={styles.pinSubtitle}>{t('tell_pin_to_driver_msg', 'Fale este código ao motorista para iniciar a corrida')}</Text>
-              <View style={styles.pinDigitsRow}>
-                {activeOtpPin.split('').map((digit, index) => (
-                  <View key={`pin-digit-${index}`} style={styles.pinDigitBox}>
-                    <Text style={styles.pinDigitText}>{digit}</Text>
-                  </View>
-                ))}
-              </View>
-            </View>
-          )}
+{/* 🔑 PIN DE EMBARQUE DE SEGURANÇA */}
+{(rideStatus === 'accepted' || rideStatus === 'arrived') && Boolean(activeOtpPin) && (
+  <View style={styles.pinCardContainer}>
+    <View style={styles.pinHeader}>
+      <Ionicons name="shield-checkmark-sharp" size={18} color="#10B981" />
+      <Text style={styles.pinTitle}>{t('boarding_pin_title', 'PIN DE EMBARQUE')}</Text>
+    </View>
+    <Text style={styles.pinSubtitle}>{t('tell_pin_to_driver_msg', 'Fale este código ao motorista para iniciar a corrida')}</Text>
+    <View style={styles.pinDigitsRow}>
+      {activeOtpPin.split('').map((digit, index) => (
+        <View key={`pin-digit-${index}`} style={styles.pinDigitBox}>
+          <Text style={styles.pinDigitText}>{digit}</Text>
+        </View>
+      ))}
+    </View>
+  </View>
+)}
 
-          {/* 📡 STATUS DE BUSCA COM RADAR MODERNO */}
+{/* 📡 STATUS DE BUSCA */}
 {rideStatus === 'searching' && (
   <View style={styles.statusBox}>
     <View style={{ height: 90, justifyContent: 'center', alignItems: 'center', marginBottom: 12 }}>
@@ -3118,7 +3108,7 @@ return (
   </View>
 )}
 
-          {/* 📊 PAINEL PROFISSIONAL DE ACOMPANHAMENTO DA CORRIDA (CARD ÚNICO E ORGANIZADO) */}
+{/* 📊 PAINEL PROFISSIONAL DE ACOMPANHAMENTO DA CORRIDA */}
 {['accepted', 'arrived', 'in_progress'].includes(rideStatus) && driverInfo && (
   <View style={styles.activeRideContainer}>
     
@@ -3134,7 +3124,6 @@ return (
            (driverEta ? `Em Viagem • Chegada em ${driverEta} min` : 'Viagem em Andamento')}
         </Text>
 
-        {/* 🟢 DISTÂNCIA EM KM PARA O PASSAGEIRO */}
         {estimatedDistance ? (
           <View style={{ backgroundColor: '#1E293B', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, marginTop: 4, alignSelf: 'flex-start' }}>
             <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: 'bold' }}>
@@ -3144,170 +3133,133 @@ return (
         ) : null}
       </View>
 
-      {/* VALOR EM DESTAQUE */}
+      {/* VALOR EM DESTAQUE - FORMATAÇÃO SEGURA */}
       <View style={styles.priceBadgeHeader}>
         <Text style={styles.priceBadgeLabel}>VALOR</Text>
         <Text style={styles.priceBadgeValue}>
-          {estimatedPrice ? `${estimatedPrice.toLocaleString('pt-GW')} XOF` : 'A calcular'}
+          {estimatedPrice ? `${Math.round(estimatedPrice).toLocaleString('pt-BR')} XOF` : 'A calcular'}
         </Text>
       </View>
     </View>
 
-              {/* ITINERÁRIO */}
-              <View style={styles.routeTimelineContainer}>
-                <Text style={styles.routeTimelineHeaderTitle}>ITINERÁRIO DA VIAGEM</Text>
-                
-                <View style={styles.timelineItem}>
-                  <View style={[styles.timelineIconBg, { backgroundColor: '#10B981' }]}>
-                    <Ionicons name="location" size={14} color="#FFF" />
-                  </View>
-                  <View style={styles.timelineTextWrapper}>
-                    <Text style={styles.timelineLabel}>Origem</Text>
-                    <Text style={styles.timelineValue} numberOfLines={1}>{pickupAddress}</Text>
-                  </View>
-                </View>
+    {/* ITINERÁRIO */}
+    <View style={styles.routeTimelineContainer}>
+      <Text style={styles.routeTimelineHeaderTitle}>ITINERÁRIO DA VIAGEM</Text>
+      
+      <View style={styles.timelineItem}>
+        <View style={[styles.timelineIconBg, { backgroundColor: '#10B981' }]}>
+          <Ionicons name="location" size={14} color="#FFF" />
+        </View>
+        <View style={styles.timelineTextWrapper}>
+          <Text style={styles.timelineLabel}>Origem</Text>
+          <Text style={styles.timelineValue} numberOfLines={1}>{pickupAddress}</Text>
+        </View>
+      </View>
 
-                {extraStopCoords && (
-                  <View style={styles.timelineItem}>
-                    <View style={[styles.timelineIconBg, { backgroundColor: '#3B82F6' }]}>
-                      <Ionicons name="location-sharp" size={14} color="#FFF" />
-                    </View>
-                    <View style={styles.timelineTextWrapper}>
-                      <Text style={[styles.timelineLabel, { color: '#60A5FA' }]}>Parada Intermediária</Text>
-                      <Text style={styles.timelineValue} numberOfLines={1}>{extraStopAddress || 'Parada 1'}</Text>
-                    </View>
-                  </View>
-                )}
+      {extraStopCoords && (
+        <View style={styles.timelineItem}>
+          <View style={[styles.timelineIconBg, { backgroundColor: '#3B82F6' }]}>
+            <Ionicons name="location-sharp" size={14} color="#FFF" />
+          </View>
+          <View style={styles.timelineTextWrapper}>
+            <Text style={[styles.timelineLabel, { color: '#60A5FA' }]}>Parada Intermediária</Text>
+            <Text style={styles.timelineValue} numberOfLines={1}>{extraStopAddress || 'Parada 1'}</Text>
+          </View>
+        </View>
+      )}
 
-                <View style={styles.timelineItem}>
-                  <View style={[styles.timelineIconBg, { backgroundColor: '#EF4444' }]}>
-                    <Ionicons name="flag" size={14} color="#FFF" />
-                  </View>
-                  <View style={styles.timelineTextWrapper}>
-                    <Text style={styles.timelineLabel}>Destino Final</Text>
-                    <Text style={styles.timelineValue} numberOfLines={1}>{dropoffAddress}</Text>
-                  </View>
-                </View>
+      <View style={styles.timelineItem}>
+        <View style={[styles.timelineIconBg, { backgroundColor: '#EF4444' }]}>
+          <Ionicons name="flag" size={14} color="#FFF" />
+        </View>
+        <View style={styles.timelineTextWrapper}>
+          <Text style={styles.timelineLabel}>Destino Final</Text>
+          <Text style={styles.timelineValue} numberOfLines={1}>{dropoffAddress}</Text>
+        </View>
+      </View>
 
-                <View style={styles.paymentMethodChip}>
-                  <Ionicons 
-                    name={paymentMethod === 'ORANGE_MONEY' ? 'phone-portrait' : paymentMethod === 'MTN_MOMO' ? 'wallet' : 'cash'} 
-                    size={14} 
-                    color="#EAB308" 
-                  />
-                  <Text style={styles.paymentMethodChipText}>
-                    Pagamento: {paymentMethod === 'ORANGE_MONEY' ? 'Orange Money' : paymentMethod === 'MTN_MOMO' ? 'MTN MoMo' : 'Dinheiro em Espécie'}
-                  </Text>
-                </View>
-              </View>
-
-              {/* DADOS DO MOTORISTA E VEÍCULO (ÚNICA INSTÂNCIA) */}
-              <View style={styles.driverCardCompact}>
-                <Image 
-                  source={{ uri: driverInfo.photoUrl || driverInfo.profilePicture || 'https://via.placeholder.com/100' }} 
-                  style={styles.driverAvatarCompact} 
-                />
-                <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text style={styles.driverNameCompact}>{driverInfo.name}</Text>
-                  <Text style={styles.vehicleModelCompact}>
-  {driverInfo.carModel || 'Veículo'} {driverInfo.carColor ? `• ${driverInfo.carColor}` : ''}
-</Text>
-                  <View style={styles.plateBadgeCompact}>
-                    <Text style={styles.plateTextCompact}>{driverInfo.licensePlate?.toUpperCase() || 'SEM PLACA'}</Text>
-                  </View>
-                </View>
-                <Image 
-                  source={getVehicle3DIconAsset(driverInfo.vehicleType, driverInfo.carColor)} 
-                  style={{ width: 48, height: 48 }} 
-                  resizeMode="contain" 
-                />
-              </View>
-
-              {/* BOTÕES DE AÇÃO RÁPIDA */}
-              <View style={styles.actionRowGrid}>
-                <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleSosPress} activeOpacity={0.8}>
-                  <Ionicons name="shield-checkmark" size={18} color="#EF4444" />
-                  <Text style={[styles.actionBtnText, { color: '#EF4444' }]}>SOS</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleCallDriver} activeOpacity={0.8}>
-                  <Ionicons name="call" size={18} color="#EAB308" />
-                  <Text style={[styles.actionBtnText, { color: '#EAB308' }]}>Ligar</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleShareTrip} activeOpacity={0.8}>
-                  <Ionicons name="share-social" size={18} color="#3B82F6" />
-                  <Text style={[styles.actionBtnText, { color: '#3B82F6' }]}>Partilhar</Text>
-                </TouchableOpacity>
-
-                {/* ✅ POR ISTO: */}
-<TouchableOpacity 
-  style={styles.actionBtnPrimary} 
-  onPress={() => {
-    setUnreadCount(0);
-    setIsChatVisible(true);
-  }} 
-  activeOpacity={0.85}
->
-  <Ionicons name="chatbubble-ellipses" size={18} color="#0F172A" />
-  <Text style={styles.actionBtnPrimaryText}>Chat</Text>
-
-  {/* 🔴 BADGE DE MENSAGENS NÃO LIDAS */}
-  {unreadCount > 0 && (
-    <View style={styles.chatBadgeContainer}>
-      <Text style={styles.chatBadgeText}>
-        {unreadCount > 9 ? '9+' : unreadCount}
-      </Text>
+      <View style={styles.paymentMethodChip}>
+        <Ionicons 
+          name={paymentMethod === 'ORANGE_MONEY' ? 'phone-portrait' : paymentMethod === 'MTN_MOMO' ? 'wallet' : 'cash'} 
+          size={14} 
+          color="#EAB308" 
+        />
+        <Text style={styles.paymentMethodChipText}>
+          Pagamento: {paymentMethod === 'ORANGE_MONEY' ? 'Orange Money' : paymentMethod === 'MTN_MOMO' ? 'MTN MoMo' : 'Dinheiro em Espécie'}
+        </Text>
+      </View>
     </View>
-  )}
-</TouchableOpacity>
-              </View>
 
-              <TouchableOpacity style={styles.cancelRideLink} onPress={() => setShowCancelModal(true)} activeOpacity={0.7}>
-                <Text style={styles.cancelRideLinkText}>Cancelar Corrida</Text>
-              </TouchableOpacity>
-            </View>
-          )}
+    {/* DADOS DO MOTORISTA E VEÍCULO */}
+    <View style={styles.driverCardCompact}>
+      <Image 
+        source={{ uri: driverInfo.photoUrl || driverInfo.profilePicture || 'https://via.placeholder.com/100' }} 
+        style={styles.driverAvatarCompact} 
+      />
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <Text style={styles.driverNameCompact}>{driverInfo.name}</Text>
+        <Text style={styles.vehicleModelCompact}>
+          {driverInfo.carModel || 'Veículo'} {driverInfo.carColor ? `• ${driverInfo.carColor}` : ''}
+        </Text>
+        <View style={styles.plateBadgeCompact}>
+          <Text style={styles.plateTextCompact}>{driverInfo.licensePlate?.toUpperCase() || 'SEM PLACA'}</Text>
+        </View>
+      </View>
+      <Image 
+        source={getVehicle3DIconAsset(driverInfo.vehicleType, driverInfo.carColor)} 
+        style={{ width: 48, height: 48 }} 
+        resizeMode="contain" 
+      />
+    </View>
+
+    {/* BOTÕES DE AÇÃO RÁPIDA */}
+    <View style={styles.actionRowGrid}>
+      <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleSosPress} activeOpacity={0.8}>
+        <Ionicons name="shield-checkmark" size={18} color="#EF4444" />
+        <Text style={[styles.actionBtnText, { color: '#EF4444' }]}>SOS</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleCallDriver} activeOpacity={0.8}>
+        <Ionicons name="call" size={18} color="#EAB308" />
+        <Text style={[styles.actionBtnText, { color: '#EAB308' }]}>Ligar</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleShareTrip} activeOpacity={0.8}>
+        <Ionicons name="share-social" size={18} color="#3B82F6" />
+        <Text style={[styles.actionBtnText, { color: '#3B82F6' }]}>Partilhar</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity 
+        style={styles.actionBtnPrimary} 
+        onPress={() => {
+          setUnreadCount(0);
+          setIsChatVisible(true);
+        }} 
+        activeOpacity={0.85}
+      >
+        <Ionicons name="chatbubble-ellipses" size={18} color="#0F172A" />
+        <Text style={styles.actionBtnPrimaryText}>Chat</Text>
+
+        {unreadCount > 0 && (
+          <View style={styles.chatBadgeContainer}>
+            <Text style={styles.chatBadgeText}>
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </Text>
+          </View>
+        )}
+      </TouchableOpacity>
+    </View>
+
+    <TouchableOpacity style={styles.cancelRideLink} onPress={() => setShowCancelModal(true)} activeOpacity={0.7}>
+      <Text style={styles.cancelRideLinkText}>Cancelar Corrida</Text>
+    </TouchableOpacity>
+  </View>
+)}
 
         </ScrollView>
       </Animated.View>
     </KeyboardAvoidingView>
-    {/* 🚗 CARTÃO DE INFORMAÇÕES DO MOTORISTA E CORRIDA */}
-{rideStatus !== 'idle' && (
-  <View style={styles.driverInfoCard} accessibilityRole="summary">
-    
-    {/* Título e Botão de Leitura do Cartão */}
-    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-      <Text style={styles.cardTitle}>Status da Viagem</Text>
-      
-      {/* 🔊 Botão Ouvir Resumo */}
-      <TouchableOpacity
-        onPress={() => {
-          triggerHapticFeedback('BUTTON_PRESS');
-          speakText(
-            `Motorista ${driverInfo?.name || ''}, veículo ${driverInfo?.carModel || ''} ${driverInfo?.carColor || ''}, matrícula ${driverInfo?.licensePlate || ''}. Valor da corrida: ${estimatedPrice || 0} XOF.`
-          );
-        }}
-        accessibilityLabel="Ouvir informações do motorista e valor da corrida"
-        accessibilityRole="button"
-        style={{ padding: 6, backgroundColor: 'rgba(234, 179, 8, 0.2)', borderRadius: 20 }}
-      >
-        <Ionicons name="volume-medium" size={20} color="#EAB308" />
-      </TouchableOpacity>
-    </View>
 
-    {/* Valor com Ícone de Som */}
-    <TouchableOpacity
-      onPress={() => speakText(`Valor total: ${estimatedPrice || 0} XOF`)}
-      style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 6 }}
-      accessibilityLabel={`Valor total de ${estimatedPrice || 0} XOF. Toque para ouvir.`}
-    >
-      <Text style={styles.priceText}>{estimatedPrice || 0} XOF</Text>
-      <Ionicons name="volume-high-outline" size={16} color="#EAB308" style={{ marginLeft: 6 }} />
-    </TouchableOpacity>
-
-  </View>
-)}
     {/* MODAL DE IDIOMAS */}
     <Modal visible={langModalVisible} transparent animationType="slide" onRequestClose={() => setLangModalVisible(false)}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
@@ -3429,7 +3381,7 @@ return (
                   <View style={styles.amountBadgeContainer}>
                     <Text style={styles.amountTextLabel}>{t('total_amount', 'VALOR A PAGAR')}</Text>
                     <Text style={styles.amountValue}>
-                      {estimatedPrice ? `${estimatedPrice.toLocaleString('pt-GW')} XOF` : t('calculating', 'Calculando...')}
+                      {estimatedPrice ? `${Math.round(estimatedPrice).toLocaleString('pt-BR')} XOF` : t('calculating', 'Calculando...')}
                     </Text>
                   </View>
 
@@ -3501,27 +3453,27 @@ return (
           </View>
 
           <View style={styles.menuItems}>
-            {/* Opção de Ativar/Desativar Voz no Menu */}
-  <TouchableOpacity style={styles.menuItem} onPress={toggleVoiceAssist} activeOpacity={0.7}>
-    <Ionicons 
-      name={isVoiceAssistEnabled ? "volume-high-outline" : "volume-mute-outline"} 
-      size={20} 
-      color={isVoiceAssistEnabled ? "#EAB308" : "#0F172A"} 
-    />
-    <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingRight: 8 }}>
-      <Text style={styles.menuItemText}>{t('voice_assist', 'Assistência por Voz')}</Text>
-      <View style={{
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-        borderRadius: 10,
-        backgroundColor: isVoiceAssistEnabled ? '#EAB308' : '#334155'
-      }}>
-        <Text style={{ fontSize: 10, fontWeight: 'bold', color: isVoiceAssistEnabled ? '#0F172A' : '#FFF' }}>
-          {isVoiceAssistEnabled ? 'LIGADO' : 'DESLIGADO'}
-        </Text>
-      </View>
-    </View>
-  </TouchableOpacity>
+            <TouchableOpacity style={styles.menuItem} onPress={toggleVoiceAssist} activeOpacity={0.7}>
+              <Ionicons 
+                name={isVoiceAssistEnabled ? "volume-high-outline" : "volume-mute-outline"} 
+                size={20} 
+                color={isVoiceAssistEnabled ? "#EAB308" : "#0F172A"} 
+              />
+              <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingRight: 8 }}>
+                <Text style={styles.menuItemText}>{t('voice_assist', 'Assistência por Voz')}</Text>
+                <View style={{
+                  paddingHorizontal: 8,
+                  paddingVertical: 2,
+                  borderRadius: 10,
+                  backgroundColor: isVoiceAssistEnabled ? '#EAB308' : '#334155'
+                }}>
+                  <Text style={{ fontSize: 10, fontWeight: 'bold', color: isVoiceAssistEnabled ? '#0F172A' : '#FFF' }}>
+                    {isVoiceAssistEnabled ? 'LIGADO' : 'DESLIGADO'}
+                  </Text>
+                </View>
+              </View>
+            </TouchableOpacity>
+
             <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('Profile'); }} activeOpacity={0.7}>
               <Ionicons name="person-outline" size={20} color="#0F172A" />
               <Text style={styles.menuItemText}>{t('my_profile', 'Meu Perfil')}</Text>
@@ -3553,480 +3505,389 @@ return (
       </TouchableOpacity>
     </Modal>
 
-    {/* CHAT INTERNO */}
+{/* 🔀 MODAL DE BUSCA DE ENDEREÇO MAPBOX */}
     <Modal 
-      visible={isChatVisible} 
+      visible={isSearchModalVisible} 
       animationType="slide" 
-      transparent 
-      statusBarTranslucent
-      onRequestClose={() => setIsChatVisible(false)}
+      transparent={false} 
+      onRequestClose={() => setIsSearchModalVisible(false)}
     >
-      <KeyboardAvoidingView 
-        style={styles.chatOverlay} 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <View style={[styles.chatContainer, { paddingTop: Math.max((insets?.top || 0) + 10, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 16) }]}>
-          <View style={styles.chatHeader}>
-            <View style={styles.chatHeaderUserInfo}>
-              {driverInfo?.photoUrl || driverInfo?.profilePicture ? (
-                <Image source={{ uri: formatPhotoUrl(driverInfo.photoUrl || driverInfo.profilePicture) }} style={styles.headerAvatar} />
-              ) : (
-                <View style={styles.headerAvatarPlaceholder}>
-                  <Ionicons name="person" size={18} color="#64748B" />
-                </View>
-              )}
-              <Text style={styles.chatTitle}>
-                {t('chat_with', 'Chat com')} {driverInfo?.name || 'Motorista'}
-              </Text>
-            </View>
-
-            <TouchableOpacity onPress={() => setIsChatVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} activeOpacity={0.8}>
-              <Ionicons name="close" size={22} color="#FFFFFF" />
+      <SafeAreaView style={styles.searchModalContainer}>
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+          style={{ flex: 1 }}
+        >
+          {/* CABEÇALHO */}
+          <View style={styles.searchHeader}>
+            <TouchableOpacity 
+              onPress={() => setIsSearchModalVisible(false)} 
+              style={styles.backButton} 
+              activeOpacity={0.7}
+            >
+              <Ionicons name="arrow-back" size={24} color="#F8FAFC" />
             </TouchableOpacity>
-          </View>
-
-          <FlatList
-            ref={chatFlatListRef}
-            data={messages}
-            keyExtractor={(item, index) => item.id || `msg-${index}`}
-            contentContainerStyle={styles.chatList}
-            keyboardShouldPersistTaps="handled"
-            onContentSizeChange={() => chatFlatListRef.current?.scrollToEnd({ animated: true })}
-            renderItem={({ item }) => {
-              const isPassenger = item.sender === 'passenger';
-              const photoUrl = formatPhotoUrl(item.senderPhoto || (isPassenger ? user?.profilePicture : driverInfo?.profilePicture));
-
-              return (
-                <View style={[styles.messageRow, isPassenger ? styles.rowPassenger : styles.rowDriver]}>
-                  {!isPassenger && (
-                    photoUrl ? (
-                      <Image source={{ uri: photoUrl }} style={styles.chatBubbleAvatar} />
-                    ) : (
-                      <View style={styles.chatBubbleAvatarPlaceholder}>
-                        <Ionicons name="person" size={12} color="#64748B" />
-                      </View>
-                    )
-                  )}
-
-                  <View style={[styles.messageBubble, isPassenger ? styles.messagePassenger : styles.messageDriver]}>
-                    <Text style={[styles.messageText, isPassenger ? styles.textPassenger : styles.textDriver]}>
-                      {item.text}
-                    </Text>
-                  </View>
-
-                  {isPassenger && (
-                    photoUrl ? (
-                      <Image source={{ uri: photoUrl }} style={styles.chatBubbleAvatar} />
-                    ) : (
-                      <View style={styles.chatBubbleAvatarPlaceholder}>
-                        <Ionicons name="person" size={12} color="#64748B" />
-                      </View>
-                    )
-                  )}
-                </View>
-              );
-            }}
-          />
-
-          <View style={[styles.chatInputContainer, { paddingBottom: Math.max((insets?.bottom || 0) + 8, 12) }]}>
-            <TextInput
-              style={styles.chatInput}
-              value={inputText}
-              onChangeText={setInputText}
-              placeholder={t('type_something', 'Escreva algo...')}
-              placeholderTextColor="#94A3B8"
-              multiline
-              maxLength={250}
-            />
-            <TouchableOpacity style={styles.chatSendButton} onPress={sendMessage} activeOpacity={0.85}>
-              <Ionicons name="send" size={16} color="#0F172A" />
-            </TouchableOpacity>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
-
-    {/* 🔀 MODAL DE BUSCA DE ENDEREÇO MAPBOX (CÓDIGO AJUSTADO) */}
-<Modal 
-  visible={isSearchModalVisible} 
-  animationType="slide" 
-  transparent={false} 
-  onRequestClose={() => setIsSearchModalVisible(false)}
->
-  <SafeAreaView style={styles.searchModalContainer}>
-    <KeyboardAvoidingView 
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
-      style={{ flex: 1 }}
-    >
-      {/* CABEÇALHO */}
-      <View style={styles.searchHeader}>
-        <TouchableOpacity 
-          onPress={() => setIsSearchModalVisible(false)} 
-          style={styles.backButton} 
-          activeOpacity={0.7}
-        >
-          <Ionicons name="arrow-back" size={24} color="#F8FAFC" />
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={styles.passengerSelector} 
-          onPress={() => setIsGuestModalVisible(true)} 
-          activeOpacity={0.8}
-        >
-          <Ionicons name="person" size={13} color="#EAB308" style={{ marginRight: 6 }} />
-          <Text style={styles.passengerSelectorText}>
-            {isForAnotherPerson ? (guestName || 'Outra Pessoa') : t('for_me', 'Para mim')}
-          </Text>
-        </TouchableOpacity>
-
-        <View style={{ width: 40 }} />
-      </View>
-
-      {/* CORPO DO FORMULÁRIO COM SCROLLVIEW */}
-      <View style={styles.modalBody}>
-        <ScrollView 
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingBottom: 24 }}
-        >
-          {/* 📍 LINHA DO TEMPO + ENTRADAS DE ENDEREÇOS E REFERÊNCIAS */}
-          <View style={{ flexDirection: 'row', marginBottom: 15, paddingHorizontal: 4 }}>
             
-            {/* Indicadores Visuais da Linha do Tempo */}
-            <View style={{ alignItems: 'center', marginRight: 12, paddingTop: 14 }}>
-              <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#EAB308' }} />
-              <View style={{ width: 2, height: showExtraStop ? 110 : 70, backgroundColor: '#334155', marginVertical: 4 }} />
-              {showExtraStop && (
-                <>
-                  <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#3B82F6' }} />
-                  <View style={{ width: 2, height: 70, backgroundColor: '#334155', marginVertical: 4 }} />
-                </>
-              )}
-              <View style={{ width: 12, height: 12, backgroundColor: '#EF4444', borderRadius: 2 }} />
-            </View>
+            <TouchableOpacity 
+              style={styles.passengerSelector} 
+              onPress={() => setIsGuestModalVisible(true)} 
+              activeOpacity={0.8}
+            >
+              <Ionicons name="person" size={13} color="#EAB308" style={{ marginRight: 6 }} />
+              <Text style={styles.passengerSelectorText}>
+                {isForAnotherPerson ? (guestName || 'Outra Pessoa') : t('for_me', 'Para mim')}
+              </Text>
+            </TouchableOpacity>
 
-            {/* Campos de Input Organizados */}
-            <View style={{ flex: 1 }}>
-              
-              {/* 🟢 1. PARTIDA / EMBARQUE */}
-              <View style={{ marginBottom: 12 }}>
-                <Text style={{ color: '#EAB308', fontSize: 11, fontWeight: '800', marginBottom: 4 }}>
-                  PONTO DE PARTIDA (EMBARQUE)
-                </Text>
-                <View style={[
-                  styles.mapboxSearchInputWrapper, 
-                  searchType === 'pickup' ? { borderColor: '#EAB308', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
-                ]}>
-                  <Ionicons name="location" size={18} color="#EAB308" style={{ marginRight: 8 }} />
-                  <TextInput
-                    style={styles.mapboxSearchInput}
-                    placeholder={t('pickup_location', 'Local de Partida')}
-                    placeholderTextColor="#64748B"
-                    value={searchType === 'pickup' ? searchQuery : pickupAddress}
-                    autoCorrect={false}
-                    onFocus={() => { setSearchType('pickup'); setSearchQuery(pickupAddress); }}
-                    onChangeText={(text) => {
-                      setSearchQuery(text);
-                      handleMapboxSearch(text);
-                    }}
-                  />
-                  {isSearchingMapbox && searchType === 'pickup' ? (
-                    <ActivityIndicator size="small" color="#EAB308" style={{ marginRight: 6 }} />
-                  ) : (searchType === 'pickup' ? searchQuery : pickupAddress) ? (
-                    <TouchableOpacity onPress={() => { setSearchQuery(''); setPickupAddress(''); }}>
-                      <Ionicons name="close-circle" size={18} color="#64748B" />
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
-
-                {/* Ref. Partida */}
-                <View style={[styles.mapboxSearchInputWrapper, { marginTop: 4, backgroundColor: '#1E293B', borderColor: '#334155', borderWidth: 1 }]}>
-                  <Ionicons name="compass" size={15} color="#EAB308" style={{ marginRight: 8 }} />
-                  <TextInput
-                    style={[styles.mapboxSearchInput, { fontSize: 12 }]}
-                    placeholder="Ref. Partida (ex: Perto da Farmácia Central)"
-                    placeholderTextColor="#64748B"
-                    value={pickupReferencePoint}
-                    onChangeText={setPickupReferencePoint}
-                    maxLength={80}
-                  />
-                </View>
-              </View>
-
-              {/* 🔵 2. PARADA INTERMEDIÁRIA (SE ATIVADA) */}
-              {showExtraStop && (
-                <View style={{ marginBottom: 12 }}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                    <Text style={{ color: '#3B82F6', fontSize: 11, fontWeight: '800' }}>
-                      PARADA INTERMEDIÁRIA
-                    </Text>
-                    <TouchableOpacity onPress={() => { setShowExtraStop(false); setExtraStopAddress(''); setExtraStopCoords(null); setExtraStopReferencePoint(''); }}>
-                      <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: '600' }}>Remover</Text>
-                    </TouchableOpacity>
-                  </View>
-                  
-                  <View style={[
-                    styles.mapboxSearchInputWrapper, 
-                    searchType === 'extraStop' ? { borderColor: '#3B82F6', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
-                  ]}>
-                    <Ionicons name="location-sharp" size={18} color="#3B82F6" style={{ marginRight: 8 }} />
-                    <TextInput
-                      style={styles.mapboxSearchInput}
-                      placeholder="Adicionar Parada..."
-                      placeholderTextColor="#64748B"
-                      value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
-                      autoCorrect={false}
-                      onFocus={() => { setSearchType('extraStop'); setSearchQuery(extraStopAddress); }}
-                      onChangeText={(text) => {
-                        setSearchQuery(text);
-                        handleMapboxSearch(text);
-                      }}
-                    />
-                  </View>
-
-                  {/* Ref. Parada */}
-                  <View style={[styles.mapboxSearchInputWrapper, { marginTop: 4, backgroundColor: '#1E293B', borderColor: '#334155', borderWidth: 1 }]}>
-                    <Ionicons name="compass-outline" size={15} color="#3B82F6" style={{ marginRight: 8 }} />
-                    <TextInput
-                      style={[styles.mapboxSearchInput, { fontSize: 12 }]}
-                      placeholder="Ref. Parada (ex: Em frente à Loja Amarela)"
-                      placeholderTextColor="#64748B"
-                      value={extraStopReferencePoint}
-                      onChangeText={setExtraStopReferencePoint}
-                      maxLength={80}
-                    />
-                  </View>
-                </View>
-              )}
-
-              {/* 🔴 3. DESTINO FINAL */}
-              <View style={{ marginBottom: 8 }}>
-                <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: '800', marginBottom: 4 }}>
-                  DESTINO FINAL (DESEMBARQUE)
-                </Text>
-                <View style={[
-                  styles.mapboxSearchInputWrapper, 
-                  searchType === 'dropoff' ? { borderColor: '#EF4444', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
-                ]}>
-                  <Ionicons name="flag" size={18} color="#EF4444" style={{ marginRight: 8 }} />
-                  <TextInput
-                    style={styles.mapboxSearchInput}
-                    placeholder={t('where_to', 'Para onde vamos?')}
-                    placeholderTextColor="#64748B"
-                    value={searchType === 'dropoff' ? searchQuery : dropoffAddress}
-                    autoCorrect={false}
-                    onFocus={() => { setSearchType('dropoff'); setSearchQuery(dropoffAddress); }}
-                    onChangeText={(text) => {
-                      setSearchQuery(text);
-                      handleMapboxSearch(text);
-                    }}
-                  />
-                  {isSearchingMapbox && searchType === 'dropoff' ? (
-                    <ActivityIndicator size="small" color="#EF4444" style={{ marginRight: 6 }} />
-                  ) : (searchType === 'dropoff' ? searchQuery : dropoffAddress) ? (
-                    <TouchableOpacity onPress={() => { setSearchQuery(''); setDropoffAddress(''); }}>
-                      <Ionicons name="close-circle" size={18} color="#64748B" />
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
-
-                {/* Ref. Destino */}
-                <View style={[styles.mapboxSearchInputWrapper, { marginTop: 4, backgroundColor: '#1E293B', borderColor: '#334155', borderWidth: 1 }]}>
-                  <Ionicons name="compass" size={15} color="#EF4444" style={{ marginRight: 8 }} />
-                  <TextInput
-                    style={[styles.mapboxSearchInput, { fontSize: 12 }]}
-                    placeholder="Ref. Destino (ex: Em frente ao Mercado)"
-                    placeholderTextColor="#64748B"
-                    value={dropoffReferencePoint}
-                    onChangeText={setDropoffReferencePoint}
-                    maxLength={80}
-                  />
-                </View>
-              </View>
-
-              {/* Botão de Adicionar Parada */}
-              {!showExtraStop && (
-                <TouchableOpacity 
-                  style={{ marginTop: 6, flexDirection: 'row', alignItems: 'center' }} 
-                  onPress={() => { setShowExtraStop(true); setSearchType('extraStop'); setSearchQuery(''); }}
-                >
-                  <Ionicons name="add-circle-outline" size={18} color="#3B82F6" />
-                  <Text style={{ color: '#3B82F6', fontWeight: '700', marginLeft: 6, fontSize: 13 }}>
-                    + Adicionar Parada Intermediária
-                  </Text>
-                </TouchableOpacity>
-              )}
-
-            </View>
+            <View style={{ width: 40 }} />
           </View>
 
-          {/* CONDICIONAL: FAVORITOS + RECENTES (QUANDO VAZIO) OU RESULTADOS DA BUSCA */}
-          {searchQuery.trim().length === 0 ? (
-            <View>
-              {/* LOCAIS FAVORITOS (CASA / TRABALHO) */}
-              <Text style={styles.sectionHeaderTitle}>Locais Salvos</Text>
-              
-              <TouchableOpacity 
-                style={styles.savedPlaceRow} 
-                onPress={() => handleFavoritePress('home')}
-                onLongPress={() => {
-                  if (pickupCoords) {
-                    saveFavoritePlace('home', { address: pickupAddress, ...pickupCoords });
-                  }
-                }}
-              >
-                <View style={[styles.savedIconCircle, { backgroundColor: '#FEF3C7' }]}>
-                  <Ionicons name="home" size={20} color="#D97706" />
+          {/* CORPO DO FORMULÁRIO COM SCROLLVIEW */}
+          <View style={styles.modalBody}>
+            <ScrollView 
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 24 }}
+            >
+              {/* 📍 LINHA DO TEMPO + ENTRADAS DE ENDEREÇOS E REFERÊNCIAS */}
+              <View style={{ flexDirection: 'row', marginBottom: 15, paddingHorizontal: 4 }}>
+                
+                {/* Indicadores Visuais da Linha do Tempo */}
+                <View style={{ alignItems: 'center', marginRight: 12, paddingTop: 14 }}>
+                  <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#EAB308' }} />
+                  <View style={{ width: 2, height: showExtraStop ? 110 : 70, backgroundColor: '#334155', marginVertical: 4 }} />
+                  {showExtraStop && (
+                    <>
+                      <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#3B82F6' }} />
+                      <View style={{ width: 2, height: 70, backgroundColor: '#334155', marginVertical: 4 }} />
+                    </>
+                  )}
+                  <View style={{ width: 12, height: 12, backgroundColor: '#EF4444', borderRadius: 2 }} />
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.savedPlaceTitle}>Casa</Text>
-                  <Text style={styles.savedPlaceSub} numberOfLines={1}>
-                    {homeLocation ? homeLocation.address : 'Segure para definir a localização atual como Casa'}
-                  </Text>
-                </View>
-              </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={styles.savedPlaceRow} 
-                onPress={() => handleFavoritePress('work')}
-                onLongPress={() => {
-                  if (pickupCoords) {
-                    saveFavoritePlace('work', { address: pickupAddress, ...pickupCoords });
-                  }
-                }}
-              >
-                <View style={[styles.savedIconCircle, { backgroundColor: '#E0F2FE' }]}>
-                  <Ionicons name="briefcase" size={20} color="#0284C7" />
-                </View>
+                {/* Campos de Input Organizados */}
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.savedPlaceTitle}>Trabalho</Text>
-                  <Text style={styles.savedPlaceSub} numberOfLines={1}>
-                    {workLocation ? workLocation.address : 'Segure para definir a localização atual como Trabalho'}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-
-              {/* HISTÓRICO DE PESQUISAS RECENTES */}
-              {recentSearches.length > 0 && (
-                <View style={{ marginTop: 20 }}>
-                  <Text style={styles.sectionHeaderTitle}>Pesquisas Recentes</Text>
-                  {recentSearches.map((item) => (
-                    <View key={item.id} style={styles.recentItemRow}>
-                      <TouchableOpacity 
-                        style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 }}
-                        onPress={() => {
-                          if (searchType === 'pickup') {
-                            isManualPickupRef.current = true;
-                            setPickupAddress(item.description);
-                            setPickupCoords({ latitude: item.latitude, longitude: item.longitude });
-                          } else if (searchType === 'extraStop') {
-                            setExtraStopAddress(item.description);
-                            setExtraStopCoords({ latitude: item.latitude, longitude: item.longitude });
-                          } else {
-                            setDropoffAddress(item.description);
-                            setDropoffCoords({ latitude: item.latitude, longitude: item.longitude });
-                            setIsSearchModalVisible(false);
-                            setBookingStep('SERVICE_AND_PRICE');
-                          }
+                  
+                  {/* 🟢 1. PARTIDA / EMBARQUE */}
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={{ color: '#EAB308', fontSize: 11, fontWeight: '800', marginBottom: 4 }}>
+                      PONTO DE PARTIDA (EMBARQUE)
+                    </Text>
+                    <View style={[
+                      styles.mapboxSearchInputWrapper, 
+                      searchType === 'pickup' ? { borderColor: '#EAB308', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
+                    ]}>
+                      <Ionicons name="location" size={18} color="#EAB308" style={{ marginRight: 8 }} />
+                      <TextInput
+                        style={styles.mapboxSearchInput}
+                        placeholder={t('pickup_location', 'Local de Partida')}
+                        placeholderTextColor="#64748B"
+                        value={searchType === 'pickup' ? searchQuery : pickupAddress}
+                        autoCorrect={false}
+                        onFocus={() => { setSearchType('pickup'); setSearchQuery(pickupAddress); }}
+                        onChangeText={(text) => {
+                          setSearchQuery(text);
+                          handleMapboxSearch(text);
                         }}
-                      >
-                        <Ionicons name="time-outline" size={20} color="#64748B" />
-                        <Text style={styles.recentText} numberOfLines={1}>{item.description}</Text>
-                      </TouchableOpacity>
-                      
-                      <TouchableOpacity onPress={() => removeRecentSearch(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                        <Ionicons name="close-circle" size={18} color="#94A3B8" />
-                      </TouchableOpacity>
+                      />
+                      {isSearchingMapbox && searchType === 'pickup' ? (
+                        <ActivityIndicator size="small" color="#EAB308" style={{ marginRight: 6 }} />
+                      ) : (searchType === 'pickup' ? searchQuery : pickupAddress) ? (
+                        <TouchableOpacity onPress={() => { setSearchQuery(''); setPickupAddress(''); }}>
+                          <Ionicons name="close-circle" size={18} color="#64748B" />
+                        </TouchableOpacity>
+                      ) : null}
                     </View>
+
+                    {/* Ref. Partida */}
+                    <View style={[styles.mapboxSearchInputWrapper, { marginTop: 4, backgroundColor: '#1E293B', borderColor: '#334155', borderWidth: 1 }]}>
+                      <Ionicons name="compass" size={15} color="#EAB308" style={{ marginRight: 8 }} />
+                      <TextInput
+                        style={[styles.mapboxSearchInput, { fontSize: 12 }]}
+                        placeholder="Ref. Partida (ex: Perto da Farmácia Central)"
+                        placeholderTextColor="#64748B"
+                        value={pickupReferencePoint}
+                        onChangeText={setPickupReferencePoint}
+                        maxLength={80}
+                      />
+                    </View>
+                  </View>
+
+                  {/* 🔵 2. PARADA INTERMEDIÁRIA (SE ATIVADA) */}
+                  {showExtraStop && (
+                    <View style={{ marginBottom: 12 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <Text style={{ color: '#3B82F6', fontSize: 11, fontWeight: '800' }}>
+                          PARADA INTERMEDIÁRIA
+                        </Text>
+                        <TouchableOpacity onPress={() => { setShowExtraStop(false); setExtraStopAddress(''); setExtraStopCoords(null); setExtraStopReferencePoint(''); }}>
+                          <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: '600' }}>Remover</Text>
+                        </TouchableOpacity>
+                      </View>
+                      
+                      <View style={[
+                        styles.mapboxSearchInputWrapper, 
+                        searchType === 'extraStop' ? { borderColor: '#3B82F6', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
+                      ]}>
+                        <Ionicons name="location-sharp" size={18} color="#3B82F6" style={{ marginRight: 8 }} />
+                        <TextInput
+                          style={styles.mapboxSearchInput}
+                          placeholder="Adicionar Parada..."
+                          placeholderTextColor="#64748B"
+                          value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
+                          autoCorrect={false}
+                          onFocus={() => { setSearchType('extraStop'); setSearchQuery(extraStopAddress); }}
+                          onChangeText={(text) => {
+                            setSearchQuery(text);
+                            handleMapboxSearch(text);
+                          }}
+                        />
+                      </View>
+
+                      {/* Ref. Parada */}
+                      <View style={[styles.mapboxSearchInputWrapper, { marginTop: 4, backgroundColor: '#1E293B', borderColor: '#334155', borderWidth: 1 }]}>
+                        <Ionicons name="compass-outline" size={15} color="#3B82F6" style={{ marginRight: 8 }} />
+                        <TextInput
+                          style={[styles.mapboxSearchInput, { fontSize: 12 }]}
+                          placeholder="Ref. Parada (ex: Em frente à Loja Amarela)"
+                          placeholderTextColor="#64748B"
+                          value={extraStopReferencePoint}
+                          onChangeText={setExtraStopReferencePoint}
+                          maxLength={80}
+                        />
+                      </View>
+                    </View>
+                  )}
+
+                  {/* 🔴 3. DESTINO FINAL */}
+                  <View style={{ marginBottom: 8 }}>
+                    <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: '800', marginBottom: 4 }}>
+                      DESTINO FINAL (DESEMBARQUE)
+                    </Text>
+                    <View style={[
+                      styles.mapboxSearchInputWrapper, 
+                      searchType === 'dropoff' ? { borderColor: '#EF4444', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
+                    ]}>
+                      <Ionicons name="flag" size={18} color="#EF4444" style={{ marginRight: 8 }} />
+                      <TextInput
+                        style={styles.mapboxSearchInput}
+                        placeholder={t('where_to', 'Para onde vamos?')}
+                        placeholderTextColor="#64748B"
+                        value={searchType === 'dropoff' ? searchQuery : dropoffAddress}
+                        autoCorrect={false}
+                        onFocus={() => { setSearchType('dropoff'); setSearchQuery(dropoffAddress); }}
+                        onChangeText={(text) => {
+                          setSearchQuery(text);
+                          handleMapboxSearch(text);
+                        }}
+                      />
+                      {isSearchingMapbox && searchType === 'dropoff' ? (
+                        <ActivityIndicator size="small" color="#EF4444" style={{ marginRight: 6 }} />
+                      ) : (searchType === 'dropoff' ? searchQuery : dropoffAddress) ? (
+                        <TouchableOpacity onPress={() => { setSearchQuery(''); setDropoffAddress(''); }}>
+                          <Ionicons name="close-circle" size={18} color="#64748B" />
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+
+                    {/* Ref. Destino */}
+                    <View style={[styles.mapboxSearchInputWrapper, { marginTop: 4, backgroundColor: '#1E293B', borderColor: '#334155', borderWidth: 1 }]}>
+                      <Ionicons name="compass" size={15} color="#EF4444" style={{ marginRight: 8 }} />
+                      <TextInput
+                        style={[styles.mapboxSearchInput, { fontSize: 12 }]}
+                        placeholder="Ref. Destino (ex: Em frente ao Mercado)"
+                        placeholderTextColor="#64748B"
+                        value={dropoffReferencePoint}
+                        onChangeText={setDropoffReferencePoint}
+                        maxLength={80}
+                      />
+                    </View>
+                  </View>
+
+                  {/* Botão de Adicionar Parada */}
+                  {!showExtraStop && (
+                    <TouchableOpacity 
+                      style={{ marginTop: 6, flexDirection: 'row', alignItems: 'center' }} 
+                      onPress={() => { setShowExtraStop(true); setSearchType('extraStop'); setSearchQuery(''); }}
+                    >
+                      <Ionicons name="add-circle-outline" size={18} color="#3B82F6" />
+                      <Text style={{ color: '#3B82F6', fontWeight: '700', marginLeft: 6, fontSize: 13 }}>
+                        + Adicionar Parada Intermediária
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+
+                </View>
+              </View>
+
+              {/* CONDICIONAL: FAVORITOS + RECENTES (QUANDO VAZIO) OU RESULTADOS DA BUSCA */}
+              {searchQuery.trim().length === 0 ? (
+                <View>
+                  {/* LOCAIS FAVORITOS (CASA / TRABALHO) */}
+                  <Text style={styles.sectionHeaderTitle}>Locais Salvos</Text>
+                  
+                  <TouchableOpacity 
+                    style={styles.savedPlaceRow} 
+                    onPress={() => handleFavoritePress('home')}
+                    onLongPress={() => {
+                      if (pickupCoords) {
+                        saveFavoritePlace('home', { address: pickupAddress, ...pickupCoords });
+                      }
+                    }}
+                  >
+                    <View style={[styles.savedIconCircle, { backgroundColor: '#FEF3C7' }]}>
+                      <Ionicons name="home" size={20} color="#D97706" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.savedPlaceTitle}>Casa</Text>
+                      <Text style={styles.savedPlaceSub} numberOfLines={1}>
+                        {homeLocation ? homeLocation.address : 'Segure para definir a localização atual como Casa'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity 
+                    style={styles.savedPlaceRow} 
+                    onPress={() => handleFavoritePress('work')}
+                    onLongPress={() => {
+                      if (pickupCoords) {
+                        saveFavoritePlace('work', { address: pickupAddress, ...pickupCoords });
+                      }
+                    }}
+                  >
+                    <View style={[styles.savedIconCircle, { backgroundColor: '#E0F2FE' }]}>
+                      <Ionicons name="briefcase" size={20} color="#0284C7" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.savedPlaceTitle}>Trabalho</Text>
+                      <Text style={styles.savedPlaceSub} numberOfLines={1}>
+                        {workLocation ? workLocation.address : 'Segure para definir a localização atual como Trabalho'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* HISTÓRICO DE PESQUISAS RECENTES */}
+                  {recentSearches.length > 0 && (
+                    <View style={{ marginTop: 20 }}>
+                      <Text style={styles.sectionHeaderTitle}>Pesquisas Recentes</Text>
+                      {recentSearches.map((item) => (
+                        <View key={item.id} style={styles.recentItemRow}>
+                          <TouchableOpacity 
+                            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 }}
+                            onPress={() => {
+                              if (searchType === 'pickup') {
+                                isManualPickupRef.current = true;
+                                setPickupAddress(item.description);
+                                setPickupCoords({ latitude: item.latitude, longitude: item.longitude });
+                              } else if (searchType === 'extraStop') {
+                                setExtraStopAddress(item.description);
+                                setExtraStopCoords({ latitude: item.latitude, longitude: item.longitude });
+                              } else {
+                                setDropoffAddress(item.description);
+                                setDropoffCoords({ latitude: item.latitude, longitude: item.longitude });
+                                setIsSearchModalVisible(false);
+                                setBookingStep('SERVICE_AND_PRICE');
+                              }
+                            }}
+                          >
+                            <Ionicons name="time-outline" size={20} color="#64748B" />
+                            <Text style={styles.recentText} numberOfLines={1}>{item.description}</Text>
+                          </TouchableOpacity>
+                          
+                          <TouchableOpacity onPress={() => removeRecentSearch(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                            <Ionicons name="close-circle" size={18} color="#94A3B8" />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              ) : (
+                /* RESULTADOS DA PESQUISA EM TEMPO REAL */
+                <View style={{ marginTop: 8 }}>
+                  {searchResults.map((item) => (
+                    <TouchableOpacity
+                      key={item.id}
+                      style={styles.searchResultItem}
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        if (searchType === 'pickup') {
+                          isManualPickupRef.current = true;
+                          setPickupAddress(item.description);
+                          setPickupCoords({ latitude: item.latitude, longitude: item.longitude });
+                          if (cameraRef.current) {
+                            cameraRef.current.setCamera({
+                              centerCoordinate: [item.longitude, item.latitude],
+                              zoomLevel: 15,
+                              animationDuration: 800,
+                            });
+                          }
+                          setSearchType(showExtraStop && !extraStopCoords ? 'extraStop' : 'dropoff');
+                          setSearchQuery('');
+                          setSearchResults([]);
+                        } else if (searchType === 'extraStop') {
+                          setExtraStopAddress(item.description);
+                          setExtraStopCoords({ latitude: item.latitude, longitude: item.longitude });
+                          setSearchType('dropoff');
+                          setSearchQuery('');
+                          setSearchResults([]);
+                        } else {
+                          const selectedFeature = {
+                            id: `recent_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                            description: item.description,
+                            latitude: item.latitude,
+                            longitude: item.longitude,
+                          };
+                          saveToRecentSearches(selectedFeature);
+                          setDropoffAddress(item.description);
+                          setDropoffCoords({ latitude: item.latitude, longitude: item.longitude });
+                          setIsSearchModalVisible(false);
+                          setBookingStep('SERVICE_AND_PRICE');
+                        }
+                      }}
+                    >
+                      <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#1E293B', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
+                        <Ionicons name="location" size={18} color="#EAB308" />
+                      </View>
+                      <Text style={[styles.searchResultText, { color: '#F8FAFC' }]}>{item.description}</Text>
+                    </TouchableOpacity>
                   ))}
                 </View>
               )}
-            </View>
-          ) : (
-            /* RESULTADOS DA PESQUISA EM TEMPO REAL */
-            <View style={{ marginTop: 8 }}>
-              {searchResults.map((item) => (
-                <TouchableOpacity
-                  key={item.id}
-                  style={styles.searchResultItem}
-                  activeOpacity={0.7}
-                  onPress={() => {
-                    if (searchType === 'pickup') {
-                      isManualPickupRef.current = true;
-                      setPickupAddress(item.description);
-                      setPickupCoords({ latitude: item.latitude, longitude: item.longitude });
-                      if (cameraRef.current) {
-                        cameraRef.current.setCamera({
-                          centerCoordinate: [item.longitude, item.latitude],
-                          zoomLevel: 15,
-                          animationDuration: 800,
-                        });
-                      }
-                      setSearchType(showExtraStop && !extraStopCoords ? 'extraStop' : 'dropoff');
-                      setSearchQuery('');
-                      setSearchResults([]);
-                    } else if (searchType === 'extraStop') {
-                      setExtraStopAddress(item.description);
-                      setExtraStopCoords({ latitude: item.latitude, longitude: item.longitude });
-                      setSearchType('dropoff');
-                      setSearchQuery('');
-                      setSearchResults([]);
-                    } else {
-                      const selectedFeature = {
-                        id: `recent_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-                        description: item.description,
-                        latitude: item.latitude,
-                        longitude: item.longitude,
-                      };
-                      saveToRecentSearches(selectedFeature);
-                      setDropoffAddress(item.description);
-                      setDropoffCoords({ latitude: item.latitude, longitude: item.longitude });
-                      setIsSearchModalVisible(false);
-                      setBookingStep('SERVICE_AND_PRICE');
-                    }
-                  }}
-                >
-                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#1E293B', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
-                    <Ionicons name="location" size={18} color="#EAB308" />
-                  </View>
-                  <Text style={[styles.searchResultText, { color: '#F8FAFC' }]}>{item.description}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-        </ScrollView>
-      </View>
-    </KeyboardAvoidingView>
-  </SafeAreaView>
-</Modal>
-{/* CHATMODAL COM TODAS AS PROPS DE ÁUDIO E SESSÃO SINCROIZADAS */}
-<ChatModal 
-  visible={isChatVisible} 
-  onClose={() => setIsChatVisible(false)} 
-  socket={socket} 
-  rideId={activeRideId || ''} 
-  currentRole="passenger" 
-  currentUserPhoto={user?.profilePicture ? formatPhotoUrl(user.profilePicture) : null} 
-  otherUserName={driverInfo?.name || 'Motorista'} 
-  otherUserPhoto={driverInfo?.photoUrl || driverInfo?.profilePicture} 
-/>
-    {/* MODAL DE CANCELAMENTO */}
-      <CancelModal
-        visible={showCancelModal}
-        userType="PASSENGER"
-        isPenaltyApplicable={checkPenaltyApplicable()}
-        onClose={handleCloseCancelModal} 
-        onConfirm={handleConfirmCancel} 
-      />
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </Modal>
 
-      {/* MODAL DE AVALIAÇÃO */}
-      <RatingModal
-        visible={showRatingModal}
-        targetName={driverInfo?.name || 'Motorista'}
-        onSubmit={handleSubmitRating} 
-      />
-    </View>
-  );
+    {/* CHATMODAL COM TODAS AS PROPS DE ÁUDIO E SESSÃO SINCROIZADAS */}
+    <ChatModal 
+      visible={isChatVisible} 
+      onClose={() => setIsChatVisible(false)} 
+      socket={socket} 
+      rideId={activeRideId || ''} 
+      currentRole="passenger" 
+      currentUserPhoto={user?.profilePicture ? formatPhotoUrl(user.profilePicture) : null} 
+      otherUserName={driverInfo?.name || 'Motorista'} 
+      otherUserPhoto={driverInfo?.photoUrl || driverInfo?.profilePicture} 
+    />
+
+    {/* MODAL DE CANCELAMENTO */}
+    <CancelModal
+      visible={showCancelModal}
+      userType="PASSENGER"
+      isPenaltyApplicable={checkPenaltyApplicable()}
+      onClose={handleCloseCancelModal} 
+      onConfirm={handleConfirmCancel} 
+    />
+
+    {/* MODAL DE AVALIAÇÃO */}
+    <RatingModal
+      visible={showRatingModal}
+      targetName={driverInfo?.name || 'Motorista'}
+      onSubmit={handleSubmitRating} 
+    />
+  </View>
+);
 }
 
 const styles = StyleSheet.create({

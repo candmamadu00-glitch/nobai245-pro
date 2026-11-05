@@ -18,7 +18,8 @@ import {
   driverArrivedLogic, 
   startRideLogic, 
   finalizeRideAndCharge, 
-  cancelRideLogic,notifyNewChatMessage
+  cancelRideLogic,
+  notifyNewChatMessage
 } from './services/rideService';
 import { passengerRoutes } from './routes/passengerRoutes'; 
 import { driverRoutes } from './routes/driverRoutes'; 
@@ -682,7 +683,6 @@ io.on('connection', (socket: any) => {
       socket.join(`driver_${userId}`);
       socket.join(`driver:${userId}`);
 
-      // 🚗 Preserva o estado da corrida ativa do motorista mesmo trocando de tela
       prisma.driver.findUnique({
         where: { id: userId },
         select: { currentRideId: true }
@@ -697,7 +697,6 @@ io.on('connection', (socket: any) => {
       socket.join(`passenger_${userId}`);
       socket.join(`passenger:${userId}`);
 
-      // 👤 Preserva o estado da corrida ativa do passageiro
       prisma.passenger.findUnique({
         where: { id: userId },
         select: { currentRideId: true }
@@ -709,14 +708,6 @@ io.on('connection', (socket: any) => {
       }).catch(() => null);
     }
   }
-
-  socket.on('join_room', (roomName: string) => {
-    if (roomName && typeof roomName === 'string') {
-      socket.join(roomName);
-      console.log(`📡 [SOCKET ROOM] Cliente ${socket.id} (User: ${userId}) entrou na sala: ${roomName}`);
-    }
-  });
-
   // 📌 ATUALIZAÇÃO DO DEVICE TOKEN DO PASSAGEIRO
   handleSocketEvent(socket, 'passenger:update_device_token', async (data) => {
     const { deviceToken } = data || {};
@@ -1224,7 +1215,6 @@ io.on('connection', (socket: any) => {
 
         console.log(`📡 [DISPARANDO OFERTA] Para motorista ID: ${d.id} (${ride.distanceKm} km | ${ride.priceXof} XOF)`);
 
-        // 🟢 INCLUSÃO DA SALA user_${d.id}
         io.to(d.id)
           .to(`driver_${d.id}`)
           .to(`driver:${d.id}`)
@@ -1276,21 +1266,24 @@ io.on('connection', (socket: any) => {
     }
 
     const lockKey = `lock:accept_ride:${rideId}`;
-    const acquiredLock = await safeRedis.set(lockKey, driverId, { NX: true, EX: 5 });
-
-    if (!acquiredLock) {
-      const currentLock = await safeRedis.get(lockKey);
-      if (currentLock && currentLock !== driverId) {
-        console.warn(`🔒 [LOCK RACE CONDITION] Corrida ${rideId} já travada por outro motorista.`);
-        const errorMsg = 'Corrida já foi aceita por outro colega!';
-        socket.emit('error', { message: errorMsg });
-        socket.emit('driver:accept_ride_response', { error: true, message: errorMsg });
-        if (typeof ackCallback === 'function') ackCallback(null, { error: true, message: errorMsg });
-        return;
-      }
-    }
+    let acquiredLock = false;
 
     try {
+      const lockRes = await safeRedis.set(lockKey, driverId, { NX: true, EX: 5 });
+      acquiredLock = !!lockRes;
+
+      if (!acquiredLock) {
+        const currentLock = await safeRedis.get(lockKey);
+        if (currentLock && currentLock !== driverId) {
+          console.warn(`🔒 [LOCK RACE CONDITION] Corrida ${rideId} já travada por outro motorista.`);
+          const errorMsg = 'Corrida já foi aceita por outro colega!';
+          socket.emit('error', { message: errorMsg });
+          socket.emit('driver:accept_ride_response', { error: true, message: errorMsg });
+          if (typeof ackCallback === 'function') ackCallback(null, { error: true, message: errorMsg });
+          return;
+        }
+      }
+
       const ride = await prisma.ride.findUnique({
         where: { id: rideId },
         include: { passenger: true }
@@ -1325,7 +1318,6 @@ io.on('connection', (socket: any) => {
       const passengerUser = updatedRide.passenger || ride.passenger;
       const driverUser = updatedRide.driver || await prisma.driver.findUnique({ where: { id: driverId } });
 
-     // 🟢 PAYLOAD DE ACEITE CORRIGIDO: ENVIANDO QUILOMETRAGEM E DURAÇÃO
       const acceptPayload = {
         rideId: ride.id,
         driverId: driverId,
@@ -1403,10 +1395,11 @@ io.on('connection', (socket: any) => {
 
     } finally {
       const lockHolder = await safeRedis.get(lockKey);
-      if (lockHolder === driverId) await safeRedis.del(lockKey);
+      if (lockHolder === driverId) {
+        await safeRedis.del(lockKey);
+      }
     }
   });
-
   // --- ATUALIZAÇÃO DE LOCALIZAÇÃO DO MOTORISTA ---
   handleSocketEvent(socket, 'driver:location_update', async (coords) => {
     if (isSocketRateLimited(socket, 'driver:location_update', 1000, 1)) return; 
@@ -1690,14 +1683,14 @@ io.on('connection', (socket: any) => {
     }
   });
 
-  // --- CHAT EM TEMPO REAL (ENVIO E RECEBIMENTO DE MENSAGENS) ---
+  // --- CHAT EM TEMPO REAL (SUPORTE CORRIGIDO PARA MENSAGENS DE ÁUDIO) ---
   handleSocketEvent(socket, 'chat:send_message', async (data) => {
-    const { rideId, message, text, senderType, senderName } = data || {};
+    const { rideId, message, text, senderType, senderName, audioUrl, audioDuration } = data || {};
     const userId = socket.data.user?.id;
 
-    if (!userId || !rideId || (!message && !text && !data?.audioUrl)) return;
+    if (!userId || !rideId || (!message && !text && !audioUrl)) return;
 
-    const effectiveMessage = String(message || text || (data?.audioUrl ? '🎤 Mensagem de áudio' : '')).trim();
+    const effectiveMessage = String(message || text || (audioUrl ? '🎤 Mensagem de áudio' : '')).trim();
     if (!effectiveMessage) return;
 
     const userRole = socket.data.user?.role || socket.data.user?.userType;
@@ -1708,17 +1701,19 @@ io.on('connection', (socket: any) => {
       senderId: userId,
       senderType: effectiveSenderType as 'PASSENGER' | 'DRIVER',
       senderName: senderName || (userRole === 'DRIVER' ? 'Motorista' : 'Passageiro'),
-      message: effectiveMessage
+      message: effectiveMessage,
+      audioUrl: audioUrl || null,
+      audioDuration: audioDuration ? Number(audioDuration) : null
     });
   });
 
   handleSocketEvent(socket, 'chat:message', async (data) => {
-    const { rideId, message, text, senderType, senderName } = data || {};
+    const { rideId, message, text, senderType, senderName, audioUrl, audioDuration } = data || {};
     const userId = socket.data.user?.id;
 
-    if (!userId || !rideId || (!message && !text && !data?.audioUrl)) return;
+    if (!userId || !rideId || (!message && !text && !audioUrl)) return;
 
-    const effectiveMessage = String(message || text || (data?.audioUrl ? '🎤 Mensagem de áudio' : '')).trim();
+    const effectiveMessage = String(message || text || (audioUrl ? '🎤 Mensagem de áudio' : '')).trim();
     if (!effectiveMessage) return;
 
     const userRole = socket.data.user?.role || socket.data.user?.userType;
@@ -1729,7 +1724,9 @@ io.on('connection', (socket: any) => {
       senderId: userId,
       senderType: effectiveSenderType as 'PASSENGER' | 'DRIVER',
       senderName: senderName || (userRole === 'DRIVER' ? 'Motorista' : 'Passageiro'),
-      message: effectiveMessage
+      message: effectiveMessage,
+      audioUrl: audioUrl || null,
+      audioDuration: audioDuration ? Number(audioDuration) : null
     });
   });
 

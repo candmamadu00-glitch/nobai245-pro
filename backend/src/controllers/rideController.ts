@@ -632,6 +632,7 @@ export const getRideChatHistory = async (req: Request, res: Response): Promise<v
       return;
     }
 
+    // 🟢 INCLUSÃO DOS CAMPOS DE ÁUDIO NO HISTÓRICO DE CHAT DO PRISMA
     const messages = await prisma.rideChatMessage.findMany({
       where: { rideId: String(rideId) },
       orderBy: { createdAt: 'asc' },
@@ -639,6 +640,8 @@ export const getRideChatHistory = async (req: Request, res: Response): Promise<v
         id: true,
         senderType: true,
         message: true,
+        audioUrl: true,
+        audioDuration: true,
         isRead: true,
         createdAt: true,
       }
@@ -654,6 +657,7 @@ export const getRideChatHistory = async (req: Request, res: Response): Promise<v
 export const uploadChatAudio = async (req: Request, res: Response): Promise<void> => {
   try {
     const { rideId } = req.params;
+    const { duration } = req.body;
     const file = (req as any).file;
     const senderId = (req as any).user?.id;
     const senderType = (req as any).user?.role === 'DRIVER' ? 'DRIVER' : 'PASSENGER';
@@ -687,13 +691,17 @@ export const uploadChatAudio = async (req: Request, res: Response): Promise<void
     const safeFilename = encodeURIComponent(file.filename);
     const audioUrl = `${baseUrl}/uploads/${safeFilename}`;
     const formattedMessage = `[AUDIO]${audioUrl}`;
+    const audioDurationNum = duration ? Number(duration) : null;
 
+    // 🟢 PREENCHIMENTO ATÔMICO DAS COLUNAS audioUrl E audioDuration NO BANCO
     const chatMessage = await prisma.rideChatMessage.create({
       data: {
         rideId: String(rideId),
         senderId,
         senderType: senderType as any,
         message: formattedMessage,
+        audioUrl,
+        audioDuration: audioDurationNum,
         isRead: false
       },
     });
@@ -705,6 +713,8 @@ export const uploadChatAudio = async (req: Request, res: Response): Promise<void
           id: chatMessage.id,
           sender: senderType.toLowerCase(),
           text: chatMessage.message,
+          audioUrl: chatMessage.audioUrl,
+          audioDuration: chatMessage.audioDuration,
           senderPhoto: null,
           createdAt: chatMessage.createdAt.toISOString()
         };

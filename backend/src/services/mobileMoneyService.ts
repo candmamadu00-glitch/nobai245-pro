@@ -193,7 +193,7 @@ export async function processSmsGatewayWebhook(payload: {
       where: {
         OR: [
           { reference: parsed.txRef },
-          { id: parsed.txRef }
+          { id: isUuid(parsed.txRef) ? parsed.txRef : undefined }
         ]
       }
     });
@@ -202,10 +202,12 @@ export async function processSmsGatewayWebhook(payload: {
       return { success: true, duplicated: true, message: 'SMS já processado anteriormente.' };
     }
 
+    const rawPhoneDigits = parsed.senderPhone.replace(/\D/g, '');
+
     // 2. Busca transação pendente compatível com o número do passageiro e valor
     const pendingPayment = await tx.transaction.findFirst({
       where: {
-        passengerPhone: parsed.senderPhone,
+        passengerPhone: { contains: rawPhoneDigits.slice(-9) },
         status: TransactionStatus.PENDING,
         amount: new Prisma.Decimal(parsed.amount)
       },
@@ -412,25 +414,29 @@ export async function chargePassengerMobileMoney(
     ? PaymentMethod.MTN_MOMO 
     : PaymentMethod.ORANGE_MONEY;
 
-  const platformFee = Math.round(cleanAmount * 0.15);
-  const driverAmount = cleanAmount - platformFee;
+  if (params.rideId) {
+    // 🟢 GARANTIA DE UUID VÁLIDO PARA A CHAVE PRIMÁRIA
+    const targetTxId = params.transactionId && isUuid(params.transactionId)
+      ? params.transactionId
+      : toDeterministicUuid(`tx-${params.rideId}`);
 
- if (params.rideId) {
     const paymentTx = await prisma.transaction.upsert({
-      where: { id: params.transactionId || `tx-${params.rideId}` },
+      where: { id: targetTxId },
       create: {
-        id: params.transactionId || `tx-${params.rideId}`,
+        id: targetTxId,
         rideId: params.rideId,
         paymentMethod: enumProvider,
         type: TransactionType.RIDE_PAYMENT,
         amount: new Prisma.Decimal(cleanAmount),
         status: TransactionStatus.PENDING,
+        passengerPhone: formattedPhone,
         description: `Cobrança Mobile Money passageiro (${formattedPhone})`
       } as any,
       update: {
         paymentMethod: enumProvider,
         amount: new Prisma.Decimal(cleanAmount),
-        status: TransactionStatus.PENDING
+        status: TransactionStatus.PENDING,
+        passengerPhone: formattedPhone
       } as any
     });
 
