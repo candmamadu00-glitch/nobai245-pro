@@ -75,7 +75,8 @@ async function main() {
   const admins = [
     { name: 'Demba', email: 'demba245@nobai.gb', password: 'Demba@Admin2026!', role: 'SUPER_ADMIN' },
     { name: 'Seco', email: 'seco245@nobai.bg', password: 'Seco*Global99!', role: 'SUPER_ADMIN' },
-    { name: 'Cande', email: 'cande245@nobai.gw', password: '5800991m', role: 'SUPER_ADMIN' }
+    { name: 'Cande', email: 'cande245@nobai.gw', password: '5800991m', role: 'SUPER_ADMIN' },
+    { name: 'Nome Do Novo Admin', email: 'novoadmin@nobai.gw', password: 'SuaSenhaAqui2026!', role: 'SUPER_ADMIN' } // <-- Adicione aqui
   ];
 
   for (const admin of admins) {
