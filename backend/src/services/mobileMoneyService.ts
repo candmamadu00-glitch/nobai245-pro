@@ -1,10 +1,12 @@
-import axios, { AxiosError } from 'axios';
+import axios from 'axios';
 import crypto from 'crypto';
 import { 
   PaymentMethod, 
   TransactionType, 
   TransactionStatus,
   RideStatus,
+  PaymentStatus,
+  PaymentProvider,
   Prisma
 } from '@prisma/client';
 import { prisma } from '../config/prisma';
@@ -12,13 +14,11 @@ import { prisma } from '../config/prisma';
 // Configurações de ambiente MTN
 const MTN_BASE_URL = process.env.MTN_MOMO_BASE_URL || 'https://sandbox.momodeveloper.mtn.com';
 const MTN_SUBSCRIPTION_KEY = process.env.MTN_MOMO_SUBSCRIPTION_KEY || process.env.MTN_SUBSCRIPTION_KEY || '';
-const MTN_TARGET_ENV = process.env.MTN_MOMO_TARGET_ENV || 'sandbox';
 
 // Configurações de ambiente ORANGE
 const ORANGE_BASE_URL = process.env.ORANGE_MONEY_API_URL || process.env.ORANGE_BASE_URL || 'https://api.orange.com';
 const ORANGE_CLIENT_ID = process.env.ORANGE_CLIENT_ID || process.env.ORANGE_MONEY_CLIENT_ID || '';
 const ORANGE_CLIENT_SECRET = process.env.ORANGE_CLIENT_SECRET || process.env.ORANGE_MONEY_CLIENT_SECRET || '';
-const ORANGE_MERCHANT_KEY = process.env.ORANGE_MERCHANT_KEY || process.env.ORANGE_MONEY_MERCHANT_KEY || '';
 
 // Configurações do Gateway Local SMS/USSD (Guiné-Bissau)
 const GATEWAY_SECRET_KEY = process.env.GATEWAY_SECRET_KEY || 'bai245-secret-gateway-key-2026';
@@ -26,9 +26,6 @@ const ADMIN_ORANGE_PIN = process.env.ADMIN_ORANGE_PIN || '0000';
 const ADMIN_MTN_PIN = process.env.ADMIN_MTN_PIN || '0000';
 const ADMIN_ORANGE_PHONE = process.env.ADMIN_ORANGE_PHONE || '245950000000';
 const ADMIN_MTN_PHONE = process.env.ADMIN_MTN_PHONE || '245960000000';
-
-const IS_PRODUCTION = process.env.NODE_ENV === 'production';
-const IS_MOCK_MODE = !IS_PRODUCTION && (process.env.ENABLE_MOCK_PAYMENTS === 'true');
 
 const apiClient = axios.create({ 
   timeout: 15000, 
@@ -203,13 +200,17 @@ export async function processSmsGatewayWebhook(payload: {
     }
 
     const rawPhoneDigits = parsed.senderPhone.replace(/\D/g, '');
+    const shortPhoneMatch = rawPhoneDigits.slice(-9);
 
-    // 2. Busca transação pendente compatível com o número do passageiro e valor
+    // 2. Busca transação pendente compatível via relacionamento de usuário/corrida
     const pendingPayment = await tx.transaction.findFirst({
       where: {
-        passengerPhone: { contains: rawPhoneDigits.slice(-9) },
         status: TransactionStatus.PENDING,
-        amount: new Prisma.Decimal(parsed.amount)
+        amount: new Prisma.Decimal(parsed.amount),
+        OR: [
+          { passenger: { phone: { contains: shortPhoneMatch } } },
+          { ride: { passenger: { phone: { contains: shortPhoneMatch } } } }
+        ]
       },
       orderBy: { createdAt: 'desc' }
     });
@@ -219,7 +220,7 @@ export async function processSmsGatewayWebhook(payload: {
       return { success: false, reason: 'NO_MATCHING_PENDING_RIDE' };
     }
 
-    // 3. Atualiza a transação de pagamento para HELD_IN_ESCROW
+    // 3. Atualiza a transação principal para HELD_IN_ESCROW
     const updatedPayment = await tx.transaction.update({
       where: { id: pendingPayment.id },
       data: {
@@ -229,8 +230,19 @@ export async function processSmsGatewayWebhook(payload: {
       }
     });
 
-    // 4. Atualiza o status da corrida para SEARCHING (Liberada para motoristas)
+    // 4. Sincroniza a tabela PaymentTransaction se existir para essa corrida
     if (pendingPayment.rideId) {
+      await tx.paymentTransaction.updateMany({
+        where: { rideId: pendingPayment.rideId },
+        data: {
+          status: PaymentStatus.CONFIRMED,
+          txRef: parsed.txRef,
+          rawSms: parsed.rawSms,
+          provider: parsed.provider === PaymentMethod.MTN_MOMO ? PaymentProvider.MTN_MOMO : PaymentProvider.ORANGE_MONEY
+        }
+      }).catch(() => null);
+
+      // Liberar corrida para busca de motoristas
       await tx.ride.update({
         where: { id: pendingPayment.rideId },
         data: { status: RideStatus.SEARCHING }
@@ -267,7 +279,7 @@ export function generateUssdCommand(
 }
 
 // -----------------------------------------------------------------------------
-// 1. TOKENS OAUTH (MANTIDOS PARA REVERSIBILIDADE SE CASO ATIVAREM AS APIS)
+// 1. TOKENS OAUTH (APIS OFICIAIS ORANGE / MTN)
 // -----------------------------------------------------------------------------
 
 export async function getOrangeAccessToken(): Promise<string> {
@@ -415,29 +427,31 @@ export async function chargePassengerMobileMoney(
     : PaymentMethod.ORANGE_MONEY;
 
   if (params.rideId) {
-    // 🟢 GARANTIA DE UUID VÁLIDO PARA A CHAVE PRIMÁRIA
     const targetTxId = params.transactionId && isUuid(params.transactionId)
       ? params.transactionId
       : toDeterministicUuid(`tx-${params.rideId}`);
+
+    const referenceStr = `PAY-${targetTxId.substring(0, 8).toUpperCase()}-${Date.now().toString().slice(-6)}`;
 
     const paymentTx = await prisma.transaction.upsert({
       where: { id: targetTxId },
       create: {
         id: targetTxId,
         rideId: params.rideId,
+        passengerId: params.passengerId || undefined,
         paymentMethod: enumProvider,
         type: TransactionType.RIDE_PAYMENT,
         amount: new Prisma.Decimal(cleanAmount),
         status: TransactionStatus.PENDING,
-        passengerPhone: formattedPhone,
+        reference: referenceStr,
         description: `Cobrança Mobile Money passageiro (${formattedPhone})`
-      } as any,
+      },
       update: {
         paymentMethod: enumProvider,
         amount: new Prisma.Decimal(cleanAmount),
         status: TransactionStatus.PENDING,
-        passengerPhone: formattedPhone
-      } as any
+        description: `Cobrança Mobile Money passageiro (${formattedPhone})`
+      }
     });
 
     const destNumber = enumProvider === PaymentMethod.ORANGE_MONEY ? ADMIN_ORANGE_PHONE : ADMIN_MTN_PHONE;
@@ -484,7 +498,7 @@ export async function verifyTransactionStatus(transactionId: string): Promise<{
     return { status: 'SUCCESS', ref: paymentTx.reference || paymentTx.id };
   }
 
-  if (paymentTx.status === TransactionStatus.FAILED) {
+  if (paymentTx.status === TransactionStatus.FAILED || paymentTx.status === TransactionStatus.CANCELLED) {
     return { status: 'FAILED' };
   }
 
@@ -588,7 +602,7 @@ export async function processWebhookConfirmation(
   providerName: string = 'ORANGE_MONEY'
 ) {
   return await prisma.$transaction(async (tx) => {
-    const existingWebhook = await (tx as any).webhookEvent?.findUnique({
+    const existingWebhook = await tx.webhookEvent.findUnique({
       where: { eventId: providerRef }
     }).catch(() => null);
 
@@ -597,16 +611,14 @@ export async function processWebhookConfirmation(
     }
 
     try {
-      if ((tx as any).webhookEvent) {
-        await (tx as any).webhookEvent.create({
-          data: {
-            eventId: providerRef,
-            provider: providerName,
-            payload: rawPayload,
-            isProcessed: true
-          }
-        });
-      }
+      await tx.webhookEvent.create({
+        data: {
+          eventId: providerRef,
+          provider: providerName,
+          payload: rawPayload,
+          isProcessed: true
+        }
+      });
     } catch (err: any) {
       if (err.code === 'P2002') return { alreadyProcessed: true, duplicated: true };
     }

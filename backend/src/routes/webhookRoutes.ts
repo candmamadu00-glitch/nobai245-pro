@@ -1,5 +1,11 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
+import { 
+  RideStatus, 
+  TransactionType, 
+  TransactionStatus, 
+  PaymentMethod 
+} from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { getIo } from '../server';
 import { processWebhookConfirmation, processSmsGatewayWebhook } from '../services/mobileMoneyService';
@@ -14,6 +20,17 @@ const SMS_GATEWAY_SECRET = process.env.SMS_GATEWAY_SECRET || process.env.GATEWAY
 const ALLOWED_IPS = (process.env.ALLOWED_WEBHOOK_IPS || '127.0.0.1,192.168.1.1')
   .split(',')
   .map((ip) => ip.trim());
+
+interface WebhookProcessResult {
+  success?: boolean;
+  status?: string;
+  rideId?: string | null;
+  passengerId?: string | null;
+  transactionId?: string;
+  alreadyProcessed?: boolean;
+  duplicated?: boolean;
+  reason?: string;
+}
 
 const ipWhitelistMiddleware = (req: Request, res: Response, next: NextFunction): void => {
   if (process.env.NODE_ENV !== 'production' || process.env.DISABLE_WEBHOOK_IP_CHECK === 'true') {
@@ -53,11 +70,13 @@ async function emitSuccessSockets(rideId?: string | null, passengerId?: string |
 
   if (rideId) {
     const updateResult = await prisma.ride.updateMany({
-      where: { id: rideId, status: { in: ['AWAITING_PAYMENT', 'PENDING'] } },
-      data: { status: 'SEARCHING' }
+      where: { 
+        id: rideId, 
+        status: { in: [RideStatus.AWAITING_PAYMENT, RideStatus.PENDING] } 
+      },
+      data: { status: RideStatus.SEARCHING }
     });
 
-    // 🟢 CORREÇÃO CRÍTICA: Garante que só notifica se realmente alterou o status no banco
     if (updateResult.count > 0) {
       if (io) {
         io.to(rideId).emit('payment:confirmed', {
@@ -86,7 +105,7 @@ async function emitSuccessSockets(rideId?: string | null, passengerId?: string |
 // -----------------------------------------------------------------------------
 router.post('/sms-gateway', async (req: Request, res: Response): Promise<any> => {
   try {
-    const secret = (req.headers['x-secret'] || req.headers['x-gateway-secret'] || req.body.secret || req.query.secret) as string;
+    const secret = (req.headers['x-sms-gateway-secret'] || req.headers['x-secret'] || req.headers['x-gateway-secret'] || req.body.secret || req.query.secret) as string;
 
     if (!secureCompare(secret, SMS_GATEWAY_SECRET)) {
       console.warn('🚨 [SMS GATEWAY] Tentativa de acesso com secret inválido.');
@@ -174,13 +193,13 @@ router.post('/sms-gateway', async (req: Request, res: Response): Promise<any> =>
       await tx.transaction.create({
         data: {
           driverId: driver.id,
-          type: 'MANUAL_RECHARGE' as any,
-          status: 'COMPLETED',
+          type: TransactionType.MANUAL_RECHARGE,
+          status: TransactionStatus.COMPLETED,
           amount: amountXOF,
           balanceBefore: currentBalance,
           balanceAfter: newBalance,
-          paymentMethod: 'ORANGE_MONEY',
-          reference: `SMS-AUTO-${Date.now()}`,
+          paymentMethod: PaymentMethod.ORANGE_MONEY,
+          reference: `SMS-AUTO-${Date.now()}-${driver.id.substring(0, 4)}`,
           description: `Recarga automática por SMS de ${amountXOF} XOF`
         }
       });
@@ -238,7 +257,7 @@ router.post('/orange', ipWhitelistMiddleware, async (req: Request, res: Response
     const normalizedStatus = String(rawStatus).toUpperCase();
     const isSuccess = ['SUCCESS', 'COMPLETED', 'SUCCESSFUL', 'SUCCESS_TRANSACTION'].includes(normalizedStatus);
     
-    const result = await processWebhookConfirmation(
+    const result: WebhookProcessResult = await processWebhookConfirmation(
       order_id, 
       isSuccess ? 'SUCCESS' : 'FAILED', 
       String(txnid), 
@@ -250,14 +269,17 @@ router.post('/orange', ipWhitelistMiddleware, async (req: Request, res: Response
       return res.status(200).send('OK - Evento duplicado ignorado de forma segura.');
     }
 
-    const resAny = result as any;
     const io = getIo();
 
-    if (resAny.success) {
-      await emitSuccessSockets(resAny.rideId, resAny.passengerId);
+    if (result.success) {
+      await emitSuccessSockets(result.rideId, result.passengerId);
     } else {
-      if (io && resAny.rideId) io.to(resAny.rideId).emit('payment:failed', { message: 'Pagamento falhou ou foi cancelado.' });
-      if (io && resAny.passengerId) io.to(resAny.passengerId).to(`passenger_${resAny.passengerId}`).emit('wallet:payment_failed', { message: 'Transação recusada pela Orange Money.' });
+      if (io && result.rideId) {
+        io.to(result.rideId).emit('payment:failed', { message: 'Pagamento falhou ou foi cancelado.' });
+      }
+      if (io && result.passengerId) {
+        io.to(result.passengerId).to(`passenger_${result.passengerId}`).emit('wallet:payment_failed', { message: 'Transação recusada pela Orange Money.' });
+      }
     }
 
     return res.status(200).send('OK');
@@ -291,7 +313,7 @@ router.post('/mtn', ipWhitelistMiddleware, async (req: Request, res: Response): 
     const normalizedStatus = String(status || '').toUpperCase();
     const isSuccess = normalizedStatus === 'SUCCESSFUL';
 
-    const result = await processWebhookConfirmation(
+    const result: WebhookProcessResult = await processWebhookConfirmation(
       refId, 
       isSuccess ? 'SUCCESS' : 'FAILED', 
       String(eventId), 
@@ -303,14 +325,17 @@ router.post('/mtn', ipWhitelistMiddleware, async (req: Request, res: Response): 
       return res.status(200).send('OK - Evento duplicado ignorado de forma segura.');
     }
 
-    const resAny = result as any;
     const io = getIo();
 
-    if (resAny.success) {
-      await emitSuccessSockets(resAny.rideId, resAny.passengerId);
+    if (result.success) {
+      await emitSuccessSockets(result.rideId, result.passengerId);
     } else {
-      if (io && resAny.rideId) io.to(resAny.rideId).emit('payment:failed', { message: 'Pagamento falhou ou foi cancelado.' });
-      if (io && resAny.passengerId) io.to(resAny.passengerId).to(`passenger_${resAny.passengerId}`).emit('wallet:payment_failed', { message: 'Transação recusada pelo MTN MoMo.' });
+      if (io && result.rideId) {
+        io.to(result.rideId).emit('payment:failed', { message: 'Pagamento falhou ou foi cancelado.' });
+      }
+      if (io && result.passengerId) {
+        io.to(result.passengerId).to(`passenger_${result.passengerId}`).emit('wallet:payment_failed', { message: 'Transação recusada pelo MTN MoMo.' });
+      }
     }
 
     return res.status(200).send('OK');

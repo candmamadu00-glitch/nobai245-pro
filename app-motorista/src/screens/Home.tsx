@@ -576,7 +576,12 @@ export function Home() {
   useEffect(() => {
     if (driver?.id && typeof registerForPushNotifications === 'function') registerForPushNotifications(driver.id);
   }, [driver?.id]);
-
+// 🟢 Mantém as refs sempre sincronizadas com os estados do React
+useEffect(() => {
+  rideStateRef.current = rideState;
+  activeRideIdRef.current = activeRideId;
+  incomingRideRef.current = incomingRide;
+}, [rideState, activeRideId, incomingRide]);
   useEffect(() => {
     let sub: any = null;
     async function checkBattery() {
@@ -766,23 +771,32 @@ export function Home() {
     let activePlayer: any = null;
     const hasActiveOffer = rideState === 'idle' && !!incomingRide;
 
-    if (hasActiveOffer) {
-      Vibration.vibrate([0, 800, 300, 800], false);
-      try {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      } catch (e) {}
+   if (hasActiveOffer) {
+  Vibration.vibrate([0, 800, 300, 800], false);
+  try {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+  } catch (e) {}
 
-      try {
-        const soundAsset = require('../../assets/sounds/alert.mp3');
-        const player = createAudioPlayer(soundAsset);
-        player.loop = true;
-        player.play();
-        alertPlayerRef.current = player;
-        activePlayer = player;
-      } catch (audioErr) {}
+  // 🟢 Limpa qualquer instância de áudio tocando antes de criar a nova
+  if (alertPlayerRef.current) {
+    try { 
+      alertPlayerRef.current.pause(); 
+      if (typeof alertPlayerRef.current.remove === 'function') alertPlayerRef.current.remove();
+    } catch (e) {}
+    alertPlayerRef.current = null;
+  }
 
-      playBilingualVoice('new_ride', 'Nova viagem encontrada');
-    } else {
+  try {
+    const soundAsset = require('../../assets/sounds/alert.mp3');
+    const player = createAudioPlayer(soundAsset);
+    player.loop = true;
+    player.play();
+    alertPlayerRef.current = player;
+    activePlayer = player;
+  } catch (audioErr) {}
+
+  playBilingualVoice('new_ride', 'Nova viagem encontrada');
+} else {
       Vibration.cancel();
       if (alertPlayerRef.current) {
         try { 
@@ -1195,27 +1209,31 @@ export function Home() {
   };
 
   const handleRideFinished = async (data: any) => {
-    if (!isMountedRef.current) return;
-    setIsLoading(false);
-    setCompletedInfo({ fareXOF: data.fareXOF, distanceKm: data.distanceKm, transactionId: data.transactionId });
+  if (!isMountedRef.current) return;
+  setIsLoading(false);
+  setCompletedInfo({ fareXOF: data.fareXOF, distanceKm: data.distanceKm, transactionId: data.transactionId });
 
-    if (data.hasQueuedRide && data.nextRideId) {
-      setActiveRideId(data.nextRideId);
-      setRideState('accepted');
-      setShowReceiptModal(false);
-      fetchTodayEarnings();
-      await syncActiveRideWithServer();
-    } else {
-      setActiveRideId(null);
-      setIncomingRide(null);
-      setQueuedOfferData(null);
-      setRideState('idle'); 
-      setShowReceiptModal(true);
-      setShowNavSheet(false);
-      persistActiveRideState(null, 'idle', null);
-      fetchTodayEarnings();
+  // 🟢 Substitui os dados da corrida anterior imediatamente se houver próxima corrida
+  if (data.hasQueuedRide && data.nextRideId) {
+    setActiveRideId(data.nextRideId);
+    setRideState('accepted');
+    if (data.nextRideData) {
+      setIncomingRide(data.nextRideData);
     }
-  };
+    setShowReceiptModal(false);
+    fetchTodayEarnings();
+    await syncActiveRideWithServer();
+  } else {
+    setActiveRideId(null);
+    setIncomingRide(null);
+    setQueuedOfferData(null);
+    setRideState('idle'); 
+    setShowReceiptModal(true);
+    setShowNavSheet(false);
+    persistActiveRideState(null, 'idle', null);
+    fetchTodayEarnings();
+  }
+};
 
   const handleQueuedNowActive = async (data: { rideId: string; status: string }) => {
     if (!isMountedRef.current) return;
@@ -1420,10 +1438,14 @@ export function Home() {
       const currentLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
       
-      if (isMocked && !__DEV__) {
-        if (isMountedRef.current) setIsOnline(false);
-        return Alert.alert('GPS Simulado Detectado', 'Desative o aplicativo de GPS Falso.');
-      }
+      // 🟢 Notifica o servidor para tirar o motorista do Geohash antes de bloquear
+if (isMocked && !__DEV__) {
+  if (driver?.id && socket?.connected) {
+    socket.emit('driver:offline', { driverId: driver.id });
+  }
+  if (isMountedRef.current) setIsOnline(false);
+  return Alert.alert('GPS Simulado Detectado', 'Desative o aplicativo de GPS Falso.');
+}
 
       setIsOnline(true);
       const activeSocket = await connectDriverSocket();

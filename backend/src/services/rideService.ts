@@ -63,7 +63,7 @@ function safeSocketEmit(room: string, event: string, payload: any): void {
 }
 
 // -----------------------------------------------------------------------------
-// HELPER PARA DISPARO DE NOVAS CORRIDAS PARA MOTORISTAS (COM MULTI-SALAS)
+// HELPER PARA DISPARO DE NOVAS CORRIDAS PARA MOTORISTAS
 // -----------------------------------------------------------------------------
 export async function notifyDriversNewRide(rideId: string): Promise<void> {
   console.log(`\n🚨 [RIDE DISPATCH] Buscando motoristas para notificar sobre a corrida ${rideId}...`);
@@ -376,7 +376,6 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
         data: { currentRideId: null }
       });
       
-      // ✅ LIMPEZA DE CACHE DO PASSAGEIRO NO REDIS
       await redis.del(`active_ride:${passenger.currentRideId}`).catch(() => null);
     } else {
       throw new Error('ACTIVE_RIDE_EXISTS: Passageiro já possui corrida ativa em andamento.');
@@ -556,7 +555,7 @@ export async function searchLandmarks(query: string) {
 }
 
 // -----------------------------------------------------------------------------
-// 2. ACEITAR CORRIDA (COM AUTO-LIMPEZA, REDIS ATÔMICO E EMISSÃO UNIFICADA)
+// 2. ACEITAR CORRIDA
 // -----------------------------------------------------------------------------
 export async function acceptRideLogic(rideId: string, driverId: string) {
   const driver = await prisma.driver.findUnique({ where: { id: driverId } });
@@ -588,7 +587,6 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
         data: { currentRideId: null, isAvailable: true }
       });
 
-      // ✅ LIMPEZA DE CACHE DO MOTORISTA NO REDIS
       await redis.del(`driver_active_ride:${driverId}`).catch(() => null);
     } else {
       throw new Error('DRIVER_BUSY: Você já possui uma corrida em andamento.');
@@ -648,7 +646,6 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     return res;
   });
 
-  // ✅ REDIS ATÔMICO: REGISTRA CORRIDA E REMOVE MOTORISTA DA BUSCA RADAR GEO
   await redis.set(`driver_active_ride:${driverId}`, rideId).catch(() => null);
   await redis.zrem('drivers:locations', driverId).catch(() => null);
 
@@ -884,9 +881,8 @@ export async function notifyDriverNearbyIfClose(rideId: string, distanceMeters: 
     ).catch(err => console.error('❌ Erro no Push de proximidade:', err));
   }
 }
-
 // -----------------------------------------------------------------------------
-// 6. FINALIZAÇÃO DA CORRIDA E LIQUIDAÇÃO (COM PURGA DE CACHE ATÔMICA)
+// 6. FINALIZAÇÃO DA CORRIDA E LIQUIDAÇÃO 100% DIGITAL
 // -----------------------------------------------------------------------------
 export async function finalizeRideAndCharge(
   rideId: string, 
@@ -931,13 +927,11 @@ export async function finalizeRideAndCharge(
   const commissionRate = tariff ? Number(tariff.commissionRate) / 100 : 0.15;
   const platformFee = Math.round(calculatedFare * commissionRate);
   const driverEarnings = calculatedFare - platformFee;
-  const isCash = ride.paymentMethod === PaymentMethod.CASH;
 
   let payoutTransactionId = '';
   let commissionTransactionId = '';
   let queuedRideToPromote: any = null;
-  let finalDriverBalance = Number(ride.driver.walletBalance || 0);
-  let wasForcedOfflineDueToBalance = false;
+  const finalDriverBalance = Number(ride.driver.walletBalance || 0);
 
   await prisma.$transaction(async (tx) => {
     const updatedRide = await tx.ride.updateMany({
@@ -993,95 +987,60 @@ export async function finalizeRideAndCharge(
       });
     }
 
-    if (isCash) {
-      const currentDriverBalance = Number(ride.driver?.walletBalance || 0);
-      finalDriverBalance = currentDriverBalance - platformFee;
+    // 🟢 LIQUIDAÇÃO DO ESCROW (VALOR RETIDO NO PAGAMENTO INICIAL)
+    await tx.transaction.updateMany({
+      where: {
+        rideId: ride.id,
+        type: TransactionType.RIDE_PAYMENT,
+        status: { in: [TransactionStatus.HELD_IN_ESCROW, TransactionStatus.COMPLETED] }
+      },
+      data: { status: TransactionStatus.COMPLETED }
+    });
 
-      const MIN_REQUIRED_ONLINE = 1000;
-      const shouldStayOnline = finalDriverBalance >= MIN_REQUIRED_ONLINE;
-      if (!shouldStayOnline) {
-        wasForcedOfflineDueToBalance = true;
-      }
-
-      await tx.driver.update({ 
-        where: { id: ride.driverId! }, 
-        data: { 
-          walletBalance: finalDriverBalance,
-          currentRideId: nextCurrentRideId, 
-          isAvailable: isDriverAvailable,
-          isOnline: shouldStayOnline
-        } 
-      });
-
-      await tx.transaction.updateMany({
-        where: { rideId: ride.id, type: TransactionType.RIDE_PAYMENT },
+    if ((ride as any).paymentTransaction?.id) {
+      await (tx as any).paymentTransaction.update({
+        where: { id: (ride as any).paymentTransaction.id },
         data: { status: TransactionStatus.COMPLETED }
-      });
-
-      // Localize a linha da comissão em finalizeRideAndCharge e substitua por:
-const commTx = await tx.transaction.create({
-  data: {
-    rideId: ride.id,
-    driverId: ride.driverId,
-    type: TransactionType.COMMISSION_FEE,
-    status: TransactionStatus.COMPLETED,
-    paymentMethod: PaymentMethod.CASH,
-    amount: platformFee,
-    reference: `COMM-CASH-${ride.id.slice(0, 8)}-${Date.now()}`,
-    description: `Comissão da taxa de plataforma (${Math.round(commissionRate * 100)}%) sobre corrida em dinheiro de ${calculatedFare} XOF`
-  }
-});
-      commissionTransactionId = commTx.id;
-    } else {
-      await tx.transaction.updateMany({
-        where: {
-          rideId: ride.id,
-          type: TransactionType.RIDE_PAYMENT,
-          status: { in: [TransactionStatus.HELD_IN_ESCROW, TransactionStatus.COMPLETED] }
-        },
-        data: { status: TransactionStatus.COMPLETED }
-      });
-
-      if ((ride as any).paymentTransaction?.id) {
-        await (tx as any).paymentTransaction.update({
-          where: { id: (ride as any).paymentTransaction.id },
-          data: { status: TransactionStatus.COMPLETED }
-        }).catch(() => null);
-      }
-
-      await tx.driver.update({ 
-        where: { id: ride.driverId! }, 
-        data: { 
-          currentRideId: nextCurrentRideId, 
-          isAvailable: isDriverAvailable 
-        } 
-      });
-
-      const payoutTx = await tx.transaction.create({
-        data: {
-          rideId: ride.id, 
-          driverId: ride.driverId, 
-          type: TransactionType.DRIVER_PAYOUT, 
-          status: IS_MOCK_MODE ? TransactionStatus.COMPLETED : TransactionStatus.PENDING, 
-          amount: driverEarnings, 
-          reference: `PAYOUT-${ride.id.slice(0, 8)}-${Date.now()}`, 
-          paymentMethod: ride.paymentMethod
-        }
-      });
-      payoutTransactionId = payoutTx.id;
-
-      const commissionTx = await tx.transaction.create({
-        data: {
-          rideId: ride.id, 
-          type: TransactionType.COMMISSION_FEE, 
-          status: IS_MOCK_MODE ? TransactionStatus.COMPLETED : TransactionStatus.PENDING, 
-          amount: platformFee, 
-          reference: `FEE-${ride.id.slice(0, 8)}-${Date.now()}`
-        }
-      });
-      commissionTransactionId = commissionTx.id;
+      }).catch(() => null);
     }
 
+    // O motorista permanece ONLINE para receber a próxima corrida
+    await tx.driver.update({ 
+      where: { id: ride.driverId! }, 
+      data: { 
+        currentRideId: nextCurrentRideId, 
+        isAvailable: isDriverAvailable,
+        isOnline: true 
+      } 
+    });
+
+    // Registra a transação de repasse dos ganhos do motorista
+    const payoutTx = await tx.transaction.create({
+      data: {
+        rideId: ride.id, 
+        driverId: ride.driverId, 
+        type: TransactionType.DRIVER_PAYOUT, 
+        status: IS_MOCK_MODE ? TransactionStatus.COMPLETED : TransactionStatus.PENDING, 
+        amount: driverEarnings, 
+        reference: `PAYOUT-${ride.id.slice(0, 8)}-${Date.now()}`, 
+        paymentMethod: ride.paymentMethod
+      }
+    });
+    payoutTransactionId = payoutTx.id;
+
+    // Registra a transação da taxa da empresa
+    const commissionTx = await tx.transaction.create({
+      data: {
+        rideId: ride.id, 
+        type: TransactionType.COMMISSION_FEE, 
+        status: IS_MOCK_MODE ? TransactionStatus.COMPLETED : TransactionStatus.PENDING, 
+        amount: platformFee, 
+        reference: `FEE-${ride.id.slice(0, 8)}-${Date.now()}`
+      }
+    });
+    commissionTransactionId = commissionTx.id;
+
+    // Atualiza o saldo geral do cofre da plataforma
     await tx.companyWallet.upsert({
       where: { id: 'bai245-main-wallet' },
       update: { 
@@ -1097,18 +1056,16 @@ const commTx = await tx.transaction.create({
     });
   }); 
 
-  // 🧹 PURGA IMEDIATA DO REDIS
+  // 🧹 LIMPEZA E ATUALIZAÇÃO NO REDIS
   await redis.del(`active_ride:${rideId}`).catch(() => null);
   if (queuedRideToPromote) {
     await redis.set(`driver_active_ride:${ride.driverId!}`, queuedRideToPromote.id).catch(() => null);
   } else {
     await redis.del(`driver_active_ride:${ride.driverId!}`).catch(() => null);
-    if (!wasForcedOfflineDueToBalance) {
-      await redis.geoadd('drivers:locations', finalLng, finalLat, ride.driverId!).catch(() => null);
-    }
+    await redis.geoadd('drivers:locations', finalLng, finalLat, ride.driverId!).catch(() => null);
   }
 
-  console.log(`🏁 [RIDE LOG - COMPLETED] Corrida ID: ${rideId} finalizada. Valor: ${calculatedFare} XOF. Saldo motorista: ${finalDriverBalance} XOF`);
+  console.log(`🏁 [RIDE LOG - COMPLETED] Corrida ID: ${rideId} finalizada. Valor: ${calculatedFare} XOF. Ganhos do motorista: ${driverEarnings} XOF`);
 
   const completedPayload = {
     rideId: ride.id,
@@ -1117,7 +1074,7 @@ const commTx = await tx.transaction.create({
     fareXOF: calculatedFare,
     distanceKm,
     driverWalletBalance: finalDriverBalance,
-    forcedOffline: wasForcedOfflineDueToBalance
+    forcedOffline: false
   };
 
   const allRooms = [
@@ -1137,33 +1094,17 @@ const commTx = await tx.transaction.create({
     safeSocketEmit(room, 'ride:finished', completedPayload);
   });
 
-  const driverRooms = [
-    ride.driverId!, 
-    `driver_${ride.driverId}`, 
-    `driver:${ride.driverId}`,
-    `user_${ride.driverId}`
-  ];
-  
-  driverRooms.forEach(room => {
-    safeSocketEmit(room, 'wallet:updated', { balance: finalDriverBalance });
-    if (wasForcedOfflineDueToBalance) {
-      safeSocketEmit(room, 'driver:forced_offline', { 
-        reason: 'INSUFFICIENT_BALANCE', 
-        message: 'Seu saldo da comissão é inferior a 1.000 XOF. Recarregue a carteira para ficar online.' 
-      });
-    }
-  });
-
   if (ride.passenger?.deviceToken) {
     sendPushNotification(
       ride.passenger.deviceToken,
       '🏁 Viagem Concluída!',
-      `Você chegou ao seu destino. Valor total: ${calculatedFare} XOF. Avalie seu motorista!`,
+      `Você chegou ao seu destino. Valor pago: ${calculatedFare} XOF. Avalie seu motorista!`,
       { type: 'RIDE_COMPLETED', rideId: ride.id, priceXof: calculatedFare, fareXOF: calculatedFare, status: 'COMPLETED' },
       PUSH_CHANNELS.RIDE_UPDATE
     ).catch(err => console.error('❌ Erro no Push de finalização:', err));
   }
 
+  // DISPARO AUTOMÁTICO DO REPASSE DIGITAL VIA MOBILE MONEY
   const provider = (ride.paymentMethod || PaymentMethod.ORANGE_MONEY).toString().toUpperCase();
   const driverPhone = (ride.driver as any).paymentAccountNumber || ride.driver.phone;
 
@@ -1195,14 +1136,14 @@ const commTx = await tx.transaction.create({
     driverEarnings, 
     platformFee, 
     distanceKm, 
-    paymentMethod: isCash ? 'CASH' : String(ride.paymentMethod), 
+    paymentMethod: String(ride.paymentMethod), 
     hasQueuedRide: !!queuedRideToPromote, 
     nextRideId: queuedRideToPromote?.id || null 
   };
 }
 
 // -----------------------------------------------------------------------------
-// 7. CANCELAMENTO DE CORRIDA (COM PURGA TOTAL DE ESTADO NO REDIS)
+// 7. CANCELAMENTO DE CORRIDA
 // -----------------------------------------------------------------------------
 export async function cancelRideLogic(
   rideId: string, 
@@ -1320,7 +1261,6 @@ export async function cancelRideLogic(
     return { appliedPenalty: penaltyAmount > 0, penaltyAmount };
   });
 
-  // 🧹 PURGA TOTAL NO REDIS AO CANCELAR
   await redis.del(`active_ride:${rideId}`).catch(() => null);
   await redis.del(`lock:accept_ride:${rideId}`).catch(() => null);
 
@@ -1391,7 +1331,7 @@ export async function cancelRideLogic(
 }
 
 // -----------------------------------------------------------------------------
-// 8. AVALIAÇÕES E MENSAGENS DE CHAT (COM SUPORTE A ÁUDIO)
+// 8. AVALIAÇÕES E CHAT
 // -----------------------------------------------------------------------------
 export async function submitRatingLogic(data: {
   rideId: string;

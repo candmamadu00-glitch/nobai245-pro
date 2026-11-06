@@ -51,7 +51,7 @@ export type RideStatus = 'idle' | 'searching' | 'queued' | 'accepted' | 'arrived
 export type BookingStep = 'ADDRESS' | 'SERVICE_AND_PRICE' | 'PAYMENT' | 'SEARCHING';
 export type VehicleType = 'moto' | 'taxi' | 'moto-carro' | 'particular';
 export type ServiceType = 'viagem' | 'entrega' | 'aluguel';
-export type PaymentMethod = 'ORANGE_MONEY' | 'MTN_MOMO' | 'CASH';
+export type PaymentMethod = 'ORANGE_MONEY' | 'MTN_MOMO';
 export type RegionType = 'BISSAU' | 'PRABIS' | 'QUINHAMEL' | 'SURU' | 'BAFATA' | 'GABU';
 
 export interface RideStop {
@@ -1907,41 +1907,38 @@ if (resDb.status === 'fulfilled' && resDb.value?.data) {
   }, [rideStatus, driverInfo, activeRideId]);
 
   async function handleInitialRequestRide() {
-    const needsDropoff = serviceType !== 'aluguel';
-    if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
+  const needsDropoff = serviceType !== 'aluguel';
+  if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
+    Alert.alert(
+      t('warning_title', 'Aviso ⚠️'), 
+      t('select_origin_destination_msg', 'Selecione a origem e o destino antes de solicitar.')
+    );
+    return;
+  }
+
+  // Proteção contra GPS Falso mantida
+  try {
+    const currentLoc = await Location.getCurrentPositionAsync({ 
+      accuracy: Location.Accuracy.Balanced 
+    });
+    const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
+
+    if (isMocked) {
       Alert.alert(
-        t('warning_title', 'Aviso ⚠️'), 
-        t('select_origin_destination_msg', 'Selecione a origem e o destino antes de solicitar.')
+        "🚨 Localização Simulada Detectada",
+        "Por motivos de segurança, não é possível solicitar corridas utilizando aplicativos de GPS falso.",
+        [{ text: "Entendido" }]
       );
       return;
     }
+  } catch (e) {}
 
-    try {
-      const currentLoc = await Location.getCurrentPositionAsync({ 
-        accuracy: Location.Accuracy.Balanced 
-      });
-      const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
-
-      if (isMocked) {
-        Alert.alert(
-          "🚨 Localização Simulada Detectada",
-          "Por motivos de segurança, não é possível solicitar corridas utilizando aplicativos de GPS falso. Desative a simulação de localização para continuar.",
-          [{ text: "Entendido" }]
-        );
-        return;
-      }
-    } catch (e) {}
-
-    if (paymentMethod === 'CASH') {
-      executeRideRequest();
-      return;
-    }
-
-    if (!paymentPhone && user?.phone) {
-      setPaymentPhone(user.phone);
-    }
-    setIsPaymentModalVisible(true);
+  // 100% AUTOMÁTICO: Redireciona sempre para o modal de pagamento Mobile Money (Orange / MTN)
+  if (!paymentPhone && user?.phone) {
+    setPaymentPhone(user.phone);
   }
+  setIsPaymentModalVisible(true);
+}
 
   async function confirmPaymentAndRide() {
     if (!user?.id) {
@@ -2941,13 +2938,13 @@ return (
     </View>
   </SafeAreaView>
 </Modal>
-{/* 💳 SELEÇÃO DE FORMA DE PAGAMENTO */}
+{/* 💳 SELEÇÃO DE FORMA DE PAGAMENTO (100% AUTOMÁTICO - ORANGE & MTN) */}
 {rideStatus === 'idle' && bookingStep === 'PAYMENT' && (
   <View style={{ width: '100%' }}>
     <Text style={styles.sectionLabel}>{t('payment_method', 'Forma de Pagamento')}</Text>
     
     <View style={styles.paymentOptionsContainer}>
-      {/* 1. ORANGE MONEY (ATIVO) */}
+      {/* 1. ORANGE MONEY */}
       <TouchableOpacity 
         style={[
           styles.paymentBtn, 
@@ -2972,7 +2969,7 @@ return (
             Orange Money
           </Text>
           <Text style={{ color: '#94A3B8', fontSize: 11, marginTop: 2 }}>
-            {t('orange_money_desc', 'Pagamento automático e seguro via USSD')}
+            {t('orange_money_desc', 'Pagamento automático e seguro via USSD (*144#)')}
           </Text>
         </View>
 
@@ -2983,80 +2980,39 @@ return (
         />
       </TouchableOpacity>
 
-      {/* 2. MTN MOMO (INDISPONÍVEL / EM BREVE) */}
+      {/* 2. MTN MOBILE MONEY (LIBERADO) */}
       <TouchableOpacity 
         style={[
           styles.paymentBtn, 
+          paymentMethod === 'MTN_MOMO' && styles.paymentBtnActive, 
           { 
-            backgroundColor: '#0F172A', 
-            borderColor: '#1E293B', 
+            backgroundColor: paymentMethod === 'MTN_MOMO' ? '#1E293B' : '#0F172A', 
+            borderColor: paymentMethod === 'MTN_MOMO' ? '#EAB308' : '#334155', 
             borderWidth: 1,
             paddingVertical: 14,
-            marginBottom: 10,
-            opacity: 0.6
+            marginBottom: 10
           }
         ]}
-        onPress={() => {
-          Alert.alert(
-            'Serviço em Breve 🚧',
-            'A integração com MTN Mobile Money estará disponível na próxima atualização. Por favor, utilize Orange Money ou Dinheiro em Espécie.'
-          );
-        }}
-        activeOpacity={0.7}
+        onPress={() => setPaymentMethod('MTN_MOMO')}
+        activeOpacity={0.9}
       >
-        <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(148, 163, 184, 0.15)', justifyContent: 'center', alignItems: 'center' }}>
-          <Ionicons name="wallet-outline" size={18} color="#94A3B8" />
+        <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(234, 179, 8, 0.15)', justifyContent: 'center', alignItems: 'center' }}>
+          <Ionicons name="wallet-outline" size={18} color="#EAB308" />
         </View>
         
         <View style={{ flex: 1, marginLeft: 10 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Text style={[styles.paymentBtnText, { color: '#94A3B8', fontWeight: '800', fontSize: 14 }]}>
-              MTN Mobile Money
-            </Text>
-            <View style={{ backgroundColor: '#334155', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginLeft: 6 }}>
-              <Text style={{ color: '#EAB308', fontSize: 9, fontWeight: 'bold' }}>EM BREVE</Text>
-            </View>
-          </View>
-          <Text style={{ color: '#64748B', fontSize: 11, marginTop: 2 }}>
-            Aguardando integração oficial
-          </Text>
-        </View>
-
-        <Ionicons name="lock-closed" size={18} color="#64748B" />
-      </TouchableOpacity>
-
-      {/* 3. DINHEIRO (CASH - ATIVO) */}
-      <TouchableOpacity 
-        style={[
-          styles.paymentBtn, 
-          paymentMethod === 'CASH' && styles.paymentBtnActive, 
-          { 
-            backgroundColor: paymentMethod === 'CASH' ? '#1E293B' : '#0F172A', 
-            borderColor: paymentMethod === 'CASH' ? '#10B981' : '#334155', 
-            borderWidth: 1,
-            paddingVertical: 14 
-          }
-        ]}
-        onPress={() => setPaymentMethod('CASH')}
-        activeOpacity={0.9}
-      >
-        <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(16, 185, 129, 0.15)', justifyContent: 'center', alignItems: 'center' }}>
-          <Ionicons name="cash-outline" size={18} color="#10B981" />
-        </View>
-
-        <View style={{ flex: 1, marginLeft: 10 }}>
           <Text style={[styles.paymentBtnText, { color: '#F8FAFC', fontWeight: '800', fontSize: 14 }]}>
-            {t('cash_payment', 'Dinheiro')}
+            MTN Mobile Money
           </Text>
           <Text style={{ color: '#94A3B8', fontSize: 11, marginTop: 2 }}>
-            {t('cash_desc', 'Pague diretamente ao motorista no final da viagem')}
+            {t('mtn_momo_desc', 'Pagamento automático e seguro via USSD (*135#)')}
           </Text>
         </View>
 
         <Ionicons 
-          name={paymentMethod === 'CASH' ? "checkmark-circle" : "ellipse-outline"} 
+          name={paymentMethod === 'MTN_MOMO' ? "checkmark-circle" : "ellipse-outline"} 
           size={22} 
-          color={paymentMethod === 'CASH' ? "#10B981" : "#64748B"} 
+          color={paymentMethod === 'MTN_MOMO' ? "#EAB308" : "#64748B"} 
         />
       </TouchableOpacity>
     </View>

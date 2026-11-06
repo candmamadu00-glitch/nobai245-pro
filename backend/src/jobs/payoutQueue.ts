@@ -1,4 +1,5 @@
 import { Queue, Worker, Job, ConnectionOptions, UnrecoverableError } from 'bullmq';
+import { TransactionStatus } from '@prisma/client';
 import { prisma } from '../config/prisma'; 
 import { getIo } from '../server';
 import { payoutToDriverMobileMoney, refundPassengerMobileMoney, verifyTransactionStatus } from '../services/mobileMoneyService';
@@ -28,7 +29,7 @@ const redisConnection: ConnectionOptions = process.env.REDIS_URL
       enableReadyCheck: false,
     }
   : {
-      host: process.env.REDIS_HOST || '127.0.0.1',
+      host: process.env.REDIS_HOST || 'nobai245-redis',
       port: Number(process.env.REDIS_PORT) || 6379,
       password: process.env.REDIS_PASSWORD || undefined,
       maxRetriesPerRequest: null,
@@ -56,123 +57,65 @@ export const mtnPayoutQueue = new Queue<PayoutJobData>('mtn-payout', { connectio
 export const refundQueue = new Queue<RefundJobData>('refund-queue', { connection: redisConnection, defaultJobOptions });
 
 // -----------------------------------------------------------------------------
-// 1. PROCESSADOR BLINDADO DE REPASSE (PAYOUT)
+// 1. PROCESSADOR BLINDADO DE REPASSE (PAYOUT DO MOTORISTA VIA USSD)
 // -----------------------------------------------------------------------------
 const processPayoutBlindado = async (job: Job<PayoutJobData>) => {
   const { transactionId, rideId, driverId, amountXOF, phone, provider } = job.data || {};
 
-  console.log(`💸 [JOB PAYOUT INICIADO] Tx: ${transactionId} | Motorista: ${driverId} | Valor: ${amountXOF} XOF | Provider: ${provider}`);
+  console.log(`💸 [JOB PAYOUT INICIADO] Tx: ${transactionId} | Motorista: ${driverId} | Valor: ${amountXOF} XOF`);
 
   if (!transactionId || !driverId || !amountXOF || !phone || !provider) {
-    console.error('❌ [JOB PAYOUT ERRO]: Parâmetros obrigatórios de repasse ausentes.');
-    throw new UnrecoverableError('DADOS_JOB_INVALIDOS: Parâmetros obrigatórios de repasse ausentes.');
+    throw new UnrecoverableError('DADOS_JOB_INVALIDOS: Parâmetros de repasse ausentes.');
   }
 
   const currentTx = await prisma.transaction.findUnique({ where: { id: transactionId } });
-  if (!currentTx) {
-    console.error(`❌ [JOB PAYOUT ERRO]: Transação ${transactionId} não encontrada no banco.`);
-    throw new UnrecoverableError(`TRANSACTION_NOT_FOUND: Tx ${transactionId}`);
-  }
+  if (!currentTx) throw new UnrecoverableError(`TRANSACTION_NOT_FOUND: Tx ${transactionId}`);
 
-  if (currentTx.status === 'COMPLETED') {
-    console.log(`ℹ️ [JOB PAYOUT SKIPPED]: Transação ${transactionId} já estava COMPLETED.`);
+  if (currentTx.status === TransactionStatus.COMPLETED) {
     return { success: true, cached: true, driverId, amountXOF, provider, ref: currentTx.externalRef };
   }
-  if (currentTx.status === 'FAILED_MANUAL_REVIEW') {
-    console.warn(`⚠️ [JOB PAYOUT WARN]: Transação ${transactionId} marcada para revisão manual.`);
+  if (currentTx.status === TransactionStatus.FAILED_MANUAL_REVIEW) {
     return { success: false, reason: 'REVISE_MANUALMENTE', driverId, amountXOF, provider };
   }
 
-  if (job.attemptsMade > 0 || currentTx.status === 'PENDING_VERIFICATION' || currentTx.status === 'PROCESSING') {
-    try {
-      console.log(`🔍 [JOB PAYOUT RECONCILIAÇÃO]: Verificando status da Tx ${transactionId}...`);
-      const verification = await verifyTransactionStatus(transactionId);
-      
-      if (verification.status === 'SUCCESS') {
-        await prisma.transaction.update({
-          where: { id: transactionId },
-          data: { status: 'COMPLETED', externalRef: verification.ref || currentTx.externalRef, failureReason: null },
-        });
-        console.log(`✅ [JOB PAYOUT RECONCILIADO COM SUCESSO]: Tx ${transactionId}`);
-        return { success: true, recovered: true, driverId, amountXOF, provider, ref: verification.ref };
-      }
-      
-      if (verification.status === 'PENDING') {
-        await prisma.transaction.update({
-          where: { id: transactionId },
-          data: { status: 'PENDING_VERIFICATION' },
-        });
-        console.log(`⏳ [JOB PAYOUT RECONCILIAÇÃO]: Transação ainda pendente na operadora.`);
-        throw new Error('TIMEOUT_REQUIRES_RECONCILIATION');
-      }
-
-      if (verification.status === 'FAILED') {
-        await prisma.transaction.update({
-          where: { id: transactionId },
-          data: { status: 'FAILED_MANUAL_REVIEW', failureReason: 'Transação confirmada com falha pela operadora' },
-        });
-        console.error(`❌ [JOB PAYOUT RECONCILIAÇÃO FALHOU]: Confirmada falha pela operadora.`);
-        throw new UnrecoverableError('REJEITADO_OPERADORA: Confirmada falha na reconciliação.');
-      }
-    } catch (verifErr: any) {
-      if (verifErr instanceof UnrecoverableError || verifErr.message === 'TIMEOUT_REQUIRES_RECONCILIATION') {
-        throw verifErr;
-      }
-    }
-  }
-
   const lockResult = await prisma.transaction.updateMany({
-    where: { id: transactionId, status: { in: ['PENDING', 'PENDING_VERIFICATION', 'FAILED'] } },
-    data: { status: 'PROCESSING' },
+    where: { id: transactionId, status: { in: [TransactionStatus.PENDING, TransactionStatus.PENDING_VERIFICATION, TransactionStatus.FAILED] } },
+    data: { status: TransactionStatus.PROCESSING },
   });
 
   if (lockResult.count === 0) {
     const recheckTx = await prisma.transaction.findUnique({ where: { id: transactionId } });
-    if (recheckTx?.status === 'COMPLETED') return { success: true, cached: true, driverId, amountXOF, provider };
-    throw new Error('CONCURRENT_PROCESSING: Transação em processamento ou com estado inválido.');
+    if (recheckTx?.status === TransactionStatus.COMPLETED) return { success: true, cached: true, driverId, amountXOF, provider };
+    throw new Error('CONCURRENT_PROCESSING: Transação em processamento.');
   }
 
   try {
-    console.log(`📡 [JOB PAYOUT ENVIANDO À OPERADORA]: Destino: ${phone} | Valor: ${amountXOF} XOF...`);
-    const result = await payoutToDriverMobileMoney({ provider, phone, amount: amountXOF, rideId, payoutId: transactionId });
+    console.log(`📡 [JOB PAYOUT DISPARANDO USSD]: Destino: ${phone} | Valor: ${amountXOF} XOF...`);
+    const result = await payoutToDriverMobileMoney({ provider, phone, amount: amountXOF, rideId, transactionId });
 
     if (!result.success) {
-      console.error(`❌ [JOB PAYOUT RESPOSTA DA OPERADORA FALHOU]:`, result);
-      
-      if (result.error === 'TIMEOUT_REQUIRES_RECONCILIATION') {
-        await prisma.transaction.update({
-          where: { id: transactionId },
-          data: { status: 'PENDING_VERIFICATION', failureReason: 'Timeout na API da operadora' },
-        });
-        throw new Error('TIMEOUT_REQUIRES_RECONCILIATION');
-      }
-
       await prisma.transaction.update({
         where: { id: transactionId },
-        data: { status: 'FAILED_MANUAL_REVIEW', failureReason: result.details || result.error || 'Recusado pela operadora' },
+        data: { status: TransactionStatus.FAILED_MANUAL_REVIEW, failureReason: result.details || result.error || 'Recusado' },
       });
       throw new UnrecoverableError(`REJEITADO_OPERADORA: ${result.details || result.error}`);
     }
 
-    console.log(`✅ [JOB PAYOUT CONCLUÍDO COM SUCESSO]: Ref Operadora: ${result.providerRef}`);
-
     await prisma.transaction.update({
       where: { id: transactionId },
-      data: { status: 'COMPLETED', externalRef: result.providerRef, failureReason: null },
+      data: { status: TransactionStatus.COMPLETED, externalRef: result.providerRef, failureReason: null },
     });
 
-    return { success: true, driverId, amountXOF, provider, providerRef: result.providerRef };
+    return { success: true, driverId, amountXOF, provider, providerRef: result.providerRef, ussdCommand: result.ussdCommand };
   } catch (error: any) {
-    if (error instanceof UnrecoverableError || error.message === 'TIMEOUT_REQUIRES_RECONCILIATION') throw error;
-    
-    console.error(`❌ [JOB PAYOUT ERRO INESPERADO]:`, error?.message || error);
-    await prisma.transaction.update({ where: { id: transactionId }, data: { status: 'PENDING_VERIFICATION' } });
+    if (error instanceof UnrecoverableError) throw error;
+    await prisma.transaction.update({ where: { id: transactionId }, data: { status: TransactionStatus.PENDING_VERIFICATION } });
     throw error;
   }
 };
 
 // -----------------------------------------------------------------------------
-// 2. PROCESSADOR BLINDADO DE ESTORNO (REFUND)
+// 2. PROCESSADOR BLINDADO DE ESTORNO (REFUND DO PASSAGEIRO VIA USSD)
 // -----------------------------------------------------------------------------
 const processRefundBlindado = async (job: Job<RefundJobData>) => {
   const { transactionId, rideId, passengerId, phone, amountXOF, provider } = job.data || {};
@@ -180,60 +123,20 @@ const processRefundBlindado = async (job: Job<RefundJobData>) => {
   console.log(`🔄 [JOB REFUND INICIADO] Tx: ${transactionId} | Passageiro: ${passengerId} | Valor: ${amountXOF} XOF`);
 
   if (!transactionId || !passengerId || !amountXOF || !phone || !provider) {
-    throw new UnrecoverableError('DADOS_JOB_INVALIDOS: Parâmetros obrigatórios de estorno ausentes.');
+    throw new UnrecoverableError('DADOS_JOB_INVALIDOS: Parâmetros de estorno ausentes.');
   }
 
   const currentTx = await prisma.transaction.findUnique({ where: { id: transactionId } });
   if (!currentTx) throw new UnrecoverableError(`TRANSACTION_NOT_FOUND: Tx ${transactionId}`);
 
-  if (currentTx.status === 'COMPLETED') {
+  if (currentTx.status === TransactionStatus.COMPLETED) {
     return { success: true, cached: true, passengerId, amountXOF, provider, ref: currentTx.externalRef };
   }
-  if (currentTx.status === 'FAILED_MANUAL_REVIEW') {
-    return { success: false, reason: 'REVISE_MANUALMENTE', passengerId, amountXOF, provider };
-  }
 
-  if (job.attemptsMade > 0 || currentTx.status === 'PENDING_VERIFICATION' || currentTx.status === 'PROCESSING') {
-    try {
-      const verification = await verifyTransactionStatus(transactionId);
-      if (verification.status === 'SUCCESS') {
-        await prisma.transaction.update({
-          where: { id: transactionId },
-          data: { status: 'COMPLETED', externalRef: verification.ref || currentTx.externalRef, failureReason: null },
-        });
-        return { success: true, recovered: true, passengerId, amountXOF, provider, ref: verification.ref };
-      }
-      if (verification.status === 'PENDING') {
-        await prisma.transaction.update({
-          where: { id: transactionId },
-          data: { status: 'PENDING_VERIFICATION' },
-        });
-        throw new Error('TIMEOUT_REQUIRES_RECONCILIATION');
-      }
-      if (verification.status === 'FAILED') {
-        await prisma.transaction.update({
-          where: { id: transactionId },
-          data: { status: 'FAILED_MANUAL_REVIEW', failureReason: 'Estorno confirmado com falha pela operadora' },
-        });
-        throw new UnrecoverableError('ESTORNO_RECUSADO: Confirmada falha na reconciliação.');
-      }
-    } catch (verifErr: any) {
-      if (verifErr instanceof UnrecoverableError || verifErr.message === 'TIMEOUT_REQUIRES_RECONCILIATION') {
-        throw verifErr;
-      }
-    }
-  }
-
-  const lockResult = await prisma.transaction.updateMany({
-    where: { id: transactionId, status: { in: ['PENDING', 'PENDING_VERIFICATION', 'FAILED'] } },
-    data: { status: 'PROCESSING' },
+  await prisma.transaction.updateMany({
+    where: { id: transactionId, status: { in: [TransactionStatus.PENDING, TransactionStatus.PENDING_VERIFICATION] } },
+    data: { status: TransactionStatus.PROCESSING },
   });
-
-  if (lockResult.count === 0) {
-    const recheckTx = await prisma.transaction.findUnique({ where: { id: transactionId } });
-    if (recheckTx?.status === 'COMPLETED') return { success: true, cached: true, passengerId, amountXOF, provider };
-    throw new Error('CONCURRENT_PROCESSING: Transação em processamento ou com estado inválido.');
-  }
 
   try {
     const result = await refundPassengerMobileMoney({
@@ -241,35 +144,26 @@ const processRefundBlindado = async (job: Job<RefundJobData>) => {
       phone,
       amount: amountXOF,
       rideId,
-      refundId: transactionId
+      transactionId
     });
 
     if (!result.success) {
-      if (result.error === 'TIMEOUT_REQUIRES_RECONCILIATION') {
-        await prisma.transaction.update({
-          where: { id: transactionId },
-          data: { status: 'PENDING_VERIFICATION', failureReason: 'Timeout na API de estorno' },
-        });
-        throw new Error('TIMEOUT_REQUIRES_RECONCILIATION');
-      }
-
       await prisma.transaction.update({
         where: { id: transactionId },
-        data: { status: 'FAILED_MANUAL_REVIEW', failureReason: result.error || 'Estorno recusado pela operadora' },
+        data: { status: TransactionStatus.FAILED_MANUAL_REVIEW, failureReason: result.error },
       });
       throw new UnrecoverableError(`ESTORNO_RECUSADO: ${result.error}`);
     }
 
     await prisma.transaction.update({
       where: { id: transactionId },
-      data: { status: 'COMPLETED', externalRef: result.providerRef, failureReason: null },
+      data: { status: TransactionStatus.COMPLETED, externalRef: result.providerRef, failureReason: null },
     });
 
-    return { success: true, passengerId, amountXOF, provider, providerRef: result.providerRef };
+    return { success: true, passengerId, amountXOF, provider, providerRef: result.providerRef, ussdCommand: result.ussdCommand };
   } catch (error: any) {
-    if (error instanceof UnrecoverableError || error.message === 'TIMEOUT_REQUIRES_RECONCILIATION') throw error;
-    
-    await prisma.transaction.update({ where: { id: transactionId }, data: { status: 'PENDING_VERIFICATION' } });
+    if (error instanceof UnrecoverableError) throw error;
+    await prisma.transaction.update({ where: { id: transactionId }, data: { status: TransactionStatus.PENDING_VERIFICATION } });
     throw error;
   }
 };
@@ -310,14 +204,14 @@ const configureWorkerEvents = (worker: Worker<any>, queueName: string, type: 'PA
           transactionId: job.data?.transactionId,
           amount: returnvalue.amountXOF,
           provider: returnvalue.provider,
-          message: `Recebido! ${returnvalue.amountXOF} XOF foram transferidos para sua conta Mobile Money.`,
+          message: `Transferência realizada! ${returnvalue.amountXOF} XOF enviados à sua conta Mobile Money.`,
         });
       } else if (type === 'REFUND' && returnvalue.passengerId) {
         io.to(returnvalue.passengerId).to(`passenger_${returnvalue.passengerId}`).emit('payment:refund_success', {
           transactionId: job.data?.transactionId,
           amount: returnvalue.amountXOF,
           provider: returnvalue.provider,
-          message: `Reembolso efetuado! ${returnvalue.amountXOF} XOF foram devolvidos à sua conta Mobile Money.`,
+          message: `Reembolso efetuado! ${returnvalue.amountXOF} XOF devolvidos à sua conta.`,
         });
       }
     } catch (err) {
@@ -327,49 +221,21 @@ const configureWorkerEvents = (worker: Worker<any>, queueName: string, type: 'PA
 
   worker.on('failed', async (job: Job | undefined, err: Error) => {
     const txId = job?.data?.transactionId;
-    console.error(`❌ [WORKER ${queueName}] Job ${job?.id || 'desconhecido'} falhou (Tentativa ${job?.attemptsMade || 0}):`, err.message);
+    console.error(`❌ [WORKER ${queueName}] Job ${job?.id || 'desconhecido'} falhou:`, err.message);
 
     if (!txId) return;
 
-    const isUnrecoverable = err instanceof UnrecoverableError || err.name === 'UnrecoverableError';
-    const isTimeout = err.message.includes('TIMEOUT_REQUIRES_RECONCILIATION');
-    const isMaxAttempts = (job?.attemptsMade || 0) >= (job?.opts?.attempts || 3);
-
-    if (isMaxAttempts || isUnrecoverable) {
-      try {
-        await prisma.transaction.update({
-          where: { id: txId },
-          data: {
-            status: isTimeout ? 'PENDING_VERIFICATION' : 'FAILED_MANUAL_REVIEW',
-            failureReason: `[FALHA_FINAL] ${err.message}`,
-          },
-        }).catch((dbErr) => console.error('Erro ao atualizar status de falha na transação:', dbErr));
-
-        const io = getIo();
-        if (io && job?.data) {
-          if (type === 'PAYOUT' && job.data.driverId) {
-            io.to(job.data.driverId).to(`driver_${job.data.driverId}`).emit('payment:payout_failed', {
-              transactionId: txId,
-              reason: 'Sua conta de Mobile Money recusou o depósito. Atualize seu número no perfil ou contate o suporte.'
-            });
-          }
-
-          io.to('admin_dashboard').emit('admin:payout_alert', {
-            transactionId: txId,
-            driverId: job.data.driverId,
-            amount: job.data.amountXOF,
-            provider: job.data.provider,
-            reason: err.message
-          });
-        }
-      } catch (e) {
-        console.error('Falha geral ao registrar erro no banco:', e);
-      }
-    }
+    await prisma.transaction.update({
+      where: { id: txId },
+      data: {
+        status: TransactionStatus.FAILED_MANUAL_REVIEW,
+        failureReason: `[FALHA_FINAL] ${err.message}`,
+      },
+    }).catch((dbErr) => console.error('Erro ao atualizar falha na transação:', dbErr));
   });
 
   worker.on('error', (err) => {
-    console.error(`🔴 [WORKER ${queueName}] Erro no cliente Redis do Worker:`, err);
+    console.error(`🔴 [WORKER ${queueName}] Erro no cliente Redis:`, err);
   });
 };
 
@@ -393,7 +259,6 @@ export async function enqueueRefundJob(data: RefundJobData) {
 }
 
 export async function closePayoutQueues() {
-  console.log('🔄 Encerrando workers e filas de pagamentos...');
   await Promise.all([
     orangePayoutWorker.close(),
     mtnPayoutWorker.close(),
@@ -402,5 +267,4 @@ export async function closePayoutQueues() {
     mtnPayoutQueue.close(),
     refundQueue.close(),
   ]);
-  console.log('🛑 Filas de pagamentos encerradas com segurança.');
 }
