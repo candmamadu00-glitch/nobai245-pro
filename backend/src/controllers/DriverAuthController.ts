@@ -826,21 +826,24 @@ export class DriverAuthController {
       }
 
       const updatedDriver = await prisma.driver.update({
-        where: { id: driverId },
-        data: { profilePicture: newProfilePicture },
-        select: {
-          id: true,
-          fullName: true,
-          phone: true,
-          profilePicture: true,
-          vehicleType: true,
-          vehicleModel: true,
-          licensePlate: true,
-          walletBalance: true,
-          ratingAverage: true,
-          status: true,
-        }
-      });
+  where: { id: driverId },
+  data: { profilePicture: newProfilePicture },
+  select: {
+    id: true,
+    fullName: true,
+    phone: true,
+    profilePicture: true,
+    vehicleType: true,
+    vehicleBrand: true,
+    vehiclePlate: true,
+    vehicleColor: true,
+    walletBalance: true,
+    ratingAverage: true,
+    status: true,
+    isOnline: true,
+    isAvailable: true,
+  }
+});
 
       console.log('✅ [FOTO MOTORISTA] Foto gravada no banco com sucesso!');
 

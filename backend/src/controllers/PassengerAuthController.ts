@@ -440,20 +440,20 @@ async updateProfile(req: Request, res: Response): Promise<Response> {
     console.log('💾 [PERFIL PASSAGEIRO] Objeto enviado ao Prisma:', dataToUpdate);
 
     const updatedPassenger = await prisma.passenger.update({
-      where: { id: passengerId },
-      data: dataToUpdate,
-      select: {
-        id: true,
-        fullName: true,
-        email: true,
-        phone: true,
-        profilePicture: true,
-        walletBalance: true,
-        ratingAverage: true,
-        paymentProvider: true,
-        paymentAccountNumber: true,
-      },
-    });
+  where: { id: passengerId },
+  data: dataToUpdate,
+  select: {
+    id: true,
+    fullName: true,
+    email: true,
+    phone: true,
+    profilePicture: true,
+    walletBalance: true,
+    ratingAverage: true,
+    paymentProvider: true,
+    paymentAccountNumber: true,
+  }
+});
 
     console.log('✅ [PERFIL PASSAGEIRO] Salvo com sucesso no Banco!');
 
