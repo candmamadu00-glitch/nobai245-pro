@@ -343,12 +343,21 @@ export function Home() {
   const route = useRoute<any>();
   const radarAnim = useRef(new Animated.Value(0)).current;
   const appStateRef = useRef(AppState.currentState);
+
+  // 🟢 ESTADOS PRINCIPAIS DE CORRIDA
   const [bookingStep, setBookingStep] = useState<BookingStep>('ADDRESS');
-  const [rideStatus, setRideStatus] = useState<RideStatus>('idle');
+  const [rideStatus, setRideStatus] = useState<RideStatus | 'waiting_payment'>('idle');
   const [activeRideId, setActiveRideId] = useState<string | null>(null);
   const [startOtp, setStartOtp] = useState<string>('');
   const [acceptedAt, setAcceptedAt] = useState<Date | null>(null);
-  const [isMapMoving, setIsMapMoving] = useState(false);
+
+  // 🟢 CHAT E REFERÊNCIA DE VISIBILIDADE (MOVIDO PARA O TOPO)
+  const [isChatVisible, setIsChatVisible] = useState(false);
+  const isChatVisibleRef = useRef(isChatVisible);
+  useEffect(() => {
+    isChatVisibleRef.current = isChatVisible;
+  }, [isChatVisible]);
+
   const [passengerLocation, setPassengerLocation] = useState<Location.LocationObject | null>(null);
   const [driverLocation, setDriverLocation] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
   const [driverInfo, setDriverInfo] = useState<DriverInfo | null>(null);
@@ -391,7 +400,6 @@ export function Home() {
   const [showCancelModal, setShowCancelModal] = useState<boolean>(false);
   const handleCloseCancelModal = useCallback(() => setShowCancelModal(false), []);
   const [showRatingModal, setShowRatingModal] = useState(false);
-  const [isChatVisible, setIsChatVisible] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
 
@@ -758,8 +766,6 @@ useEffect(() => {
     }
   }, [rideStatus, driverEta, driverInfo, dropoffAddress]);
 
-  // 1. Referência para manter o estado do Chat sempre atualizado nos eventos do Socket
-  const isChatVisibleRef = useRef(isChatVisible);
   useEffect(() => {
     isChatVisibleRef.current = isChatVisible;
   }, [isChatVisible]);
@@ -930,102 +936,179 @@ const handleIncomingChatMessage = useCallback((data: any) => {
     }
   }, [rideStatus, vehicleType]);
 
-  const syncPassengerActiveRide = useCallback(async () => {
-    try {
-      if (!api || typeof api.get !== 'function') return;
+  // 🟢 1. RESTAURAÇÃO DE CORRIDA ATIVA E MAPEAMENTO DE ESTADO
+const syncPassengerActiveRide = useCallback(async () => {
+  try {
+    if (!api || typeof api.get !== 'function') return;
 
-      let response = await api.get('/passengers/active-ride').catch(() => null);
-      if (!response?.data?.ride) {
-        response = await api.get('/rides/active').catch(() => null);
-      }
+    let response = await api.get('/passengers/active-ride').catch(() => null);
+    if (!response?.data?.ride) {
+      response = await api.get('/rides/active').catch(() => null);
+    }
+    
+    if (response?.data?.ride && isMountedRef.current) {
+      const ride = response.data.ride;
       
-      if (response?.data?.ride && isMountedRef.current) {
-        const ride = response.data.ride;
-        const mappedStatus: RideStatus = 
-          ride.status === 'SEARCHING' || ride.status === 'QUEUED' || ride.status === 'PENDING' ? 'searching' :
-          ride.status === 'ACCEPTED' ? 'accepted' :
-          ride.status === 'ARRIVED' ? 'arrived' :
-          ride.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
+      const statusMap: Record<string, RideStatus | 'waiting_payment'> = {
+        'PENDING_PAYMENT': 'waiting_payment',
+        'AWAITING_PAYMENT': 'waiting_payment',
+        'SEARCHING': 'searching',
+        'QUEUED': 'searching',
+        'PENDING': 'searching',
+        'ACCEPTED': 'accepted',
+        'ARRIVED': 'arrived',
+        'IN_PROGRESS': 'in_progress',
+      };
 
-        if (mappedStatus !== 'idle') {
-          setActiveRideId(ride.id);
-          activeRideIdRef.current = ride.id;
-          setRideStatus(mappedStatus);
-          setBookingStep('SEARCHING');
+      const mappedStatus = statusMap[ride.status] || 'idle';
 
-          const otpCode = String(ride.startOtp || ride.otpPin || ride.pin || '');
-          if (otpCode) setStartOtp(otpCode);
+      if (mappedStatus !== 'idle') {
+        setActiveRideId(ride.id);
+        activeRideIdRef.current = ride.id;
+        setRideStatus(mappedStatus as any);
+        setBookingStep('SEARCHING');
 
-          const parsedDriver = extractDriverInfo(ride, otpCode);
-          if (parsedDriver) {
-            setDriverInfo(parsedDriver);
-          }
+        const otpCode = String(ride.startOtp || ride.otpPin || ride.pin || '');
+        if (otpCode) setStartOtp(otpCode);
 
-          const dObj = ride.driver || {};
-          const lat = Number(dObj.currentLat || ride.driverLat || ride.currentLat);
-          const lng = Number(dObj.currentLng || ride.driverLng || ride.currentLng);
-          if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
-            setDriverLocation({
-              latitude: lat,
-              longitude: lng,
-              heading: Number(dObj.heading || ride.heading || 0),
-            });
-          }
+        const parsedDriver = extractDriverInfo(ride, otpCode);
+        if (parsedDriver) {
+          setDriverInfo(parsedDriver);
+        }
 
-          let pCoords = null;
-          let dCoords = null;
+        let pCoords = null;
+        let dCoords = null;
 
-          if (ride.originLat && ride.originLng) {
-            pCoords = { latitude: Number(ride.originLat), longitude: Number(ride.originLng) };
-            setPickupCoords(pCoords);
-            if (ride.originAddress) setPickupAddress(ride.originAddress);
-          }
+        if (ride.originLat && ride.originLng) {
+          pCoords = { latitude: Number(ride.originLat), longitude: Number(ride.originLng) };
+          setPickupCoords(pCoords);
+          if (ride.originAddress) setPickupAddress(ride.originAddress);
+        }
 
-          if (ride.destinationLat && ride.destinationLng) {
-            dCoords = { latitude: Number(ride.destinationLat), longitude: Number(ride.destinationLng) };
-            setDropoffCoords(dCoords);
-            if (ride.destinationAddress) setDropoffAddress(ride.destinationAddress);
-          }
+        if (ride.destinationLat && ride.destinationLng) {
+          dCoords = { latitude: Number(ride.destinationLat), longitude: Number(ride.destinationLng) };
+          setDropoffCoords(dCoords);
+          if (ride.destinationAddress) setDropoffAddress(ride.destinationAddress);
+        }
 
-          if (Array.isArray(ride.stops) && ride.stops.length > 0) {
-            const firstStop = ride.stops[0];
-            const stopLat = Number(firstStop.lat || firstStop.latitude);
-            const stopLng = Number(firstStop.lng || firstStop.longitude);
-            if (!isNaN(stopLat) && !isNaN(stopLng)) {
-              setExtraStopCoords({ latitude: stopLat, longitude: stopLng });
-              setExtraStopAddress(firstStop.address || 'Parada Intermediária');
-              setShowExtraStop(true);
-            }
-          }
+        if (ride.priceXof || ride.estimatedPriceXof) {
+          setEstimatedPrice(Number(ride.priceXof || ride.estimatedPriceXof));
+        }
 
-          if (ride.priceXof) setEstimatedPrice(Number(ride.priceXof));
+        if (pCoords && dCoords) {
+          fetchMapboxRoute(pCoords, dCoords, extraStopCoords);
+          fitMapBounds([pCoords, dCoords]);
+        }
 
-          if (pCoords && dCoords) {
-            fetchMapboxRoute(pCoords, dCoords, extraStopCoords);
-            fitMapBounds([pCoords, dCoords]);
-          }
+        await persistRideState(ride.id, mappedStatus as any, {
+          driverInfo: parsedDriver,
+          pickupCoords: pCoords,
+          pickupAddress: ride.originAddress,
+          dropoffCoords: dCoords,
+          dropoffAddress: ride.destinationAddress,
+          startOtp: otpCode,
+          estimatedPrice: ride.priceXof ? Number(ride.priceXof) : null
+        });
 
-          activateKeepAwakeAsync('PASSENGER_RIDE_KEEP_AWAKE').catch(() => {});
-
-          await persistRideState(ride.id, mappedStatus, {
-            driverInfo: parsedDriver,
-            pickupCoords: pCoords,
-            pickupAddress: ride.originAddress,
-            dropoffCoords: dCoords,
-            dropoffAddress: ride.destinationAddress,
-            startOtp: otpCode,
-            estimatedPrice: ride.priceXof ? Number(ride.priceXof) : null
-          });
-
-          if (socket && socket.connected) {
-            socket.emit('passenger:rejoin_ride', { rideId: ride.id });
-          }
+        if (socket && socket.connected) {
+          socket.emit('passenger:rejoin_ride', { rideId: ride.id });
         }
       }
-    } catch (err) {
-      console.warn('⚠️ [PASSENGER] Erro na rede - mantendo cache local:', err);
     }
-  }, [fetchMapboxRoute, fitMapBounds, extraStopCoords]);
+  } catch (err) {
+    console.warn('⚠️ Erro ao sincronizar corrida ativa:', err);
+  }
+}, [fetchMapboxRoute, fitMapBounds, extraStopCoords]);
+// 🟢 2. INICIAÇÃO DE PAGAMENTO E TRATAMENTO DE 409
+async function confirmPaymentAndRide() {
+  if (!user?.id) {
+    Alert.alert(t('error_title', 'Erro'), t('missing_user_data', 'Dados de usuário não encontrados.'));
+    return;
+  }
+
+  let cleanPhone = paymentPhone.replace(/\D/g, '');
+  if (cleanPhone.length === 9) {
+    cleanPhone = `245${cleanPhone}`;
+  }
+
+  const isGwPhoneValid = /^(245)?9[567]\d{7}$/.test(cleanPhone);
+  if (!cleanPhone || !isGwPhoneValid) {
+    Alert.alert(
+      t('error_title', 'Erro de Formato'), 
+      'Por favor, informe um número válido de 9 dígitos da conta Mobile Money (ex: 95XXXXXXX ou 96XXXXXXX).'
+    );
+    return;
+  }
+
+  setIsProcessingPayment(true);
+
+  try {
+    let targetRideId = activeRideIdRef.current || activeRideId;
+
+    if (!targetRideId) {
+      const mappedServiceType = serviceType === 'viagem' ? 'RIDE' : serviceType === 'entrega' ? 'DELIVERY' : 'RENTAL';
+      const mappedVehicleType = 
+        vehicleType === 'particular' ? 'PARTICULAR' : 
+        vehicleType === 'moto-carro' ? 'MOTO_CARRO' : 
+        (vehicleType as string) === 'toca-toca' ? 'TOCA_TOCA' :
+        vehicleType.toUpperCase();
+
+      try {
+        const rideResponse = await api.post('/passengers/rides/request', {
+          pickupLat: pickupCoords?.latitude,
+          pickupLng: pickupCoords?.longitude,
+          dropoffLat: dropoffCoords?.latitude || pickupCoords?.latitude,
+          dropoffLng: dropoffCoords?.longitude || pickupCoords?.longitude,
+          originAddress: pickupAddress,
+          destinationAddress: dropoffAddress,
+          serviceType: mappedServiceType,
+          vehicleType: mappedVehicleType,
+          paymentMethod,
+        });
+
+        targetRideId = rideResponse.data?.ride?.id || rideResponse.data?.id;
+      } catch (createErr: any) {
+        // CAPTURA 409 (CORRIDA JÁ EXISTENTE NO BANCO)
+        if (createErr?.response?.status === 409 && (createErr?.response?.data?.rideId || createErr?.response?.data?.ride?.id)) {
+          targetRideId = createErr.response.data.rideId || createErr.response.data.ride.id;
+        } else {
+          throw createErr;
+        }
+      }
+
+      if (targetRideId) {
+        activeRideIdRef.current = targetRideId;
+        setActiveRideId(targetRideId);
+      }
+    }
+
+    if (!targetRideId) {
+      throw new Error('Não foi possível registrar a corrida. Tente novamente.');
+    }
+
+    await initiateMobileMoneyPayment({
+      rideId: targetRideId,
+      phone: cleanPhone,
+      amount: estimatedPrice || 1000,
+      provider: paymentMethod as 'ORANGE_MONEY' | 'MTN_MOMO',
+      passengerId: user.id,
+    });
+
+    setIsProcessingPayment(false);
+    setIsPaymentModalVisible(false);
+
+    // MATA A TELA ESCURA: Transita a UI para o card visual de aguardando PIN USSD
+    setRideStatus('waiting_payment' as any);
+    await persistRideState(targetRideId, 'waiting_payment' as any);
+
+  } catch (error: any) {
+    setIsProcessingPayment(false);
+    Alert.alert(
+      t('error_title', 'Aviso no Pagamento'), 
+      error?.response?.data?.error || error?.response?.data?.message || error?.message || 'Não foi possível autorizar o débito. Tente novamente.'
+    );
+  }
+}
 // 🟢 1. OUVINTE DE CANCELAMENTO EM TEMPO REAL NO PASSAGEIRO
 useEffect(() => {
   if (!socket) return;
@@ -1964,97 +2047,6 @@ if (resDb.status === 'fulfilled' && resDb.value?.data) {
     setPaymentPhone(user.phone);
   }
   setIsPaymentModalVisible(true);
-}
-
- async function confirmPaymentAndRide() {
-  if (!user?.id) {
-    Alert.alert(t('error_title', 'Erro'), t('missing_user_data', 'Dados de usuário não encontrados.'));
-    return;
-  }
-
-  let cleanPhone = paymentPhone.replace(/[^\d]/g, '');
-  if (cleanPhone.startsWith('245') && cleanPhone.length === 12) {
-    cleanPhone = cleanPhone.substring(3);
-  }
-  
-  const isGwPhoneValid = /^9[567]\d{7}$/.test(cleanPhone);
-  if (!cleanPhone || !isGwPhoneValid) {
-    Alert.alert(
-      t('error_title', 'Erro de Formato'), 
-      'Por favor, informe um número válido de 9 dígitos da conta Mobile Money (ex: 95XXXXXXX).'
-    );
-    return;
-  }
-
-  setIsProcessingPayment(true);
-
-  try {
-    let targetRideId = activeRideIdRef.current || activeRideId;
-
-    // 1. Tenta criar a corrida via HTTP se ainda não existir ID em memória
-    if (!targetRideId) {
-      const mappedServiceType = serviceType === 'viagem' ? 'RIDE' : serviceType === 'entrega' ? 'DELIVERY' : 'RENTAL';
-      const mappedVehicleType = 
-        vehicleType === 'particular' ? 'PARTICULAR' : 
-        vehicleType === 'moto-carro' ? 'MOTO_CARRO' : 
-        (vehicleType as string) === 'toca-toca' ? 'TOCA_TOCA' :
-        vehicleType.toUpperCase();
-
-      try {
-        const rideResponse = await api.post('/passengers/rides/request', {
-          pickupLat: pickupCoords?.latitude,
-          pickupLng: pickupCoords?.longitude,
-          dropoffLat: dropoffCoords?.latitude || pickupCoords?.latitude,
-          dropoffLng: dropoffCoords?.longitude || pickupCoords?.longitude,
-          originAddress: pickupAddress,
-          destinationAddress: dropoffAddress,
-          serviceType: mappedServiceType,
-          vehicleType: mappedVehicleType,
-          paymentMethod,
-        });
-
-        targetRideId = rideResponse.data?.ride?.id || rideResponse.data?.id;
-      } catch (createErr: any) {
-        // 🟢 SE RETORNAR 409 (Corrida já em andamento), RECUPERA O ID DA CORRIDA DO BANCO
-        if (createErr?.response?.status === 409 && createErr?.response?.data?.rideId) {
-          targetRideId = createErr.response.data.rideId;
-        } else {
-          throw createErr;
-        }
-      }
-
-      if (targetRideId) {
-        activeRideIdRef.current = targetRideId;
-        setActiveRideId(targetRideId);
-      }
-    }
-
-    if (!targetRideId) {
-      throw new Error('Não foi possível registrar a corrida. Tente novamente.');
-    }
-
-    // 2. Envia a cobrança Mobile Money com o targetRideId garantido
-    const paymentResponse = await initiateMobileMoneyPayment({
-      rideId: targetRideId,
-      phone: cleanPhone,
-      amount: estimatedPrice || 1000,
-      provider: paymentMethod as 'ORANGE_MONEY' | 'MTN_MOMO',
-      passengerId: user.id,
-    });
-
-    setIsProcessingPayment(false);
-    setIsPaymentModalVisible(false);
-
-    // 3. Define o estado da tela para Aguardando Pagamento (bloqueia busca até SMS chegar)
-    setRideStatus('waiting_payment' as any);
-
-  } catch (error: any) {
-    setIsProcessingPayment(false);
-    Alert.alert(
-      t('error_title', 'Aviso no Pagamento'), 
-      error?.response?.data?.error || error?.response?.data?.message || error?.message || 'Não foi possível autorizar o débito. Tente novamente.'
-    );
-  }
 }
 
   function executeRideRequest() {
@@ -3359,125 +3351,119 @@ return (
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
     </Modal>
-{/* 🟢 CARD DE AGUARDANDO PAGAMENTO (Exibido na tela após confirmar o valor) */}
-    {rideStatus === ('waiting_payment' as any) && (
-      <View style={styles.waitingPaymentCard}>
-        <ActivityIndicator size="large" color="#FF6600" />
-        <Text style={styles.waitingPaymentTitle}>Aguardando Pagamento Mobile Money</Text>
-        <Text style={styles.waitingPaymentSub}>
-          Por favor, confirme a mensagem de débito no seu telemóvel e digite o seu PIN USSD (*144# ou *135#).
-        </Text>
+{/* MAPA E HEADER FICAM AQUI... */}
+
+  {/* 🟢 CARD DE AGUARDANDO PAGAMENTO MOBILE MONEY (PREVINE TELA ESCURA VAZIA) */}
+  {rideStatus === ('waiting_payment' as any) && (
+    <View style={styles.waitingPaymentCard}>
+      <ActivityIndicator size="large" color="#FF6600" style={{ marginBottom: 12 }} />
+      <Text style={styles.waitingPaymentTitle}>Aguardando Pagamento Mobile Money</Text>
+      <Text style={styles.waitingPaymentSub}>
+        Por favor, confirme a mensagem de débito enviada para o seu telemóvel e digite o seu PIN USSD (*144# ou *135#).
+      </Text>
+      <View style={styles.waitingPaymentBadge}>
+        <Ionicons name="lock-closed" size={14} color="#F59E0B" style={{ marginRight: 6 }} />
         <Text style={styles.waitingPaymentNote}>
-          Assim que o pagamento for confirmado, o sistema começará a procurar motoristas próximos.
+          Assim que o pagamento for confirmado, a busca de motoristas iniciará automaticamente.
         </Text>
       </View>
-    )}
-    {/* MODAL DE PAGAMENTO MOBILE MONEY */}
-    <Modal 
-      visible={isPaymentModalVisible} 
-      transparent 
-      animationType="fade" 
-      onRequestClose={() => !isProcessingPayment && setIsPaymentModalVisible(false)}
-    >
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
-        style={{ flex: 1 }}
+      <TouchableOpacity 
+        style={styles.cancelWaitingPaymentBtn} 
+        onPress={() => {
+          Alert.alert(
+            'Cancelar Solicitação',
+            'Deseja cancelar o pedido de corrida?',
+            [
+              { text: 'Não', style: 'cancel' },
+              { text: 'Sim, Cancelar', style: 'destructive', onPress: () => resetRideState() }
+            ]
+          );
+        }}
+        activeOpacity={0.8}
       >
-        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-          <View style={styles.modalOverlay}>
-            <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
-              <View style={[styles.paymentModalCard, { paddingBottom: Math.max((insets?.bottom || 0) + 20, 24) }]}>
-                
-                <View style={[
-                  styles.operatorHeader, 
-                  { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#004F9F' }
-                ]}>
-                  <View style={styles.operatorHeaderContent}>
-                    <Ionicons 
-                      name={paymentMethod === 'ORANGE_MONEY' ? "wallet-outline" : "card-outline"} 
-                      size={26} 
-                      color="#FFFFFF" 
-                    />
-                    <Text style={styles.operatorTitle}>
-                      {paymentMethod === 'ORANGE_MONEY' ? 'Orange Money' : 'MTN Mobile Money'}
-                    </Text>
-                  </View>
-                  <TouchableOpacity 
-                    onPress={() => !isProcessingPayment && setIsPaymentModalVisible(false)}
-                    disabled={isProcessingPayment}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="close-circle" size={26} color="rgba(255,255,255,0.8)" />
-                  </TouchableOpacity>
+        <Text style={styles.cancelWaitingPaymentText}>Cancelar Corrida</Text>
+      </TouchableOpacity>
+    </View>
+  )}
+
+  {/* 💳 MODAL DE PAGAMENTO MOBILE MONEY */}
+  <Modal 
+    visible={isPaymentModalVisible} 
+    transparent 
+    animationType="fade" 
+    onRequestClose={() => !isProcessingPayment && setIsPaymentModalVisible(false)}
+  >
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+        <View style={styles.modalOverlay}>
+          <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+            <View style={[styles.paymentModalCard, { paddingBottom: Math.max((insets?.bottom || 0) + 20, 24) }]}>
+              
+              <View style={[styles.operatorHeader, { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#004F9F' }]}>
+                <View style={styles.operatorHeaderContent}>
+                  <Ionicons name={paymentMethod === 'ORANGE_MONEY' ? "wallet-outline" : "card-outline"} size={26} color="#FFFFFF" />
+                  <Text style={styles.operatorTitle}>
+                    {paymentMethod === 'ORANGE_MONEY' ? 'Orange Money' : 'MTN Mobile Money'}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => !isProcessingPayment && setIsPaymentModalVisible(false)} disabled={isProcessingPayment} activeOpacity={0.7}>
+                  <Ionicons name="close-circle" size={26} color="rgba(255,255,255,0.8)" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={styles.paymentModalBody} contentContainerStyle={{ flexGrow: 1, paddingTop: 16, paddingBottom: 12 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="always">
+                <Text style={styles.paymentModalSubtitle}>
+                  {t('ussd_push_instruction', 'Confirme o seu número. Receberá uma notificação segura no telemóvel para digitar o seu PIN.')}
+                </Text>
+
+                <View style={styles.amountBadgeContainer}>
+                  <Text style={styles.amountTextLabel}>{t('total_amount', 'VALOR A PAGAR')}</Text>
+                  <Text style={styles.amountValue}>
+                    {estimatedPrice ? `${Math.round(estimatedPrice).toLocaleString('pt-BR')} XOF` : t('calculating', 'Calculando...')}
+                  </Text>
                 </View>
 
-                <ScrollView 
-                  style={styles.paymentModalBody} 
-                  contentContainerStyle={{ flexGrow: 1, paddingTop: 16, paddingBottom: 12 }} 
-                  showsVerticalScrollIndicator={false} 
-                  keyboardShouldPersistTaps="always"
-                >
-                  <Text style={styles.paymentModalSubtitle}>
-                    {t('ussd_push_instruction', 'Confirme o seu número. Receberá uma notificação segura no telemóvel para digitar o seu PIN.')}
-                  </Text>
+                <Text style={styles.inputLabel}>{t('mobile_money_account', 'Número de Telefone da Conta')}</Text>
+                <View style={styles.phoneInputContainer}>
+                  <Ionicons name="call-outline" size={20} color="#64748B" style={{ marginLeft: 12 }} />
+                  <TextInput
+                    style={styles.phoneInput}
+                    value={paymentPhone}
+                    onChangeText={(text) => setPaymentPhone(text.replace(/[^0-9]/g, ''))}
+                    keyboardType="number-pad"
+                    autoCorrect={false}
+                    maxLength={12}
+                    editable={!isProcessingPayment}
+                    placeholder={t('phone_number_placeholder', 'Ex: 955000000')}
+                    placeholderTextColor="#94A3B8"
+                  />
+                </View>
 
-                  <View style={styles.amountBadgeContainer}>
-                    <Text style={styles.amountTextLabel}>{t('total_amount', 'VALOR A PAGAR')}</Text>
-                    <Text style={styles.amountValue}>
-                      {estimatedPrice ? `${Math.round(estimatedPrice).toLocaleString('pt-BR')} XOF` : t('calculating', 'Calculando...')}
-                    </Text>
-                  </View>
+                <View style={styles.modalActionsRow}>
+                  <TouchableOpacity style={styles.cancelModalBtn} disabled={isProcessingPayment} onPress={() => setIsPaymentModalVisible(false)} activeOpacity={0.7}>
+                    <Text style={styles.cancelModalBtnText}>{t('back_btn', 'Cancelar')}</Text>
+                  </TouchableOpacity>
 
-                  <Text style={styles.inputLabel}>{t('mobile_money_account', 'Número de Telefone da Conta')}</Text>
-                  <View style={styles.phoneInputContainer}>
-                    <Ionicons name="call-outline" size={20} color="#64748B" style={{ marginLeft: 12 }} />
-                    <TextInput
-                      style={styles.phoneInput}
-                      value={paymentPhone}
-                      onChangeText={(text) => setPaymentPhone(text.replace(/[^0-9]/g, ''))}
-                      keyboardType="number-pad"
-                      autoCorrect={false}
-                      maxLength={12}
-                      editable={!isProcessingPayment}
-                      placeholder={t('phone_number_placeholder', 'Ex: 955000000')}
-                      placeholderTextColor="#94A3B8"
-                    />
-                  </View>
-
-                  <View style={styles.modalActionsRow}>
-                    <TouchableOpacity 
-                      style={styles.cancelModalBtn} 
-                      disabled={isProcessingPayment} 
-                      onPress={() => setIsPaymentModalVisible(false)} 
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.cancelModalBtnText}>{t('back_btn', 'Cancelar')}</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity 
-                      style={[
-                        styles.confirmModalBtn, 
-                        { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#004F9F' },
-                        isProcessingPayment && { opacity: 0.7 }
-                      ]}
-                      disabled={isProcessingPayment}
-                      onPress={confirmPaymentAndRide}
-                      activeOpacity={0.85}
-                    >
-                      {isProcessingPayment ? (
-                        <ActivityIndicator color="#FFFFFF" size="small" />
-                      ) : (
-                        <Text style={styles.confirmModalBtnText}>{t('confirm_payment_btn', 'Confirmar e Pagar')}</Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                </ScrollView>
-              </View>
-            </TouchableWithoutFeedback>
-          </View>
-        </TouchableWithoutFeedback>
-      </KeyboardAvoidingView>
-    </Modal>
+                  <TouchableOpacity 
+                    style={[styles.confirmModalBtn, { backgroundColor: paymentMethod === 'ORANGE_MONEY' ? '#FF6600' : '#004F9F' }, isProcessingPayment && { opacity: 0.7 }]}
+                    disabled={isProcessingPayment}
+                    onPress={confirmPaymentAndRide}
+                    activeOpacity={0.85}
+                  >
+                    {isProcessingPayment ? (
+                      <ActivityIndicator color="#FFFFFF" size="small" />
+                    ) : (
+                      <Text style={styles.confirmModalBtnText}>{t('confirm_payment_btn', 'Confirmar e Pagar')}</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            </View>
+          </TouchableWithoutFeedback>
+        </View>
+      </TouchableWithoutFeedback>
+    </KeyboardAvoidingView>
+  </Modal>
   
     {/* MENU LATERAL DRAWER */}
     <Modal visible={isMenuVisible} animationType="fade" transparent onRequestClose={() => setIsMenuVisible(false)}>
@@ -5484,6 +5470,69 @@ voiceToggleHeaderBtn: {
     fontSize: 12,
     color: '#F59E0B', // Amarelo/Laranja chamativo e amigável
     textAlign: 'center',
+    fontWeight: '600',
+  },
+  // 🟢 ESTILOS DO CARD DE AGUARDANDO PAGAMENTO USSD
+  waitingPaymentCard: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#0F172A',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 24,
+    paddingTop: 28,
+    paddingBottom: Platform.OS === 'ios' ? 40 : 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    zIndex: 999,
+  },
+  waitingPaymentTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  waitingPaymentSub: {
+    fontSize: 14,
+    color: '#94A3B8',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 16,
+  },
+  waitingPaymentBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+    marginBottom: 20,
+  },
+  waitingPaymentNote: {
+    fontSize: 12,
+    color: '#F59E0B',
+    fontWeight: '600',
+    flexShrink: 1,
+  },
+  cancelWaitingPaymentBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+  },
+  cancelWaitingPaymentText: {
+    color: '#EF4444',
+    fontSize: 14,
     fontWeight: '600',
   },
 });
