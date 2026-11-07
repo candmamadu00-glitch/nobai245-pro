@@ -1991,7 +1991,7 @@ if (resDb.status === 'fulfilled' && resDb.value?.data) {
   try {
     let targetRideId = activeRideIdRef.current || activeRideId;
 
-    // 1. Se a corrida ainda não tem ID, cria de forma síncrona via HTTP no endpoint que acabamos de registrar
+    // 1. Tenta criar a corrida via HTTP se ainda não existir ID em memória
     if (!targetRideId) {
       const mappedServiceType = serviceType === 'viagem' ? 'RIDE' : serviceType === 'entrega' ? 'DELIVERY' : 'RENTAL';
       const mappedVehicleType = 
@@ -2000,19 +2000,29 @@ if (resDb.status === 'fulfilled' && resDb.value?.data) {
         (vehicleType as string) === 'toca-toca' ? 'TOCA_TOCA' :
         vehicleType.toUpperCase();
 
-      const rideResponse = await api.post('/passengers/rides/request', {
-        pickupLat: pickupCoords?.latitude,
-        pickupLng: pickupCoords?.longitude,
-        dropoffLat: dropoffCoords?.latitude || pickupCoords?.latitude,
-        dropoffLng: dropoffCoords?.longitude || pickupCoords?.longitude,
-        originAddress: pickupAddress,
-        destinationAddress: dropoffAddress,
-        serviceType: mappedServiceType,
-        vehicleType: mappedVehicleType,
-        paymentMethod,
-      });
+      try {
+        const rideResponse = await api.post('/passengers/rides/request', {
+          pickupLat: pickupCoords?.latitude,
+          pickupLng: pickupCoords?.longitude,
+          dropoffLat: dropoffCoords?.latitude || pickupCoords?.latitude,
+          dropoffLng: dropoffCoords?.longitude || pickupCoords?.longitude,
+          originAddress: pickupAddress,
+          destinationAddress: dropoffAddress,
+          serviceType: mappedServiceType,
+          vehicleType: mappedVehicleType,
+          paymentMethod,
+        });
 
-      targetRideId = rideResponse.data?.ride?.id;
+        targetRideId = rideResponse.data?.ride?.id || rideResponse.data?.id;
+      } catch (createErr: any) {
+        // 🟢 SE RETORNAR 409 (Corrida já em andamento), RECUPERA O ID DA CORRIDA DO BANCO
+        if (createErr?.response?.status === 409 && createErr?.response?.data?.rideId) {
+          targetRideId = createErr.response.data.rideId;
+        } else {
+          throw createErr;
+        }
+      }
+
       if (targetRideId) {
         activeRideIdRef.current = targetRideId;
         setActiveRideId(targetRideId);
@@ -2020,10 +2030,10 @@ if (resDb.status === 'fulfilled' && resDb.value?.data) {
     }
 
     if (!targetRideId) {
-      throw new Error('Não foi possível gerar o registo da corrida. Tente novamente.');
+      throw new Error('Não foi possível registrar a corrida. Tente novamente.');
     }
 
-    // 2. Chama o pagamento Mobile Money associado ao ID retornado pela API
+    // 2. Envia a cobrança Mobile Money com o targetRideId garantido
     const paymentResponse = await initiateMobileMoneyPayment({
       rideId: targetRideId,
       phone: cleanPhone,
@@ -2035,17 +2045,14 @@ if (resDb.status === 'fulfilled' && resDb.value?.data) {
     setIsProcessingPayment(false);
     setIsPaymentModalVisible(false);
 
-    if (paymentResponse?.success) {
-      // 3. Coloca a tela no estado de Aguardando Pagamento (SMS Gateway)
-      setRideStatus('AWAITING_PAYMENT' as any);
-    } else {
-      throw new Error(paymentResponse?.message || 'Falha ao processar pagamento.');
-    }
+    // 3. Define o estado da tela para Aguardando Pagamento (bloqueia busca até SMS chegar)
+    setRideStatus('waiting_payment' as any);
+
   } catch (error: any) {
     setIsProcessingPayment(false);
     Alert.alert(
       t('error_title', 'Aviso no Pagamento'), 
-      error?.response?.data?.message || error?.message || 'Não foi possível autorizar o débito. Tente novamente.'
+      error?.response?.data?.error || error?.response?.data?.message || error?.message || 'Não foi possível autorizar o débito. Tente novamente.'
     );
   }
 }
@@ -3352,7 +3359,19 @@ return (
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
     </Modal>
-
+{/* 🟢 CARD DE AGUARDANDO PAGAMENTO (Exibido na tela após confirmar o valor) */}
+    {rideStatus === ('waiting_payment' as any) && (
+      <View style={styles.waitingPaymentCard}>
+        <ActivityIndicator size="large" color="#FF6600" />
+        <Text style={styles.waitingPaymentTitle}>Aguardando Pagamento Mobile Money</Text>
+        <Text style={styles.waitingPaymentSub}>
+          Por favor, confirme a mensagem de débito no seu telemóvel e digite o seu PIN USSD (*144# ou *135#).
+        </Text>
+        <Text style={styles.waitingPaymentNote}>
+          Assim que o pagamento for confirmado, o sistema começará a procurar motoristas próximos.
+        </Text>
+      </View>
+    )}
     {/* MODAL DE PAGAMENTO MOBILE MONEY */}
     <Modal 
       visible={isPaymentModalVisible} 
@@ -5425,4 +5444,46 @@ voiceToggleHeaderBtn: {
   borderWidth: 1,
   borderColor: '#334155',
 },
+// 🟢 ESTILOS DO CARD DE AGUARDANDO PAGAMENTO
+  waitingPaymentCard: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#0F172A', // Fundo escuro premium do app
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 24,
+    paddingTop: 28,
+    paddingBottom: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    zIndex: 99,
+  },
+  waitingPaymentTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginTop: 16,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  waitingPaymentSub: {
+    fontSize: 14,
+    color: '#94A3B8',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 12,
+  },
+  waitingPaymentNote: {
+    fontSize: 12,
+    color: '#F59E0B', // Amarelo/Laranja chamativo e amigável
+    textAlign: 'center',
+    fontWeight: '600',
+  },
 });
