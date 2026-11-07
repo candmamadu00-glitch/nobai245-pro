@@ -614,6 +614,32 @@ useEffect(() => {
     socket.off('chat:receive_message', handleChatMessage);
   };
 }, [socket]);
+useEffect(() => {
+  if (!socket) return;
+
+  // 🟢 Quando o SMS Gateway valida o pagamento no Backend, este evento é recebido
+  const handlePaymentConfirmed = (data: any) => {
+    const confirmedRideId = data?.rideId || data?.id;
+
+    if (confirmedRideId && confirmedRideId === activeRideIdRef.current) {
+      // Mudar a tela automaticamente para Procurando Motorista
+      setRideStatus('searching');
+
+      Alert.alert(
+        'Pagamento Confirmado! 💳',
+        'O seu pagamento foi recebido com sucesso. A procurar motoristas próximos...'
+      );
+    }
+  };
+
+  socket.on('payment:confirmed', handlePaymentConfirmed);
+  socket.on('ride:status_changed', handlePaymentConfirmed);
+
+  return () => {
+    socket.off('payment:confirmed', handlePaymentConfirmed);
+    socket.off('ride:status_changed', handlePaymentConfirmed);
+  };
+}, [socket]);
 // 🟢 Animação suave a 60 FPS
   useEffect(() => {
     if (!driverLocation?.latitude || !driverLocation?.longitude) return;
@@ -1940,7 +1966,7 @@ if (resDb.status === 'fulfilled' && resDb.value?.data) {
   setIsPaymentModalVisible(true);
 }
 
-  async function confirmPaymentAndRide() {
+ async function confirmPaymentAndRide() {
   if (!user?.id) {
     Alert.alert(t('error_title', 'Erro'), t('missing_user_data', 'Dados de usuário não encontrados.'));
     return;
@@ -1963,26 +1989,41 @@ if (resDb.status === 'fulfilled' && resDb.value?.data) {
   setIsProcessingPayment(true);
 
   try {
-    // 1. Dispara a criação da corrida se ainda não tiver ID
-    if (!activeRideIdRef.current && !activeRideId) {
-      executeRideRequest();
-    }
-
-    // 2. Aguarda até 6 segundos (30 tentativas x 200ms) a resposta do Socket
     let targetRideId = activeRideIdRef.current || activeRideId;
-    let attempts = 0;
-    while (!targetRideId && attempts < 30) {
-      await new Promise(resolve => setTimeout(resolve, 200));
-      targetRideId = activeRideIdRef.current || activeRideId;
-      attempts++;
-    }
 
-    // 🛑 BLOQUEIO DE SEGURANÇA: Se o servidor não criou a corrida a tempo, interrompe antes de chamar a API
+    // 1. Se a corrida ainda não tem ID, cria de forma síncrona via HTTP no endpoint que acabamos de registrar
     if (!targetRideId) {
-      throw new Error('A solicitação da corrida ainda está a ser processada pelo servidor. Aguarde um instante e tente novamente.');
+      const mappedServiceType = serviceType === 'viagem' ? 'RIDE' : serviceType === 'entrega' ? 'DELIVERY' : 'RENTAL';
+      const mappedVehicleType = 
+        vehicleType === 'particular' ? 'PARTICULAR' : 
+        vehicleType === 'moto-carro' ? 'MOTO_CARRO' : 
+        (vehicleType as string) === 'toca-toca' ? 'TOCA_TOCA' :
+        vehicleType.toUpperCase();
+
+      const rideResponse = await api.post('/passengers/rides/request', {
+        pickupLat: pickupCoords?.latitude,
+        pickupLng: pickupCoords?.longitude,
+        dropoffLat: dropoffCoords?.latitude || pickupCoords?.latitude,
+        dropoffLng: dropoffCoords?.longitude || pickupCoords?.longitude,
+        originAddress: pickupAddress,
+        destinationAddress: dropoffAddress,
+        serviceType: mappedServiceType,
+        vehicleType: mappedVehicleType,
+        paymentMethod,
+      });
+
+      targetRideId = rideResponse.data?.ride?.id;
+      if (targetRideId) {
+        activeRideIdRef.current = targetRideId;
+        setActiveRideId(targetRideId);
+      }
     }
 
-    // 3. Envia a solicitação de pagamento com o ID garantido
+    if (!targetRideId) {
+      throw new Error('Não foi possível gerar o registo da corrida. Tente novamente.');
+    }
+
+    // 2. Chama o pagamento Mobile Money associado ao ID retornado pela API
     const paymentResponse = await initiateMobileMoneyPayment({
       rideId: targetRideId,
       phone: cleanPhone,
@@ -1995,10 +2036,8 @@ if (resDb.status === 'fulfilled' && resDb.value?.data) {
     setIsPaymentModalVisible(false);
 
     if (paymentResponse?.success) {
-      Alert.alert(
-        'Solicitação Enviada 📲',
-        'Confirme a transação digitando o seu PIN no aviso USSD que apareceu no telemóvel.'
-      );
+      // 3. Coloca a tela no estado de Aguardando Pagamento (SMS Gateway)
+      setRideStatus('waiting_payment');
     } else {
       throw new Error(paymentResponse?.message || 'Falha ao processar pagamento.');
     }

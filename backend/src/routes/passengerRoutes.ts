@@ -13,7 +13,7 @@ import {
   googleSignInSchema,
   completeGoogleRegistrationSchema
 } from '../schemas/authSchemas';
-import { estimateRidePrice, getRideChatHistory, rateRide } from '../controllers/rideController';
+import { estimateRidePrice, getRideChatHistory, rateRide, requestRide } from '../controllers/rideController';
 
 const passengerRoutes = Router();
 const authController = new PassengerAuthController();
@@ -60,6 +60,10 @@ passengerRoutes.post('/emergency-contacts', (req, res) => authController.addEmer
 passengerRoutes.put('/payment-method', validate(updatePassengerPaymentSchema), (req, res) => authController.updatePaymentMethod(req, res));
 passengerRoutes.put('/device-token', validate(updateDeviceTokenSchema), (req, res) => authController.updateDeviceToken(req, res));
 passengerRoutes.post('/estimate', validate(estimateRideSchema), (req, res) => estimateRidePrice(req, res));
+
+// 🟢 ROTA DE CRIAÇÃO SÍNCRONA DE CORRIDA (Cria status PENDING_PAYMENT)
+passengerRoutes.post('/rides/request', (req, res) => requestRide(req, res));
+
 passengerRoutes.post('/rides/rate', (req, res) => rateRide(req, res));
 passengerRoutes.delete('/me', (req, res) => authController.deleteAccount(req, res));
 
