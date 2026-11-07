@@ -132,12 +132,27 @@ app.use(cors({
   optionsSuccessStatus: 200
 }));
 
+// --- CORREÇÃO AUTOMÁTICA PARA O GATEWAY SMS (Executa ANTES do express.json) ---
+app.use('/api/webhooks/sms-gateway', express.text({ type: '*/*' }), (req: Request, _res: Response, next: NextFunction) => {
+  if (typeof req.body === 'string') {
+    try {
+      req.body = JSON.parse(req.body);
+    } catch {
+      const querystring = require('querystring');
+      req.body = querystring.parse(req.body);
+    }
+  }
+  next();
+});
+
 app.use(express.json({
   limit: '10mb',
   verify: (req: Request, _res: Response, buf: Buffer) => {
     req.rawBody = buf;
   }
 }));
+
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
