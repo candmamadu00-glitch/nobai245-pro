@@ -3386,8 +3386,6 @@ return (
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
     </Modal>
-{/* MAPA E HEADER FICAM AQUI... */}
-
   {/* 🟢 CARD DE AGUARDANDO PAGAMENTO MOBILE MONEY (PREVINE TELA ESCURA VAZIA) */}
   {rideStatus === ('waiting_payment' as any) && (
     <View style={styles.waitingPaymentCard}>
@@ -5505,6 +5503,29 @@ voiceToggleHeaderBtn: {
     fontSize: 12,
     color: '#F59E0B', // Amarelo/Laranja chamativo e amigável
     textAlign: 'center',
+    fontWeight: '600',
+  },
+  // 🟢 ESTILOS ADICIONAIS DO CARD DE PAGAMENTO MOBILE MONEY
+  waitingPaymentBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+    marginBottom: 20,
+  },
+  cancelWaitingPaymentBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+  },
+  cancelWaitingPaymentText: {
+    color: '#EF4444',
+    fontSize: 14,
     fontWeight: '600',
   },
 });
