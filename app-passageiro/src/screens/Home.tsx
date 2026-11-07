@@ -350,7 +350,7 @@ export function Home() {
   const [activeRideId, setActiveRideId] = useState<string | null>(null);
   const [startOtp, setStartOtp] = useState<string>('');
   const [acceptedAt, setAcceptedAt] = useState<Date | null>(null);
-
+  const [isMapMoving, setIsMapMoving] = useState<boolean>(false);
   // 🟢 CHAT E REFERÊNCIA DE VISIBILIDADE (MOVIDO PARA O TOPO)
   const [isChatVisible, setIsChatVisible] = useState(false);
   const isChatVisibleRef = useRef(isChatVisible);
@@ -1019,9 +1019,16 @@ const syncPassengerActiveRide = useCallback(async () => {
     console.warn('⚠️ Erro ao sincronizar corrida ativa:', err);
   }
 }, [fetchMapboxRoute, fitMapBounds, extraStopCoords]);
-// 🟢 2. INICIAÇÃO DE PAGAMENTO E TRATAMENTO DE 409
 async function confirmPaymentAndRide() {
+  console.log('==================================================');
+  console.log('🚀 [MOBILE MONEY FRONTEND] Iniciando fluxo de pagamento');
+  console.log('👤 User ID:', user?.id);
+  console.log('📱 Telefone inserido:', paymentPhone);
+  console.log('💳 Método de pagamento:', paymentMethod);
+  console.log('💰 Preço estimado:', estimatedPrice);
+
   if (!user?.id) {
+    console.error('❌ [ERRO FRONTEND] Usuário não autenticado!');
     Alert.alert(t('error_title', 'Erro'), t('missing_user_data', 'Dados de usuário não encontrados.'));
     return;
   }
@@ -1031,8 +1038,11 @@ async function confirmPaymentAndRide() {
     cleanPhone = `245${cleanPhone}`;
   }
 
+  console.log('📱 Telefone formatado (E.164):', cleanPhone);
+
   const isGwPhoneValid = /^(245)?9[567]\d{7}$/.test(cleanPhone);
   if (!cleanPhone || !isGwPhoneValid) {
+    console.warn('⚠️ [VALIDAÇÃO] Número de telefone inválido para Guiné-Bissau:', cleanPhone);
     Alert.alert(
       t('error_title', 'Erro de Formato'), 
       'Por favor, informe um número válido de 9 dígitos da conta Mobile Money (ex: 95XXXXXXX ou 96XXXXXXX).'
@@ -1044,7 +1054,9 @@ async function confirmPaymentAndRide() {
 
   try {
     let targetRideId = activeRideIdRef.current || activeRideId;
+    console.log('🔑 RideID em memória antes do envio:', targetRideId);
 
+    // 1. Tenta criar a corrida se não existir ID ativo
     if (!targetRideId) {
       const mappedServiceType = serviceType === 'viagem' ? 'RIDE' : serviceType === 'entrega' ? 'DELIVERY' : 'RENTAL';
       const mappedVehicleType = 
@@ -1053,24 +1065,32 @@ async function confirmPaymentAndRide() {
         (vehicleType as string) === 'toca-toca' ? 'TOCA_TOCA' :
         vehicleType.toUpperCase();
 
+      const requestPayload = {
+        pickupLat: pickupCoords?.latitude,
+        pickupLng: pickupCoords?.longitude,
+        dropoffLat: dropoffCoords?.latitude || pickupCoords?.latitude,
+        dropoffLng: dropoffCoords?.longitude || pickupCoords?.longitude,
+        originAddress: pickupAddress,
+        destinationAddress: dropoffAddress,
+        serviceType: mappedServiceType,
+        vehicleType: mappedVehicleType,
+        paymentMethod,
+      };
+
+      console.log('📡 [POST /passengers/rides/request] Enviando payload:', requestPayload);
+
       try {
-        const rideResponse = await api.post('/passengers/rides/request', {
-          pickupLat: pickupCoords?.latitude,
-          pickupLng: pickupCoords?.longitude,
-          dropoffLat: dropoffCoords?.latitude || pickupCoords?.latitude,
-          dropoffLng: dropoffCoords?.longitude || pickupCoords?.longitude,
-          originAddress: pickupAddress,
-          destinationAddress: dropoffAddress,
-          serviceType: mappedServiceType,
-          vehicleType: mappedVehicleType,
-          paymentMethod,
-        });
+        const rideResponse = await api.post('/passengers/rides/request', requestPayload);
+        console.log('📥 [RESPOSTA CRIAR CORRIDA]:', rideResponse.data);
 
         targetRideId = rideResponse.data?.ride?.id || rideResponse.data?.id;
       } catch (createErr: any) {
-        // CAPTURA 409 (CORRIDA JÁ EXISTENTE NO BANCO)
+        console.warn('⚠️ [POST /passengers/rides/request] Erro recebido:', createErr?.response?.status, createErr?.response?.data);
+
+        // Trata Erro 409 (Corrida já em andamento)
         if (createErr?.response?.status === 409 && (createErr?.response?.data?.rideId || createErr?.response?.data?.ride?.id)) {
           targetRideId = createErr.response.data.rideId || createErr.response.data.ride.id;
+          console.log('🔄 [RECOVERY 409] Reaproveitando RideID existente:', targetRideId);
         } else {
           throw createErr;
         }
@@ -1083,30 +1103,45 @@ async function confirmPaymentAndRide() {
     }
 
     if (!targetRideId) {
-      throw new Error('Não foi possível registrar a corrida. Tente novamente.');
+      throw new Error('Não foi possível obter um ID de corrida válido.');
     }
 
-    await initiateMobileMoneyPayment({
+    // 2. Dispara o Pagamento Mobile Money
+    const paymentPayload = {
       rideId: targetRideId,
       phone: cleanPhone,
       amount: estimatedPrice || 1000,
       provider: paymentMethod as 'ORANGE_MONEY' | 'MTN_MOMO',
       passengerId: user.id,
-    });
+    };
+
+    console.log('📡 [POST /passengers/payments/initiate] Disparando cobrança:', paymentPayload);
+
+    const paymentResponse = await initiateMobileMoneyPayment(paymentPayload);
+    console.log('✅ [RESPOSTA MOBILE MONEY GATEWAY]:', paymentResponse);
 
     setIsProcessingPayment(false);
     setIsPaymentModalVisible(false);
 
-    // MATA A TELA ESCURA: Transita a UI para o card visual de aguardando PIN USSD
+    // 3. Atualiza estado para aguardando PIN
     setRideStatus('waiting_payment' as any);
     await persistRideState(targetRideId, 'waiting_payment' as any);
+    console.log('🎯 Status atualizado para waiting_payment com sucesso!');
 
   } catch (error: any) {
     setIsProcessingPayment(false);
+    console.error('❌ [ERRO COMPLETO PAGAMENTO]:', {
+      status: error?.response?.status,
+      data: error?.response?.data,
+      message: error?.message,
+    });
+
     Alert.alert(
       t('error_title', 'Aviso no Pagamento'), 
       error?.response?.data?.error || error?.response?.data?.message || error?.message || 'Não foi possível autorizar o débito. Tente novamente.'
     );
+  } finally {
+    console.log('==================================================');
   }
 }
 // 🟢 1. OUVINTE DE CANCELAMENTO EM TEMPO REAL NO PASSAGEIRO
@@ -5470,69 +5505,6 @@ voiceToggleHeaderBtn: {
     fontSize: 12,
     color: '#F59E0B', // Amarelo/Laranja chamativo e amigável
     textAlign: 'center',
-    fontWeight: '600',
-  },
-  // 🟢 ESTILOS DO CARD DE AGUARDANDO PAGAMENTO USSD
-  waitingPaymentCard: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: '#0F172A',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 24,
-    paddingTop: 28,
-    paddingBottom: Platform.OS === 'ios' ? 40 : 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-    zIndex: 999,
-  },
-  waitingPaymentTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  waitingPaymentSub: {
-    fontSize: 14,
-    color: '#94A3B8',
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 16,
-  },
-  waitingPaymentBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(245, 158, 11, 0.12)',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(245, 158, 11, 0.3)',
-    marginBottom: 20,
-  },
-  waitingPaymentNote: {
-    fontSize: 12,
-    color: '#F59E0B',
-    fontWeight: '600',
-    flexShrink: 1,
-  },
-  cancelWaitingPaymentBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-  },
-  cancelWaitingPaymentText: {
-    color: '#EF4444',
-    fontSize: 14,
     fontWeight: '600',
   },
 });
