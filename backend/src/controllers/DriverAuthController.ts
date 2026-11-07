@@ -778,40 +778,82 @@ export class DriverAuthController {
     }
   }
 
-  // ==========================================
-  // 🖼️ ATUALIZAR FOTO DE PERFIL
+ // ==========================================
+  // 🖼️ ATUALIZAR FOTO DE PERFIL DO MOTORISTA
   // ==========================================
   async updateProfilePicture(req: Request, res: Response): Promise<Response> {
+    console.log('==================================================');
+    console.log('📥 [DEBUG FOTO MOTORISTA] Requisição recebida');
+    console.log('🚕 Driver ID:', (req as any).user?.id);
+    console.log('📦 req.body:', req.body);
+    console.log('📄 req.file:', req.file);
+    console.log('📁 req.files:', req.files);
+    console.log('==================================================');
+
     try {
       const driverId = (req as any).user?.id;
-      if (!driverId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
+      if (!driverId) {
+        console.error('❌ [FOTO MOTORISTA] Não autorizado: Driver ID ausente');
+        return res.status(401).json({ success: false, error: 'Não autorizado.' });
+      }
 
+      // 1. Tenta capturar o arquivo vindo pelo Multer
       const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
       const file = req.file || 
                    files?.['profilePicture']?.[0] || 
+                   files?.['avatar']?.[0] || 
                    files?.['photo']?.[0] || 
                    files?.['file']?.[0] || 
                    files?.['image']?.[0];
 
-      if (!file) {
+      // 2. Tenta capturar do req.body (caso o app envie base64 ou URL)
+      const bodyImage = req.body?.profilePicture || req.body?.avatar || req.body?.photo || req.body?.image;
+
+      let newProfilePicture: string | null = null;
+
+      if (file) {
+        const baseUrl = process.env.APP_URL ? process.env.APP_URL.replace(/\/$/, '') : `${req.protocol}://${req.get('host')}`;
+        newProfilePicture = `${baseUrl}/uploads/${encodeURIComponent(file.filename)}`;
+        console.log('📸 [FOTO MOTORISTA] Imagem capturada via Upload:', newProfilePicture);
+      } else if (bodyImage) {
+        newProfilePicture = String(bodyImage);
+        console.log('🔗 [FOTO MOTORISTA] Imagem capturada via req.body:', newProfilePicture);
+      }
+
+      if (!newProfilePicture) {
+        console.warn('⚠️ [FOTO MOTORISTA] Nenhuma imagem válida encontrada na requisição.');
         return res.status(400).json({ success: false, error: 'Nenhuma imagem foi enviada.' });
       }
 
-      const baseUrl = process.env.APP_URL ? process.env.APP_URL.replace(/\/$/, '') : `${req.protocol}://${req.get('host')}`;
-      const newProfilePicture = `${baseUrl}/uploads/${encodeURIComponent(file.filename)}`;
-      
-      await prisma.driver.update({
+      const updatedDriver = await prisma.driver.update({
         where: { id: driverId },
-        data: { profilePicture: newProfilePicture }
+        data: { profilePicture: newProfilePicture },
+        select: {
+          id: true,
+          fullName: true,
+          email: true,
+          phone: true,
+          profilePicture: true,
+          vehicleType: true,
+          vehicleModel: true,
+          licensePlate: true,
+          walletBalance: true,
+          ratingAverage: true,
+          status: true,
+        }
       });
+
+      console.log('✅ [FOTO MOTORISTA] Atualizada com sucesso no banco!');
 
       return res.status(200).json({ 
         success: true, 
         message: 'Foto atualizada com sucesso', 
-        profilePicture: newProfilePicture 
+        profilePicture: newProfilePicture,
+        driver: updatedDriver,
+        user: updatedDriver
       });
     } catch (error: any) {
-      console.error('❌ [FOTO PERFIL]:', error?.message || error);
+      console.error('❌ [ERRO FOTO MOTORISTA]:', error?.message || error);
       return res.status(500).json({ success: false, error: 'Erro ao processar imagem.' });
     }
   }

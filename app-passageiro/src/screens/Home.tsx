@@ -2037,7 +2037,7 @@ if (resDb.status === 'fulfilled' && resDb.value?.data) {
 
     if (paymentResponse?.success) {
       // 3. Coloca a tela no estado de Aguardando Pagamento (SMS Gateway)
-      setRideStatus('waiting_payment');
+      setRideStatus('AWAITING_PAYMENT' as any);
     } else {
       throw new Error(paymentResponse?.message || 'Falha ao processar pagamento.');
     }
