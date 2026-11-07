@@ -831,7 +831,6 @@ export class DriverAuthController {
         select: {
           id: true,
           fullName: true,
-          email: true,
           phone: true,
           profilePicture: true,
           vehicleType: true,
@@ -843,7 +842,7 @@ export class DriverAuthController {
         }
       });
 
-      console.log('✅ [FOTO MOTORISTA] Atualizada com sucesso no banco!');
+      console.log('✅ [FOTO MOTORISTA] Foto gravada no banco com sucesso!');
 
       return res.status(200).json({ 
         success: true, 
