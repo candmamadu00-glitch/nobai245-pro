@@ -383,69 +383,78 @@ export class PassengerAuthController {
   }
 
   // 7. ATUALIZAR PERFIL
-  async updateProfile(req: Request, res: Response): Promise<Response> {
-    try {
-      const passengerId = (req as any).user?.id;
-      if (!passengerId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
+async updateProfile(req: Request, res: Response): Promise<Response> {
+  try {
+    const passengerId = (req as any).user?.id;
+    if (!passengerId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
 
-      const { fullName, email } = req.body;
-      const dataToUpdate: any = {};
+    const { fullName, email, profilePicture, avatar, photo, image } = req.body;
+    const dataToUpdate: any = {};
 
-      if (fullName) dataToUpdate.fullName = sanitizeText(String(fullName), 120);
-      
-      if (email !== undefined) {
-        const cleanEmail = email ? sanitizeText(String(email).toLowerCase(), 150) : null;
-        if (cleanEmail) {
-          const emailExists = await prisma.passenger.findUnique({ where: { email: cleanEmail } });
-          if (emailExists && emailExists.id !== passengerId) {
-            return res.status(409).json({ success: false, error: 'Este e-mail já está em uso por outra conta.' });
-          }
+    if (fullName) dataToUpdate.fullName = sanitizeText(String(fullName), 120);
+    
+    if (email !== undefined) {
+      const cleanEmail = email ? sanitizeText(String(email).toLowerCase(), 150) : null;
+      if (cleanEmail) {
+        const emailExists = await prisma.passenger.findUnique({ where: { email: cleanEmail } });
+        if (emailExists && emailExists.id !== passengerId) {
+          return res.status(409).json({ success: false, error: 'Este e-mail já está em uso por outra conta.' });
         }
-        dataToUpdate.email = cleanEmail;
       }
-
-      const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
-      const uploadedFile = req.file || files?.['profilePicture']?.[0] || files?.['avatar']?.[0] || files?.['photo']?.[0] || files?.['file']?.[0];
-
-      if (uploadedFile) {
-        const baseUrl = process.env.APP_URL ? process.env.APP_URL.replace(/\/$/, '') : `${req.protocol}://${req.get('host')}`;
-        const safeFilename = encodeURIComponent(uploadedFile.filename);
-        dataToUpdate.profilePicture = `${baseUrl}/uploads/${safeFilename}`;
-      }
-
-      const updatedPassenger = await prisma.passenger.update({
-        where: { id: passengerId },
-        data: dataToUpdate,
-        select: {
-          id: true,
-          fullName: true,
-          email: true,
-          phone: true,
-          profilePicture: true,
-          walletBalance: true,
-          ratingAverage: true,
-          paymentProvider: true,
-          paymentAccountNumber: true,
-        },
-      });
-
-      const responsePayload = {
-        ...updatedPassenger,
-        walletBalance: Number(updatedPassenger.walletBalance || 0),
-        ratingAverage: Number(updatedPassenger.ratingAverage || 5.0)
-      };
-
-      return res.status(200).json({
-        success: true,
-        message: 'Perfil atualizado com sucesso!',
-        passenger: responsePayload,
-        user: responsePayload,
-      });
-    } catch (error: any) {
-      console.error('❌ [ATUALIZAR PERFIL PASSAGEIRO]:', error?.message || error);
-      return res.status(500).json({ success: false, error: 'Erro ao atualizar dados do perfil.' });
+      dataToUpdate.email = cleanEmail;
     }
+
+    // 🟢 Captura o arquivo recebido pelo Multer
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+    const uploadedFile = req.file || 
+      files?.['profilePicture']?.[0] || 
+      files?.['avatar']?.[0] || 
+      files?.['photo']?.[0] || 
+      files?.['image']?.[0] || 
+      files?.['file']?.[0];
+
+    if (uploadedFile) {
+      const baseUrl = process.env.APP_URL ? process.env.APP_URL.replace(/\/$/, '') : `${req.protocol}://${req.get('host')}`;
+      const safeFilename = encodeURIComponent(uploadedFile.filename);
+      dataToUpdate.profilePicture = `${baseUrl}/uploads/${safeFilename}`;
+    } else if (profilePicture || avatar || photo || image) {
+      // 🟢 Suporte caso o frontend envie a URL/Base64 diretamente no corpo
+      dataToUpdate.profilePicture = profilePicture || avatar || photo || image;
+    }
+
+    const updatedPassenger = await prisma.passenger.update({
+      where: { id: passengerId },
+      data: dataToUpdate,
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        phone: true,
+        profilePicture: true,
+        walletBalance: true,
+        ratingAverage: true,
+        paymentProvider: true,
+        paymentAccountNumber: true,
+      },
+    });
+
+    const responsePayload = {
+      ...updatedPassenger,
+      walletBalance: Number(updatedPassenger.walletBalance || 0),
+      ratingAverage: Number(updatedPassenger.ratingAverage || 5.0)
+    };
+
+    return res.status(200).json({
+      success: true,
+      message: 'Perfil atualizado com sucesso!',
+      passenger: responsePayload,
+      user: responsePayload,
+    });
+  } catch (error: any) {
+    console.error('❌ [ATUALIZAR PERFIL PASSAGEIRO]:', error?.message || error);
+    return res.status(500).json({ success: false, error: 'Erro ao atualizar dados do perfil.' });
   }
+}
 
   // 8. EXTRATO FINANCEIRO
   async getFinance(req: Request, res: Response): Promise<Response> {

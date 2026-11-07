@@ -24,6 +24,7 @@ const handlePassengerAvatarUpload = upload.fields([
   { name: 'profilePicture', maxCount: 1 },
   { name: 'avatar', maxCount: 1 },
   { name: 'photo', maxCount: 1 },
+  { name: 'image', maxCount: 1 },
   { name: 'file', maxCount: 1 },
 ]);
 

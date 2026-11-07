@@ -1941,69 +1941,75 @@ if (resDb.status === 'fulfilled' && resDb.value?.data) {
 }
 
   async function confirmPaymentAndRide() {
-    if (!user?.id) {
-      Alert.alert(t('error_title', 'Erro'), t('missing_user_data', 'Dados de usuário não encontrados.'));
-      return;
-    }
+  if (!user?.id) {
+    Alert.alert(t('error_title', 'Erro'), t('missing_user_data', 'Dados de usuário não encontrados.'));
+    return;
+  }
 
-    let cleanPhone = paymentPhone.replace(/[^\d]/g, '');
-    if (cleanPhone.startsWith('245') && cleanPhone.length === 12) {
-      cleanPhone = cleanPhone.substring(3);
-    }
-    
-    const isGwPhoneValid = /^9[567]\d{7}$/.test(cleanPhone);
-    if (!cleanPhone || !isGwPhoneValid) {
-      Alert.alert(
-        t('error_title', 'Erro de Formato'), 
-        'Por favor, informe um número válido de 9 dígitos da conta Mobile Money (ex: 95XXXXXXX).'
-      );
-      return;
-    }
+  let cleanPhone = paymentPhone.replace(/[^\d]/g, '');
+  if (cleanPhone.startsWith('245') && cleanPhone.length === 12) {
+    cleanPhone = cleanPhone.substring(3);
+  }
+  
+  const isGwPhoneValid = /^9[567]\d{7}$/.test(cleanPhone);
+  if (!cleanPhone || !isGwPhoneValid) {
+    Alert.alert(
+      t('error_title', 'Erro de Formato'), 
+      'Por favor, informe um número válido de 9 dígitos da conta Mobile Money (ex: 95XXXXXXX).'
+    );
+    return;
+  }
 
+  setIsProcessingPayment(true);
+
+  try {
     // 1. Dispara a criação da corrida se ainda não tiver ID
-    if (!activeRideIdRef.current) {
+    if (!activeRideIdRef.current && !activeRideId) {
       executeRideRequest();
     }
 
-    setIsProcessingPayment(true);
-
-    try {
-      // 2. Aguarda até 3 segundos para que o socket receba 'ride:created' e defina activeRideIdRef.current
-      let targetRideId = activeRideIdRef.current || activeRideId;
-      let attempts = 0;
-      while (!targetRideId && attempts < 15) {
-        await new Promise(resolve => setTimeout(resolve, 200));
-        targetRideId = activeRideIdRef.current || activeRideId;
-        attempts++;
-      }
-
-      const paymentResponse = await initiateMobileMoneyPayment({
-        rideId: targetRideId || undefined,
-        phone: cleanPhone,
-        amount: estimatedPrice || 1000,
-        provider: paymentMethod as 'ORANGE_MONEY' | 'MTN_MOMO',
-        passengerId: user.id,
-      });
-
-      setIsProcessingPayment(false);
-      setIsPaymentModalVisible(false);
-
-      if (paymentResponse?.success) {
-        Alert.alert(
-          'Solicitação Enviada 📲',
-          'Confirme a transação digitando o seu PIN no aviso USSD que apareceu no telemóvel.'
-        );
-      } else {
-        throw new Error(paymentResponse?.message || 'Falha ao processar pagamento.');
-      }
-    } catch (error: any) {
-      setIsProcessingPayment(false);
-      Alert.alert(
-        t('error_title', 'Aviso no Pagamento'), 
-        error?.response?.data?.message || error?.message || 'Não foi possível autorizar o débito. Tente novamente.'
-      );
+    // 2. Aguarda até 6 segundos (30 tentativas x 200ms) a resposta do Socket
+    let targetRideId = activeRideIdRef.current || activeRideId;
+    let attempts = 0;
+    while (!targetRideId && attempts < 30) {
+      await new Promise(resolve => setTimeout(resolve, 200));
+      targetRideId = activeRideIdRef.current || activeRideId;
+      attempts++;
     }
+
+    // 🛑 BLOQUEIO DE SEGURANÇA: Se o servidor não criou a corrida a tempo, interrompe antes de chamar a API
+    if (!targetRideId) {
+      throw new Error('A solicitação da corrida ainda está a ser processada pelo servidor. Aguarde um instante e tente novamente.');
+    }
+
+    // 3. Envia a solicitação de pagamento com o ID garantido
+    const paymentResponse = await initiateMobileMoneyPayment({
+      rideId: targetRideId,
+      phone: cleanPhone,
+      amount: estimatedPrice || 1000,
+      provider: paymentMethod as 'ORANGE_MONEY' | 'MTN_MOMO',
+      passengerId: user.id,
+    });
+
+    setIsProcessingPayment(false);
+    setIsPaymentModalVisible(false);
+
+    if (paymentResponse?.success) {
+      Alert.alert(
+        'Solicitação Enviada 📲',
+        'Confirme a transação digitando o seu PIN no aviso USSD que apareceu no telemóvel.'
+      );
+    } else {
+      throw new Error(paymentResponse?.message || 'Falha ao processar pagamento.');
+    }
+  } catch (error: any) {
+    setIsProcessingPayment(false);
+    Alert.alert(
+      t('error_title', 'Aviso no Pagamento'), 
+      error?.response?.data?.message || error?.message || 'Não foi possível autorizar o débito. Tente novamente.'
+    );
   }
+}
 
   function executeRideRequest() {
   if (!user?.id || !pickupCoords) {

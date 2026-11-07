@@ -149,21 +149,19 @@ export function Profile() {
         const type = ext === 'png' ? 'image/png' : 'image/jpeg';
         const formattedUri = Platform.OS === 'android' ? selectedImage : selectedImage.replace('file://', '');
 
-        formData.append('profilePicture', {
+        const filePayload = {
           uri: formattedUri,
           name: filename,
           type,
-        } as any);
+        };
 
-        formData.append('avatar', {
-          uri: formattedUri,
-          name: filename,
-          type,
-        } as any);
+        formData.append('profilePicture', filePayload as any);
+        formData.append('avatar', filePayload as any);
       }
 
+      // 🟢 O Axios gera o boundary do multipart automaticamente quando não forçamos o Content-Type manual
       const response = await api.put('/passengers/me', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+        transformRequest: (data) => data,
       });
 
       const updatedPassenger = response.data?.passenger || response.data?.user;
