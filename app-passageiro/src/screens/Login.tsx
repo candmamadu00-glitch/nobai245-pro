@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { 
   View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, 
   ActivityIndicator, ScrollView, Platform, StatusBar,
-  Animated, Dimensions, TouchableWithoutFeedback, Keyboard
+  Animated, TouchableWithoutFeedback, Keyboard
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -34,7 +34,6 @@ export function Login() {
   const { t } = useTranslation();
 
   useEffect(() => {
-    // Escuta a abertura e fecho do teclado em tempo real no Android/iOS
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
 
@@ -96,13 +95,13 @@ export function Login() {
   }
 
   // ==========================================
-  // 🔐 RECUPERAÇÃO DE SENHA (POR TELEFONE/SMS)
+  // 🔐 RECUPERAÇÃO DE SENHA (CONECTADO À TELA FORGOTPASSWORD)
   // ==========================================
   async function handleRecoverPassword() {
     const cleanRecoveryPhone = recoveryPhone.replace(/[^0-9]/g, '');
 
-    if (!cleanRecoveryPhone) {
-      return Alert.alert(t('warning_title', 'Atenção ⚠️'), 'Informe o número de telefone cadastrado.');
+    if (cleanRecoveryPhone.length !== 9) {
+      return Alert.alert(t('warning_title', 'Atenção ⚠️'), 'Informe um número de telefone válido com 9 dígitos.');
     }
 
     setRecoveryLoading(true);
@@ -112,11 +111,20 @@ export function Login() {
       await api.post('/passengers/forgot-password', payload);
       
       Alert.alert(
-        t('success_title', 'Instruções Enviadas! ✉️'), 
-        'Enviamos o código de verificação por SMS para o seu número via Termii.'
+        t('success_title', 'Código Enviado! ✉️'), 
+        'Enviamos o código de verificação por SMS para o seu telefone.',
+        [
+          {
+            text: 'Digitar Código ➔',
+            onPress: () => {
+              setForgotModalVisible(false);
+              // Redireciona para a tela de recuperação passando o número preenchido
+              navigation.navigate('ForgotPassword', { initialPhone: cleanRecoveryPhone });
+              setRecoveryPhone('');
+            }
+          }
+        ]
       );
-      setForgotModalVisible(false);
-      setRecoveryPhone('');
     } catch (error: any) {
       const errorMessage = error.response?.data?.error || error.response?.data?.message || t('server_error_msg', 'Erro ao processar solicitação.');
       Alert.alert(t('error_title', 'Erro'), errorMessage);
@@ -236,7 +244,7 @@ export function Login() {
         </Animated.View>
       </ScrollView>
 
-      {/* 🔐 OVERLAY INLINE DE RECUPERAÇÃO COM ELEVAÇÃO EM TEMPO REAL PELO TECLADO */}
+      {/* 🔐 OVERLAY INLINE DE RECUPERAÇÃO */}
       {isForgotModalVisible && (
         <View style={styles.modalOverlay}>
           <TouchableWithoutFeedback onPress={() => { Keyboard.dismiss(); setForgotModalVisible(false); }}>
@@ -293,7 +301,7 @@ export function Login() {
                 {recoveryLoading ? (
                   <ActivityIndicator color="#0F172A" />
                 ) : (
-                  <Text style={styles.buttonText}>Enviar Código OTP</Text>
+                  <Text style={styles.buttonText}>Enviar Código SMS</Text>
                 )}
               </TouchableOpacity>
             </ScrollView>
@@ -335,7 +343,6 @@ const styles = StyleSheet.create({
   linkText: { color: '#94A3B8', fontSize: 15 },
   linkTextBold: { color: '#EAB308', fontWeight: '700' },
   
-  // 🔐 OVERLAY DE RECUPERAÇÃO ELEVADO
   modalOverlay: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(15, 23, 42, 0.85)', justifyContent: 'flex-end', zIndex: 999 },
   backdrop: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 },
   modalContent: { backgroundColor: '#1E293B', borderTopLeftRadius: 32, borderTopRightRadius: 32, padding: 24, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)' },
@@ -344,4 +351,4 @@ const styles = StyleSheet.create({
   closeModalButton: { padding: 8, backgroundColor: '#0F172A', borderRadius: 20 },
   modalTitle: { fontSize: 22, fontWeight: '800', color: '#FFFFFF', marginBottom: 6 },
   modalSubtitle: { fontSize: 13, color: '#94A3B8', lineHeight: 18, marginBottom: 18 },
-}); 
+});

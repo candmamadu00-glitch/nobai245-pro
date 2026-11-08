@@ -10,7 +10,7 @@ import { Socket } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
 import { AudioModule, RecordingPresets, useAudioRecorder, createAudioPlayer } from 'expo-audio';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system'; 
 import { api } from '../services/api';
 
 export interface ChatMessage {
@@ -565,10 +565,10 @@ export function ChatModal({
 const styles = StyleSheet.create({
   chatOverlay: {
     flex: 1,
-    justify: 'flex-end',
+    justifyContent: 'flex-end',
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(15, 23, 42, 0.4)', 
   },
   chatContainer: {
@@ -711,7 +711,7 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 24,
     alignItems: 'center',
-    justify: 'center',
+    justifyContent: 'center',
   },
   micButton: {
     backgroundColor: '#EF4444',
@@ -719,7 +719,7 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 24,
     alignItems: 'center',
-    justify: 'center',
+    justifyContent: 'center',
   },
   sendIcon: {
     marginLeft: 2, 
@@ -748,7 +748,7 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    justify: 'space-between',
+    justifyContent: 'space-between',
     backgroundColor: '#FEF2F2',
     borderWidth: 1,
     borderColor: '#FCA5A5',
@@ -781,6 +781,6 @@ const styles = StyleSheet.create({
     height: 36,
     borderRadius: 18,
     alignItems: 'center',
-    justify: 'center',
+    justifyContent: 'center',
   },
 });

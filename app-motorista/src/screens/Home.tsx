@@ -1420,7 +1420,7 @@ async function startTracking() {
   }
 
   // 2. 🟢 BLOQUEIO POR SALDO INSUFICIENTE NA CARTEIRA DIGITAL
-  const walletBalance = Number(driver?.walletBalance || 0);
+  const walletBalance = Number((driver as any)?.walletBalance || 0);
   if (walletBalance <= 0) {
     return Alert.alert(
       'Saldo Insuficiente na Carteira 💳',

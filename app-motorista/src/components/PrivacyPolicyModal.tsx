@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 
 interface PrivacyPolicyModalProps {
   visible: boolean;
@@ -17,6 +18,8 @@ interface PrivacyPolicyModalProps {
 }
 
 export function PrivacyPolicyModal({ visible, onClose }: PrivacyPolicyModalProps) {
+  const { t } = useTranslation();
+
   return (
     <Modal 
       visible={visible} 
@@ -25,9 +28,12 @@ export function PrivacyPolicyModal({ visible, onClose }: PrivacyPolicyModalProps
       onRequestClose={onClose}
     >
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-        {/* Header */}
+        {/* Cabeçalho */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Políticas de Privacidade</Text>
+          <View style={styles.headerTitleRow}>
+            <Ionicons name="shield-checkmark-sharp" size={22} color="#059669" style={{ marginRight: 8 }} />
+            <Text style={styles.headerTitle}>{t('driver_privacy_title', 'Termos de Privacidade do Motorista')}</Text>
+          </View>
           <TouchableOpacity 
             onPress={onClose} 
             style={styles.closeButton}
@@ -38,51 +44,75 @@ export function PrivacyPolicyModal({ visible, onClose }: PrivacyPolicyModalProps
           </TouchableOpacity>
         </View>
 
-        {/* Conteúdo */}
+        {/* Conteúdo Profissional para Motoristas */}
         <ScrollView 
           style={styles.content} 
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: 40 }}
         >
-          <Text style={styles.updateText}>Última atualização: Setembro de 2026</Text>
+          <View style={styles.updateBadge}>
+            <Ionicons name="document-text-outline" size={14} color="#059669" />
+            <Text style={styles.updateText}>{t('driver_privacy_date', 'Última atualização: Setembro de 2026 • Padrão Motorista Parceiro')}</Text>
+          </View>
 
-          <Text style={styles.sectionTitle}>1. Coleta de Dados Pessoais e Veiculares</Text>
-          <Text style={styles.paragraph}>
-            Para validar seu cadastro como motorista parceiro na Guiné-Bissau, o Nobai245 coleta: nome completo, telefone (+245), fotos de documentos oficiais (BI/Passaporte e Carta de Condução), além de dados e fotos do veículo (marca, modelo, cor e placa).
+          <Text style={styles.introParagraph}>
+            {t('driver_privacy_intro', 'Como motorista parceiro Nobai245 na Guiné-Bissau, a proteção dos seus dados de verificação e a segurança operacional do seu veículo são prioridades legais da nossa plataforma.')}
           </Text>
 
-          <Text style={styles.sectionTitle}>2. GPS e Rastreamento em Segundo Plano</Text>
+          {/* Seção 1 */}
+          <Text style={styles.sectionTitle}>{t('driver_sec1_title', '1. Coleta de Dados Pessoais, Documentos e Veículo')}</Text>
           <Text style={styles.paragraph}>
-            O aplicativo do motorista coleta dados de localização precisa (GPS) constantemente para garantir o funcionamento do serviço. O rastreamento ocorre:
+            {t('driver_sec1_desc', 'Para homologação do seu perfil profissional de transporte, o Nobai245 coleta e valida:')}
           </Text>
           <Text style={styles.bullet}>
-            • <Text style={styles.bold}>Em primeiro plano:</Text> Para exibir o mapa de navegação e as solicitações de viagem próximas a você.
+            • <Text style={styles.bold}>Documentos Oficiais:</Text> Foto da Carta de Condução (Habilitação), BI/Passaporte e Selfie de Identificação.
           </Text>
           <Text style={styles.bullet}>
-            • <Text style={styles.bold}>Em segundo plano (Background):</Text> <Text style={styles.highlightText}>O aplicativo continua coletando sua localização mesmo quando está fechado, minimizado ou não está em uso na tela principal.</Text> Isso é obrigatório para: enviar novas corridas baseadas na sua posição real, calcular a distância e o valor exato da tarifa, e garantir a sua segurança e a do passageiro durante o trajeto.
+            • <Text style={styles.bold}>Dados do Veículo:</Text> Placa, marca, modelo, cor, foto do veículo e categoria de transporte.
           </Text>
 
-          <Text style={styles.sectionTitle}>3. Repasses e Mobile Money</Text>
+          {/* Seção 2 */}
+          <Text style={styles.sectionTitle}>{t('driver_sec2_title', '2. GPS Contínuo e Rastreamento em Segundo Plano')}</Text>
           <Text style={styles.paragraph}>
-            Armazenamos seu número de telefone associado à sua carteira Orange Money ou MTN MoMo exclusivamente para automatizar o pagamento dos seus ganhos semanais/diários. Nenhuma senha ou PIN de transação é coletado ou armazenado pelo nosso sistema.
+            {t('driver_sec2_desc', 'O aplicativo do motorista exige a coleta contínua da sua localização GPS precisa:')}
+          </Text>
+          <Text style={styles.bullet}>
+            • <Text style={styles.bold}>Em Primeiro Plano:</Text> Para exibir solicitações de chamadas e rota de navegação em tempo real.
+          </Text>
+          <Text style={styles.bullet}>
+            • <Text style={styles.bold}>Em Segundo Plano (Background):</Text> <Text style={styles.highlightText}>O aplicativo coleta seu GPS mesmo quando minimizado, fechado ou com a tela bloqueada enquanto seu status for "ONLINE".</Text> Isso é indispensável para: enviar chamadas de passageiros próximos da sua posição real, calcular a distância e valores de tarifas com precisão, e alimentar o sistema de segurança central e botão SOS.
           </Text>
 
-          <Text style={styles.sectionTitle}>4. Compartilhamento de Informações</Text>
+          {/* Seção 3 */}
+          <Text style={styles.sectionTitle}>{t('driver_sec3_title', '3. Carteira Digital e Repasses Mobile Money')}</Text>
           <Text style={styles.paragraph}>
-            Quando você aceita uma corrida, compartilhamos com o passageiro solicitante: seu primeiro nome, sua foto de perfil, a placa e o modelo do seu veículo, e sua localização em tempo real até o fim da viagem. Isso garante a identificação e a segurança mútua da plataforma.
+            {t('driver_sec3_desc', 'Os dados da sua conta Orange Money e MTN MoMo são armazenados de forma estritamente criptografada para processar o crédito automático das suas corridas e a cobrança da taxa da plataforma. O Nobai245 jamais solicitará suas senhas de acesso bancário ou PINs de carteira.')}
           </Text>
 
-          <Text style={styles.sectionTitle}>5. Direitos e Exclusão de Conta</Text>
+          {/* Seção 4 */}
+          <Text style={styles.sectionTitle}>{t('driver_sec4_title', '4. Compartilhamento de Informações com Passageiros')}</Text>
           <Text style={styles.paragraph}>
-            Você tem total controle sobre seus dados. A qualquer momento, você pode solicitar a alteração de dados cadastrais ou a exclusão definitiva da sua conta e de todos os documentos enviados através da aba "Meu Perfil" no aplicativo.
+            {t('driver_sec4_desc', 'Ao aceitar uma solicitação de viagem, são compartilhados com o passageiro apenas: seu primeiro nome, sua foto de perfil, a placa e modelo do veículo, e a sua posição no mapa até o término do trajeto.')}
+          </Text>
+
+          {/* Seção 5 */}
+          <Text style={styles.sectionTitle}>{t('driver_sec5_title', '5. Segurança da Informação e Auditoria')}</Text>
+          <Text style={styles.paragraph}>
+            {t('driver_sec5_desc', 'Seus dados e documentos digitais são mantidos em servidores de alta segurança com criptografia de ponta a ponta, sendo acessados exclusivamente pela equipe de suporte para auditoria ou cumprimento de requisições judiciais legais.')}
+          </Text>
+
+          {/* Seção 6 */}
+          <Text style={styles.sectionTitle}>{t('driver_sec6_title', '6. Direitos do Motorista e Exclusão da Conta')}</Text>
+          <Text style={styles.paragraph}>
+            {t('driver_sec6_desc', 'Você pode atualizar seus dados cadastrais ou solicitar o encerramento do vínculo e exclusão total dos seus documentos a qualquer momento na aba "Perfil" > "Excluir Conta".')}
           </Text>
 
           <TouchableOpacity 
             style={styles.actionButton} 
             onPress={onClose}
-            activeOpacity={0.8}
+            activeOpacity={0.85}
           >
-            <Text style={styles.actionButtonText}>Compreendi e Concordo</Text>
+            <Text style={styles.actionButtonText}>{t('driver_agree_btn', 'Compreendi e Concordo')}</Text>
           </TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
@@ -106,30 +136,54 @@ const styles = StyleSheet.create({
     borderBottomColor: '#E5E7EB',
     ...Platform.select({
       ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4 },
-      android: { elevation: 2 },
+      android: { elevation: 3 },
     }),
   },
+  headerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
   headerTitle: { 
-    fontSize: 18, 
+    fontSize: 16, 
     fontWeight: '800', 
-    color: '#111827' 
+    color: '#111827',
+    flex: 1,
   },
   closeButton: { 
-    padding: 4 
+    padding: 6,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 20,
   },
   content: { 
     flex: 1, 
     paddingHorizontal: 20, 
-    paddingTop: 20 
+    paddingTop: 16 
+  },
+  updateBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginBottom: 16,
+    gap: 6,
   },
   updateText: { 
-    fontSize: 13, 
-    color: '#6B7280', 
-    marginBottom: 20,
-    fontWeight: '600'
+    fontSize: 12, 
+    color: '#047857', 
+    fontWeight: '700'
+  },
+  introParagraph: {
+    fontSize: 13,
+    color: '#4B5563',
+    lineHeight: 20,
+    marginBottom: 16,
+    fontStyle: 'italic',
   },
   sectionTitle: { 
-    fontSize: 16, 
+    fontSize: 15, 
     fontWeight: '800', 
     color: '#111827', 
     marginTop: 18, 
@@ -139,12 +193,12 @@ const styles = StyleSheet.create({
     fontSize: 14, 
     color: '#4B5563', 
     lineHeight: 22, 
-    marginBottom: 12 
+    marginBottom: 10 
   },
   bullet: { 
-    fontSize: 14, 
+    fontSize: 13, 
     color: '#4B5563', 
-    lineHeight: 22, 
+    lineHeight: 20, 
     marginLeft: 8, 
     marginBottom: 8 
   },
@@ -153,24 +207,26 @@ const styles = StyleSheet.create({
     color: '#111827' 
   },
   highlightText: {
-    color: '#059669', // Destaque verde para chamar a atenção dos revisores das lojas
-    fontWeight: '600'
+    color: '#059669',
+    fontWeight: '700'
   },
   actionButton: {
-    backgroundColor: '#059669', // Verde padrão do app motorista
+    backgroundColor: '#059669',
     paddingVertical: 16,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: 'center',
-    marginTop: 32,
-    elevation: 2,
+    marginTop: 28,
     shadowColor: '#059669',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
   },
   actionButtonText: { 
     color: '#FFFFFF', 
-    fontWeight: 'bold', 
-    fontSize: 16 
+    fontWeight: '900', 
+    fontSize: 15,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
 });
