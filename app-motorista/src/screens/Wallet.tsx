@@ -63,8 +63,8 @@ export function Wallet() {
   const dynamicTopPadding = Math.max((insets?.top || 0) + 6, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 6 : 14);
   const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 28 : 16);
 
-  const adminOrangeNumber = financeData?.adminOrangeNumber || '955000000';
-  const adminMtnNumber = financeData?.adminMtnNumber || '966000000';
+  const adminOrangeNumber = financeData?.adminOrangeNumber || '957330790';
+  const adminMtnNumber = financeData?.adminMtnNumber || '966626730';
 
   return (
     <View style={styles.container}>
