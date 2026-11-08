@@ -482,7 +482,7 @@ export class PassengerAuthController {
     }
   }
 
-  // 9. INICIAR COBRANÇA DIRETA DE CORRIDA NO MOBILE MONEY
+  // 9. RECARGA OU DEBÓSITO DE CARTEIRA VIA MOBILE MONEY
   async initiatePayment(req: Request, res: Response): Promise<Response> {
     try {
       const passengerId = (req as any).user?.id || (req as any).userId || (req as any).passenger?.id || req.body.passengerId;
@@ -498,7 +498,7 @@ export class PassengerAuthController {
 
       const cleanAmount = Math.round(Number(rawAmount));
       if (isNaN(cleanAmount) || cleanAmount <= 0) {
-        return res.status(400).json({ success: false, error: 'O valor da cobrança deve ser maior que zero XOF.' });
+        return res.status(400).json({ success: false, error: 'O valor deve ser maior que zero XOF.' });
       }
 
       const passenger = await prisma.passenger.findUnique({
@@ -524,29 +524,29 @@ export class PassengerAuthController {
         amount: cleanAmount,
         provider: selectedProvider,
         rideId,
-        isWalletRecharge: false
+        isWalletRecharge: true
       });
 
       if (!chargeResult.success) {
         return res.status(400).json({
           success: false,
           error: chargeResult.error || 'PROVIDER_REJECTED',
-          message: chargeResult.details || 'Não foi possível autorizar o débito. Verifique o saldo ou o número e tente novamente.'
+          message: chargeResult.details || 'Não foi possível autorizar a operação no Mobile Money.'
         });
       }
 
       return res.status(200).json({
         success: true,
         message: String(selectedProvider).toUpperCase().includes('ORANGE') 
-          ? 'Confirme o débito digitando seu PIN no celular ou acessando o link.' 
+          ? 'Confirme a transação digitando seu PIN no celular ou acessando o link.' 
           : 'Solicitação enviada ao seu telefone. Digite o seu PIN do Mobile Money.',
         paymentUrl: chargeResult.paymentUrl || null,
         providerRef: chargeResult.providerRef,
         status: chargeResult.status
       });
     } catch (error: any) {
-      console.error('❌ [ERRO COBRANÇA DIRETA PASSAGEIRO]:', error?.message || error);
-      return res.status(500).json({ success: false, error: 'Erro interno ao processar cobrança no Mobile Money.' });
+      console.error('❌ [ERRO RECARGA PASSAGEIRO]:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro interno ao processar transação no Mobile Money.' });
     }
   }
 
@@ -562,8 +562,8 @@ export class PassengerAuthController {
 
       const { paymentProvider, paymentAccountNumber } = req.body;
 
-      if (!paymentProvider || !['ORANGE_MONEY', 'MTN_MOMO'].includes(paymentProvider)) {
-        return res.status(400).json({ success: false, error: 'Selecione uma operadora válida (ORANGE_MONEY ou MTN_MOMO).' });
+      if (!paymentProvider || !['ORANGE_MONEY', 'MTN_MOMO', 'CASH'].includes(paymentProvider)) {
+        return res.status(400).json({ success: false, error: 'Selecione um método válido (CASH, ORANGE_MONEY ou MTN_MOMO).' });
       }
 
       const formattedAccount = paymentAccountNumber ? formatPhoneNumber(String(paymentAccountNumber)) : undefined;
@@ -814,7 +814,7 @@ export class PassengerAuthController {
       return res.status(500).json({ success: false, error: `Erro ao validar Google: ${error?.message || 'Falha no servidor'}` });
     }
   }
-  // 16. CONCLUIR REGISTRO GOOGLE
+ // 16. CONCLUIR REGISTRO GOOGLE
   async completeGoogleRegistration(req: Request, res: Response): Promise<Response> {
     try {
       const { email, fullName, phone, profilePicture, deviceToken } = req.body;

@@ -556,7 +556,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(15, 23, 42, 0.6)', 
   },
   chatContainer: {
@@ -695,7 +695,7 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 24,
     alignItems: 'center',
-    justify: 'center',
+    justifyContent: 'center',
   },
   micButton: {
     backgroundColor: '#EAB308',
@@ -703,7 +703,7 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 24,
     alignItems: 'center',
-    justify: 'center',
+    justifyContent: 'center',
   },
   sendIcon: {
     marginLeft: 2, 
@@ -732,7 +732,7 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    justify: 'space-between',
+    justifyContent: 'space-between',
     backgroundColor: '#450A0A',
     borderWidth: 1,
     borderColor: '#991B1B',
@@ -765,6 +765,6 @@ const styles = StyleSheet.create({
     height: 36,
     borderRadius: 18,
     alignItems: 'center',
-    justify: 'center',
+    justifyContent: 'center',
   },
 });

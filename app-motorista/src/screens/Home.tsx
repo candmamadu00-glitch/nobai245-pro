@@ -1410,111 +1410,131 @@ useEffect(() => {
     );
   } catch (e) {}
 };
-  async function startTracking() {
-    if (driver?.status !== 'APPROVED') {
-      return Alert.alert('Conta em Análise', 'Aguarde a aprovação dos documentos.');
-    }
+  // =======================================================
+// 🟢 FICAR ONLINE (VALIDAÇÃO DE APROVAÇÃO E SALDO DA CARTEIRA)
+// =======================================================
+async function startTracking() {
+  // 1. Validação de Aprovação do Cadastro
+  if (driver?.status !== 'APPROVED') {
+    return Alert.alert('Conta em Análise 📄', 'Aguarde a aprovação dos seus documentos para poder rodar.');
+  }
 
-    const foreground = await Location.requestForegroundPermissionsAsync();
-    if (foreground.status !== 'granted') {
-      return Alert.alert('Permissão Necessária', 'Permita acesso à localização.');
-    }
-
-    try {
-      const currentLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
-      
-      if (isMocked && !__DEV__) {
-        if (isMountedRef.current) setIsOnline(false);
-        return Alert.alert('GPS Simulado Detectado', 'Desative o aplicativo de GPS Falso.');
-      }
-
-      setIsOnline(true);
-      const activeSocket = await connectDriverSocket();
-
-      if (isMountedRef.current) {
-        setLocation(currentLoc);
-        if (cameraRef.current) {
-          cameraRef.current.setCamera({ 
-            centerCoordinate: [currentLoc.coords.longitude, currentLoc.coords.latitude], 
-            zoomLevel: 16 
-          });
+  // 2. 🟢 BLOQUEIO POR SALDO INSUFICIENTE NA CARTEIRA DIGITAL
+  const walletBalance = Number(driver?.walletBalance || 0);
+  if (walletBalance <= 0) {
+    return Alert.alert(
+      'Saldo Insuficiente na Carteira 💳',
+      `Seu saldo atual é de ${walletBalance.toLocaleString()} XOF. Para ficar online e receber corridas em dinheiro, recarregue sua carteira efetuando o pagamento para a conta administrativa.`,
+      [
+        { text: 'Entendido', style: 'cancel' },
+        { 
+          text: 'Ver Carteira', 
+          onPress: () => navigation.navigate('Wallet' as never) 
         }
-      }
+      ]
+    );
+  }
 
-      const socketToUse = (activeSocket as any) || socket;
-      if (socketToUse) {
-        const payload = {
-          driverId: driver?.id,
-          latitude: currentLoc.coords.latitude,
-          longitude: currentLoc.coords.longitude,
-          lat: currentLoc.coords.latitude,
-          lng: currentLoc.coords.longitude,
-          heading: currentLoc.coords.heading || 0,
-          speed: currentLoc.coords.speed || 0,
-        };
+  // 3. Validação de Permissões de Localização
+  const foreground = await Location.requestForegroundPermissionsAsync();
+  if (foreground.status !== 'granted') {
+    return Alert.alert('Permissão Necessária 📍', 'Permita o acesso à localização para ficar online.');
+  }
 
-        socketToUse.emit('driver:online', payload);
-        socketToUse.emit('driver:location_update', payload);
-      }
-
-      await startTrackingForState(rideState);
-    } catch (e) {
+  try {
+    const currentLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+    const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
+    
+    if (isMocked && !__DEV__) {
       if (isMountedRef.current) setIsOnline(false);
+      return Alert.alert('GPS Simulado Detectado 🚨', 'Desative o aplicativo de GPS Falso para continuar.');
     }
+
+    setIsOnline(true);
+    const activeSocket = await connectDriverSocket();
+
+    if (isMountedRef.current) {
+      setLocation(currentLoc);
+      if (cameraRef.current) {
+        cameraRef.current.setCamera({ 
+          centerCoordinate: [currentLoc.coords.longitude, currentLoc.coords.latitude], 
+          zoomLevel: 16 
+        });
+      }
+    }
+
+    const socketToUse = (activeSocket as any) || socket;
+    if (socketToUse) {
+      const payload = {
+        driverId: driver?.id,
+        latitude: currentLoc.coords.latitude,
+        longitude: currentLoc.coords.longitude,
+        lat: currentLoc.coords.latitude,
+        lng: currentLoc.coords.longitude,
+        heading: currentLoc.coords.heading || 0,
+        speed: currentLoc.coords.speed || 0,
+      };
+
+      socketToUse.emit('driver:online', payload);
+      socketToUse.emit('driver:location_update', payload);
+    }
+
+    await startTrackingForState(rideState);
+  } catch (e) {
+    if (isMountedRef.current) setIsOnline(false);
+  }
+}
+
+function stopTracking() {
+  if (driver?.id && socket && socket.connected) {
+    socket.timeout(2000).emit('driver:offline', { driverId: driver.id });
+  }
+  setIsOnline(false);
+  if (locationWatcherRef.current) { 
+    locationWatcherRef.current.remove(); 
+    locationWatcherRef.current = null; 
+  }
+  stopBackgroundLocation();
+}
+
+useEffect(() => { if (isOnline) startTrackingForState(rideState); }, [rideState, isOnline, isLowBattery]);
+
+function acceptRide(rideId: string, driverId: string, currentLat: number, currentLng: number) {
+  Vibration.cancel();
+  setIsLoading(true);
+
+  activeRideIdRef.current = rideId;
+  rideStateRef.current = 'accepted';
+  setQueuedOfferData(null);
+
+  if (!socket || !socket.connected) {
+    setIsLoading(false);
+    return Alert.alert('Sem Conexão', 'Sinal de internet insuficiente.');
   }
 
-  function stopTracking() {
-    if (driver?.id && socket && socket.connected) {
-      socket.timeout(2000).emit('driver:offline', { driverId: driver.id });
+  socket.timeout(8000).emit('driver:accept_ride', { 
+    rideId, driverId, driverLat: currentLat, driverLng: currentLng 
+  }, (err: any, response: any) => {
+    if (!isMountedRef.current) return;
+    setIsLoading(false);
+
+    if (err) return Alert.alert('Sinal Fraco 📡', 'Não foi possível confirmar a tempo.');
+    
+    if (response?.error) {
+      setQueuedOfferData(null); 
+      return Alert.alert('Aviso', response.message);
     }
-    setIsOnline(false);
-    if (locationWatcherRef.current) { 
-      locationWatcherRef.current.remove(); 
-      locationWatcherRef.current = null; 
+
+    setActiveRideId(rideId);
+    setRideState('accepted');
+    if (queuedOfferDataRef.current) {
+      setIncomingRide(queuedOfferDataRef.current);
+      persistActiveRideState(queuedOfferDataRef.current, 'accepted', rideId);
     }
-    stopBackgroundLocation();
-  }
-
-  useEffect(() => { if (isOnline) startTrackingForState(rideState); }, [rideState, isOnline, isLowBattery]);
-
-  function acceptRide(rideId: string, driverId: string, currentLat: number, currentLng: number) {
-    Vibration.cancel();
-    setIsLoading(true);
-
-    activeRideIdRef.current = rideId;
-    rideStateRef.current = 'accepted';
     setQueuedOfferData(null);
-
-    if (!socket || !socket.connected) {
-      setIsLoading(false);
-      return Alert.alert('Sem Conexão', 'Sinal de internet insuficiente.');
-    }
-
-    socket.timeout(8000).emit('driver:accept_ride', { 
-      rideId, driverId, driverLat: currentLat, driverLng: currentLng 
-    }, (err: any, response: any) => {
-      if (!isMountedRef.current) return;
-      setIsLoading(false);
-
-      if (err) return Alert.alert('Sinal Fraco 📡', 'Não foi possível confirmar a tempo.');
-      
-      if (response?.error) {
-        setQueuedOfferData(null); 
-        return Alert.alert('Aviso', response.message);
-      }
-
-      setActiveRideId(rideId);
-      setRideState('accepted');
-      if (queuedOfferDataRef.current) {
-        setIncomingRide(queuedOfferDataRef.current);
-        persistActiveRideState(queuedOfferDataRef.current, 'accepted', rideId);
-      }
-      setQueuedOfferData(null);
-      snapToState(true);
-    });
-  }
-
+    snapToState(true);
+  });
+}
   async function handleArrived() {
     if (!activeRideId) return;
     setIsLoading(true);

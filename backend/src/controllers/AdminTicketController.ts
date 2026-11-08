@@ -10,7 +10,7 @@ export class AdminTicketController {
       const skip = (page - 1) * limit;
 
       const { status, category, priority, search } = req.query;
-
+ 
       const where: any = {};
 
       if (status) where.status = status;

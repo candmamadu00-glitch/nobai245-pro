@@ -49,7 +49,7 @@ const sanitizeRide = <T extends Record<string, any>>(ride: T): T => {
   return sanitized;
 };
 
-const ALLOWED_PAYMENT_METHODS = ['ORANGE_MONEY', 'MTN_MOMO', 'CASH', 'WALLET'];
+const ALLOWED_PAYMENT_METHODS = ['CASH', 'ORANGE_MONEY', 'MTN_MOMO', 'WALLET'];
 const ALLOWED_VEHICLES = ['PARTICULAR', 'TAXI', 'MOTO', 'MOTO_CARRO', 'TOCA_TOCA'];
 
 // -----------------------------------------------------------------------------
@@ -143,7 +143,7 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
 
     const { 
       pickupLat, pickupLng, dropoffLat, dropoffLng, 
-      vehicleType, serviceType = 'RIDE', paymentMethod = 'ORANGE_MONEY',
+      vehicleType, serviceType = 'RIDE', paymentMethod = 'CASH',
       originAddress, destinationAddress, rentalRegion = 'BISSAU',
       idempotencyKey, stops = []
     } = req.body;
@@ -249,9 +249,11 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
         select: { id: true, lastLat: true, lastLng: true, deviceToken: true, walletBalance: true }
       });
 
+      // 🟢 VALIDAÇÃO DE SALDO MÍNIMO DO MOTORISTA (CASH ONLY)
+      // Bloqueia motoristas com carteira digital zero ou negativa (walletBalance <= 0)
       const nearbyDrivers = availableDrivers.filter(d => {
         if (d.lastLat === null || d.lastLng === null) return false;
-        if (paymentMethod === 'CASH' && Number(d.walletBalance || 0) < -2000) return false;
+        if (Number(d.walletBalance || 0) <= 0) return false;
         return calculateDistance(pLat, pLng, Number(d.lastLat), Number(d.lastLng)) <= 5.0;
       });
 
@@ -300,7 +302,7 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
               sendPushNotification(
                 driver.deviceToken!,
                 "🔔 Nova Corrida Próxima!",
-                `Ganho estimado: ${result.ride.priceXof} XOF (${paymentMethod === 'CASH' ? 'Dinheiro' : 'Mobile Money'}). Toque para aceitar.`,
+                `Valor total: ${result.ride.priceXof} XOF (Pagamento em Dinheiro). Toque para aceitar.`,
                 { ...payload, type: 'NEW_RIDE_REQUEST', rideId: result.ride.id },
                 PUSH_CHANNELS.NEW_RIDE_ALARM
               )
@@ -354,7 +356,7 @@ export const acceptRide = async (req: Request, res: Response): Promise<void> => 
     if (error?.message?.includes('INSUFFICIENT_DRIVER_BALANCE')) {
       res.status(402).json({ 
         success: false, 
-        error: 'Seu saldo de comissões está negativo. Recarregue via Mobile Money para aceitar corridas em dinheiro.' 
+        error: 'Seu saldo na carteira digital está zerado ou negativo. Recarregue para aceitar corridas.' 
       });
       return;
     }
@@ -474,7 +476,7 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
 
     const otpInput = finishOtp || otp;
     
-    // Finaliza a corrida no motor de regras (executa o split e o repasse automático ao motorista)
+    // Finaliza a corrida e deduz a comissão da plataforma da carteira digital do motorista
     const result: any = await (finalizeRideAndCharge as any)(
       currentRide.id, 
       Number(finalLat), 
@@ -522,7 +524,7 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
         sendPushNotification(
           currentRide.passenger.deviceToken,
           "🏁 Corrida Concluída!",
-          `Sua viagem foi finalizada. Valor total: ${result.fareXOF} XOF. Obrigado por viajar com o Nô Bai 245!`,
+          `Sua viagem foi finalizada. Pague ${result.fareXOF} XOF em dinheiro ao motorista. Obrigado por viajar com o Nô Bai 245!`,
           { type: 'RIDE_COMPLETED', rideId: currentRide.id, fareXOF: result.fareXOF },
           PUSH_CHANNELS.RIDE_UPDATE
         ).catch(pErr => console.warn('⚠️ [PUSH] Erro de notificação do passageiro:', pErr?.message || pErr));
@@ -581,18 +583,12 @@ export const cancelRide = async (req: Request, res: Response): Promise<void> => 
 
     const cleanReason = sanitizeText(reason || `Cancelado pelo ${userRole === 'DRIVER' ? 'motorista' : 'passageiro'}`, 200);
     
-    // 1. Atualiza status da corrida no banco de dados
     const cancelResult = await cancelRideLogic(currentRide.id, userId, userRole as any, cleanReason);
     
-    // 2. 💸 DISPARO DO ESTORNO AUTOMÁTICO SE HOUVER FUNDOS EM CAUÇÃO (MOBILE MONEY)
     const refundResult = await refundPassengerOnCancellation(currentRide.id, cleanReason).catch((refundErr: any) => {
-      console.error(`❌ [ESTORNO AUTOMÁTICO] Erro ao devolver dinheiro ao passageiro:`, refundErr?.message || refundErr);
+      console.error(`❌ [ESTORNO AUTOMÁTICO] Erro ao processar cancelamento:`, refundErr?.message || refundErr);
       return null;
     });
-
-    if (refundResult?.success) {
-      console.log(`💸 [ESTORNO SUCESSO] Valor devolvido com sucesso para o Mobile Money do passageiro!`);
-    }
 
     try {
       const io = getIo();

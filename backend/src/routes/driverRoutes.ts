@@ -23,7 +23,7 @@ import {
   uploadChatAudio, 
   rateRide 
 } from '../controllers/rideController';
-
+import { claimRechargeByTxId } from '../controllers/WalletController';
 const driverRoutes = Router();
 const authController = new DriverAuthController();
 const ticketController = new TicketController();
@@ -71,7 +71,7 @@ driverRoutes.delete('/delete-account', (req, res) => authController.deleteAccoun
 driverRoutes.get('/finance', (req, res) => authController.getFinance(req, res));
 driverRoutes.put('/payment-info', validate(updateDriverPaymentSchema), (req, res) => authController.updatePaymentInfo(req, res));
 driverRoutes.put('/device-token', validate(updateDeviceTokenSchema), (req, res) => authController.updateDeviceToken(req, res));
-
+driverRoutes.post('/wallet/claim', (req, res) => claimRechargeByTxId(req, res));
 // 🚗 Fluxo de Corridas
 driverRoutes.post('/rides/accept', (req, res) => acceptRide(req, res));
 driverRoutes.post('/rides/:rideId/arrived', (req, res) => driverArrived(req, res));

@@ -577,7 +577,7 @@ export function Home() {
     }
   }, [rideStatus, driverEta, driverInfo, dropoffAddress]);
 
-  isChatVisibleRef = useRef(isChatVisible);
+  isChatVisibleRef.current = isChatVisible;
   useEffect(() => {
     isChatVisibleRef.current = isChatVisible;
   }, [isChatVisible]);

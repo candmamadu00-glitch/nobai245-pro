@@ -515,6 +515,9 @@ export class DriverAuthController {
   // ==========================================
   // 💰 EXTRATO E FINANÇAS
   // ==========================================
+  // ==========================================
+  // 💰 EXTRATO E FINANÇAS
+  // ==========================================
   async getFinance(req: Request, res: Response): Promise<Response> {
     try {
       const driverId = (req as any).user?.id;
@@ -532,6 +535,9 @@ export class DriverAuthController {
       });
 
       if (!driver) return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
+
+      // 🔍 Busca os números oficiais da empresa na tabela SystemConfig
+      const sysConfig = await prisma.systemConfig.findFirst().catch(() => null);
 
       const rides = await prisma.ride.findMany({
         where: { driverId, status: { in: ['COMPLETED', 'CANCELLED'] } },
@@ -557,6 +563,8 @@ export class DriverAuthController {
         mobileMoneyAccount: driver.paymentAccountNumber,
         orangeNumber: driver.orangeNumber,
         mtnNumber: driver.mtnNumber,
+        adminOrangeNumber: sysConfig?.adminOrangeNumber || '955000000',
+        adminMtnNumber: sysConfig?.adminMtnNumber || '966000000',
         totalRides: rides.filter(r => r.status === 'COMPLETED').length,
         history: rides.map(r => ({
           ...r,

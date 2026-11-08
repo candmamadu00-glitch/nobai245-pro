@@ -1,11 +1,13 @@
 import { Request, Response } from 'express';
 import crypto from 'crypto';
-import { prisma } from '../lib/prisma';
+import { prisma } from '../config/prisma';
 import { TransactionType, TransactionStatus } from '@prisma/client';
 
 export class AdminFinanceController {
-  
-  // 💰 1. DASHBOARD FINANCEIRO: Consultas Paralelas e Otimizadas
+
+  // ==========================================
+  // 💰 1. DASHBOARD FINANCEIRO (CONSULTAS PARALELAS)
+  // ==========================================
   async getDashboard(req: Request, res: Response): Promise<Response> {
     try {
       const [transactions, commissionAggregation, pendingWithdrawals] = await Promise.all([
@@ -19,43 +21,57 @@ export class AdminFinanceController {
         }),
         prisma.transaction.aggregate({
           _sum: { amount: true },
-          where: { type: TransactionType.COMMISSION_FEE, status: TransactionStatus.COMPLETED }
+          where: { 
+            type: TransactionType.COMMISSION_FEE, 
+            status: TransactionStatus.COMPLETED 
+          }
         }),
         prisma.transaction.aggregate({
           _sum: { amount: true },
-          where: { type: TransactionType.DRIVER_PAYOUT, status: TransactionStatus.PENDING }
+          where: { 
+            type: TransactionType.DRIVER_PAYOUT, 
+            status: TransactionStatus.PENDING 
+          }
         })
       ]);
 
       const totalCollected = Number(commissionAggregation._sum.amount || 0);
       const totalPending = Number(pendingWithdrawals._sum.amount || 0);
 
+      const formattedTransactions = transactions.map(t => ({
+        ...t,
+        amount: Number(t.amount || 0)
+      }));
+
       return res.status(200).json({
+        success: true,
         wallet: { 
           balance: totalCollected, 
           totalCollected, 
           pendingWithdrawalsAmount: totalPending 
         },
-        transactions
+        transactions: formattedTransactions
       });
     } catch (error) {
-      console.error('❌ [FINANCE DASHBOARD CRITICAL ERROR]:', error);
-      return res.status(500).json({ error: 'Falha interna ao processar métricas financeiras.' });
+      console.error('❌ [FINANCE DASHBOARD ERROR]:', error);
+      return res.status(500).json({ success: false, error: 'Falha interna ao processar métricas financeiras.' });
     }
   }
 
-  // 💸 2. RECARGA MANUAL: Transações Atômicas (ACID)
+  // ==========================================
+  // 💸 2. RECARGA MANUAL EM DINHEIRO (ACID)
+  // ==========================================
   async manualRecharge(req: Request, res: Response): Promise<Response> {
     try {
       const { userType, userId, amount, reason, description } = req.body;
-      const numericAmount = Number(amount);
+      const numericAmount = Math.round(Number(amount));
 
       if (!userId || isNaN(numericAmount) || numericAmount <= 0) {
-        return res.status(400).json({ error: 'Payload inválido: ID ausente ou valor incorreto.' });
+        return res.status(400).json({ success: false, error: 'Payload inválido: ID ausente ou valor incorreto.' });
       }
 
       if (!['PASSENGER', 'DRIVER'].includes(userType)) {
-        return res.status(400).json({ error: 'Tipo de usuário não reconhecido pelo sistema.' });
+        return res.status(400).json({ success: false, error: 'Tipo de usuário não reconhecido pelo sistema.' });
       }
 
       const targetPassengerId = userType === 'PASSENGER' ? String(userId) : null;
@@ -90,19 +106,25 @@ export class AdminFinanceController {
       });
 
       return res.status(200).json({ 
+        success: true,
         message: 'Ativo financeiro creditado com sucesso.', 
-        transaction: newTx 
+        transaction: {
+          ...newTx,
+          amount: Number(newTx.amount || 0)
+        } 
       });
     } catch (error: any) {
       if (error.message === 'USER_NOT_FOUND') {
-        return res.status(404).json({ error: 'Usuário não localizado na base de dados.' });
+        return res.status(404).json({ success: false, error: 'Usuário não localizado na base de dados.' });
       }
       console.error('❌ [FINANCE RECHARGE ERROR]:', error);
-      return res.status(500).json({ error: 'Erro de processamento no motor financeiro.' });
+      return res.status(500).json({ success: false, error: 'Erro de processamento no motor financeiro.' });
     }
   }
 
-  // 📊 3. EXPORTAÇÃO: Otimizada para baixo consumo de memória
+  // ==========================================
+  // 📊 3. EXPORTAÇÃO DE RELATÓRIO DE TRANSAÇÕES
+  // ==========================================
   async exportTransactions(req: Request, res: Response): Promise<Response> {
     try {
       const { startDate, endDate } = req.query;
@@ -127,20 +149,33 @@ export class AdminFinanceController {
           amount: true,
           status: true,
           paymentMethod: true,
+          reference: true,
+          description: true,
           createdAt: true,
-          passenger: { select: { fullName: true } },
-          driver: { select: { fullName: true } }
+          passenger: { select: { fullName: true, phone: true } },
+          driver: { select: { fullName: true, phone: true } }
         }
       });
 
-      return res.status(200).json(transactions);
+      const formatted = transactions.map(t => ({
+        ...t,
+        amount: Number(t.amount || 0)
+      }));
+
+      return res.status(200).json({
+        success: true,
+        totalRecords: formatted.length,
+        transactions: formatted
+      });
     } catch (error) {
       console.error('❌ [FINANCE EXPORT ERROR]:', error);
-      return res.status(500).json({ error: 'Falha ao processar o relatório de exportação.' });
+      return res.status(500).json({ success: false, error: 'Falha ao processar o relatório de exportação.' });
     }
   }
 
-  // 🔄 4. TENTAR NOVAMENTE: Reprocessar falhas de saque/pagamento
+  // ==========================================
+  // 🔄 4. TENTAR NOVAMENTE TRANSAÇÃO COM FALHA
+  // ==========================================
   async retryTransaction(req: Request, res: Response): Promise<Response> {
     try {
       const { id } = req.params;
@@ -150,11 +185,11 @@ export class AdminFinanceController {
       });
 
       if (!transaction) {
-        return res.status(404).json({ error: 'Transação não encontrada.' });
+        return res.status(404).json({ success: false, error: 'Transação não encontrada.' });
       }
 
-      if (transaction.status !== TransactionStatus.FAILED && transaction.status !== TransactionStatus.FAILED_MANUAL_REVIEW) {
-        return res.status(400).json({ error: 'Apenas transações com falha podem ser reprocessadas.' });
+      if (transaction.status !== TransactionStatus.FAILED && (transaction.status as string) !== 'FAILED_MANUAL_REVIEW') {
+        return res.status(400).json({ success: false, error: 'Apenas transações com falha podem ser reprocessadas.' });
       }
 
       const updatedTx = await prisma.transaction.update({
@@ -166,14 +201,25 @@ export class AdminFinanceController {
       });
 
       return res.status(200).json({
+        success: true,
         message: 'Transação reenviada para a fila de processamento.',
-        transaction: updatedTx
+        transaction: {
+          ...updatedTx,
+          amount: Number(updatedTx.amount || 0)
+        }
       });
     } catch (error) {
       console.error('❌ [FINANCE RETRY ERROR]:', error);
-      return res.status(500).json({ error: 'Falha ao tentar reenviar a transação.' });
+      return res.status(500).json({ success: false, error: 'Falha ao tentar reenviar a transação.' });
     }
   }
 }
 
-export default new AdminFinanceController();
+const adminFinanceController = new AdminFinanceController();
+
+export const getDashboard = (req: Request, res: Response) => adminFinanceController.getDashboard(req, res);
+export const manualRecharge = (req: Request, res: Response) => adminFinanceController.manualRecharge(req, res);
+export const exportTransactions = (req: Request, res: Response) => adminFinanceController.exportTransactions(req, res);
+export const retryTransaction = (req: Request, res: Response) => adminFinanceController.retryTransaction(req, res);
+
+export default adminFinanceController;

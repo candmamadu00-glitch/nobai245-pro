@@ -30,20 +30,16 @@ import { api } from '../services/api';
 // Componentes
 import { PrivacyPolicyModal } from '../components/PrivacyPolicyModal';
 
-// Tipagem de Rotas
 type RootStackParamList = any;
 
-// Configuração segura do URL da API
 const API_URL = process.env.EXPO_PUBLIC_API_URL || (__DEV__ ? 'http://192.168.18.29:3333' : '');
 
-// Estrutura do objeto de idioma
 export interface LanguageOption {
   code: string;
   name: string;
   flag: string;
 }
 
-// LISTA DE IDIOMAS SUPORTADOS (Imutável)
 const LANGUAGES: readonly LanguageOption[] = [
   { code: 'pt', name: 'Português', flag: '🇵🇹' },
   { code: 'en', name: 'English', flag: '🇬🇧' },
@@ -56,7 +52,6 @@ const LANGUAGES: readonly LanguageOption[] = [
 
 type ProfileScreenNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
-// --- INTERFACES DE DADOS ---
 export interface FinanceData {
   walletBalance: number;
   totalEarned: number;
@@ -74,7 +69,6 @@ export interface UpdateFormState {
   newDocumentNumber: string;
 }
 
-// --- DECLARAÇÃO DO COMPONENTE ---
 export function Profile() {
   const { t, i18n } = useTranslation();
   const { driver, signOut, refreshDriverProfile } = useAuth();
@@ -111,7 +105,6 @@ export function Profile() {
     newDocumentNumber: (driver as any)?.documentNumber || '',
   });
 
-  // --- EFEITOS E CARREGAMENTO INICIAL ---
   useEffect(() => {
     loadInitialData();
   }, []);
@@ -142,7 +135,6 @@ export function Profile() {
     }
   }
 
-  // --- UTILITÁRIOS DE FORMATAÇÃO ---
   function formatMoney(value?: number | string): string {
     if (value === null || value === undefined) return '0';
     const num = Number(value);
@@ -155,14 +147,12 @@ export function Profile() {
     setMmNumber(numericOnly);
   }
 
-  // --- ABRIR EDIÇÃO DE PAGAMENTO ---
   function handleOpenEdit() {
     setIsEditingPayment(true);
     setMmProvider('ORANGE');
     setMmNumber(financeData?.orangeNumber || financeData?.mobileMoneyAccount || '');
   }
 
-  // --- ALTERAR OPERADORA (BLOQUEIO AMIGÁVEL DA MTN) ---
   function handleProviderChange(provider: 'ORANGE' | 'MTN') {
     if (provider === 'MTN') {
       Alert.alert(
@@ -175,7 +165,6 @@ export function Profile() {
     setMmNumber(financeData?.orangeNumber || financeData?.mobileMoneyAccount || '');
   }
 
-  // --- UPLOAD DA FOTO DE PERFIL ---
   async function handlePickAndUploadImage() {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
@@ -184,10 +173,10 @@ export function Profile() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 0.1,
+      quality: 0.5,
       base64: false,
     });
 
@@ -224,7 +213,6 @@ export function Profile() {
     }
   }
 
-  // --- SALVAR INFORMAÇÕES DE PAGAMENTO ---
   async function handleSavePaymentInfo() {
     if (mmProvider === 'MTN') {
       return Alert.alert(
@@ -270,7 +258,6 @@ export function Profile() {
     }
   }
 
-  // --- SOLICITAÇÃO DE ALTERAÇÃO DE DADOS ---
   function openUpdateModal() {
     setUpdateData({
       newFullName: driver?.fullName || '',
@@ -322,7 +309,6 @@ export function Profile() {
     }
   }
 
-  // --- EXCLUSÃO DE CONTA ---
   async function handleDeleteAccount() {
     Alert.alert(
       'Excluir Conta Permanentemente',

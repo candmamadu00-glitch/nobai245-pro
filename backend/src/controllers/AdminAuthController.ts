@@ -12,7 +12,10 @@ if (!JWT_SECRET) {
 }
 
 export class AdminAuthController {
-  // 🗑️ Soft/Hard Delete de Motorista pelo Admin com Liberação de Credenciais
+
+  // ==========================================
+  // 🗑️ EXCLUSÃO / DESATIVAÇÃO DE MOTORISTA
+  // ==========================================
   async deleteDriver(req: Request, res: Response): Promise<Response> {
     try {
       const { driverId } = req.params;
@@ -29,10 +32,8 @@ export class AdminAuthController {
       const hasHistory = driver.rides.length > 0 || driver.transactions.length > 0;
 
       if (!hasHistory) {
-        // Sem histórico: Remoção definitiva da base de dados
         await prisma.driver.delete({ where: { id: String(driverId) } });
       } else {
-        // Com histórico: Anonimiza dados únicos para liberar telefone, placa e documento
         const stamp = Date.now().toString().slice(-8);
         await prisma.driver.update({
           where: { id: String(driverId) },
@@ -61,7 +62,9 @@ export class AdminAuthController {
     }
   }
 
-  // 🗑️ Soft/Hard Delete de Passageiro pelo Admin com Liberação de Telefone
+  // ==========================================
+  // 🗑️ EXCLUSÃO / DESATIVAÇÃO DE PASSAGEIRO
+  // ==========================================
   async deletePassenger(req: Request, res: Response): Promise<Response> {
     try {
       const { passengerId } = req.params;
@@ -78,10 +81,8 @@ export class AdminAuthController {
       const hasHistory = passenger.rides.length > 0 || passenger.transactions.length > 0;
 
       if (!hasHistory) {
-        // Sem histórico: Remoção definitiva da base de dados
         await prisma.passenger.delete({ where: { id: String(passengerId) } });
       } else {
-        // Com histórico: Anonimiza telefone e e-mail para liberar cadastro futuro
         const stamp = Date.now().toString().slice(-8);
         const rand = Math.floor(100 + Math.random() * 900);
         await prisma.passenger.update({
@@ -107,7 +108,9 @@ export class AdminAuthController {
     }
   }
 
-  // 📋 Listar solicitações de exclusão enviadas pelos Apps
+  // ==========================================
+  // 📋 LISTAR SOLICITAÇÕES DE EXCLUSÃO DE CONTA
+  // ==========================================
   async listAccountDeletionRequests(req: Request, res: Response): Promise<Response> {
     try {
       const requests = await prisma.accountDeletionRequest.findMany({
@@ -125,7 +128,9 @@ export class AdminAuthController {
     }
   }
 
-  // ⚙️ Aprovar ou Rejeitar pedido de exclusão enviado pelo App
+  // ==========================================
+  // ⚙️ APROVAR OU REJEITAR PEDIDO DE EXCLUSÃO
+  // ==========================================
   async reviewAccountDeletionRequest(req: Request, res: Response): Promise<Response> {
     try {
       const { requestId } = req.params;
@@ -212,7 +217,9 @@ export class AdminAuthController {
     }
   }
 
-  // 🛡️ 1. REGISTRO DO PRIMEIRO ADMINISTRADOR
+  // ==========================================
+  // 🛡️ REGISTRO DO SUPER ADMIN INICIAL
+  // ==========================================
   async register(req: Request, res: Response): Promise<Response> {
     try {
       const { name, email, password } = req.body;
@@ -263,7 +270,9 @@ export class AdminAuthController {
     }
   }
 
-  // 🔐 2. LOGIN DE ADMINISTRADOR
+  // ==========================================
+  // 🔐 LOGIN DE ADMINISTRADOR
+  // ==========================================
   async login(req: Request, res: Response): Promise<Response> {
     try {
       const { email, password } = req.body;
@@ -305,7 +314,9 @@ export class AdminAuthController {
     }
   }
 
-  // 📋 3. LISTAR MOTORISTAS (FILTRANDO CONTAS EXCLUÍDAS)
+  // ==========================================
+  // 📋 LISTAR MOTORISTAS
+  // ==========================================
   async listDrivers(req: Request, res: Response): Promise<Response> {
     try {
       const { status } = req.query;
@@ -365,7 +376,9 @@ export class AdminAuthController {
     }
   }
 
-  // 💰 ATUALIZAR DADOS DE PAGAMENTO DO MOTORISTA
+  // ==========================================
+  // 💰 ATUALIZAR PAGAMENTO DO MOTORISTA
+  // ==========================================
   async updateDriverPaymentInfo(req: Request, res: Response): Promise<Response> {
     try {
       const { driverId } = req.params;
@@ -377,7 +390,7 @@ export class AdminAuthController {
 
       const cleanNumber = String(mobileMoneyNumber).replace(/\D/g, '');
       if (cleanNumber.length !== 9) {
-        return res.status(400).json({ error: 'O número deve ter exatamente 9 dígitos.' });
+        return res.status(400).json({ error: 'O número deve ter exatamente 9 dígitos (ex: 955800991).' });
       }
 
       const prefix = cleanNumber.substring(0, 2);
@@ -386,13 +399,13 @@ export class AdminAuthController {
       let updateData: any = { paymentAccountNumber: formattedPhone };
 
       if (providerUpper.includes('ORANGE')) {
-        if (prefix !== '95') return res.status(400).json({ error: 'Números da Orange devem começar com 95.' });
+        if (prefix !== '95') return res.status(400).json({ error: 'Números da Orange Money devem começar com 95.' });
         updateData.orangeNumber = formattedPhone;
       } else if (providerUpper.includes('MTN')) {
-        if (!['96', '97'].includes(prefix)) return res.status(400).json({ error: 'Números da MTN devem começar com 96 ou 97.' });
+        if (!['96', '97'].includes(prefix)) return res.status(400).json({ error: 'Números da MTN Mobile Money devem começar com 96 ou 97.' });
         updateData.mtnNumber = formattedPhone;
       } else {
-        return res.status(400).json({ error: 'Operadora inválida.' });
+        return res.status(400).json({ error: 'Operadora inválida. Utilize Orange ou MTN.' });
       }
 
       const updatedDriver = await prisma.driver.update({
@@ -410,7 +423,9 @@ export class AdminAuthController {
     }
   }
 
-  // 🛡️ 4. APROVAR MOTORISTA
+  // ==========================================
+  // 🛡️ APROVAR CADASTRO DO MOTORISTA
+  // ==========================================
   async approveDriver(req: Request, res: Response): Promise<Response> {
     try {
       const { driverId } = req.params;
@@ -435,7 +450,9 @@ export class AdminAuthController {
     }
   }
 
-  // 📋 5. LISTAR PASSAGEIROS (FILTRANDO CONTAS EXCLUÍDAS)
+  // ==========================================
+  // 📋 LISTAR PASSAGEIROS
+  // ==========================================
   async listPassengers(req: Request, res: Response): Promise<Response> {
     try {
       const passengers = await prisma.passenger.findMany({
@@ -474,7 +491,9 @@ export class AdminAuthController {
     }
   }
 
-  // 🚫 6. ATUALIZAR STATUS DO PASSAGEIRO
+  // ==========================================
+  // 🚫 ATUALIZAR STATUS DO PASSAGEIRO
+  // ==========================================
   async togglePassengerStatus(req: Request, res: Response): Promise<Response> {
     try {
       const { passengerId } = req.params;
@@ -499,7 +518,9 @@ export class AdminAuthController {
     }
   }
 
-  // 🚫 7. ATUALIZAR STATUS DO MOTORISTA
+  // ==========================================
+  // 🚫 ATUALIZAR STATUS DO MOTORISTA
+  // ==========================================
   async toggleDriverStatus(req: Request, res: Response): Promise<Response> {
     try {
       const { driverId } = req.params;
@@ -524,7 +545,9 @@ export class AdminAuthController {
     }
   }
 
-  // 💰 8. DASHBOARD FINANCEIRO
+  // ==========================================
+  // 💰 DASHBOARD FINANCEIRO DA CENTRAL
+  // ==========================================
   async getFinancialDashboard(req: Request, res: Response): Promise<Response> {
     try {
       const mainWallet = await prisma.companyWallet.findFirst();
@@ -554,7 +577,9 @@ export class AdminAuthController {
     }
   }
 
-  // 🗺️ 9. LISTAR TODAS AS CORRIDAS
+  // ==========================================
+  // 🗺️ LISTAR TODAS AS CORRIDAS
+  // ==========================================
   async listAllRides(req: Request, res: Response): Promise<Response> {
     try {
       const rides = await prisma.ride.findMany({
@@ -595,7 +620,9 @@ export class AdminAuthController {
     }
   }
 
-  // 💰 10. RECARGA MANUAL
+  // ==========================================
+  // 💰 RECARGA MANUAL DE CARTEIRA
+  // ==========================================
   async manualRecharge(req: Request, res: Response): Promise<Response> {
     try {
       const { userType, userId, amount } = req.body;
@@ -654,7 +681,9 @@ export class AdminAuthController {
     }
   }
 
-  // 🛡️ 11. LISTAR SOLICITAÇÕES PENDENTES DE MOTORISTAS
+  // ==========================================
+  // 🛡️ SOLICITAÇÕES DE ALTERAÇÃO DE DADOS
+  // ==========================================
   async listDriverChangeRequests(req: Request, res: Response): Promise<Response> {
     try {
       const requests = await prisma.driverChangeRequest.findMany({
@@ -674,7 +703,9 @@ export class AdminAuthController {
     }
   }
 
-  // 👥 13. LISTAR ADMINISTRADORES
+  // ==========================================
+  // 👥 LISTAR EQUIPE DE ADMINISTRADORES
+  // ==========================================
   async listAdmins(req: Request, res: Response): Promise<Response> {
     try {
       const admins = await prisma.admin.findMany({
@@ -696,7 +727,9 @@ export class AdminAuthController {
     }
   }
 
-  // 👥 14. CRIAR NOVO ADMINISTRADOR/OPERADOR
+  // ==========================================
+  // 👥 CRIAR NOVO ADMINISTRADOR / OPERADOR
+  // ==========================================
   async createAdmin(req: Request, res: Response): Promise<Response> {
     try {
       const { name, email, password, role } = req.body;
@@ -745,7 +778,9 @@ export class AdminAuthController {
     }
   }
 
-  // 👥 15. ATIVAR/DESATIVAR ADMINISTRADOR
+  // ==========================================
+  // 👥 ATIVAR / DESATIVAR ADMINISTRADOR
+  // ==========================================
   async toggleAdminStatus(req: Request, res: Response): Promise<Response> {
     try {
       const { adminId } = req.params;
@@ -776,7 +811,9 @@ export class AdminAuthController {
     }
   }
 
-  // 🛡️ 12. APROVAR OU REJEITAR SOLICITAÇÃO DE ALTERAÇÃO DE DADOS DE MOTORISTA
+  // ==========================================
+  // 🛡️ REVISAR ALTERAÇÃO DE DADOS DE MOTORISTA
+  // ==========================================
   async reviewDriverChangeRequest(req: Request, res: Response): Promise<Response> {
     try {
       const { requestId } = req.params;
@@ -826,7 +863,9 @@ export class AdminAuthController {
     }
   }
 
-  // 🚗 LISTAR MOTORISTAS ONLINE
+  // ==========================================
+  // 🚗 LISTAR MOTORISTAS ONLINE NO MAPA
+  // ==========================================
   async getOnlineDrivers(req: Request, res: Response): Promise<Response> {
     try {
       const drivers = await prisma.driver.findMany({
@@ -892,5 +931,4 @@ export const createAdmin = (req: Request, res: Response) => adminAuthController.
 export const toggleAdminStatus = (req: Request, res: Response) => adminAuthController.toggleAdminStatus(req, res);
 export const reviewDriverChangeRequest = (req: Request, res: Response) => adminAuthController.reviewDriverChangeRequest(req, res);
 export const getOnlineDrivers = (req: Request, res: Response) => adminAuthController.getOnlineDrivers(req, res);
-
 export default adminAuthController;
