@@ -275,7 +275,7 @@ export class DriverAuthController {
   }
 
   // ==========================================
-  // 📝 REGISTRO DE MOTORISTA
+  // 📝 REGISTRO DE MOTORISTA (CORRIGIDO)
   // ==========================================
   async register(req: Request, res: Response): Promise<Response> {
     try {
@@ -286,18 +286,19 @@ export class DriverAuthController {
       const rawPhone = req.body.phone ? String(req.body.phone).trim() : '';
       const formattedPhone = formatPhoneNumber(rawPhone);
 
-      const vehiclePlate = sanitize(req.body.vehiclePlate);
-      const documentNumber = sanitize(req.body.documentNumber);
+      // Trata campos com valores padrão se não forem enviados na etapa inicial
+      const vehiclePlate = sanitize(req.body.vehiclePlate) || `P-${Date.now().toString().slice(-6)}`;
+      const documentNumber = sanitize(req.body.documentNumber) || `DOC-${Date.now().toString().slice(-6)}`;
       const cleanFullName = sanitizeText(fullName, 120);
-      const cleanVehicleBrand = sanitizeText(vehicleBrand || vehicleModel, 80);
-      const cleanVehicleColor = sanitizeText(vehicleColor, 40);
+      const cleanVehicleBrand = sanitizeText(vehicleBrand || vehicleModel, 80) || 'Não informado';
+      const cleanVehicleColor = sanitizeText(vehicleColor, 40) || 'Branco';
 
       if (!isValidBissauPhone(formattedPhone)) {
         return res.status(400).json({ success: false, error: 'O número de telefone deve ser válido para a Guiné-Bissau (+245).' });
       }
 
-      if (!cleanFullName || !cleanVehicleBrand || !vehiclePlate || !password || !cleanVehicleColor || !documentNumber) {
-        return res.status(400).json({ success: false, error: 'Todos os campos obrigatórios devem ser preenchidos.' });
+      if (!cleanFullName || !password) {
+        return res.status(400).json({ success: false, error: 'Nome completo e senha são obrigatórios.' });
       }
 
       if (String(password).length < 6) {
@@ -313,31 +314,19 @@ export class DriverAuthController {
         return res.status(409).json({ success: false, error: 'Este número de telefone já está cadastrado na plataforma.' });
       }
 
-      const [driverDoc, passengerDoc] = await Promise.all([
-        prisma.driver.findFirst({ where: { documentNumber } }),
-        prisma.passenger.findFirst({ where: { documentNumber } }),
-      ]);
+      // Mapeamento flexível de arquivos do Multer (suporta múltiplos nomes de campos do frontend)
+      const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+      
+      const selfieFile = files?.['profilePicture']?.[0] || files?.['selfie']?.[0] || files?.['photo']?.[0] || (req as any).file;
+      const licenseFrontFile = files?.['documentFront']?.[0] || files?.['licenseFront']?.[0] || files?.['cnhPhoto']?.[0] || files?.['document']?.[0];
+      const licenseBackFile = files?.['documentBack']?.[0] || files?.['licenseBack']?.[0] || files?.['vehiclePhoto']?.[0];
 
-      if (driverDoc || passengerDoc) {
-        return res.status(409).json({ success: false, error: 'Este documento já está vinculado a outra conta.' });
-      }
-
-      const plateExists = await prisma.driver.findFirst({ where: { vehiclePlate } });
-      if (plateExists) {
-        return res.status(409).json({ success: false, error: 'Esta placa de veículo já está cadastrada.' });
-      }
+      // Salva o caminho relativo padrão (/uploads/nome_arquivo) garantindo compatibilidade com o servidor
+      const profilePicture = selfieFile ? `/uploads/${encodeURIComponent(selfieFile.filename)}` : null;
+      const licenseFrontPicture = licenseFrontFile ? `/uploads/${encodeURIComponent(licenseFrontFile.filename)}` : null;
+      const licenseBackPicture = licenseBackFile ? `/uploads/${encodeURIComponent(licenseBackFile.filename)}` : null;
 
       const passwordHash = await bcrypt.hash(String(password), 12);
-      const baseUrl = process.env.APP_URL ? process.env.APP_URL.replace(/\/$/, '') : `${req.protocol}://${req.get('host')}`;
-
-      const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
-      const selfieFile = files?.['selfie']?.[0]; 
-      const licenseFrontFile = files?.['licenseFront']?.[0];
-      const licenseBackFile = files?.['licenseBack']?.[0];
-
-      const profilePicture = selfieFile ? `${baseUrl}/uploads/${encodeURIComponent(selfieFile.filename)}` : null;
-      const licenseFrontPicture = licenseFrontFile ? `${baseUrl}/uploads/${encodeURIComponent(licenseFrontFile.filename)}` : null;
-      const licenseBackPicture = licenseBackFile ? `${baseUrl}/uploads/${encodeURIComponent(licenseBackFile.filename)}` : null;
 
       const driver = await prisma.driver.create({
         data: { 
@@ -360,7 +349,13 @@ export class DriverAuthController {
       return res.status(201).json({
         success: true,
         message: 'Cadastro realizado com sucesso! Aguarde a aprovação do seu perfil.',
-        driver: { id: driver.id, fullName: driver.fullName, phone: driver.phone, status: driver.status, profilePicture: driver.profilePicture },
+        driver: { 
+          id: driver.id, 
+          fullName: driver.fullName, 
+          phone: driver.phone, 
+          status: driver.status, 
+          profilePicture: driver.profilePicture 
+        },
       });
     } catch (error: any) {
       console.error('❌ [REGISTRO MOTORISTA]:', error?.message || error);
@@ -793,23 +788,24 @@ export class DriverAuthController {
                    files?.['file']?.[0] || 
                    files?.['image']?.[0];
 
-      if (!file) {
-        return res.status(400).json({ success: false, error: 'Nenhuma imagem foi enviada.' });
-      }
+      // 🖼️ ATUALIZAR FOTO DE PERFIL
+if (!file) {
+  return res.status(400).json({ success: false, error: 'Nenhuma imagem foi enviada.' });
+}
 
-      const baseUrl = process.env.APP_URL ? process.env.APP_URL.replace(/\/$/, '') : `${req.protocol}://${req.get('host')}`;
-      const newProfilePicture = `${baseUrl}/uploads/${encodeURIComponent(file.filename)}`;
-      
-      await prisma.driver.update({
-        where: { id: driverId },
-        data: { profilePicture: newProfilePicture }
-      });
+// Salva o caminho relativo padrão no banco
+const newProfilePicture = `/uploads/${encodeURIComponent(file.filename)}`;
+
+await prisma.driver.update({
+  where: { id: driverId },
+  data: { profilePicture: newProfilePicture }
+});
 
       return res.status(200).json({ 
         success: true, 
         message: 'Foto atualizada com sucesso', 
         profilePicture: newProfilePicture 
-      });
+      }); 
     } catch (error: any) {
       console.error('❌ [FOTO PERFIL]:', error?.message || error);
       return res.status(500).json({ success: false, error: 'Erro ao processar imagem.' });

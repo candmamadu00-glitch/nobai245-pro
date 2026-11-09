@@ -5,7 +5,6 @@ import { upload } from '../config/multer';
 import { authenticate, authorizeRole } from '../middlewares/authMiddleware';
 import { validate } from '../middlewares/validateMiddleware';
 import {
-  registerDriverSchema,
   loginDriverSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
@@ -24,6 +23,7 @@ import {
   rateRide 
 } from '../controllers/rideController';
 import { claimRechargeByTxId } from '../controllers/WalletController';
+
 const driverRoutes = Router();
 const authController = new DriverAuthController();
 const ticketController = new TicketController();
@@ -39,12 +39,21 @@ const handleProfilePictureUpload = upload.fields([
 // -----------------------------------------------------------------------------
 // 🟢 ROTAS PÚBLICAS (AUTENTICAÇÃO & RECUPERAÇÃO)
 // -----------------------------------------------------------------------------
+
+// 🚀 CADASTRO FLEXIBILIZADO: Aceita todas as variações de nomes de arquivo do App
 driverRoutes.post(
   '/register',
   upload.fields([
     { name: 'selfie', maxCount: 1 },
+    { name: 'profilePicture', maxCount: 1 },
+    { name: 'photo', maxCount: 1 },
     { name: 'licenseFront', maxCount: 1 },
+    { name: 'documentFront', maxCount: 1 },
+    { name: 'cnhPhoto', maxCount: 1 },
+    { name: 'document', maxCount: 1 },
     { name: 'licenseBack', maxCount: 1 },
+    { name: 'documentBack', maxCount: 1 },
+    { name: 'vehiclePhoto', maxCount: 1 },
   ]),
   (req, res) => authController.register(req, res)
 );
@@ -72,6 +81,7 @@ driverRoutes.get('/finance', (req, res) => authController.getFinance(req, res));
 driverRoutes.put('/payment-info', validate(updateDriverPaymentSchema), (req, res) => authController.updatePaymentInfo(req, res));
 driverRoutes.put('/device-token', validate(updateDeviceTokenSchema), (req, res) => authController.updateDeviceToken(req, res));
 driverRoutes.post('/wallet/claim', (req, res) => claimRechargeByTxId(req, res));
+
 // 🚗 Fluxo de Corridas
 driverRoutes.post('/rides/accept', (req, res) => acceptRide(req, res));
 driverRoutes.post('/rides/:rideId/arrived', (req, res) => driverArrived(req, res));

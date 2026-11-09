@@ -407,11 +407,12 @@ export class PassengerAuthController {
       const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
       const uploadedFile = req.file || files?.['profilePicture']?.[0] || files?.['avatar']?.[0] || files?.['photo']?.[0] || files?.['file']?.[0];
 
-      if (uploadedFile) {
-        const baseUrl = process.env.APP_URL ? process.env.APP_URL.replace(/\/$/, '') : `${req.protocol}://${req.get('host')}`;
-        const safeFilename = encodeURIComponent(uploadedFile.filename);
-        dataToUpdate.profilePicture = `${baseUrl}/uploads/${safeFilename}`;
-      }
+      // 7. ATUALIZAR PERFIL
+if (uploadedFile) {
+  const safeFilename = encodeURIComponent(uploadedFile.filename);
+  // Salva o caminho relativo padrão no banco
+  dataToUpdate.profilePicture = `/uploads/${safeFilename}`;
+}
 
       const updatedPassenger = await prisma.passenger.update({
         where: { id: passengerId },

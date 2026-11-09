@@ -130,25 +130,6 @@ export function Register() {
 
     setLoading(true);
 
-    console.log('=== 📤 [DEBUG CADASTRO] ENVIANDO DADOS AO BACKEND ===');
-    console.log({
-      fullName: fullName.trim(),
-      phone: `+245${cleanPhone}`,
-      password: '***',
-      vehicleBrand: vehicleModel.trim(),
-      vehicleModel: vehicleModel.trim(),
-      vehiclePlate: vehiclePlate.trim().toUpperCase(),
-      vehicleColor: vehicleColor.trim(),
-      vehicleType,
-      vehicleSeats,
-      documentType,
-      documentNumber: documentNumber.trim().toUpperCase(),
-      hasSelfie: !!selfie,
-      hasLicenseFront: !!licenseFront,
-      hasLicenseBack: !!licenseBack,
-      privacyAccepted,
-    });
-
     try {
       const formData = new FormData();
       formData.append('fullName', fullName.trim());
@@ -167,6 +148,7 @@ export function Register() {
       formData.append('documentType', documentType);
       formData.append('documentNumber', documentNumber.trim().toUpperCase());
 
+      // 🟢 Função de anexo corrigida para Android e iOS
       const appendImage = (key: string, uri: string) => {
         const filename = uri.split('/').pop() || `${key}.jpg`;
         const match = /\.(\w+)$/.exec(filename);
@@ -174,7 +156,7 @@ export function Register() {
         const type = ext === 'png' ? 'image/png' : 'image/jpeg';
 
         formData.append(key, {
-          uri: Platform.OS === 'android' ? uri : uri.replace('file://', ''),
+          uri: uri, // Mantém a URI original em ambas as plataformas
           name: filename,
           type,
         } as any);
@@ -184,15 +166,16 @@ export function Register() {
       appendImage('licenseFront', licenseFront);
       appendImage('licenseBack', licenseBack);
 
+      // 🟢 O Axios injeta automaticamente o boundary correto ao enviar o formData puro
       const response = await api.post('/drivers/register', formData, {
         headers: {
-          'Content-Type': 'multipart/form-data',
+          'Accept': 'application/json',
         },
+        transformRequest: (data) => data, // Preserva o FormData intacto no React Native
       });
 
       console.log('=== ✅ [DEBUG CADASTRO] SUCESSO ===', response.data);
       
-      // Mensagem de sucesso formatada e profissional
       Alert.alert(
         '🎉 Cadastro Concluído com Sucesso!',
         'Seus dados e documentos foram enviados para nossa equipe de análise.\n\n' +
@@ -211,7 +194,6 @@ export function Register() {
       console.log('=== ❌ [DEBUG CADASTRO] ERRO RETORNADO PELA API ===');
       console.log('Status HTTP:', error.response?.status);
       console.log('Resposta do Servidor:', JSON.stringify(error.response?.data, null, 2));
-      console.log('Mensagem de Erro:', error.message);
 
       Alert.alert('Erro no Cadastro', error.response?.data?.error || error.response?.data?.message || 'Falha ao registrar.');
     } finally {
