@@ -65,7 +65,7 @@ router.get('/landmarks', async (_req: Request, res: Response) => {
       id: p.id,
       name: p.name,
       popularName: p.popularName,
-      neighborhood: p.neighborhood.name,
+      neighborhood: p.neighborhood?.name || '',
       referenceNotes: p.referenceNotes,
       latitude: p.latitude,
       longitude: p.longitude,
@@ -80,7 +80,7 @@ router.get('/landmarks', async (_req: Request, res: Response) => {
   }
 });
 
-// 🟢 3. BUSCA HÍBRIDA (PASSAGEIRO / APP)
+// 🟢 3. BUSCA HÍBRIDA (PASSAGEIRO / APP) - CORRIGIDA COM FALLBACKS DE CAMPOS
 router.get('/landmarks/search', async (req: Request, res: Response) => {
   try {
     const query = String(req.query.q || '').trim().toLowerCase();
@@ -105,9 +105,15 @@ router.get('/landmarks/search', async (req: Request, res: Response) => {
 
     const formattedResults = places.map((p: any) => ({
       id: p.id,
-      title: `${p.name}`,
-      subtitle: `${p.neighborhood.name}${p.referenceNotes ? ` • ${p.referenceNotes}` : ''}`,
-      displayText: `${p.name} (${p.neighborhood.name})`,
+      name: p.name,
+      popularName: p.popularName,
+      neighborhood: p.neighborhood?.name || '',
+      referenceNotes: p.referenceNotes,
+      title: p.name,
+      subtitle: `${p.neighborhood?.name || ''}${p.referenceNotes ? ` • ${p.referenceNotes}` : ''}`,
+      displayText: p.popularName 
+        ? `${p.name} (${p.popularName}) - ${p.neighborhood?.name || ''}` 
+        : `${p.name}${p.neighborhood?.name ? ` - ${p.neighborhood.name}` : ''}`,
       latitude: p.latitude,
       longitude: p.longitude
     }));
@@ -174,4 +180,5 @@ router.delete('/landmarks/:id', async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Erro ao apagar ponto de referência.' });
   }
 });
+
 export default router;

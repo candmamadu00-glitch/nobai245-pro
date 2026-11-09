@@ -107,9 +107,6 @@ export const authMiddleware = (req: Request, res: Response, next: NextFunction):
   }
 };
 
-/**
- * Middleware universal de autorização por papéis (Roles)
- */
 export const authorizeRole = (allowedRoles: (UserRole | Role | string)[]) => {
   return (req: Request, res: Response, next: NextFunction): void => {
     const currentRole = req.user?.role || req.admin?.role;

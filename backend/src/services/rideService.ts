@@ -41,10 +41,13 @@ function safeSocketEmit(room: string, event: string, payload: any): void {
   try {
     const io = getIo();
     if (io) {
+      console.log(`🔄 [SOCKET_EMIT] Disparando evento "${event}" -> Sala: [${room}]`);
       io.to(room).emit(event, payload);
+    } else {
+      console.warn(`⚠️ [SOCKET_EMIT_WARN] Instância do Socket.io não está pronta. Evento omitido: ${event}`);
     }
   } catch (err) {
-    console.warn(`⚠️ [SOCKET EMIT ERROR] Falha ao disparar ${event} para ${room}:`, err);
+    console.error(`❌ [SOCKET_EMIT_ERROR] Falha ao disparar ${event} para ${room}:`, err);
   }
 }
 
@@ -52,7 +55,7 @@ function safeSocketEmit(room: string, event: string, payload: any): void {
 // HELPER PARA DISPARO DE NOVAS CORRIDAS PARA MOTORISTAS (APENAS DISPONÍVEIS E COM SALDO)
 // -----------------------------------------------------------------------------
 export async function notifyDriversNewRide(rideId: string): Promise<void> {
-  console.log(`\n🚨 [RIDE DISPATCH] Buscando motoristas para notificar sobre a corrida ${rideId}...`);
+  console.log(`\n🚨 [RIDE_DISPATCH] Buscando motoristas para notificar sobre a corrida ID: ${rideId}...`);
   try {
     const ride = await prisma.ride.findUnique({ 
       where: { id: rideId },
@@ -66,7 +69,12 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
         }
       }
     });
-    if (!ride) return;
+    if (!ride) {
+      console.warn(`⚠️ [RIDE_DISPATCH] Corrida ${rideId} não foi encontrada no banco.`);
+      return;
+    }
+
+    console.log(`📸 [FOTO_DEBUG] Foto do Passageiro cadastrada no Banco: "${ride.passenger?.profilePicture || 'SEM_FOTO'}"`);
 
     const pLat = Number(ride.originLat);
     const pLng = Number(ride.originLng);
@@ -98,6 +106,7 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
       }
 
       if (Number(driver.walletBalance || 0) <= MIN_DRIVER_BALANCE_FOR_CASH) {
+        console.log(`⚠️ [RIDE_DISPATCH_SKIP] Motorista ${driver.fullName} (${driver.id}) sem saldo suficiente: ${driver.walletBalance} XOF`);
         continue;
       }
 
@@ -115,12 +124,12 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
       }
     }
 
-    console.log(`🔍 [RIDE DISPATCH] ${qualifiedDrivers.length} motoristas qualificados no raio de 5km.`);
+    console.log(`🔍 [RIDE_DISPATCH] ${qualifiedDrivers.length} motoristas qualificados encontrados no raio de 5km.`);
 
     const ridePayload = {
       rideId: ride.id,
       passengerName: ride.passenger?.fullName || 'Passageiro',
-      passengerPhoto: ride.passenger?.profilePicture,
+      passengerPhoto: ride.passenger?.profilePicture || null,
       passengerRating: Number(ride.passenger?.ratingAverage || 5.0),
       originAddress: ride.originAddress,
       originLat: Number(ride.originLat),
@@ -147,7 +156,7 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
         where: { rideId_driverId: { rideId: ride.id, driverId: driver.id } },
         update: { status: RideOfferStatus.PENDING, expiresAt: offerExpiresAt },
         create: { rideId: ride.id, driverId: driver.id, status: RideOfferStatus.PENDING, expiresAt: offerExpiresAt }
-      }).catch((err: any) => console.warn(`⚠️ [RIDE OFFER CREATION FAIL] Driver: ${driver.id}`, err?.message));
+      }).catch((err: any) => console.warn(`⚠️ [RIDE_OFFER_CREATION_FAIL] Motorista: ${driver.id}`, err?.message));
 
       safeSocketEmit(`driver_${driver.id}`, 'ride:new_request', {
         ...ridePayload,
@@ -165,7 +174,7 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
       }
     }
   } catch (error) {
-    console.error('💥 [RIDE DISPATCH ERROR] Falha ao disparar notificações de nova corrida:', error);
+    console.error('💥 [RIDE_DISPATCH_ERROR] Falha ao disparar notificações de nova corrida:', error);
   }
 }
 
@@ -300,6 +309,7 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
   idempotencyKey?: string;
   estimatedPrice?: number;
 }) {
+  console.log(`📡 [CREATE_RIDE] Iniciando criação de corrida para Passageiro ID: ${passengerId}`);
   const { 
     originLat, originLng, destinationLat, destinationLng, 
     requestedVehicleType, serviceType, originAddress, destinationAddress, 
@@ -308,10 +318,12 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
   } = data;
 
   if (!isValidCoordinate(originLat, originLng) || !isValidCoordinate(destinationLat, destinationLng)) {
+    console.error(`❌ [CREATE_RIDE_ERROR] Coordenadas inválidas: Origem (${originLat}, ${originLng}) Destino (${destinationLat}, ${destinationLng})`);
     throw new Error('BAD_REQUEST: Coordenadas geográficas de origem ou destino inválidas.');
   }
 
   if (!isWithinGuineaBissau(originLat, originLng)) {
+    console.error(`❌ [CREATE_RIDE_ERROR] Fora de Guiné-Bissau: (${originLat}, ${originLng})`);
     throw new Error('OUT_OF_SERVICE_AREA: O serviço Nô Bai 245 está disponível apenas no território da Guiné-Bissau.');
   }
 
@@ -321,6 +333,7 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
   });
 
   if (!passenger || passenger.status !== 'ACTIVE') {
+    console.error(`❌ [CREATE_RIDE_ERROR] Passageiro inativo ou inexistente: ID ${passengerId}`);
     throw new Error('UNAUTHORIZED: Conta de passageiro inexistente, inativa ou suspensa.');
   }
 
@@ -348,6 +361,7 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
         data: { currentRideId: null }
       });
     } else {
+      console.warn(`⚠️ [CREATE_RIDE_WARN] Passageiro ${passengerId} tentou criar corrida mas já possui a corrida ativa: ${passenger.currentRideId}`);
       throw new Error('ACTIVE_RIDE_EXISTS: Passageiro já possui corrida ativa em andamento.');
     }
   }
@@ -438,6 +452,7 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     return { ride: newRide };
   });
 
+  console.log(`✅ [CREATE_RIDE_SUCCESS] Corrida ${ride.id} criada com sucesso! Valor: ${ride.priceXof} XOF`);
   return { success: true, pendingVerification: false, ride };
 }
 
@@ -464,23 +479,36 @@ export async function searchLandmarks(query: string) {
     take: 10
   });
 
-  return places.map(place => ({
-    id: place.id,
-    name: place.name,
-    popularName: place.popularName,
-    neighborhoodName: place.neighborhood?.name || 'Bissau',
-    latitude: place.latitude,
-    longitude: place.longitude,
-    referenceNotes: place.referenceNotes
-  }));
+  return places.map(place => {
+    const neighborhood = place.neighborhood?.name || 'Bissau';
+    const mainTitle = place.name;
+    const subTitle = `${neighborhood}${place.referenceNotes ? ` • ${place.referenceNotes}` : ''}`;
+    const display = place.popularName ? `${place.name} (${place.popularName}) - ${neighborhood}` : `${place.name} - ${neighborhood}`;
+
+    return {
+      id: place.id,
+      name: place.name,
+      popularName: place.popularName,
+      neighborhoodName: neighborhood,
+      neighborhood: neighborhood,
+      latitude: place.latitude,
+      longitude: place.longitude,
+      referenceNotes: place.referenceNotes,
+      title: mainTitle,
+      subtitle: subTitle,
+      displayText: display
+    };
+  });
 }
 
 // -----------------------------------------------------------------------------
 // ACEITAR CORRIDA
 // -----------------------------------------------------------------------------
 export async function acceptRideLogic(rideId: string, driverId: string) {
+  console.log(`📡 [ACCEPT_RIDE] Motorista ${driverId} solicitou aceite da corrida ${rideId}`);
   const driver = await prisma.driver.findUnique({ where: { id: driverId } });
   if (!driver || !driver.isOnline || driver.status !== 'APPROVED') {
+    console.error(`❌ [ACCEPT_RIDE_ERROR] Motorista ${driverId} não está aprovado ou online.`);
     throw new Error('DRIVER_UNAVAILABLE: Motorista indisponível ou conta não aprovada.');
   }
 
@@ -497,18 +525,21 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
         data: { currentRideId: null, isAvailable: true }
       });
     } else {
+      console.warn(`⚠️ [ACCEPT_RIDE_WARN] Motorista ${driverId} já possui a corrida ativa: ${driver.currentRideId}`);
       throw new Error('DRIVER_BUSY: Você já possui uma corrida em andamento. Conclua-a antes de aceitar uma nova.');
     }
   }
 
   const ride = await prisma.ride.findUnique({ where: { id: rideId } });
   if (!ride || ride.status !== RideStatus.SEARCHING) {
+    console.warn(`⚠️ [ACCEPT_RIDE_WARN] Corrida ${rideId} não está mais em SEARCHING (Status atual: ${ride?.status})`);
     throw new Error('RIDE_UNAVAILABLE: Corrida indisponível ou já aceita por outro motorista.');
   }
 
   // 🟢 VERIFICAÇÃO DE SALDO POSITIVO NA CARTEIRA DIGITAL
   const currentBalance = Number(driver.walletBalance || 0);
   if (currentBalance <= MIN_DRIVER_BALANCE_FOR_CASH) {
+    console.warn(`⚠️ [ACCEPT_RIDE_WARN] Motorista ${driverId} com saldo insuficiente na carteira: ${currentBalance} XOF`);
     throw new Error('INSUFFICIENT_DRIVER_BALANCE: Seu saldo na carteira digital está zerado ou negativo. Recarregue para aceitar corridas em dinheiro.');
   }
 
@@ -567,7 +598,8 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     return res;
   });
 
-  console.log(`🚗 [RIDE LOG - ACCEPT] Motorista "${result.driver?.fullName}" aceitou a corrida ID: ${result.id}`);
+  console.log(`🚗 [RIDE_LOG_ACCEPT] Motorista "${result.driver?.fullName}" aceitou a corrida ID: ${result.id}`);
+  console.log(`📸 [FOTO_DEBUG] AcceptRide - Foto do Motorista: "${result.driver?.profilePicture || 'SEM_FOTO'}" | Foto do Passageiro: "${result.passenger?.profilePicture || 'SEM_FOTO'}"`);
 
   const passengerAcceptedPayload = {
     rideId: result.id,
@@ -625,6 +657,7 @@ export const acceptRide = acceptRideLogic;
 // CHEGADA DO MOTORISTA
 // -----------------------------------------------------------------------------
 export async function driverArrivedLogic(rideId: string, driverId: string) {
+  console.log(`📡 [ARRIVED_RIDE] Motorista ${driverId} informou chegada ao local na corrida ${rideId}`);
   const ride = await prisma.ride.findUnique({ where: { id: rideId } });
   if (!ride || ride.driverId !== driverId) throw new Error('UNAUTHORIZED: Motorista não associado a esta viagem.');
   if (ride.status !== RideStatus.ACCEPTED) throw new Error('INVALID_STATUS: A corrida não está em estado aceito.');
@@ -652,7 +685,7 @@ export async function driverArrivedLogic(rideId: string, driverId: string) {
     return updatedRide;
   });
 
-  console.log(`📍 [RIDE LOG - ARRIVED] Motorista chegou ao local de embarque da corrida ID: ${rideId}`);
+  console.log(`📍 [RIDE_LOG_ARRIVED] Motorista chegou ao local de embarque da corrida ID: ${rideId}`);
 
   const arrivedPayload = {
     rideId: updated.id,
@@ -690,9 +723,10 @@ export async function driverArrivedLogic(rideId: string, driverId: string) {
 }
 
 // -----------------------------------------------------------------------------
-// 3. INÍCIO DA VIAGEM (COM MULTI-BROADCAST E PUSH)
+// INÍCIO DA VIAGEM
 // -----------------------------------------------------------------------------
 export async function startRideLogic(rideId: string, driverId: string, otpInput: string) {
+  console.log(`📡 [START_RIDE] Motorista ${driverId} solicitou início da corrida ${rideId} com OTP: "${otpInput}"`);
   const ride = await prisma.ride.findUnique({ 
     where: { id: rideId },
     include: { passenger: { select: { id: true, deviceToken: true } } }
@@ -703,6 +737,7 @@ export async function startRideLogic(rideId: string, driverId: string, otpInput:
   const cleanStartOtp = String(ride.startOtp || '').trim().padStart(4, '0');
 
   if (cleanStartOtp && cleanStartOtp !== cleanOtpInput) {
+    console.error(`❌ [START_RIDE_ERROR] PIN incorreto! Esperado: "${cleanStartOtp}", Recebido: "${cleanOtpInput}"`);
     throw new Error('INVALID_OTP: O código PIN informado está incorreto.');
   }
 
@@ -723,6 +758,8 @@ export async function startRideLogic(rideId: string, driverId: string, otpInput:
 
     return updatedRes;
   });
+
+  console.log(`🟢 [START_RIDE_SUCCESS] Corrida ${rideId} iniciada com sucesso!`);
 
   const startPayload = { 
     rideId: ride.id, 
@@ -761,6 +798,8 @@ export async function startRideLogic(rideId: string, driverId: string, otpInput:
 // -----------------------------------------------------------------------------
 export async function notifyDriverNearbyIfClose(rideId: string, distanceMeters: number) {
   if (distanceMeters > 300) return;
+
+  console.log(`📍 [NEARBY_DEBUG] Motorista a ${Math.round(distanceMeters)}m do embarque na corrida ID: ${rideId}`);
 
   const ride = await prisma.ride.findUnique({ 
     where: { id: rideId },
@@ -801,7 +840,10 @@ export async function finalizeRideAndCharge(
   finalLng: number,
   finishOtpInput?: string
 ): Promise<FinalizeRideResult> {
+  console.log(`🏁 [FINALIZE_DEBUG] Iniciando finalização da corrida ${rideId}. Destino final: (${finalLat}, ${finalLng})`);
+
   if (!isValidCoordinate(finalLat, finalLng)) {
+    console.error(`❌ [FINALIZE_ERROR] Coordenadas de desembarque inválidas: (${finalLat}, ${finalLng})`);
     throw new Error('INVALID_COORDINATES: Coordenadas finais de desembarque inválidas.');
   }
 
@@ -811,10 +853,12 @@ export async function finalizeRideAndCharge(
   });
 
   if (!ride || !ride.driver || !ride.passenger) {
+    console.error(`❌ [FINALIZE_ERROR] Dados incompletos para a corrida ID ${rideId}`);
     throw new Error('NOT_FOUND: Dados completos da corrida não localizados.');
   }
   
   if (ride.status === RideStatus.COMPLETED || ride.status === RideStatus.CANCELLED) {
+    console.warn(`⚠️ [FINALIZE_WARN] Corrida ID ${rideId} já estava em estado final: ${ride.status}`);
     throw new Error('RIDE_FINISHED: A corrida já foi finalizada ou cancelada anteriormente.');
   }
 
@@ -825,6 +869,7 @@ export async function finalizeRideAndCharge(
     const cleanDbOtp = String(rideFinishOtp || '').trim().padStart(4, '0');
 
     if (cleanDbOtp && cleanDbOtp !== cleanInput) {
+      console.error(`❌ [FINALIZE_ERROR] PIN de confirmação incorreto! Esperado: "${cleanDbOtp}", Informado: "${cleanInput}"`);
       throw new Error('INVALID_OTP: O código PIN de confirmação informado está incorreto.');
     }
   }
@@ -959,7 +1004,7 @@ export async function finalizeRideAndCharge(
     });
   }); 
 
-  console.log(`🏁 [RIDE LOG - COMPLETED] Corrida ID: ${rideId} finalizada. Valor: ${calculatedFare} XOF. Saldo restante do motorista: ${finalDriverBalance} XOF`);
+  console.log(`🏁 [RIDE_LOG_COMPLETED] Corrida ID: ${rideId} finalizada com sucesso! Total: ${calculatedFare} XOF. Comissão: ${platformFee} XOF. Saldo motorista: ${finalDriverBalance} XOF`);
 
   const completedPayload = {
     rideId: ride.id,
@@ -1027,10 +1072,12 @@ export async function cancelRideLogic(
   reason?: string,
   isReportedProblem: boolean = false
 ) {
+  console.log(`❌ [CANCEL_DEBUG] Solicitado cancelamento da corrida ${rideId} por ${userType} (ID: ${userId})`);
   const ride = await prisma.ride.findUnique({ where: { id: rideId }, include: { passenger: true, driver: true } });
   if (!ride) throw new Error('NOT_FOUND: Corrida não encontrada.');
 
   if (ride.status === RideStatus.IN_PROGRESS && !isReportedProblem) {
+    console.warn(`⚠️ [CANCEL_WARN] Tentativa de cancelar corrida em andamento sem reportar problema (ID: ${rideId})`);
     throw new Error('RIDE_IN_PROGRESS: A viagem já está em andamento. Cancele apenas via suporte ou emergência.');
   }
 
@@ -1094,7 +1141,7 @@ export async function cancelRideLogic(
     return { appliedPenalty: false, penaltyAmount: 0 };
   });
 
-  console.log(`⚠️ [RIDE LOG - CANCEL] Corrida ID: ${rideId} cancelada por ${userType}. Motivo: ${cleanReason}`);
+  console.log(`⚠️ [RIDE_LOG_CANCEL] Corrida ID: ${rideId} cancelada por ${userType}. Motivo: ${cleanReason}`);
 
   safeSocketEmit(`passenger_${ride.passengerId}`, 'ride:cancelled', {
     rideId: ride.id,
@@ -1145,16 +1192,20 @@ export async function notifyNewChatMessage(data: {
 }) {
   try {
     const { rideId, senderId, senderType, senderName, message } = data;
+    console.log(`💬 [CHAT_DEBUG] Nova mensagem na corrida ${rideId} de ${senderName} (${senderType}): "${message}"`);
 
     const ride = await prisma.ride.findUnique({
       where: { id: rideId },
       include: {
-        passenger: { select: { id: true, fullName: true, deviceToken: true } },
-        driver: { select: { id: true, fullName: true, deviceToken: true } }
+        passenger: { select: { id: true, fullName: true, deviceToken: true, profilePicture: true } },
+        driver: { select: { id: true, fullName: true, deviceToken: true, profilePicture: true } }
       }
     });
 
-    if (!ride) return;
+    if (!ride) {
+      console.warn(`⚠️ [CHAT_WARN] Corrida ${rideId} não encontrada ao enviar mensagem.`);
+      return;
+    }
 
     const isPassenger = senderType === 'PASSENGER';
     const targetUserId = isPassenger ? ride.driverId : ride.passengerId;
@@ -1196,7 +1247,7 @@ export async function notifyNewChatMessage(data: {
       ).catch(err => console.warn('⚠️ [PUSH CHAT ERR]:', err?.message));
     }
   } catch (err) {
-    console.error('💥 [CHAT NOTIFY ERROR]:', err);
+    console.error('💥 [CHAT_NOTIFY_ERROR]:', err);
   }
 }
 
@@ -1210,6 +1261,7 @@ export async function submitRatingLogic(data: {
   comment?: string;
 }) {
   const { rideId, reviewerId, reviewerType, receiverId, stars, tags = [], comment } = data;
+  console.log(`⭐ [RATING_DEBUG] Avaliação submetida para corrida ${rideId}. De: ${reviewerType} (${reviewerId}) Para: ${receiverId} Nota: ${stars}★`);
 
   const newRating = await prisma.$transaction(async (tx) => {
     const rating = await tx.rating.upsert({
@@ -1239,13 +1291,17 @@ export async function submitRatingLogic(data: {
         _count: { stars: true }
       });
 
+      const avgStars = Number(agg._avg.stars || 5.0);
+      const countStars = Number(agg._count.stars || 0);
+
       await tx.driver.update({
         where: { id: receiverId },
         data: {
-          ratingAverage: Number(agg._avg.stars || 5.0),
-          totalRatings: Number(agg._count.stars || 0)
+          ratingAverage: avgStars,
+          totalRatings: countStars
         }
       });
+      console.log(`⭐ [RATING_DEBUG] Nova média do Motorista (${receiverId}): ${avgStars.toFixed(1)}★ (Total: ${countStars})`);
     } else if (reviewerType === 'DRIVER') {
       const agg = await tx.rating.aggregate({
         where: { receiverId, reviewerType: UserType.DRIVER },
@@ -1253,13 +1309,17 @@ export async function submitRatingLogic(data: {
         _count: { stars: true }
       });
 
+      const avgStars = Number(agg._avg.stars || 5.0);
+      const countStars = Number(agg._count.stars || 0);
+
       await tx.passenger.update({
         where: { id: receiverId },
         data: {
-          ratingAverage: Number(agg._avg.stars || 5.0),
-          totalRatings: Number(agg._count.stars || 0)
+          ratingAverage: avgStars,
+          totalRatings: countStars
         }
       });
+      console.log(`⭐ [RATING_DEBUG] Nova média do Passageiro (${receiverId}): ${avgStars.toFixed(1)}★ (Total: ${countStars})`);
     }
 
     return rating;

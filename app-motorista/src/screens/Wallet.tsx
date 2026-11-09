@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, Text, StyleSheet, TouchableOpacity, 
   ScrollView, Platform, StatusBar, ActivityIndicator, RefreshControl, Modal 
@@ -7,48 +7,72 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { api } from '../services/api';
 import { socket } from '../services/socket';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../theme/theme';
 
 export function Wallet() {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
-  
+  const isMountedRef = useRef(true);
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [financeData, setFinanceData] = useState<any>(null);
   const [isRechargeModalVisible, setIsRechargeModalVisible] = useState(false);
 
   useEffect(() => {
+    isMountedRef.current = true;
+    console.log('💳 [WALLET_DEBUG] Componente Wallet montado.');
     fetchWalletData();
 
     // 📡 Escuta Socket em tempo real emitida pelo webhookRoutes.ts (/sms-gateway)
     if (socket) {
+      console.log('📡 [SOCKET_DEBUG] Registrando ouvinte em tempo real: "wallet:updated"');
       const handleWalletUpdated = (data: any) => {
-        console.log('⚡ [SOCKET WALLET] Saldo atualizado em tempo real:', data);
-        fetchWalletData();
+        console.log('⚡ [SOCKET_DEBUG] Evento "wallet:updated" recebido:', data);
+        if (isMountedRef.current) {
+          fetchWalletData();
+        }
       };
 
       socket.on('wallet:updated', handleWalletUpdated);
       return () => {
+        isMountedRef.current = false;
+        console.log('📡 [SOCKET_DEBUG] Removendo ouvinte: "wallet:updated"');
         socket.off('wallet:updated', handleWalletUpdated);
       };
     }
+
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
   async function fetchWalletData() {
     try {
+      console.log('💳 [WALLET_DEBUG] Buscando dados financeiros via GET /drivers/finance...');
       const res = await api.get('/drivers/finance');
-      setFinanceData(res.data);
-    } catch (error) {
-      console.log('Erro ao carregar dados da carteira:', error);
+      if (isMountedRef.current) {
+        console.log('✅ [WALLET_DEBUG] Resumo financeiro recarregado:', {
+          todayEarned: res.data?.todayEarned,
+          weeklyEarned: res.data?.weeklyEarned,
+          totalEarned: res.data?.totalEarned,
+          walletBalance: res.data?.walletBalance,
+        });
+        setFinanceData(res.data);
+      }
+    } catch (error: any) {
+      console.error('❌ [WALLET_DEBUG] Erro ao carregar dados da carteira:', error?.response?.data || error?.message || error);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }
 
   function handleRefresh() {
+    console.log('🔄 [WALLET_DEBUG] Atualização manual acionada pelo usuário.');
     setRefreshing(true);
     fetchWalletData();
   }
@@ -59,6 +83,11 @@ export function Wallet() {
     if (isNaN(num)) return '0';
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   }
+
+  const toggleRechargeModal = (visible: boolean) => {
+    console.log(`📲 [RECHARGE_DEBUG] Modal de recarga alterado para: ${visible}`);
+    setIsRechargeModalVisible(visible);
+  };
 
   const dynamicTopPadding = Math.max((insets?.top || 0) + 6, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 6 : 14);
   const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 28 : 16);
@@ -104,7 +133,10 @@ export function Wallet() {
         <View style={styles.quickPillRow}>
           <TouchableOpacity 
             style={styles.quickPill} 
-            onPress={() => navigation.navigate('RideHistory')}
+            onPress={() => {
+              console.log('📱 [WALLET_DEBUG] Navegando para RideHistory');
+              navigation.navigate('RideHistory');
+            }}
             activeOpacity={0.85}
           >
             <Ionicons name="receipt-outline" size={16} color="#FFF" />
@@ -113,7 +145,10 @@ export function Wallet() {
           
           <TouchableOpacity 
             style={styles.quickPill} 
-            onPress={() => navigation.navigate('Profile')}
+            onPress={() => {
+              console.log('📱 [WALLET_DEBUG] Navegando para Profile (Conta de Recebimento)');
+              navigation.navigate('Profile');
+            }}
             activeOpacity={0.85}
           >
             <Ionicons name="wallet-outline" size={16} color="#FFF" />
@@ -193,7 +228,7 @@ export function Wallet() {
                 {/* BOTÃO QUE ABRE O MODAL DE RECARGA USSD */}
                 <TouchableOpacity 
                   style={styles.rechargeButton}
-                  onPress={() => setIsRechargeModalVisible(true)}
+                  onPress={() => toggleRechargeModal(true)}
                   activeOpacity={0.85}
                 >
                   <Ionicons name="add-circle-outline" size={20} color="#FFF" />
@@ -218,13 +253,13 @@ export function Wallet() {
         visible={isRechargeModalVisible}
         animationType="slide"
         transparent
-        onRequestClose={() => setIsRechargeModalVisible(false)}
+        onRequestClose={() => toggleRechargeModal(false)}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Recarga de Saldo Instantânea</Text>
-              <TouchableOpacity onPress={() => setIsRechargeModalVisible(false)}>
+              <TouchableOpacity onPress={() => toggleRechargeModal(false)}>
                 <Ionicons name="close-circle" size={26} color="#94A3B8" />
               </TouchableOpacity>
             </View>
@@ -258,7 +293,7 @@ export function Wallet() {
 
             <TouchableOpacity 
               style={styles.modalCloseButton} 
-              onPress={() => setIsRechargeModalVisible(false)}
+              onPress={() => toggleRechargeModal(false)}
             >
               <Text style={styles.modalCloseButtonText}>Entendido</Text>
             </TouchableOpacity>
@@ -356,7 +391,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
-  // ESTILOS DO MODAL DE RECARGA
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',

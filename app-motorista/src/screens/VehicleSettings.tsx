@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, Text, StyleSheet, TouchableOpacity, 
-  ScrollView, Platform, StatusBar, Alert 
+  ScrollView, Platform, StatusBar, Alert, Image 
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -72,38 +72,59 @@ function getVehicle3DIconAsset(vehicleType?: string, vehicleColor?: string) {
       return require('../../assets/images/vehicles/car_white.jpg');
   }
 }
+
 export function VehicleSettings() {
   const navigation = useNavigation<any>();
   const { driver } = useAuth();
   const insets = useSafeAreaInsets();
   const { speakInstruction } = useBilingualVoice();
+  const isMountedRef = useRef(true);
 
   const [voiceMode, setVoiceMode] = useState<VoiceMode>('BOTH');
 
   useEffect(() => {
+    isMountedRef.current = true;
+    console.log('🚘 [VEHICLE_DEBUG] Tela de configurações do veículo montada:', {
+      id: driver?.id,
+      brand: (driver as any)?.vehicleBrand,
+      color: (driver as any)?.vehicleColor,
+      plate: driver?.vehiclePlate,
+      type: (driver as any)?.vehicleType,
+    });
+
     async function loadVoicePreference() {
       try {
+        console.log('🔊 [VOICE_DEBUG] Lendo preferência de voz do AsyncStorage...');
         const saved = await AsyncStorage.getItem(STORAGE_VOICE_MODE_KEY);
-        if (saved) setVoiceMode(saved as VoiceMode);
+        if (saved && isMountedRef.current) {
+          console.log(`🔊 [VOICE_DEBUG] Modo de voz recarregado: "${saved}"`);
+          setVoiceMode(saved as VoiceMode);
+        }
       } catch (err) {
-        console.error('Erro ao carregar preferência de voz:', err);
+        console.error('❌ [VOICE_DEBUG] Erro ao carregar preferência de voz:', err);
       }
     }
     loadVoicePreference();
-  }, []);
+
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, [driver]);
 
   const handleSelectVoiceMode = async (mode: VoiceMode) => {
     try {
+      console.log(`🔊 [VOICE_DEBUG] Alterando preferência de voz para: "${mode}"`);
       setVoiceMode(mode);
       await AsyncStorage.setItem(STORAGE_VOICE_MODE_KEY, mode);
-      console.log(`✅ [CONFIG] Modo de voz alterado para: ${mode}`);
+      console.log(`✅ [VOICE_DEBUG] Modo de voz salvo no AsyncStorage com sucesso: "${mode}"`);
     } catch (err) {
+      console.error('❌ [VOICE_DEBUG] Erro ao salvar modo de voz:', err);
       Alert.alert('Erro', 'Não foi possível guardar a preferência de voz.');
     }
   };
 
   const handleTestVoice = (modeToTest: VoiceMode) => {
-    console.log(`🧪 [TESTE VOZ] Testando modo: ${modeToTest}`);
+    console.log(`🧪 [VOICE_DEBUG] Executando teste de voz sintética para o modo: "${modeToTest}"`);
     speakInstruction('new_ride', 'Nova viagem encontrada', modeToTest);
   };
 
@@ -116,6 +137,8 @@ export function VehicleSettings() {
     { key: 'PT', label: 'Apenas Português', sub: 'Instruções no padrão em Português' },
     { key: 'OFF', label: 'Desativado', sub: 'Sem orientação por voz durante a navegação' },
   ];
+
+  const vehicle3DAsset = getVehicle3DIconAsset((driver as any)?.vehicleType, (driver as any)?.vehicleColor);
 
   return (
     <View style={styles.container}>
@@ -199,6 +222,11 @@ export function VehicleSettings() {
               <Ionicons name="car" size={22} color="#059669" />
             </View>
             <Text style={styles.cardTitle}>Dados do Veículo</Text>
+          </View>
+
+          {/* ILUSTRAÇÃO 3D DO VEÍCULO */}
+          <View style={styles.vehiclePreviewContainer}>
+            <Image source={vehicle3DAsset} style={styles.vehicle3DImage} resizeMode="contain" />
           </View>
 
           <View style={styles.infoRow}>
@@ -305,6 +333,18 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   testBtnText: { fontSize: 11, fontWeight: '700', color: '#059669' },
+  vehiclePreviewContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 10,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    paddingVertical: 12,
+  },
+  vehicle3DImage: {
+    width: 140,
+    height: 90,
+  },
   infoRow: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F3F4F6', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   label: { fontSize: 13, color: '#6B7280', fontWeight: '600' },
   value: { fontSize: 14, color: '#111827', fontWeight: '700' },

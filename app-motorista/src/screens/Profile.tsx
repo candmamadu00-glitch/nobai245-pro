@@ -79,6 +79,7 @@ export function Profile() {
   // --- ESTADOS DE DADOS ---
   const [financeData, setFinanceData] = useState<FinanceData | null>(null);
   const [hasPendingRequest, setHasPendingRequest] = useState<boolean>(false);
+  const [imageTimestamp, setImageTimestamp] = useState<number>(Date.now());
   
   // --- ESTADOS DE CARREGAMENTO E REDE ---
   const [initialLoading, setInitialLoading] = useState<boolean>(true);
@@ -106,6 +107,12 @@ export function Profile() {
   });
 
   useEffect(() => {
+    console.log('👤 [PROFILE_DEBUG] Perfil do motorista carregado:', {
+      id: driver?.id,
+      fullName: driver?.fullName,
+      status: driver?.status,
+      vehiclePlate: driver?.vehiclePlate,
+    });
     loadInitialData();
   }, []);
 
@@ -118,20 +125,24 @@ export function Profile() {
 
   async function loadFinanceData() {
     try {
+      console.log('💳 [FINANCE_DEBUG] Carregando dados de finanças do motorista...');
       const res = await api.get<FinanceData>('/drivers/finance');
+      console.log('✅ [FINANCE_DEBUG] Finanças carregadas:', res.data);
       setFinanceData(res.data);
     } catch (error) {
-      console.error('Erro ao buscar finanças:', error);
+      console.error('❌ [FINANCE_DEBUG] Erro ao buscar finanças do motorista:', error);
       setNetworkError(true);
     }
   }
 
   async function checkPendingRequest() {
     try {
+      console.log('🔍 [UPDATE_DEBUG] Checando se há solicitações de alteração pendentes...');
       const res = await api.get<{ hasPendingRequest: boolean }>('/drivers/request-update/status');
+      console.log(`📋 [UPDATE_DEBUG] Solicitação pendente: ${res.data.hasPendingRequest}`);
       setHasPendingRequest(res.data.hasPendingRequest);
     } catch (error) {
-      console.error('Erro ao checar solicitação de alteração:', error);
+      console.error('❌ [UPDATE_DEBUG] Erro ao checar solicitação de alteração:', error);
     }
   }
 
@@ -148,6 +159,7 @@ export function Profile() {
   }
 
   function handleOpenEdit() {
+    console.log('⚙️ [PAYMENT_DEBUG] Abrindo formulário de configuração de recebimentos.');
     setIsEditingPayment(true);
     setMmProvider('ORANGE');
     setMmNumber(financeData?.orangeNumber || financeData?.mobileMoneyAccount || '');
@@ -155,6 +167,7 @@ export function Profile() {
 
   function handleProviderChange(provider: 'ORANGE' | 'MTN') {
     if (provider === 'MTN') {
+      console.warn('⚠️ [PAYMENT_DEBUG] Tentativa de seleção MTN MoMo (Serviço desativado).');
       Alert.alert(
         'Aviso Nobai245 📲',
         'O serviço de recebimento automático via MTN Mobile Money está temporariamente em fase de atualização técnica. Por favor, utilize a Orange Money para o recebimento dos seus ganhos no momento.'
@@ -166,8 +179,10 @@ export function Profile() {
   }
 
   async function handlePickAndUploadImage() {
+    console.log('📸 [AVATAR_DEBUG] Solicitando permissão de galeria para motorista...');
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
+      console.warn('⚠️ [AVATAR_DEBUG] Permissão de galeria negada.');
       Alert.alert('Permissão necessária', 'Conceda acesso à galeria para alterar sua foto de perfil.');
       return;
     }
@@ -176,11 +191,12 @@ export function Profile() {
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 0.5,
+      quality: 0.6,
       base64: false,
     });
 
     if (!result.canceled && result.assets && result.assets[0]) {
+      console.log(`📸 [AVATAR_DEBUG] Imagem selecionada: ${result.assets[0].uri}`);
       uploadProfileImage(result.assets[0].uri);
     }
   }
@@ -193,6 +209,8 @@ export function Profile() {
       const match = /\.(\w+)$/.exec(filename);
       const type = match ? `image/${match[1]}` : `image/jpeg`;
 
+      console.log(`📸 [AVATAR_DEBUG] Enviando PATCH /drivers/profile/picture (${filename})`);
+
       formData.append('profilePicture', {
         uri: Platform.OS === 'android' ? uri : uri.replace('file://', ''),
         name: filename,
@@ -204,8 +222,12 @@ export function Profile() {
       });
 
       await refreshDriverProfile();
+      setImageTimestamp(Date.now());
+
+      console.log('✅ [AVATAR_DEBUG] Foto do motorista atualizada com sucesso.');
       Alert.alert('Sucesso!', 'Sua foto de perfil foi atualizada com sucesso.');
     } catch (error: any) {
+      console.error('❌ [AVATAR_DEBUG] Erro ao enviar foto de perfil:', error);
       const errorMessage = error.response?.data?.error || error.response?.data?.message || 'Não foi possível atualizar sua foto no momento.';
       Alert.alert('Erro', errorMessage);
     } finally {
@@ -238,17 +260,20 @@ export function Profile() {
     }
 
     setLoading(true);
+    console.log(`💵 [PAYMENT_DEBUG] Salvando número Orange Money: +245${cleanNumber}`);
     try {
       await api.put('/drivers/payment-info', {
         mobileMoneyNumber: cleanNumber,
         mobileMoneyProvider: 'ORANGE'
       });
       
+      console.log('✅ [PAYMENT_DEBUG] Dados de recebimento salvos!');
       Alert.alert('Sucesso', 'Sua conta Orange Money para recebimentos foi atualizada!');
       setIsEditingPayment(false);
       await refreshDriverProfile();
       await loadFinanceData(); 
     } catch (error: any) {
+      console.error('❌ [PAYMENT_DEBUG] Erro ao salvar conta de pagamento:', error);
       Alert.alert(
         'Falha no Cadastro', 
         error.response?.data?.message || 'Verifique sua conexão ou tente novamente mais tarde.'
@@ -297,12 +322,15 @@ export function Profile() {
     }
 
     setIsSubmittingUpdate(true);
+    console.log('📝 [UPDATE_DEBUG] Enviando pedido de alteração de dados:', payload);
     try {
       await api.post('/drivers/request-update', payload);
+      console.log('✅ [UPDATE_DEBUG] Solicitação enviada com sucesso!');
       Alert.alert('Sucesso', 'Sua solicitação foi enviada para análise da central.');
       setIsUpdateModalVisible(false);
       setHasPendingRequest(true);
     } catch (error: any) {
+      console.error('❌ [UPDATE_DEBUG] Erro ao enviar solicitação:', error);
       Alert.alert('Erro', error.response?.data?.error || error.response?.data?.message || 'Não foi possível enviar a solicitação.');
     } finally {
       setIsSubmittingUpdate(false);
@@ -310,6 +338,7 @@ export function Profile() {
   }
 
   async function handleDeleteAccount() {
+    console.warn('⚠️ [DELETE_DEBUG] Solicitação de exclusão de conta de motorista iniciada.');
     Alert.alert(
       'Excluir Conta Permanentemente',
       'Tem certeza que deseja excluir sua conta? Você perderá o acesso ao app e seu saldo não resgatado poderá ser retido. Esta ação é irreversível.',
@@ -321,10 +350,13 @@ export function Profile() {
           onPress: async () => {
             try {
               setLoading(true);
+              console.log('🗑️ [DELETE_DEBUG] Enviando DELETE /drivers/delete-account');
               await api.delete('/drivers/delete-account');
+              console.log('✅ [DELETE_DEBUG] Conta de motorista excluída.');
               Alert.alert('Conta Excluída', 'Sua conta foi encerrada com sucesso.');
               signOut();
             } catch (error: any) {
+              console.error('❌ [DELETE_DEBUG] Erro ao excluir conta de motorista:', error);
               Alert.alert(
                 'Erro ao excluir', 
                 error.response?.data?.error || error.response?.data?.message || 'Não foi possível excluir a conta no momento.'
@@ -349,7 +381,13 @@ export function Profile() {
   };
 
   const statusDisplay = getStatusDisplay();
-  const formatImageUrl = (path?: string) => path ? (path.startsWith('http') ? path : `${API_URL}${path.startsWith('/') ? '' : '/'}${path}`) : undefined;
+
+  const formatImageUrl = (path?: string) => {
+    if (!path) return undefined;
+    const fullUrl = path.startsWith('http') ? path : `${API_URL}${path.startsWith('/') ? '' : '/'}${path}`;
+    return `${fullUrl}?t=${imageTimestamp}`;
+  };
+
   const profileImageUrl = formatImageUrl(driver?.profilePicture || undefined);
   const currentLang = LANGUAGES.find(l => l.code === i18n.language) || LANGUAGES[0];
 
@@ -627,19 +665,19 @@ export function Profile() {
             
             <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               <Text style={styles.inputLabel}>Nome Completo</Text>
-              <TextInput style={styles.modalInput} value={updateData.newFullName} onChangeText={(t) => setUpdateData({...updateData, newFullName: t})} placeholderTextColor="#9CA3AF" />
+              <TextInput style={styles.modalInput} value={updateData.newFullName} onChangeText={(tVal) => setUpdateData({...updateData, newFullName: tVal})} placeholderTextColor="#9CA3AF" />
               
               <Text style={styles.inputLabel}>Nº Documento (BI / Passaporte)</Text>
-              <TextInput style={styles.modalInput} value={updateData.newDocumentNumber} onChangeText={(t) => setUpdateData({...updateData, newDocumentNumber: t})} placeholderTextColor="#9CA3AF" />
+              <TextInput style={styles.modalInput} value={updateData.newDocumentNumber} onChangeText={(tVal) => setUpdateData({...updateData, newDocumentNumber: tVal})} placeholderTextColor="#9CA3AF" />
               
               <Text style={styles.inputLabel}>Marca / Modelo do Veículo</Text>
-              <TextInput style={styles.modalInput} value={updateData.newVehicleBrand} onChangeText={(t) => setUpdateData({...updateData, newVehicleBrand: t})} placeholderTextColor="#9CA3AF" />
+              <TextInput style={styles.modalInput} value={updateData.newVehicleBrand} onChangeText={(tVal) => setUpdateData({...updateData, newVehicleBrand: tVal})} placeholderTextColor="#9CA3AF" />
               
               <Text style={styles.inputLabel}>Cor do Veículo</Text>
-              <TextInput style={styles.modalInput} value={updateData.newVehicleColor} onChangeText={(t) => setUpdateData({...updateData, newVehicleColor: t})} placeholderTextColor="#9CA3AF" />
+              <TextInput style={styles.modalInput} value={updateData.newVehicleColor} onChangeText={(tVal) => setUpdateData({...updateData, newVehicleColor: tVal})} placeholderTextColor="#9CA3AF" />
               
               <Text style={styles.inputLabel}>Placa do Veículo</Text>
-              <TextInput style={styles.modalInput} value={updateData.newVehiclePlate} onChangeText={(t) => setUpdateData({...updateData, newVehiclePlate: t})} placeholderTextColor="#9CA3AF" />
+              <TextInput style={styles.modalInput} value={updateData.newVehiclePlate} onChangeText={(tVal) => setUpdateData({...updateData, newVehiclePlate: tVal})} placeholderTextColor="#9CA3AF" />
             </ScrollView>
 
             <View style={[styles.formActions, { marginTop: 16 }]}>
@@ -670,7 +708,11 @@ export function Profile() {
                 <TouchableOpacity 
                   key={item.code} 
                   style={[styles.languageOption, isSelected && styles.languageOptionActive]} 
-                  onPress={() => { i18n.changeLanguage(item.code); setIsLanguageModalVisible(false); }}
+                  onPress={() => { 
+                    console.log(`🌐 [LANG_DEBUG] Idioma alterado pelo motorista para: ${item.code}`);
+                    i18n.changeLanguage(item.code); 
+                    setIsLanguageModalVisible(false); 
+                  }}
                 >
                   <Text style={styles.languageFlag}>{item.flag}</Text>
                   <Text style={[styles.languageName, isSelected && styles.languageNameActive]}>{item.name}</Text>

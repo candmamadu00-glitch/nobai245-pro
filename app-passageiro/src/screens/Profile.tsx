@@ -35,7 +35,9 @@ const formatPhotoUrl = (path?: string | null, timestamp?: number) => {
     const cleanPath = path.startsWith('/') ? path : `/${path}`;
     fullUrl = `${cleanBase}${cleanPath}`;
   }
-  return timestamp ? `${fullUrl}?t=${timestamp}` : fullUrl;
+  const resultUrl = timestamp ? `${fullUrl}?t=${timestamp}` : fullUrl;
+  console.log(`📸 [AVATAR_DEBUG] URL da foto formatada: "${resultUrl}"`);
+  return resultUrl;
 };
 
 const LANGUAGES = [
@@ -59,9 +61,6 @@ export function Profile() {
   const [imageTimestamp, setImageTimestamp] = useState<number>(Date.now());
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
-  const [paymentProvider, setPaymentProvider] = useState<'ORANGE_MONEY' | 'MTN_MOMO' | null>(
-    (user?.paymentProvider as 'ORANGE_MONEY' | 'MTN_MOMO') || null
-  );
   const [accountNumber, setAccountNumber] = useState(user?.paymentAccountNumber || '');
   const [isSavingPayment, setIsSavingPayment] = useState(false);
 
@@ -70,14 +69,22 @@ export function Profile() {
 
   useEffect(() => {
     isMountedRef.current = true;
+    console.log('👤 [PROFILE_DEBUG] Perfil do passageiro montado:', {
+      id: user?.id,
+      fullName: user?.fullName,
+      phone: user?.phone,
+      rating: user?.ratingAverage,
+    });
     return () => {
       isMountedRef.current = false;
     };
-  }, []);
+  }, [user]);
 
   async function handlePickImage() {
+    console.log('📸 [AVATAR_DEBUG] Solicitando permissão de galeria para alteração de foto...');
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
+      console.warn('⚠️ [AVATAR_DEBUG] Permissão de acesso à galeria negada.');
       Alert.alert(
         t('permission_needed', 'Permissão necessária'), 
         t('photo_permission_msg', 'Precisamos de acesso às suas fotos para alterar o avatar.')
@@ -86,22 +93,27 @@ export function Profile() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.8,
     });
 
     if (!result.canceled && result.assets[0]?.uri) {
+      console.log(`📸 [AVATAR_DEBUG] Foto selecionada na galeria: ${result.assets[0].uri}`);
       setSelectedImage(result.assets[0].uri);
+    } else {
+      console.log('📸 [AVATAR_DEBUG] Seleção de foto cancelada pelo usuário.');
     }
   }
 
   function handleSignOut() {
+    console.log('🚪 [PROFILE_DEBUG] Passageiro solicitou encerramento de sessão.');
     signOut();
   }
 
   function handleDeleteAccount() {
+    console.warn('⚠️ [DELETE_DEBUG] Solicitação de exclusão de conta iniciada.');
     Alert.alert(
       t('delete_account_title', 'Excluir Conta'),
       t('delete_account_confirm', 'Tem certeza de que deseja excluir sua conta? Esta ação é permanente e você perderá seu histórico e dados salvos.'),
@@ -112,7 +124,9 @@ export function Profile() {
           style: 'destructive',
           onPress: async () => {
             try {
+              console.log('🗑️ [DELETE_DEBUG] Enviando requisição DELETE /passengers/me');
               await api.delete('/passengers/me');
+              console.log('✅ [DELETE_DEBUG] Conta excluída com sucesso.');
               Alert.alert(
                 t('account_deleted', 'Conta excluída'), 
                 t('account_deleted_msg', 'Sua conta foi removida com sucesso.')
@@ -120,6 +134,7 @@ export function Profile() {
               signOut();
             } catch (error: any) {
               if (!isMountedRef.current) return;
+              console.error('❌ [DELETE_DEBUG] Erro ao excluir conta:', error);
               Alert.alert(
                 t('error_title', 'Erro'), 
                 error?.response?.data?.error || error?.response?.data?.message || t('delete_account_error', 'Não foi possível excluir a conta. Tente novamente mais tarde.')
@@ -141,6 +156,8 @@ export function Profile() {
     Keyboard.dismiss();
 
     setIsSavingProfile(true);
+    console.log(`💾 [PROFILE_DEBUG] Atualizando perfil: "${fullName}" | Email: "${email}"`);
+
     try {
       const formData = new FormData();
       formData.append('fullName', fullName.trim());
@@ -152,6 +169,8 @@ export function Profile() {
         const ext = match ? match[1].toLowerCase() : 'jpg';
         const type = ext === 'png' ? 'image/png' : 'image/jpeg';
         const formattedUri = Platform.OS === 'android' ? selectedImage : selectedImage.replace('file://', '');
+
+        console.log(`📸 [AVATAR_DEBUG] Anexando avatar ao formulário: ${filename} (${type})`);
 
         formData.append('profilePicture', {
           uri: formattedUri,
@@ -173,6 +192,7 @@ export function Profile() {
       const updatedPassenger = response.data?.passenger || response.data?.user;
 
       if (updatedPassenger && updateUserContext) {
+        console.log('✅ [PROFILE_DEBUG] Contexto de usuário atualizado:', updatedPassenger);
         updateUserContext(updatedPassenger);
       }
 
@@ -187,6 +207,7 @@ export function Profile() {
       );
     } catch (error: any) {
       if (!isMountedRef.current) return;
+      console.error('❌ [PROFILE_DEBUG] Erro ao salvar dados pessoais:', error);
       Alert.alert(
         t('error_title', 'Erro'), 
         error?.response?.data?.error || error?.response?.data?.message || t('update_profile_error', 'Não foi possível atualizar seus dados pessoais.')
@@ -201,6 +222,8 @@ export function Profile() {
   async function handleSavePaymentInfo() {
     Keyboard.dismiss();
     setIsSavingPayment(true);
+    console.log(`💵 [PAYMENT_DEBUG] Salvando preferência de conta: "${accountNumber}"`);
+
     try {
       if (accountNumber.trim()) {
         await api.put('/passengers/payment-method', { 
@@ -215,6 +238,7 @@ export function Profile() {
       );
     } catch (error: any) {
       if (!isMountedRef.current) return;
+      console.error('❌ [PAYMENT_DEBUG] Erro ao salvar dados de pagamento:', error);
       Alert.alert(
         t('error_title', 'Erro'), 
         t('payment_update_error', 'Não foi possível salvar as informações de pagamento.')
@@ -227,6 +251,7 @@ export function Profile() {
   }
 
   const handleSelectLanguage = (code: string) => {
+    console.log(`🌐 [LANG_DEBUG] Idioma do perfil alterado para: ${code}`);
     i18n.changeLanguage(code);
     setIsLangModalOpen(false);
   };
@@ -238,6 +263,7 @@ export function Profile() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
 
+      {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#1A202C" />
@@ -252,6 +278,7 @@ export function Profile() {
       >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+            {/* AVATAR & RATING */}
             <View style={styles.avatarContainer}>
               <TouchableOpacity activeOpacity={0.8} onPress={handlePickImage} style={styles.avatarWrapper}>
                 {avatarUri ? (
@@ -274,6 +301,7 @@ export function Profile() {
               </View>
             </View>
 
+            {/* WALLET CARD */}
             <View style={styles.walletCard}>
               <Ionicons name="wallet-outline" size={22} color="#854D0E" />
               <View style={styles.walletInfo}>
@@ -284,7 +312,7 @@ export function Profile() {
               </View>
             </View>
 
-            {/* Configuração de Idioma */}
+            {/* SELEÇÃO DE IDIOMA */}
             <TouchableOpacity style={styles.historyButton} onPress={() => setIsLangModalOpen(true)}>
               <View style={styles.historyButtonLeft}>
                 <View style={[styles.iconBox, { backgroundColor: '#E0E7FF' }]}>
@@ -298,6 +326,7 @@ export function Profile() {
               <Ionicons name="chevron-forward" size={20} color="#A0AEC0" />
             </TouchableOpacity>
 
+            {/* EDITAR DADOS PESSOAIS */}
             <Text style={styles.sectionTitle}>{t('edit_personal_data', 'Editar Dados Pessoais')}</Text>
             <View style={styles.formCard}>
               <Text style={styles.inputLabel}>{t('full_name', 'Nome Completo')}</Text>
@@ -346,10 +375,10 @@ export function Profile() {
               </TouchableOpacity>
             </View>
 
+            {/* CONFIGURAR PAGAMENTO */}
             <Text style={styles.sectionTitle}>{t('setup_payment', 'Configurar Pagamento')}</Text>
             <View style={styles.formCard}>
               
-              {/* Aviso Dinheiro em Espécie */}
               <View style={styles.cashNoticeBox}>
                 <Ionicons name="cash-outline" size={22} color="#166534" />
                 <Text style={styles.cashNoticeText}>
@@ -360,7 +389,6 @@ export function Profile() {
               <Text style={styles.inputLabel}>{t('mobile_money_provider', 'Operadoras Mobile Money')}</Text>
               <View style={styles.providerContainer}>
                 
-                {/* ORANGE MONEY (QUADRADO BLOQUEADO) */}
                 <TouchableOpacity 
                   style={styles.providerSquareButtonBlocked} 
                   onPress={() => {
@@ -378,7 +406,6 @@ export function Profile() {
                   </View>
                 </TouchableOpacity>
 
-                {/* MTN MOMO (QUADRADO BLOQUEADO) */}
                 <TouchableOpacity 
                   style={styles.providerSquareButtonBlocked} 
                   onPress={() => {
@@ -426,6 +453,7 @@ export function Profile() {
               </TouchableOpacity>
             </View>
 
+            {/* OUTRAS NAVEGAÇÕES */}
             <TouchableOpacity style={styles.historyButton} onPress={() => navigation.navigate('EmergencyContacts')}>
               <View style={styles.historyButtonLeft}>
                 <View style={[styles.iconBox, { backgroundColor: '#FEE2E2' }]}>
@@ -486,7 +514,7 @@ export function Profile() {
         onClose={() => setIsPrivacyModalOpen(false)} 
       />
 
-      {/* Modal de Seleção de Idioma */}
+      {/* MODAL DE IDIOMAS */}
       <Modal visible={isLangModalOpen} transparent animationType="slide" onRequestClose={() => setIsLangModalOpen(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.langModalContainer}>

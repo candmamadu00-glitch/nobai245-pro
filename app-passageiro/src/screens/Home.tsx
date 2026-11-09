@@ -161,7 +161,9 @@ const formatPhotoUrl = (path?: string) => {
   if (path.startsWith('http://') || path.startsWith('https://')) return path;
   const cleanBase = API_URL.replace(/\/$/, '');
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
-  return `${cleanBase}${cleanPath}`;
+  const fullUrl = `${cleanBase}${cleanPath}`;
+  console.log(`📸 [FOTO_DEBUG] Foto formatada para o passageiro: "${fullUrl}"`);
+  return fullUrl;
 };
 
 const isNightTimeForPin = () => {
@@ -181,7 +183,9 @@ function calculateVehiclePrice(type: VehicleType, distanceKm: number | null): nu
 
   const rate = VEHICLE_RATES[type] || VEHICLE_RATES.particular;
   const calculatedPrice = rate.base + (distanceKm * rate.perKm);
-  return Math.round(calculatedPrice / 50) * 50;
+  const roundedPrice = Math.round(calculatedPrice / 50) * 50;
+  console.log(`💵 [PRICE_DEBUG] Categoria: ${type} | Distância: ${distanceKm.toFixed(2)}km | Valor: ${roundedPrice} XOF`);
+  return roundedPrice;
 }
 
 const normalizeVehicleType = (type?: string): string => {
@@ -348,6 +352,7 @@ export function Home() {
   ];
 
   const resetRideState = useCallback(() => {
+    console.log('🔄 [STATE_DEBUG] Resetando estado completo da corrida no passageiro...');
     setActiveRideId(null);
     activeRideIdRef.current = null;
     setRideStatus('idle');
@@ -399,6 +404,7 @@ export function Home() {
           estimatedPrice: extraData?.estimatedPrice ?? estimatedPrice,
         };
         await AsyncStorage.setItem(STORAGE_RIDE_KEY, JSON.stringify(payload));
+        console.log(`💾 [STATE_DEBUG] Estado salvo no AsyncStorage para a corrida ${rideId} (Status: ${status})`);
       } else {
         await AsyncStorage.removeItem(STORAGE_RIDE_KEY);
       }
@@ -549,7 +555,7 @@ export function Home() {
           },
           (_, status) => {
             if (status.state === 'complete') {
-              console.log('✅ Mapa de Bissau gravado no armazenamento local.');
+              console.log('✅ [OFFLINE_MAP] Mapa de Bissau gravado no armazenamento local.');
             }
           }
         );
@@ -596,6 +602,8 @@ export function Home() {
     const normalizedSender: 'passenger' | 'driver' = isFromDriver ? 'driver' : 'passenger';
     const messageId = String(data.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`);
 
+    console.log(`💬 [CHAT_DEBUG] Mensagem recebida no passageiro: "${text || '[Áudio]'}" de ${normalizedSender}`);
+
     setMessages(prev => {
       const isDuplicate = prev.some(
         m => m.id === messageId || 
@@ -633,6 +641,7 @@ export function Home() {
     const sw = [Math.min(...lngs), Math.min(...lats)];
 
     try {
+      console.log('📍 [MAP_DEBUG] Enquadrando limites no mapa Mapbox.');
       cameraRef.current.fitBounds(ne, sw, [120, 60, 360, 60], 1000);
     } catch (err) {
       console.warn('Erro ao ajustar enquadramento do mapa Mapbox:', err);
@@ -668,6 +677,7 @@ export function Home() {
       const coordinatesString = waypoints.join(';');
       const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${coordinatesString}?geometries=geojson&overview=full&access_token=${MAPBOX_ACCESS_TOKEN}`;
       
+      console.log(`🗺️ [ROUTE_DEBUG] Solicitando rota Mapbox: ${coordinatesString}`);
       const res = await fetch(url);
       if (!res.ok) return;
 
@@ -684,6 +694,8 @@ export function Home() {
 
         const distanceKm = routeObj.distance / 1000;
         const durationMin = Math.ceil(routeObj.duration / 60);
+
+        console.log(`🗺️ [ROUTE_DEBUG] Rota obtida! Distância: ${distanceKm.toFixed(2)}km | ETA: ${durationMin} min`);
 
         setDriverEta(durationMin);
         if (rideStatus === 'idle' || rideStatus === 'searching') {
@@ -704,7 +716,7 @@ export function Home() {
 
     const otpCode = String(source.startOtp || source.otpPin || source.pin || d.startOtp || otpFallback || '');
 
-    return {
+    const extracted: DriverInfo = {
       id: String(id),
       name: d.fullName || d.name || source.driverName || 'Motorista',
       photoUrl: formatPhotoUrl(d.profilePicture || d.photoUrl || source.driverPhoto),
@@ -717,11 +729,15 @@ export function Home() {
       phone: d.phone || source.driverPhone,
       startOtp: otpCode,
     };
+
+    console.log(`🚘 [DRIVER_DEBUG] Motorista extraído: ${extracted.name} (${extracted.licensePlate}) | PIN: "${otpCode}"`);
+    return extracted;
   };
 
   const syncPassengerActiveRide = useCallback(async () => {
     try {
       if (!api || typeof api.get !== 'function') return;
+      console.log('🔄 [SYNC_DEBUG] Sincronizando corrida ativa do passageiro via API...');
 
       let response = await api.get('/passengers/active-ride').catch(() => null);
       if (!response?.data?.ride) {
@@ -737,6 +753,7 @@ export function Home() {
           ride.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
 
         if (mappedStatus !== 'idle') {
+          console.log(`✅ [SYNC_DEBUG] Corrida em andamento restaurada! ID: ${ride.id} | Status: ${mappedStatus}`);
           setActiveRideId(ride.id);
           activeRideIdRef.current = ride.id;
           setRideStatus(mappedStatus);
@@ -808,11 +825,12 @@ export function Home() {
 
           if (socket && socket.connected) {
             socket.emit('passenger:rejoin_ride', { rideId: ride.id });
+            console.log(`📡 [SOCKET_DEBUG] Passageiro reingressando na sala da corrida: ${ride.id}`);
           }
         }
       }
     } catch (err) {
-      console.warn('⚠️ [PASSENGER] Erro na rede - mantendo cache local:', err);
+      console.warn('⚠️ [SYNC_DEBUG] Erro na rede ao sincronizar corrida - mantendo cache local:', err);
     }
   }, [fetchMapboxRoute, fitMapBounds, extraStopCoords]);
 
@@ -821,6 +839,7 @@ export function Home() {
 
     const handleRideCancelledEvent = async (data: { rideId?: string; cancelledBy?: string; reason?: string }) => {
       if (!data.rideId || data.rideId === activeRideId) {
+        console.warn(`❌ [CANCEL_DEBUG] Evento "ride:cancelled" recebido! Solicitante: ${data.cancelledBy || 'Desconhecido'} | Motivo: ${data.reason || 'N/A'}`);
         Vibration.vibrate([0, 400, 200, 400]);
 
         Alert.alert(
@@ -856,6 +875,7 @@ export function Home() {
     }
 
     setIsSearchingMapbox(true);
+    console.log(`🔍 [SEARCH_DEBUG] Pesquisando local: "${text}"`);
 
     try {
       const response = await api.get(`/landmarks/search?q=${encodeURIComponent(text)}`).catch(() => null);
@@ -863,23 +883,37 @@ export function Home() {
       let dbResults: MapboxGeocodingFeature[] = [];
 
       if (response?.data && Array.isArray(response.data)) {
-        dbResults = response.data.map((item: any) => ({
-          id: `db_${item.id}`,
-          description: item.popularName 
-            ? `${item.name} (${item.popularName}) - ${item.neighborhood}` 
-            : `${item.name} - ${item.neighborhood}`,
-          latitude: Number(item.latitude),
-          longitude: Number(item.longitude),
-          isLocalBairro: true,
-        }));
+        dbResults = response.data.map((item: any) => {
+          const mainTitle = item.displayText || item.name || item.title || item.popularName || '';
+          const subTitle = item.subtitle || item.neighborhood || item.referenceNotes || '';
+          
+          let description = mainTitle;
+          if (!item.displayText && subTitle && !mainTitle.toLowerCase().includes(subTitle.toLowerCase())) {
+            description = `${mainTitle} - ${subTitle}`;
+          }
+
+          if (!description || description.includes('undefined')) {
+            description = item.description || item.formatted_address || 'Localização';
+          }
+
+          return {
+            id: `db_${item.id || Math.random()}`,
+            description: description.replace(/undefined/g, '').trim(),
+            latitude: Number(item.latitude),
+            longitude: Number(item.longitude),
+            isLocalBairro: true,
+          };
+        });
       }
 
       if (dbResults.length > 0) {
+        console.log(`📍 [SEARCH_DEBUG] ${dbResults.length} locais encontrados no banco de pontos de referência.`);
         setSearchResults(dbResults);
         setIsSearchingMapbox(false);
         return;
       }
 
+      console.log('🌐 [SEARCH_DEBUG] Consultando API Mapbox Geocoding...');
       const mapboxRes = await fetch(
         `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(text)}.json?country=gw&proximity=${BISSAU_CENTER.longitude},${BISSAU_CENTER.latitude}&language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`
       );
@@ -888,7 +922,7 @@ export function Home() {
         const mapboxData = await mapboxRes.json();
         const formattedMapbox: MapboxGeocodingFeature[] = (mapboxData.features || []).map((item: any) => ({
           id: item.id,
-          description: (item.place_name || item.text || '').replace(/, Guiné-Bissau/gi, ''),
+          description: (item.place_name || item.text || 'Localização').replace(/, Guiné-Bissau/gi, ''),
           latitude: item.geometry.coordinates[1],
           longitude: item.geometry.coordinates[0],
           isLocalBairro: false,
@@ -899,7 +933,7 @@ export function Home() {
         setSearchResults([]);
       }
     } catch (error) {
-      console.error('Erro ao pesquisar local:', error);
+      console.error('❌ [SEARCH_DEBUG] Erro ao pesquisar local:', error);
       setSearchResults([]);
     } finally {
       setIsSearchingMapbox(false);
@@ -950,6 +984,7 @@ export function Home() {
 
       if (!isMountedRef.current || !location) return;
 
+      console.log(`📍 [LOCATION_DEBUG] Posição do passageiro obtida: [${location.coords.latitude}, ${location.coords.longitude}]`);
       setPassengerLocation(location);
 
       if (!isManualPickupRef.current) {
@@ -959,6 +994,7 @@ export function Home() {
         const localName = findNearestLocalBairro(latitude, longitude);
 
         if (localName) {
+          console.log(`📍 [LOCATION_DEBUG] Bairro mais próximo identificado: "${localName}"`);
           setPickupAddress(localName);
         } else if (MAPBOX_ACCESS_TOKEN && isMountedRef.current) {
           try {
@@ -994,6 +1030,8 @@ export function Home() {
   const handleInaccessibleLocationAlert = useCallback((data: any) => {
     if (isInaccessibleAlertShowingRef.current) return;
     isInaccessibleAlertShowingRef.current = true;
+
+    console.warn(`📢 [ALERT_DEBUG] Alerta de local inacessível emitido pelo motorista:`, data);
 
     Alert.alert(
       data?.title || t('warning_title', 'Atenção ⚠️'), 
@@ -1130,7 +1168,7 @@ export function Home() {
   useEffect(() => {
     const subscription = AppState.addEventListener('change', async (nextAppState) => {
       if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
-        console.log('📱 [PASSENGER APP RESUME] Passageiro voltou para o aplicativo!');
+        console.log('📱 [APP_STATE_DEBUG] Passageiro retornou ao primeiro plano.');
         getCurrentLocationWithFallback();
 
         if (socket && !socket.connected) {
@@ -1182,6 +1220,7 @@ export function Home() {
         if (savedState && isMountedRef.current) {
           const parsed = JSON.parse(savedState);
           if (parsed?.rideId && parsed?.status && parsed.status !== 'idle' && parsed.status !== 'completed') {
+            console.log(`🔄 [STATE_DEBUG] Recuperando estado salvo da corrida ID: ${parsed.rideId} | Status: ${parsed.status}`);
             setActiveRideId(parsed.rideId);
             activeRideIdRef.current = parsed.rideId;
             setRideStatus(parsed.status);
@@ -1232,6 +1271,7 @@ export function Home() {
 
     const handleConnect = () => {
       if (isMountedRef.current) setIsConnected(true);
+      console.log('⚡ [SOCKET_DEBUG] Passageiro conectado ao Socket Server!');
       if (socket && socket.connected) {
         socket.emit('passenger:request_state');
         if (activeRideIdRef.current) {
@@ -1242,6 +1282,7 @@ export function Home() {
 
     const handleDisconnect = () => {
       if (isMountedRef.current) setIsConnected(false);
+      console.warn('⚡ [SOCKET_DEBUG] Passageiro desconectado do Socket Server.');
     };
 
     const handleStateRecovered = async (data: any) => {
@@ -1260,6 +1301,7 @@ export function Home() {
         if (data?.hasActiveRide && data?.ride) {
           if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
           const ride = data.ride;
+          console.log('🔄 [SOCKET_DEBUG] Estado da corrida recuperado via Socket:', ride.status);
           setActiveRideId(ride.id);
           activeRideIdRef.current = ride.id;
 
@@ -1294,6 +1336,8 @@ export function Home() {
       if (!isMountedRef.current || !data) return;
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
+      console.log('🎉 [RIDE_DEBUG] Evento "ride:accepted" recebido no passageiro:', data);
+
       const otpCode = String(data.startOtp || data.otpPin || data.pin || '');
       setStartOtp(otpCode); 
       setActiveRideId(data.rideId || data.id);
@@ -1326,6 +1370,7 @@ export function Home() {
 
     const handleDriverArrived = (data: any) => {
       if (!isMountedRef.current) return;
+      console.log('📍 [RIDE_DEBUG] Motorista chegou ao local de embarque!');
       setRideStatus('arrived');
       if (data?.startOtp) setStartOtp(data.startOtp);
       if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'arrived');
@@ -1345,6 +1390,7 @@ export function Home() {
 
     const handleRideStarted = () => { 
       if (!isMountedRef.current) return;
+      console.log('🚀 [RIDE_DEBUG] Viagem iniciada!');
       setRideStatus('in_progress'); 
       setIsChatVisible(false); 
       speakRideStatusUpdate('in_progress');
@@ -1353,6 +1399,7 @@ export function Home() {
 
     const handleRideFinished = () => { 
       if (!isMountedRef.current) return;
+      console.log('🏁 [RIDE_DEBUG] Viagem concluída com sucesso!');
       setRideStatus('completed');
       setShowRatingModal(true); 
       speakRideStatusUpdate('completed');
@@ -1361,6 +1408,7 @@ export function Home() {
 
     const handleRideCancelled = (data: any) => {
       if (!isMountedRef.current) return;
+      console.warn('❌ [RIDE_DEBUG] Viagem cancelada:', data);
 
       const isDriverCancel = data?.cancelledBy === 'DRIVER';
       const title = isDriverCancel ? t('warning_title', 'Aviso ⚠️') : t('cancelled_title', 'Cancelado');
@@ -1384,6 +1432,8 @@ export function Home() {
     const handleNoDriversFound = () => {
       if (!isMountedRef.current) return;
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+
+      console.warn('⚠️ [RIDE_DEBUG] Nenhum motorista encontrado na região.');
 
       Notifications.scheduleNotificationAsync({
         content: {
@@ -1435,6 +1485,7 @@ export function Home() {
     socket.on('ride:inaccessible_location', handleInaccessibleLocationAlert);
 
     return () => {
+      console.log('⚡ [SOCKET_DEBUG] Removendo ouvintes de eventos do Socket do passageiro.');
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       socket.off('passenger:state_recovered', handleStateRecovered);
@@ -1482,6 +1533,7 @@ export function Home() {
       let fitPoints = [origin, destination];
       if (extra) fitPoints.push(extra);
       
+      console.log(`🗺️ [ROUTE_DEBUG] Recalculando limites da rota no mapa (Status: ${rideStatus})`);
       fitMapBounds(fitPoints);
       fetchMapboxRoute(origin, destination, extra);
     }
@@ -1489,6 +1541,7 @@ export function Home() {
 
   useEffect(() => {
     if (route.params?.openChat) {
+      console.log('💬 [CHAT_DEBUG] Abrindo chat automaticamente via parâmetros de navegação.');
       setIsChatVisible(true);
       navigation.setParams({ openChat: undefined });
     }
@@ -1506,6 +1559,7 @@ export function Home() {
     const isRideActive = activeRideStates.includes(rideStatus);
 
     if (isRideActive) {
+      console.log('📱 [KEEP_AWAKE_DEBUG] Ativando KeepAwake (Tela sempre acesa durante a corrida)');
       activateKeepAwakeAsync('passenger_ride_tag').catch((err) => {
         console.warn('⚠️ Não foi possível manter a tela acesa:', err);
       });
@@ -1538,6 +1592,7 @@ export function Home() {
       const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
 
       if (isMocked) {
+        console.warn('🚨 [SECURITY_DEBUG] Tentativa de solicitação com GPS Falso / Simulador!');
         Alert.alert(
           "🚨 Localização Simulada Detectada",
           "Por motivos de segurança, não é possível solicitar corridas utilizando aplicativos de GPS falso.",
@@ -1572,7 +1627,7 @@ export function Home() {
         
       const regionLabel = RENTAL_PRICES[selectedRegion]?.label || selectedRegion;
 
-      emitRequestRide({
+      const payload = {
         passengerId: user.id,
         passengerName: (user as any)?.name || user.fullName,
         passengerRating: Number((user as any)?.rating || user.ratingAverage || 5.0),
@@ -1588,7 +1643,7 @@ export function Home() {
         referencePoint: pickupReferencePoint.trim(),
         serviceType: mappedServiceType,
         vehicleType: mappedVehicleType,
-        paymentMethod: 'CASH', // 🟢 SEMPRE DINHEIRO
+        paymentMethod: 'CASH', // 🟢 SEMPRE DINHEIRO FÍSICO
         estimatedPrice: estimatedPrice,
         priceXof: estimatedPrice,
         guestName: isForAnotherPerson ? guestName : undefined,
@@ -1607,11 +1662,15 @@ export function Home() {
         extraStopLat: extraStopCoords?.latitude,
         extraStopLng: extraStopCoords?.longitude,
         extraStopAddress: extraStopAddress || undefined,
-      });
+      };
+
+      console.log('📡 [RIDE_DEBUG] Emitindo evento "passenger:request_ride":', payload);
+      emitRequestRide(payload);
 
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
       searchTimeoutRef.current = setTimeout(() => {
         if (isMountedRef.current) {
+          console.warn('⏱️ [RIDE_DEBUG] Tempo limite de 60s expirado sem resposta de motorista.');
           Alert.alert(
             t('no_response_title', 'Sem resposta'), 
             t('no_driver_accepted_msg', 'Nenhum motorista aceitou no momento. Tente novamente.')
@@ -1621,6 +1680,7 @@ export function Home() {
       }, 60000);
 
     } catch (error) {
+      console.error('❌ [RIDE_DEBUG] Erro ao emitir pedido de corrida:', error);
       Alert.alert(
         t('error_title', 'Erro'), 
         t('server_error_msg', 'Ocorreu um problema ao comunicar com os servidores.')
@@ -1634,6 +1694,7 @@ export function Home() {
   };
 
   const handleConfirmCancel = useCallback((reason: string) => {
+    console.log(`🛑 [CANCEL_DEBUG] Confirmação de cancelamento enviada pelo passageiro. Motivo: "${reason}"`);
     setShowCancelModal(false);
 
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
@@ -1668,6 +1729,7 @@ export function Home() {
     const [lng, lat] = coords;
     if (typeof lng !== 'number' || typeof lat !== 'number' || isNaN(lng) || isNaN(lat)) return;
 
+    console.log(`🗺️ [MAP_DEBUG] Mapa arrastado para as coordenadas: [${lat}, ${lng}]`);
     setPickupCoords({ latitude: lat, longitude: lng });
 
     const localName = findNearestLocalBairro(lat, lng);
@@ -1701,6 +1763,7 @@ export function Home() {
 
   const handleSubmitRating = useCallback((stars: number, tags: string[], comment: string) => {
     if (activeRideId && driverInfo && user?.id) {
+      console.log(`⭐ [RATING_DEBUG] Enviando avaliação do motorista ${driverInfo.id}: ${stars} estrelas.`);
       rateDriver({ 
         rideId: activeRideId, 
         reviewerId: user.id, 
@@ -1715,6 +1778,7 @@ export function Home() {
   }, [activeRideId, driverInfo, user?.id, resetRideState]);
 
   const handleResetToMyGps = () => {
+    console.log('📍 [LOCATION_DEBUG] Resetando pino de embarque para o GPS atual do passageiro.');
     isManualPickupRef.current = false;
     getCurrentLocationWithFallback();
   };
@@ -1741,6 +1805,8 @@ export function Home() {
       const baseUrl = apiDomain.replace(/\/api\/?$/, '').replace(/\/$/, '');
       const trackingUrl = `${baseUrl}/track/${activeRideId}`;
 
+      console.log(`🔗 [SHARE_DEBUG] Link de compartilhamento gerado: ${trackingUrl}`);
+
       const mensagem = 
         `🚕 *Acompanhe minha viagem no Nô Bai 245!*\n\n` +
         `👤 *Motorista:* ${driverInfo.name || 'Motorista'}\n` +
@@ -1762,6 +1828,7 @@ export function Home() {
   };
 
   function openSearchModal(type: 'pickup' | 'dropoff' | 'extraStop') {
+    console.log(`🔍 [SEARCH_DEBUG] Abrindo modal de busca de endereço para o tipo: "${type}"`);
     setSearchType(type);
     setSearchQuery('');
     setSearchResults([]);
@@ -1769,6 +1836,7 @@ export function Home() {
   }
 
   const handleSelectSearchResult = (address: string, coords: { latitude: number; longitude: number }) => {
+    console.log(`📍 [SEARCH_DEBUG] Local selecionado: "${address}" [${coords.latitude}, ${coords.longitude}]`);
     const selectedFeature: MapboxGeocodingFeature = {
       id: `recent_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       description: address,
@@ -1795,6 +1863,7 @@ export function Home() {
   };
 
   const handleSosPress = () => {
+    console.log('🚨 [SOS_DEBUG] Modal de emergência acionado pelo passageiro.');
     Alert.alert(
       t('emergency_sos', 'SOS / Emergência 🚨'),
       t('choose_emergency_service', 'Selecione o serviço de emergência que deseja contactar:'),
@@ -2093,6 +2162,7 @@ export function Home() {
         style={[styles.recenterButton, { bottom: Math.max((insets?.bottom || 0) + 260, 270) }]} 
         activeOpacity={0.85}
         onPress={() => {
+          console.log('📍 [MAP_DEBUG] Recentralizando câmera no passageiro/motorista.');
           if (cameraRef.current) {
             cameraRef.current.setCamera({
               centerCoordinate: safeCenterCoordinate,
@@ -2189,7 +2259,10 @@ export function Home() {
                       placeholder="Ref. Partida (ex: Perto da Farmácia Central)"
                       placeholderTextColor="#64748B"
                       value={pickupReferencePoint}
-                      onChangeText={setPickupReferencePoint}
+                      onChangeText={(val) => {
+                        setPickupReferencePoint(val);
+                        console.log(`📍 [LOCATION_DEBUG] Ref. Embarque atualizada: "${val}"`);
+                      }}
                       maxLength={80}
                     />
                   </View>
@@ -2206,7 +2279,12 @@ export function Home() {
                     </TouchableOpacity>
                     <TouchableOpacity 
                       style={{ padding: 10, marginLeft: 6, backgroundColor: 'rgba(239,68,68,0.15)', borderRadius: 12 }} 
-                      onPress={() => { setShowExtraStop(false); setExtraStopAddress(''); setExtraStopCoords(null); }}
+                      onPress={() => { 
+                        console.log('🗑️ [UI_DEBUG] Parada intermediária removida.');
+                        setShowExtraStop(false); 
+                        setExtraStopAddress(''); 
+                        setExtraStopCoords(null); 
+                      }}
                     >
                       <Ionicons name="trash-outline" size={20} color="#EF4444" />
                     </TouchableOpacity>
@@ -2230,7 +2308,10 @@ export function Home() {
                         placeholder="Ref. Destino (ex: Em frente ao Mercado)"
                         placeholderTextColor="#64748B"
                         value={dropoffReferencePoint}
-                        onChangeText={setDropoffReferencePoint}
+                        onChangeText={(val) => {
+                          setDropoffReferencePoint(val);
+                          console.log(`🚩 [LOCATION_DEBUG] Ref. Destino atualizada: "${val}"`);
+                        }}
                         maxLength={80}
                       />
                     </View>
@@ -2240,7 +2321,11 @@ export function Home() {
                 {!showExtraStop && (
                   <TouchableOpacity 
                     style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 6, paddingHorizontal: 4 }} 
-                    onPress={() => { setShowExtraStop(true); openSearchModal('extraStop'); }}
+                    onPress={() => { 
+                      console.log('➕ [UI_DEBUG] Abrindo busca para adicionar parada intermediária.');
+                      setShowExtraStop(true); 
+                      openSearchModal('extraStop'); 
+                    }}
                   >
                     <Ionicons name="add-circle-outline" size={20} color="#3B82F6" style={{ marginRight: 6 }} />
                     <Text style={{ color: '#3B82F6', fontWeight: '600', fontSize: 13 }}>+ Adicionar Parada Intermediária</Text>
@@ -2248,7 +2333,14 @@ export function Home() {
                 )}
 
                 {dropoffCoords ? (
-                  <TouchableOpacity style={styles.requestButton} activeOpacity={0.85} onPress={() => setBookingStep('SERVICE_AND_PRICE')}>
+                  <TouchableOpacity 
+                    style={styles.requestButton} 
+                    activeOpacity={0.85} 
+                    onPress={() => {
+                      console.log('📱 [UI_DEBUG] Avançando para a etapa SERVICE_AND_PRICE.');
+                      setBookingStep('SERVICE_AND_PRICE');
+                    }}
+                  >
                     <Text style={styles.requestButtonText}>{t('next_btn', 'Avançar')}</Text>
                   </TouchableOpacity>
                 ) : (
@@ -2488,6 +2580,7 @@ export function Home() {
                   <TouchableOpacity 
                     style={styles.actionBtnPrimary} 
                     onPress={() => {
+                      console.log('💬 [UI_DEBUG] Abrindo modal de chat e zerando unreadCount.');
                       setUnreadCount(0);
                       setIsChatVisible(true);
                     }} 
@@ -2582,7 +2675,10 @@ export function Home() {
             <View style={styles.serviceTypesContainer}>
               <TouchableOpacity 
                 style={[styles.serviceTypeButton, serviceType === 'viagem' && styles.serviceTypeActive]}
-                onPress={() => setServiceType('viagem')}
+                onPress={() => {
+                  console.log('🚖 [SERVICE_DEBUG] Serviço selecionado: VIAGEM');
+                  setServiceType('viagem');
+                }}
               >
                 <Ionicons name="car-outline" size={18} color={serviceType === 'viagem' ? '#0F172A' : '#94A3B8'} />
                 <Text style={[styles.serviceTypeText, serviceType === 'viagem' && styles.serviceTypeTextActive]}>Viagem</Text>
@@ -2590,7 +2686,10 @@ export function Home() {
 
               <TouchableOpacity 
                 style={[styles.serviceTypeButton, serviceType === 'entrega' && styles.serviceTypeActive]}
-                onPress={() => setServiceType('entrega')}
+                onPress={() => {
+                  console.log('📦 [SERVICE_DEBUG] Serviço selecionado: ENTREGA');
+                  setServiceType('entrega');
+                }}
               >
                 <Ionicons name="cube-outline" size={18} color={serviceType === 'entrega' ? '#0F172A' : '#94A3B8'} />
                 <Text style={[styles.serviceTypeText, serviceType === 'entrega' && styles.serviceTypeTextActive]}>Entrega</Text>
@@ -2598,7 +2697,10 @@ export function Home() {
 
               <TouchableOpacity 
                 style={[styles.serviceTypeButton, serviceType === 'aluguel' && styles.serviceTypeActive]}
-                onPress={() => setServiceType('aluguel')}
+                onPress={() => {
+                  console.log('🔑 [SERVICE_DEBUG] Serviço selecionado: ALUGUEL');
+                  setServiceType('aluguel');
+                }}
               >
                 <Ionicons name="key-outline" size={18} color={serviceType === 'aluguel' ? '#0F172A' : '#94A3B8'} />
                 <Text style={[styles.serviceTypeText, serviceType === 'aluguel' && styles.serviceTypeTextActive]}>Aluguel</Text>
@@ -2637,7 +2739,10 @@ export function Home() {
                           { paddingVertical: 14, paddingHorizontal: 16, borderRadius: 16 }
                         ]}
                         activeOpacity={0.85}
-                        onPress={() => setVehicleType(item.id)}
+                        onPress={() => {
+                          console.log(`🚗 [SERVICE_DEBUG] Categoria selecionada: "${item.id}" (${price} XOF)`);
+                          setVehicleType(item.id);
+                        }}
                       >
                         <Image source={item.image} style={{ width: 55, height: 40 }} resizeMode="contain" />
                         <View style={[styles.categoryTextWrapper, { marginLeft: 12 }]}>
@@ -2684,7 +2789,10 @@ export function Home() {
                     <TouchableOpacity
                       key={lang.code}
                       style={styles.langOption}
-                      onPress={() => changeLanguage(lang.code)}
+                      onPress={() => {
+                        console.log(`🌐 [UI_DEBUG] Idioma alterado para: ${lang.code}`);
+                        changeLanguage(lang.code);
+                      }}
                       activeOpacity={0.7}
                     >
                       <Text style={styles.langOptionText}>{lang.label}</Text>
@@ -2729,7 +2837,10 @@ export function Home() {
 
                   <TouchableOpacity 
                     style={styles.cancelButtonOutline} 
-                    onPress={getCurrentLocationWithFallback}
+                    onPress={() => {
+                      console.log('📍 [LOCATION_DEBUG] Tentando obter localização novamente via botão do modal.');
+                      getCurrentLocationWithFallback();
+                    }}
                     activeOpacity={0.8}
                   >
                     <Text style={styles.cancelButtonOutlineText}>{t('try_again', 'Já ativei / Tentar novamente')}</Text>
@@ -2741,7 +2852,7 @@ export function Home() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* MENU LATERAL DRAWER */}
+      {/* 📑 MENU LATERAL DRAWER */}
       <Modal visible={isMenuVisible} animationType="fade" transparent onRequestClose={() => setIsMenuVisible(false)}>
         <TouchableOpacity style={styles.menuOverlay} activeOpacity={1} onPress={() => setIsMenuVisible(false)}>
           <View style={[styles.menuDrawer, { paddingTop: Math.max((insets?.top || 0) + 16, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 20), paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
@@ -2758,7 +2869,14 @@ export function Home() {
             </View>
 
             <View style={styles.menuItems}>
-              <TouchableOpacity style={styles.menuItem} onPress={toggleVoiceAssist} activeOpacity={0.7}>
+              <TouchableOpacity 
+                style={styles.menuItem} 
+                onPress={() => {
+                  console.log('🎙️ [MENU_DEBUG] Alternando Assistência por Voz via Menu Lateral.');
+                  toggleVoiceAssist();
+                }} 
+                activeOpacity={0.7}
+              >
                 <Ionicons 
                   name={isVoiceAssistEnabled ? "volume-high-outline" : "volume-mute-outline"} 
                   size={20} 
@@ -2779,29 +2897,69 @@ export function Home() {
                 </View>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('Profile'); }} activeOpacity={0.7}>
+              <TouchableOpacity 
+                style={styles.menuItem} 
+                onPress={() => { 
+                  console.log('📱 [MENU_DEBUG] Navegando para: Profile');
+                  setIsMenuVisible(false); 
+                  navigation.navigate('Profile'); 
+                }} 
+                activeOpacity={0.7}
+              >
                 <Ionicons name="person-outline" size={20} color="#0F172A" />
                 <Text style={styles.menuItemText}>{t('my_profile', 'Meu Perfil')}</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('RideHistory'); }} activeOpacity={0.7}>
+              <TouchableOpacity 
+                style={styles.menuItem} 
+                onPress={() => { 
+                  console.log('📱 [MENU_DEBUG] Navegando para: RideHistory');
+                  setIsMenuVisible(false); 
+                  navigation.navigate('RideHistory'); 
+                }} 
+                activeOpacity={0.7}
+              >
                 <Ionicons name="time-outline" size={20} color="#0F172A" />
                 <Text style={styles.menuItemText}>{t('my_rides', 'Minhas Corridas')}</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('EmergencyContacts'); }} activeOpacity={0.7}>
+              <TouchableOpacity 
+                style={styles.menuItem} 
+                onPress={() => { 
+                  console.log('📱 [MENU_DEBUG] Navegando para: EmergencyContacts');
+                  setIsMenuVisible(false); 
+                  navigation.navigate('EmergencyContacts'); 
+                }} 
+                activeOpacity={0.7}
+              >
                 <Ionicons name="shield-checkmark-outline" size={20} color="#0F172A" />
                 <Text style={styles.menuItemText}>{t('emergency_contacts', 'Contatos de Emergência')}</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); navigation.navigate('HelpCenter'); }} activeOpacity={0.7}>
+              <TouchableOpacity 
+                style={styles.menuItem} 
+                onPress={() => { 
+                  console.log('📱 [MENU_DEBUG] Navegando para: HelpCenter');
+                  setIsMenuVisible(false); 
+                  navigation.navigate('HelpCenter'); 
+                }} 
+                activeOpacity={0.7}
+              >
                 <Ionicons name="help-buoy-outline" size={20} color="#0F172A" />
                 <Text style={styles.menuItemText}>{t('help_center', 'Central de Ajuda')}</Text>
               </TouchableOpacity>
 
               <View style={styles.menuDivider} />
 
-              <TouchableOpacity style={styles.menuItem} onPress={() => { setIsMenuVisible(false); signOut(); }} activeOpacity={0.7}>
+              <TouchableOpacity 
+                style={styles.menuItem} 
+                onPress={() => { 
+                  console.log('🚪 [MENU_DEBUG] Efetuando logout da conta do passageiro...');
+                  setIsMenuVisible(false); 
+                  signOut(); 
+                }} 
+                activeOpacity={0.7}
+              >
                 <Ionicons name="log-out-outline" size={20} color="#EF4444" />
                 <Text style={[styles.menuItemText, { color: '#EF4444' }]}>{t('logout', 'Sair da Conta')}</Text>
               </TouchableOpacity>
@@ -2824,7 +2982,10 @@ export function Home() {
           >
             <View style={styles.searchHeader}>
               <TouchableOpacity 
-                onPress={() => setIsSearchModalVisible(false)} 
+                onPress={() => {
+                  console.log('🔍 [SEARCH_DEBUG] Modal de busca fechado pelo passageiro.');
+                  setIsSearchModalVisible(false);
+                }} 
                 style={styles.backButton} 
                 activeOpacity={0.7}
               >
@@ -2833,7 +2994,10 @@ export function Home() {
               
               <TouchableOpacity 
                 style={styles.passengerSelector} 
-                onPress={() => setIsGuestModalVisible(true)} 
+                onPress={() => {
+                  console.log('👤 [GUEST_DEBUG] Abrindo configuração de viagem para outra pessoa.');
+                  setIsGuestModalVisible(true);
+                }} 
                 activeOpacity={0.8}
               >
                 <Ionicons name="person" size={13} color="#EAB308" style={{ marginRight: 6 }} />
@@ -2881,7 +3045,11 @@ export function Home() {
                           placeholderTextColor="#64748B"
                           value={searchType === 'pickup' ? searchQuery : pickupAddress}
                           autoCorrect={false}
-                          onFocus={() => { setSearchType('pickup'); setSearchQuery(pickupAddress); }}
+                          onFocus={() => { 
+                            console.log('🔍 [SEARCH_DEBUG] Foco definido em: PICKUP');
+                            setSearchType('pickup'); 
+                            setSearchQuery(pickupAddress); 
+                          }}
                           onChangeText={(text) => {
                             setSearchQuery(text);
                             handleMapboxSearch(text);
@@ -2916,7 +3084,13 @@ export function Home() {
                           <Text style={{ color: '#3B82F6', fontSize: 11, fontWeight: '800' }}>
                             PARADA INTERMEDIÁRIA
                           </Text>
-                          <TouchableOpacity onPress={() => { setShowExtraStop(false); setExtraStopAddress(''); setExtraStopCoords(null); setExtraStopReferencePoint(''); }}>
+                          <TouchableOpacity onPress={() => { 
+                            console.log('🗑️ [SEARCH_DEBUG] Parada extra zerada no modal de busca.');
+                            setShowExtraStop(false); 
+                            setExtraStopAddress(''); 
+                            setExtraStopCoords(null); 
+                            setExtraStopReferencePoint(''); 
+                          }}>
                             <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: '600' }}>Remover</Text>
                           </TouchableOpacity>
                         </View>
@@ -2932,7 +3106,11 @@ export function Home() {
                             placeholderTextColor="#64748B"
                             value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
                             autoCorrect={false}
-                            onFocus={() => { setSearchType('extraStop'); setSearchQuery(extraStopAddress); }}
+                            onFocus={() => { 
+                              console.log('🔍 [SEARCH_DEBUG] Foco definido em: EXTRA_STOP');
+                              setSearchType('extraStop'); 
+                              setSearchQuery(extraStopAddress); 
+                            }}
                             onChangeText={(text) => {
                               setSearchQuery(text);
                               handleMapboxSearch(text);
@@ -2970,7 +3148,11 @@ export function Home() {
                           placeholderTextColor="#64748B"
                           value={searchType === 'dropoff' ? searchQuery : dropoffAddress}
                           autoCorrect={false}
-                          onFocus={() => { setSearchType('dropoff'); setSearchQuery(dropoffAddress); }}
+                          onFocus={() => { 
+                            console.log('🔍 [SEARCH_DEBUG] Foco definido em: DROPOFF');
+                            setSearchType('dropoff'); 
+                            setSearchQuery(dropoffAddress); 
+                          }}
                           onChangeText={(text) => {
                             setSearchQuery(text);
                             handleMapboxSearch(text);
@@ -3001,7 +3183,12 @@ export function Home() {
                     {!showExtraStop && (
                       <TouchableOpacity 
                         style={{ marginTop: 6, flexDirection: 'row', alignItems: 'center' }} 
-                        onPress={() => { setShowExtraStop(true); setSearchType('extraStop'); setSearchQuery(''); }}
+                        onPress={() => { 
+                          console.log('➕ [SEARCH_DEBUG] Ativando parada intermediária.');
+                          setShowExtraStop(true); 
+                          setSearchType('extraStop'); 
+                          setSearchQuery(''); 
+                        }}
                       >
                         <Ionicons name="add-circle-outline" size={18} color="#3B82F6" />
                         <Text style={{ color: '#3B82F6', fontWeight: '700', marginLeft: 6, fontSize: 13 }}>
@@ -3021,6 +3208,7 @@ export function Home() {
                       onPress={() => handleFavoritePress('home')}
                       onLongPress={() => {
                         if (pickupCoords) {
+                          console.log('💾 [SEARCH_DEBUG] Salvando local de embarque atual como CASA.');
                           saveFavoritePlace('home', { address: pickupAddress, ...pickupCoords });
                         }
                       }}
@@ -3041,6 +3229,7 @@ export function Home() {
                       onPress={() => handleFavoritePress('work')}
                       onLongPress={() => {
                         if (pickupCoords) {
+                          console.log('💾 [SEARCH_DEBUG] Salvando local de embarque atual como TRABALHO.');
                           saveFavoritePlace('work', { address: pickupAddress, ...pickupCoords });
                         }
                       }}
@@ -3064,6 +3253,7 @@ export function Home() {
                             <TouchableOpacity 
                               style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 }}
                               onPress={() => {
+                                console.log(`📍 [SEARCH_DEBUG] Pesquisa recente selecionada: "${item.description}"`);
                                 if (searchType === 'pickup') {
                                   isManualPickupRef.current = true;
                                   setPickupAddress(item.description);
@@ -3083,7 +3273,13 @@ export function Home() {
                               <Text style={styles.recentText} numberOfLines={1}>{item.description}</Text>
                             </TouchableOpacity>
                             
-                            <TouchableOpacity onPress={() => removeRecentSearch(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                            <TouchableOpacity 
+                              onPress={() => {
+                                console.log(`🗑️ [SEARCH_DEBUG] Removendo pesquisa recente ID: ${item.id}`);
+                                removeRecentSearch(item.id);
+                              }} 
+                              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                            >
                               <Ionicons name="close-circle" size={18} color="#94A3B8" />
                             </TouchableOpacity>
                           </View>
@@ -3099,6 +3295,7 @@ export function Home() {
                         style={styles.searchResultItem}
                         activeOpacity={0.7}
                         onPress={() => {
+                          console.log(`✅ [SEARCH_DEBUG] Resultado selecionado: "${item.description}" [${item.latitude}, ${item.longitude}]`);
                           if (searchType === 'pickup') {
                             isManualPickupRef.current = true;
                             setPickupAddress(item.description);
@@ -3204,6 +3401,7 @@ export function Home() {
                     <TouchableOpacity
                       style={[styles.cancelButtonOutline, { flex: 1 }]}
                       onPress={() => {
+                        console.log('👤 [GUEST_DEBUG] Configurações de viagem para outra pessoa removidas.');
                         setIsForAnotherPerson(false);
                         setGuestName('');
                         setGuestPhone('');
@@ -3217,6 +3415,7 @@ export function Home() {
                       style={[styles.requestButton, { flex: 1 }]}
                       onPress={() => {
                         if (guestName.trim() && guestPhone.trim()) {
+                          console.log(`👤 [GUEST_DEBUG] Viagem salva para: ${guestName} (${guestPhone})`);
                           setIsForAnotherPerson(true);
                           setIsGuestModalVisible(false);
                         } else {
@@ -3234,10 +3433,13 @@ export function Home() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* CHATMODAL COM TODAS AS PROPS DE ÁUDIO E SESSÃO SINCRONIZADAS */}
+      {/* 💬 CHATMODAL COM TODAS AS PROPS DE ÁUDIO E SESSÃO SINCRONIZADAS */}
       <ChatModal 
         visible={isChatVisible} 
-        onClose={() => setIsChatVisible(false)} 
+        onClose={() => {
+          console.log('💬 [CHAT_DEBUG] Modal de Chat fechado.');
+          setIsChatVisible(false);
+        }} 
         socket={socket} 
         rideId={activeRideId || ''} 
         currentRole="passenger" 
@@ -3246,7 +3448,7 @@ export function Home() {
         otherUserPhoto={driverInfo?.photoUrl || driverInfo?.profilePicture} 
       />
 
-      {/* MODAL DE CANCELAMENTO */}
+      {/* 🛑 MODAL DE CANCELAMENTO */}
       <CancelModal
         visible={showCancelModal}
         userType="PASSENGER"
@@ -3255,7 +3457,7 @@ export function Home() {
         onConfirm={handleConfirmCancel} 
       />
 
-      {/* MODAL DE AVALIAÇÃO */}
+      {/* ⭐ MODAL DE AVALIAÇÃO */}
       <RatingModal
         visible={showRatingModal}
         targetName={driverInfo?.name || 'Motorista'}
