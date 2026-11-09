@@ -27,12 +27,15 @@ import { PrivacyPolicyModal } from '../components/PrivacyPolicyModal';
 
 const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com').replace(/\/api\/?$/, '');
 
-const formatPhotoUrl = (path?: string | null) => {
+const formatPhotoUrl = (path?: string | null, timestamp?: number) => {
   if (!path || typeof path !== 'string') return undefined;
-  if (path.startsWith('http://') || path.startsWith('https://')) return path;
-  const cleanBase = API_URL.replace(/\/$/, '');
-  const cleanPath = path.startsWith('/') ? path : `/${path}`;
-  return `${cleanBase}${cleanPath}`;
+  let fullUrl = path;
+  if (!path.startsWith('http://') && !path.startsWith('https://')) {
+    const cleanBase = API_URL.replace(/\/$/, '');
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    fullUrl = `${cleanBase}${cleanPath}`;
+  }
+  return timestamp ? `${fullUrl}?t=${timestamp}` : fullUrl;
 };
 
 const LANGUAGES = [
@@ -53,6 +56,7 @@ export function Profile() {
   const [fullName, setFullName] = useState(user?.fullName || '');
   const [email, setEmail] = useState(user?.email || '');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [imageTimestamp, setImageTimestamp] = useState<number>(Date.now());
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   const [paymentProvider, setPaymentProvider] = useState<'ORANGE_MONEY' | 'MTN_MOMO' | null>(
@@ -149,7 +153,6 @@ export function Profile() {
         const type = ext === 'png' ? 'image/png' : 'image/jpeg';
         const formattedUri = Platform.OS === 'android' ? selectedImage : selectedImage.replace('file://', '');
 
-        // Envia com a chave oficial profilePicture e fallback avatar
         formData.append('profilePicture', {
           uri: formattedUri,
           name: filename,
@@ -175,6 +178,7 @@ export function Profile() {
 
       if (isMountedRef.current) {
         setSelectedImage(null);
+        setImageTimestamp(Date.now());
       }
       
       Alert.alert(
@@ -195,43 +199,25 @@ export function Profile() {
   }
 
   async function handleSavePaymentInfo() {
-    if (!paymentProvider) {
-      return Alert.alert(
-        t('warning_title', 'Atenção ⚠️'), 
-        t('select_provider_msg', 'Selecione uma operadora (Orange ou MTN).')
-      );
-    }
-    if (!accountNumber || accountNumber.trim().length < 8) {
-      return Alert.alert(
-        t('warning_title', 'Atenção ⚠️'), 
-        t('invalid_account_number', 'Digite um número de conta válido.')
-      );
-    }
     Keyboard.dismiss();
-
     setIsSavingPayment(true);
     try {
-      const response = await api.put('/passengers/payment-method', { 
-        paymentProvider, 
-        paymentAccountNumber: accountNumber.trim() 
-      });
-      
-      if (updateUserContext) {
-        updateUserContext({ 
-          paymentProvider, 
+      if (accountNumber.trim()) {
+        await api.put('/passengers/payment-method', { 
+          paymentProvider: null, 
           paymentAccountNumber: accountNumber.trim() 
-        });
+        }).catch(() => null);
       }
       
       Alert.alert(
-        t('success', 'Sucesso'), 
-        t('payment_updated', 'Sua forma de pagamento padrão foi atualizada!')
+        'Forma de Pagamento 💵', 
+        'No momento, o sistema está configurado para pagamentos exclusivamente em Dinheiro em Espécie diretamente ao motorista.'
       );
     } catch (error: any) {
       if (!isMountedRef.current) return;
       Alert.alert(
         t('error_title', 'Erro'), 
-        error?.response?.data?.error || error?.response?.data?.message || t('payment_update_error', 'Não foi possível salvar as informações de pagamento.')
+        t('payment_update_error', 'Não foi possível salvar as informações de pagamento.')
       );
     } finally {
       if (isMountedRef.current) {
@@ -246,7 +232,7 @@ export function Profile() {
   };
 
   const currentLangObj = LANGUAGES.find(l => l.code === i18n.language) || LANGUAGES[0];
-  const avatarUri = selectedImage || formatPhotoUrl(user?.profilePicture);
+  const avatarUri = selectedImage || formatPhotoUrl(user?.profilePicture, imageTimestamp);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -361,71 +347,84 @@ export function Profile() {
             </View>
 
             <Text style={styles.sectionTitle}>{t('setup_payment', 'Configurar Pagamento')}</Text>
-<View style={styles.formCard}>
-  <Text style={styles.inputLabel}>{t('mobile_money_provider', 'Operadora (Mobile Money)')}</Text>
-  <View style={styles.providerContainer}>
-    
-    {/* ORANGE MONEY */}
-    <TouchableOpacity 
-      style={[styles.providerButton, paymentProvider === 'ORANGE_MONEY' && styles.providerButtonActive]} 
-      onPress={() => setPaymentProvider('ORANGE_MONEY')}
-      disabled={isSavingPayment}
-      activeOpacity={0.8}
-    >
-      <Text style={[styles.providerText, paymentProvider === 'ORANGE_MONEY' && styles.providerTextActive]}>Orange Money</Text>
-    </TouchableOpacity>
+            <View style={styles.formCard}>
+              
+              {/* Aviso Dinheiro em Espécie */}
+              <View style={styles.cashNoticeBox}>
+                <Ionicons name="cash-outline" size={22} color="#166534" />
+                <Text style={styles.cashNoticeText}>
+                  O pagamento está temporariamente definido como <Text style={{ fontWeight: '800' }}>Dinheiro em Espécie 💵</Text>. As operadoras Mobile Money estão em atualização técnica.
+                </Text>
+              </View>
 
-    {/* MTN MOMO (BLOQUEADO TEMPORARIAMENTE) */}
-    <TouchableOpacity 
-      style={[styles.providerButton, { opacity: 0.5, backgroundColor: '#F1F5F9', borderColor: '#CBD5E1' }]} 
-      onPress={() => {
-        Alert.alert(
-          'Aviso Nobai245 📲',
-          'O serviço de pagamento via MTN Mobile Money está temporariamente em fase de atualização técnica. Por favor, utilize a Orange Money no momento.'
-        );
-      }}
-      activeOpacity={0.7}
-    >
-      <Text style={[styles.providerText, { color: '#94A3B8' }]}>MTN MoMo (Em Breve)</Text>
-    </TouchableOpacity>
-  </View>
+              <Text style={styles.inputLabel}>{t('mobile_money_provider', 'Operadoras Mobile Money')}</Text>
+              <View style={styles.providerContainer}>
+                
+                {/* ORANGE MONEY (QUADRADO BLOQUEADO) */}
+                <TouchableOpacity 
+                  style={styles.providerSquareButtonBlocked} 
+                  onPress={() => {
+                    Alert.alert(
+                      'Aviso Nobai245 📲',
+                      'O serviço de pagamento via Orange Money está temporariamente em fase de atualização técnica. No momento, o pagamento é feito diretamente em Dinheiro em Espécie.'
+                    );
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="phone-portrait-outline" size={22} color="#94A3B8" style={{ marginBottom: 4 }} />
+                  <Text style={styles.providerSquareText}>Orange Money</Text>
+                  <View style={styles.badgeBlocked}>
+                    <Text style={styles.badgeBlockedText}>Em Breve</Text>
+                  </View>
+                </TouchableOpacity>
 
-  <Text style={styles.inputLabel}>{t('account_phone_number', 'Número da Conta / Telefone (Orange)')}</Text>
-  <View style={styles.inputContainer}>
-    <Ionicons name="phone-portrait-outline" size={20} color="#A0AEC0" />
-    <TextInput 
-      style={styles.input} 
-      keyboardType="phone-pad" 
-      value={accountNumber} 
-      onChangeText={setAccountNumber} 
-      maxLength={15}
-      placeholder="Ex: 955000000"
-      placeholderTextColor="#94A3B8"
-      editable={!isSavingPayment}
-    />
-  </View>
+                {/* MTN MOMO (QUADRADO BLOQUEADO) */}
+                <TouchableOpacity 
+                  style={styles.providerSquareButtonBlocked} 
+                  onPress={() => {
+                    Alert.alert(
+                      'Aviso Nobai245 📲',
+                      'O serviço de pagamento via MTN Mobile Money está temporariamente em fase de atualização técnica. No momento, o pagamento é feito diretamente em Dinheiro em Espécie.'
+                    );
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="wallet-outline" size={22} color="#94A3B8" style={{ marginBottom: 4 }} />
+                  <Text style={styles.providerSquareText}>MTN MoMo</Text>
+                  <View style={styles.badgeBlocked}>
+                    <Text style={styles.badgeBlockedText}>Em Breve</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
 
-  <TouchableOpacity 
-    style={[styles.saveButton, isSavingPayment && styles.saveButtonDisabled]} 
-    onPress={() => {
-      if (paymentProvider === 'MTN_MOMO') {
-        return Alert.alert(
-          'Indisponível ⚠️',
-          'A operadora MTN MoMo está temporariamente desativada. Selecione Orange Money para salvar seu método de pagamento.'
-        );
-      }
-      handleSavePaymentInfo();
-    }} 
-    disabled={isSavingPayment}
-    activeOpacity={0.85}
-  >
-    {isSavingPayment ? (
-      <ActivityIndicator color="#1A202C" />
-    ) : (
-      <Text style={styles.saveButtonText}>{t('save_payment', 'Salvar Pagamento')}</Text>
-    )}
-  </TouchableOpacity>
-</View>
+              <Text style={styles.inputLabel}>{t('account_phone_number', 'Número da Conta / Telefone (Opcional)')}</Text>
+              <View style={styles.inputContainer}>
+                <Ionicons name="phone-portrait-outline" size={20} color="#A0AEC0" />
+                <TextInput 
+                  style={styles.input} 
+                  keyboardType="phone-pad" 
+                  value={accountNumber} 
+                  onChangeText={setAccountNumber} 
+                  maxLength={15}
+                  placeholder="Ex: 955000000"
+                  placeholderTextColor="#94A3B8"
+                  editable={!isSavingPayment}
+                />
+              </View>
+
+              <TouchableOpacity 
+                style={[styles.saveButton, isSavingPayment && styles.saveButtonDisabled]} 
+                onPress={handleSavePaymentInfo} 
+                disabled={isSavingPayment}
+                activeOpacity={0.85}
+              >
+                {isSavingPayment ? (
+                  <ActivityIndicator color="#1A202C" />
+                ) : (
+                  <Text style={styles.saveButtonText}>{t('save_payment', 'Salvar Pagamento')}</Text>
+                )}
+              </TouchableOpacity>
+            </View>
 
             <TouchableOpacity style={styles.historyButton} onPress={() => navigation.navigate('EmergencyContacts')}>
               <View style={styles.historyButtonLeft}>
@@ -539,11 +538,16 @@ const styles = StyleSheet.create({
   disabledInputContainer: { backgroundColor: '#F1F5F9', borderColor: '#CBD5E1' },
   input: { flex: 1, height: 48, marginLeft: 10, fontSize: 15, color: '#1A202C' },
   disabledInput: { color: '#64748B' },
+  
+  cashNoticeBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#DCFCE7', borderWidth: 1, borderColor: '#86EFAC', borderRadius: 12, padding: 12, marginBottom: 16, gap: 10 },
+  cashNoticeText: { flex: 1, fontSize: 12, color: '#166534', lineHeight: 17 },
+
   providerContainer: { flexDirection: 'row', gap: 12, marginBottom: 16 },
-  providerButton: { flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC', alignItems: 'center' },
-  providerButtonActive: { borderColor: '#EAB308', backgroundColor: '#FEF08A' },
-  providerText: { fontSize: 14, fontWeight: '600', color: '#718096' },
-  providerTextActive: { color: '#1A202C', fontWeight: '700' },
+  providerSquareButtonBlocked: { flex: 1, height: 85, borderRadius: 12, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center', opacity: 0.65 },
+  providerSquareText: { fontSize: 13, fontWeight: '700', color: '#64748B' },
+  badgeBlocked: { backgroundColor: '#E2E8F0', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, marginTop: 4 },
+  badgeBlockedText: { fontSize: 10, fontWeight: '800', color: '#64748B', textTransform: 'uppercase' },
+
   saveButton: { backgroundColor: '#EAB308', paddingVertical: 14, borderRadius: 10, alignItems: 'center', marginTop: 4 },
   saveButtonDisabled: { opacity: 0.7 },
   saveButtonText: { fontSize: 15, fontWeight: '700', color: '#1A202C' },
