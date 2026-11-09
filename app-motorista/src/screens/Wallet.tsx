@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, Text, StyleSheet, TouchableOpacity, 
-  ScrollView, Platform, StatusBar, ActivityIndicator, RefreshControl, Modal 
+  ScrollView, Platform, StatusBar, ActivityIndicator, RefreshControl, Modal, TextInput, Alert, Clipboard 
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -19,6 +19,11 @@ export function Wallet() {
   const [refreshing, setRefreshing] = useState(false);
   const [financeData, setFinanceData] = useState<any>(null);
   const [isRechargeModalVisible, setIsRechargeModalVisible] = useState(false);
+
+  // Estado para resgate de transação realizada por outro número
+  const [txId, setTxId] = useState('');
+  const [claiming, setClaiming] = useState(false);
+  const [copiedProvider, setCopiedProvider] = useState<string | null>(null);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -53,12 +58,7 @@ export function Wallet() {
       console.log('💳 [WALLET_DEBUG] Buscando dados financeiros via GET /drivers/finance...');
       const res = await api.get('/drivers/finance');
       if (isMountedRef.current) {
-        console.log('✅ [WALLET_DEBUG] Resumo financeiro recarregado:', {
-          todayEarned: res.data?.todayEarned,
-          weeklyEarned: res.data?.weeklyEarned,
-          totalEarned: res.data?.totalEarned,
-          walletBalance: res.data?.walletBalance,
-        });
+        console.log('✅ [WALLET_DEBUG] Resumo financeiro recarregado:', res.data);
         setFinanceData(res.data);
       }
     } catch (error: any) {
@@ -87,13 +87,57 @@ export function Wallet() {
   const toggleRechargeModal = (visible: boolean) => {
     console.log(`📲 [RECHARGE_DEBUG] Modal de recarga alterado para: ${visible}`);
     setIsRechargeModalVisible(visible);
+    if (!visible) {
+      setTxId('');
+      setCopiedProvider(null);
+    }
   };
+
+  function copyToClipboard(text: string, provider: string) {
+    Clipboard.setString(text);
+    setCopiedProvider(provider);
+    setTimeout(() => {
+      if (isMountedRef.current) setCopiedProvider(null);
+    }, 3000);
+  }
+
+  async function handleClaimTxId() {
+    const cleanTx = txId.trim();
+    if (!cleanTx) {
+      return Alert.alert('Atenção', 'Digite ou cole o código da transação (TxID) recebido por SMS.');
+    }
+
+    setClaiming(true);
+    try {
+      const res = await api.post('/drivers/wallet/claim', { txId: cleanTx });
+      Alert.alert(
+        '🎉 Recarga Confirmada!',
+        res.data?.message || 'O saldo foi creditado com sucesso na sua carteira.',
+        [{ text: 'OK', onPress: () => toggleRechargeModal(false) }]
+      );
+      fetchWalletData();
+    } catch (error: any) {
+      console.error('❌ [CLAIM_TXID_ERROR]:', error?.response?.data || error?.message);
+      Alert.alert(
+        'Falha no Resgate',
+        error?.response?.data?.error || 'Código de transação não localizado ou já utilizado. Verifique os dígitos no SMS.'
+      );
+    } finally {
+      if (isMountedRef.current) setClaiming(false);
+    }
+  }
 
   const dynamicTopPadding = Math.max((insets?.top || 0) + 6, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 6 : 14);
   const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 28 : 16);
 
-  const adminOrangeNumber = financeData?.adminOrangeNumber || '957330790';
-  const adminMtnNumber = financeData?.adminMtnNumber || '966626730';
+  // Garantia de fallback dos números caso venham nulos do backend
+  const adminOrangeNumber = financeData?.adminOrangeNumber && financeData.adminOrangeNumber.trim() !== '' 
+    ? financeData.adminOrangeNumber 
+    : '245957330790';
+
+  const adminMtnNumber = financeData?.adminMtnNumber && financeData.adminMtnNumber.trim() !== '' 
+    ? financeData.adminMtnNumber 
+    : '245966626730';
 
   return (
     <View style={styles.container}>
@@ -133,10 +177,7 @@ export function Wallet() {
         <View style={styles.quickPillRow}>
           <TouchableOpacity 
             style={styles.quickPill} 
-            onPress={() => {
-              console.log('📱 [WALLET_DEBUG] Navegando para RideHistory');
-              navigation.navigate('RideHistory');
-            }}
+            onPress={() => navigation.navigate('RideHistory')}
             activeOpacity={0.85}
           >
             <Ionicons name="receipt-outline" size={16} color="#FFF" />
@@ -145,10 +186,7 @@ export function Wallet() {
           
           <TouchableOpacity 
             style={styles.quickPill} 
-            onPress={() => {
-              console.log('📱 [WALLET_DEBUG] Navegando para Profile (Conta de Recebimento)');
-              navigation.navigate('Profile');
-            }}
+            onPress={() => navigation.navigate('Profile')}
             activeOpacity={0.85}
           >
             <Ionicons name="wallet-outline" size={16} color="#FFF" />
@@ -225,7 +263,7 @@ export function Wallet() {
                   </View>
                 )}
 
-                {/* BOTÃO QUE ABRE O MODAL DE RECARGA USSD */}
+                {/* BOTÃO QUE ABRE O MODAL DE RECARGA */}
                 <TouchableOpacity 
                   style={styles.rechargeButton}
                   onPress={() => toggleRechargeModal(true)}
@@ -248,7 +286,7 @@ export function Wallet() {
         </ScrollView>
       </View>
 
-      {/* 📲 MODAL COM NÚMEROS DA EMPRESA E INSTRUÇÕES DE RECARGA */}
+      {/* 📲 MODAL COM NÚMEROS DA EMPRESA E RECONFIRMAÇÃO POR TXID */}
       <Modal
         visible={isRechargeModalVisible}
         animationType="slide"
@@ -264,38 +302,85 @@ export function Wallet() {
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.modalDescription}>
-              Faça a transferência USSD de qualquer valor a partir do mesmo telefone cadastrado no seu perfil. O seu saldo será creditado automaticamente assim que o envio for concluído!
-            </Text>
-
-            {/* NÚMERO ORANGE MONEY */}
-            <View style={[styles.numberCard, { borderColor: '#FF7900' }]}>
-              <View style={[styles.providerBadge, { backgroundColor: '#FF7900' }]}>
-                <Text style={styles.providerBadgeText}>Orange Money</Text>
-              </View>
-              <Text style={styles.numberText}>{adminOrangeNumber}</Text>
-            </View>
-
-            {/* NÚMERO MTN MOMO */}
-            <View style={[styles.numberCard, { borderColor: '#FFCC00' }]}>
-              <View style={[styles.providerBadge, { backgroundColor: '#FFCC00' }]}>
-                <Text style={[styles.providerBadgeText, { color: '#0F172A' }]}>MTN MoMo</Text>
-              </View>
-              <Text style={styles.numberText}>{adminMtnNumber}</Text>
-            </View>
-
-            <View style={styles.instructionsBox}>
-              <Ionicons name="information-circle-outline" size={20} color="#0284C7" />
-              <Text style={styles.instructionsText}>
-                Após enviar a transferência pelo seu celular, aguarde alguns segundos nesta tela. O seu saldo será atualizado sozinho!
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 480 }}>
+              <Text style={styles.modalDescription}>
+                Envie o valor da recarga via USSD para um dos números oficiais da plataforma abaixo:
               </Text>
-            </View>
+
+              {/* NÚMERO ORANGE MONEY */}
+              <View style={[styles.numberCard, { borderColor: '#FF7900' }]}>
+                <View style={{ flex: 1 }}>
+                  <View style={[styles.providerBadge, { backgroundColor: '#FF7900' }]}>
+                    <Text style={styles.providerBadgeText}>Orange Money</Text>
+                  </View>
+                  <Text style={styles.numberText}>{adminOrangeNumber}</Text>
+                </View>
+
+                <TouchableOpacity 
+                  style={[styles.copyBtn, copiedProvider === 'ORANGE' && styles.copyBtnSuccess]} 
+                  onPress={() => copyToClipboard(adminOrangeNumber, 'ORANGE')}
+                >
+                  <Ionicons name={copiedProvider === 'ORANGE' ? "checkmark-done" : "copy-outline"} size={16} color="#FFF" />
+                  <Text style={styles.copyBtnText}>{copiedProvider === 'ORANGE' ? "Copiado" : "Copiar"}</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* NÚMERO MTN MOMO */}
+              <View style={[styles.numberCard, { borderColor: '#EAB308' }]}>
+                <View style={{ flex: 1 }}>
+                  <View style={[styles.providerBadge, { backgroundColor: '#EAB308' }]}>
+                    <Text style={[styles.providerBadgeText, { color: '#0F172A' }]}>MTN MoMo</Text>
+                  </View>
+                  <Text style={styles.numberText}>{adminMtnNumber}</Text>
+                </View>
+
+                <TouchableOpacity 
+                  style={[styles.copyBtn, copiedProvider === 'MTN' && styles.copyBtnSuccess]} 
+                  onPress={() => copyToClipboard(adminMtnNumber, 'MTN')}
+                >
+                  <Ionicons name={copiedProvider === 'MTN' ? "checkmark-done" : "copy-outline"} size={16} color="#FFF" />
+                  <Text style={styles.copyBtnText}>{copiedProvider === 'MTN' ? "Copiado" : "Copiar"}</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* SEÇÃO PARA ENVIOS DE OUTRO NÚMERO / RESGATE POR TXID */}
+              <View style={styles.claimSection}>
+                <Text style={styles.claimSectionTitle}>
+                  💡 Transferiu de outro número (parente/amigo)?
+                </Text>
+                <Text style={styles.claimSectionSub}>
+                  Cole o código da transação (ID / Ref) recebido na mensagem SMS para validar seu saldo agora:
+                </Text>
+
+                <View style={styles.claimInputRow}>
+                  <TextInput
+                    style={styles.claimInput}
+                    placeholder="Ex: 12984920492"
+                    placeholderTextColor="#94A3B8"
+                    value={txId}
+                    onChangeText={setTxId}
+                    keyboardType="number-pad"
+                  />
+                  <TouchableOpacity 
+                    style={[styles.claimBtn, claiming && { opacity: 0.7 }]} 
+                    onPress={handleClaimTxId}
+                    disabled={claiming}
+                  >
+                    {claiming ? (
+                      <ActivityIndicator size="small" color="#FFF" />
+                    ) : (
+                      <Text style={styles.claimBtnText}>Validar</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </ScrollView>
 
             <TouchableOpacity 
               style={styles.modalCloseButton} 
               onPress={() => toggleRechargeModal(false)}
             >
-              <Text style={styles.modalCloseButtonText}>Entendido</Text>
+              <Text style={styles.modalCloseButtonText}>Fechar</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -394,7 +479,7 @@ const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'flex-end',
+    justify: 'flex-end',
   },
   modalContent: {
     backgroundColor: '#FFF',
@@ -417,27 +502,29 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: theme.colors.textSecondary,
     lineHeight: 18,
-    marginBottom: 16,
+    marginBottom: 14,
   },
   numberCard: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 14,
+    padding: 12,
     borderRadius: 14,
     borderWidth: 1.5,
     backgroundColor: '#F8FAFC',
     marginBottom: 10,
   },
   providerBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    marginBottom: 4,
   },
   providerBadgeText: {
     color: '#FFF',
     fontWeight: '800',
-    fontSize: 12,
+    fontSize: 11,
   },
   numberText: {
     fontSize: 18,
@@ -445,27 +532,77 @@ const styles = StyleSheet.create({
     color: theme.colors.textPrimary,
     letterSpacing: 1,
   },
-  instructionsBox: {
+  copyBtn: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: theme.colors.primaryDark,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    gap: 4,
+  },
+  copyBtnSuccess: {
+    backgroundColor: theme.colors.emeraldGreen,
+  },
+  copyBtnText: {
+    color: '#FFF',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  claimSection: {
     backgroundColor: '#F0F9FF',
-    padding: 12,
-    borderRadius: 10,
-    marginTop: 6,
+    borderRadius: 14,
+    padding: 14,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+  },
+  claimSectionTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0369A1',
+    marginBottom: 4,
+  },
+  claimSectionSub: {
+    fontSize: 12,
+    color: '#0284C7',
+    lineHeight: 16,
+    marginBottom: 10,
+  },
+  claimInputRow: {
+    flexDirection: 'row',
     gap: 8,
   },
-  instructionsText: {
-    fontSize: 12,
-    color: '#0369A1',
+  claimInput: {
     flex: 1,
-    lineHeight: 16,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#7DD3FC',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    fontWeight: '700',
+    color: theme.colors.textPrimary,
+    height: 44,
+  },
+  claimBtn: {
+    backgroundColor: '#0284C7',
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  claimBtnText: {
+    color: '#FFF',
+    fontWeight: '800',
+    fontSize: 13,
   },
   modalCloseButton: {
     backgroundColor: theme.colors.primaryDark,
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: 'center',
-    marginTop: 18,
+    marginTop: 14,
   },
   modalCloseButtonText: {
     color: '#FFF',

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, 
   ActivityIndicator, ScrollView, KeyboardAvoidingView, Platform, Image, StatusBar 
@@ -13,6 +13,7 @@ import { theme } from '../theme/theme';
 export function Register() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [sendingOtp, setSendingOtp] = useState(false);
 
   // Fase 1: Veículo e Pessoal
   const [fullName, setFullName] = useState('');
@@ -33,11 +34,30 @@ export function Register() {
   const [licenseFront, setLicenseFront] = useState<string | null>(null);
   const [licenseBack, setLicenseBack] = useState<string | null>(null);
 
+  // Fase 4: Código SMS OTP
+  const [otpCode, setOtpCode] = useState('');
+  const [resendTimer, setResendTimer] = useState(60);
+  const [canResend, setCanResend] = useState(false);
+
   // Políticas de Privacidade
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [isPrivacyModalVisible, setPrivacyModalVisible] = useState(false);
 
   const navigation = useNavigation<any>();
+
+  // Temporizador para reenvio do código SMS
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (step === 4 && resendTimer > 0) {
+      setCanResend(false);
+      timer = setInterval(() => {
+        setResendTimer((prev) => prev - 1);
+      }, 1000);
+    } else if (resendTimer === 0) {
+      setCanResend(true);
+    }
+    return () => clearInterval(timer);
+  }, [step, resendTimer]);
 
   /**
    * Menu de captura de imagem com opções de Câmera ou Galeria
@@ -104,6 +124,33 @@ export function Register() {
     );
   }
 
+  async function handleSendOtp() {
+    const cleanPhone = phone.replace(/\D/g, '');
+    if (!cleanPhone || cleanPhone.length !== 9) {
+      return Alert.alert('Atenção', 'Informe um número de telefone válido com 9 dígitos.');
+    }
+    if (!password) return Alert.alert('Atenção', 'Crie sua senha segura.');
+    if (!selfie || !licenseFront || !licenseBack) {
+      return Alert.alert('Fotos', 'Selfie e Carta de Condução são obrigatórias.');
+    }
+    if (!privacyAccepted) {
+      return Alert.alert('Atenção', 'Você deve ler e aceitar as Políticas de Privacidade.');
+    }
+
+    setSendingOtp(true);
+    try {
+      // Tenta enviar o SMS via API do Termii
+      await api.post('/drivers/forgot-password', { phone: `+245${cleanPhone}` }).catch(() => null);
+      
+      setResendTimer(60);
+      setStep(4);
+    } catch (error) {
+      setStep(4);
+    } finally {
+      setSendingOtp(false);
+    }
+  }
+
   function handleNextStep() {
     if (step === 1) {
       if (!fullName || !vehicleModel || !vehiclePlate || !vehicleColor) {
@@ -118,15 +165,18 @@ export function Register() {
         return Alert.alert('Atenção', 'O número do documento é obrigatório.');
       }
       setStep(3);
+    } else if (step === 3) {
+      handleSendOtp();
     }
   }
 
   async function handleRegister() {
     const cleanPhone = phone.replace(/\D/g, '');
-    if (!cleanPhone || cleanPhone.length !== 9) return Alert.alert('Atenção', 'Informe um número de telefone válido com 9 dígitos.');
-    if (!password) return Alert.alert('Atenção', 'Crie sua senha segura.');
-    if (!selfie || !licenseFront || !licenseBack) return Alert.alert('Fotos', 'Selfie e Carta de Condução são obrigatórias.');
-    if (!privacyAccepted) return Alert.alert('Atenção', 'Você deve ler e aceitar as Políticas de Privacidade.');
+    const cleanOtp = otpCode.trim();
+
+    if (!cleanOtp || cleanOtp.length !== 6) {
+      return Alert.alert('Atenção', 'Digite o código de verificação SMS de 6 dígitos.');
+    }
 
     setLoading(true);
 
@@ -140,6 +190,7 @@ export function Register() {
       formData.append('vehiclePlate', vehiclePlate.trim().toUpperCase());
       formData.append('vehicleColor', vehicleColor.trim());
       formData.append('vehicleType', vehicleType);
+      formData.append('otpCode', cleanOtp);
       
       if (vehicleType === 'TOCA_TOCA') {
         formData.append('vehicleSeats', vehicleSeats);
@@ -148,7 +199,6 @@ export function Register() {
       formData.append('documentType', documentType);
       formData.append('documentNumber', documentNumber.trim().toUpperCase());
 
-      // 🟢 Função de anexo corrigida para Android e iOS
       const appendImage = (key: string, uri: string) => {
         const filename = uri.split('/').pop() || `${key}.jpg`;
         const match = /\.(\w+)$/.exec(filename);
@@ -156,22 +206,21 @@ export function Register() {
         const type = ext === 'png' ? 'image/png' : 'image/jpeg';
 
         formData.append(key, {
-          uri: uri, // Mantém a URI original em ambas as plataformas
+          uri: uri,
           name: filename,
           type,
         } as any);
       };
 
-      appendImage('selfie', selfie);
-      appendImage('licenseFront', licenseFront);
-      appendImage('licenseBack', licenseBack);
+      appendImage('selfie', selfie!);
+      appendImage('licenseFront', licenseFront!);
+      appendImage('licenseBack', licenseBack!);
 
-      // 🟢 O Axios injeta automaticamente o boundary correto ao enviar o formData puro
       const response = await api.post('/drivers/register', formData, {
         headers: {
           'Accept': 'application/json',
         },
-        transformRequest: (data) => data, // Preserva o FormData intacto no React Native
+        transformRequest: (data) => data,
       });
 
       console.log('=== ✅ [DEBUG CADASTRO] SUCESSO ===', response.data);
@@ -215,9 +264,9 @@ export function Register() {
           <View style={styles.formCard}>
             <View style={styles.progressContainer}>
               <View style={styles.progressBarBg}>
-                <View style={[styles.progressBarFill, { width: `${(step / 3) * 100}%` }]} />
+                <View style={[styles.progressBarFill, { width: `${(step / 4) * 100}%` }]} />
               </View>
-              <Text style={styles.stepText}>Etapa {step} de 3</Text>
+              <Text style={styles.stepText}>Etapa {step} de 4</Text>
             </View>
 
             {step === 1 && (
@@ -346,12 +395,56 @@ export function Register() {
                   </Text>
                 </View>
 
-                <TouchableOpacity style={[styles.primaryBtn, loading && { opacity: 0.7 }]} onPress={handleRegister} disabled={loading}>
-                  {loading ? <ActivityIndicator color="#0F2537" /> : <Text style={styles.primaryBtnText}>Finalizar Cadastro ✅</Text>}
+                <TouchableOpacity style={[styles.primaryBtn, sendingOtp && { opacity: 0.7 }]} onPress={handleNextStep} disabled={sendingOtp}>
+                  {sendingOtp ? <ActivityIndicator color="#0F2537" /> : (
+                    <>
+                      <Text style={styles.primaryBtnText}>Receber Código SMS 📩</Text>
+                      <Feather name="arrow-right" size={18} color="#0F2537" />
+                    </>
+                  )}
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.secondaryBtn} onPress={() => setStep(2)}>
                   <Text style={styles.secondaryBtnText}>Voltar</Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            {step === 4 && (
+              <>
+                <Text style={styles.sectionTitle}>4. Verificação por SMS</Text>
+                <Text style={styles.otpSubtitle}>
+                  Enviamos um código de verificação de 6 dígitos para o número{' '}
+                  <Text style={{ fontWeight: '800', color: theme.colors.textPrimary }}>+245 {phone}</Text>
+                </Text>
+
+                <Text style={styles.inputLabel}>Código de 6 dígitos</Text>
+                <TextInput 
+                  style={styles.otpInput} 
+                  placeholder="000000" 
+                  placeholderTextColor={theme.colors.textLight} 
+                  value={otpCode} 
+                  onChangeText={setOtpCode} 
+                  keyboardType="number-pad" 
+                  maxLength={6} 
+                />
+
+                <TouchableOpacity 
+                  style={[styles.resendBtn, !canResend && { opacity: 0.5 }]} 
+                  onPress={handleSendOtp} 
+                  disabled={!canResend}
+                >
+                  <Text style={styles.resendText}>
+                    {canResend ? '🔄 Reenviar Código SMS' : `Aguarde ${resendTimer}s para reenviar`}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={[styles.primaryBtn, loading && { opacity: 0.7 }]} onPress={handleRegister} disabled={loading}>
+                  {loading ? <ActivityIndicator color="#0F2537" /> : <Text style={styles.primaryBtnText}>Finalizar Cadastro ✅</Text>}
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.secondaryBtn} onPress={() => setStep(3)}>
+                  <Text style={styles.secondaryBtnText}>Voltar e Alterar Dados</Text>
                 </TouchableOpacity>
               </>
             )}
@@ -391,6 +484,7 @@ const styles = StyleSheet.create({
   progressBarFill: { height: '100%', backgroundColor: theme.colors.accentOrange },
   stepText: { fontSize: 12, color: theme.colors.textSecondary, fontWeight: '700', textAlign: 'right' },
   sectionTitle: { fontSize: 17, fontWeight: '900', color: theme.colors.textPrimary, marginBottom: 16 },
+  otpSubtitle: { fontSize: 13, color: theme.colors.textSecondary, marginBottom: 16, lineHeight: 18 },
   inputLabel: { fontSize: 13, fontWeight: '700', color: theme.colors.textPrimary, marginBottom: 6 },
   typeScroll: { flexDirection: 'row', marginBottom: 16 },
   typeBadge: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: '#F1F5F9', marginRight: 8, borderWidth: 1, borderColor: theme.colors.border },
@@ -401,6 +495,9 @@ const styles = StyleSheet.create({
   docTypeButton: { flex: 1, paddingVertical: 10, borderRadius: 10, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center' },
   docTypeText: { fontSize: 12, fontWeight: '700', color: theme.colors.textSecondary },
   input: { backgroundColor: '#F8FAFC', borderWidth: 1.5, borderColor: theme.colors.border, borderRadius: theme.borderRadius.md, paddingHorizontal: 14, height: 50, fontSize: 14, fontWeight: '600', color: theme.colors.textPrimary, marginBottom: 14 },
+  otpInput: { backgroundColor: '#F8FAFC', borderWidth: 2, borderColor: theme.colors.accentOrange, borderRadius: theme.borderRadius.md, textAlign: 'center', height: 56, fontSize: 24, fontWeight: '900', letterSpacing: 8, color: theme.colors.textPrimary, marginBottom: 14 },
+  resendBtn: { alignItems: 'center', marginBottom: 14, paddingVertical: 8 },
+  resendText: { fontSize: 13, fontWeight: '800', color: theme.colors.primaryBlue },
   row: { flexDirection: 'row' },
   inputPhoneContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderWidth: 1.5, borderColor: theme.colors.border, borderRadius: theme.borderRadius.md, marginBottom: 14, paddingHorizontal: 12, height: 50 },
   prefixBadge: { backgroundColor: '#E2E8F0', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, marginRight: 8 },
