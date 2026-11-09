@@ -47,7 +47,7 @@ export function Register() {
 
   // Temporizador para reenvio do código SMS
   useEffect(() => {
-    let timer: NodeJS.Timeout;
+    let timer: ReturnType<typeof setInterval>;
     if (step === 4 && resendTimer > 0) {
       setCanResend(false);
       timer = setInterval(() => {
