@@ -26,7 +26,7 @@ export interface ChatMessage {
 interface ChatModalProps {
   visible: boolean;
   onClose: () => void;
-  socket: Socket;
+  socket: Socket | null | undefined;
   rideId: string;
   currentRole: 'passenger' | 'driver';
   currentUserPhoto?: string | null;
@@ -71,8 +71,15 @@ export function ChatModal({
   const insets = useSafeAreaInsets();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
-  
-  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const [hasRenderError, setHasRenderError] = useState(false);
+
+  // Inicialização defensiva do gravador
+  let audioRecorder: any = null;
+  try {
+    audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  } catch (recorderErr) {
+    console.warn('⚠️ [CHAT] Não foi possível inicializar gravador de áudio:', recorderErr);
+  }
 
   const [isRecording, setIsRecording] = useState(false);
   const [recordDuration, setRecordDuration] = useState(0);
@@ -84,11 +91,26 @@ export function ChatModal({
 
   const storageKey = `@bai245:chat_${rideId}`;
 
-  // 1. Limpa o chat ao alternar ID da viagem
+  // Helper para emissão segura via Socket (Impede crash se socket estiver nulo ou desconectado)
+  const safeEmit = (event: string, payload: any) => {
+    try {
+      if (socket && socket.connected) {
+        socket.emit(event, payload);
+        console.log(`📡 [CHAT_SOCKET] Evento "${event}" emitido com sucesso.`);
+      } else {
+        console.warn(`⚠️ [CHAT_SOCKET] Socket desconectado. Evento "${event}" não enviado ao servidor.`);
+      }
+    } catch (err) {
+      console.error(`❌ [CHAT_SOCKET] Erro ao emitir evento "${event}":`, err);
+    }
+  };
+
+  // 1. Limpa mensagens se alterar o ID da viagem
   useEffect(() => {
     if (!rideId) {
       setMessages([]);
     }
+    setHasRenderError(false);
   }, [rideId]);
 
   // 2. Persiste mensagens localmente
@@ -103,6 +125,7 @@ export function ChatModal({
     return () => {
       if (activePlayerRef.current) {
         try { activePlayerRef.current.pause(); } catch (e) {}
+        activePlayerRef.current = null;
       }
       if (recordTimerRef.current) {
         clearInterval(recordTimerRef.current);
@@ -110,9 +133,10 @@ export function ChatModal({
     };
   }, []);
 
-  // 4. Carrega do Cache e Histórico da API
+  // 4. Carrega mensagens do Cache e API com tratamento rigoroso
   useEffect(() => {
     if (visible && rideId) {
+      // Tenta recuperar do cache local
       AsyncStorage.getItem(storageKey).then((cached) => {
         if (cached) {
           try {
@@ -120,42 +144,49 @@ export function ChatModal({
             if (Array.isArray(parsed) && parsed.length > 0) {
               setMessages(parsed);
             }
-          } catch (e) {}
-        }
-      });
-
-      api.get(`/rides/${rideId}/chat`)
-        .then(response => {
-          const data = response?.data;
-          const rawList = Array.isArray(data) 
-            ? data 
-            : Array.isArray(data?.messages) 
-              ? data.messages 
-              : Array.isArray(data?.history) 
-                ? data.history 
-                : [];
-
-          if (rawList.length > 0) {
-            const history: ChatMessage[] = rawList.map((msg: any) => ({
-              id: String(msg.id || `hist-${Math.random().toString(36).substring(2, 7)}`),
-              sender: (msg.senderType === 'PASSENGER' || msg.sender === 'passenger' || msg.senderRole === 'passenger') ? 'passenger' : 'driver',
-              text: msg.message || msg.text || '',
-              audioUrl: msg.audioUrl || msg.audio || null,
-              audioDuration: msg.audioDuration || msg.duration || 0,
-              senderPhoto: formatPhotoUrl(msg.senderPhoto || msg.userPhoto),
-              createdAt: msg.createdAt || new Date().toISOString(),
-            }));
-
-            setMessages((prev) => {
-              const map = new Map<string, ChatMessage>();
-              [...prev, ...history].forEach(m => map.set(m.id, m));
-              return Array.from(map.values());
-            });
+          } catch (e) {
+            console.warn('⚠️ Cache de chat corrompido, ignorando...');
           }
-        })
-        .catch(error => {
-          console.warn("⚠️ [CHAT PASSAGEIRO] Erro ao carregar histórico da API:", error?.response?.data || error?.message);
-        });
+        }
+      }).catch(() => {});
+
+      // Busca na API backend
+      if (api && typeof api.get === 'function') {
+        api.get(`/rides/${rideId}/chat`)
+          .then(response => {
+            const data = response?.data;
+            const rawList = Array.isArray(data) 
+              ? data 
+              : Array.isArray(data?.messages) 
+                ? data.messages 
+                : Array.isArray(data?.history) 
+                  ? data.history 
+                  : [];
+
+            if (rawList.length > 0) {
+              const history: ChatMessage[] = rawList.map((msg: any) => ({
+                id: String(msg.id || `hist-${Math.random().toString(36).substring(2, 7)}`),
+                sender: (msg.senderType === 'PASSENGER' || msg.sender === 'passenger' || msg.senderRole === 'passenger') ? 'passenger' : 'driver',
+                text: msg.message || msg.text || '',
+                audioUrl: msg.audioUrl || msg.audio || null,
+                audioDuration: Number(msg.audioDuration || msg.duration || 0),
+                senderPhoto: formatPhotoUrl(msg.senderPhoto || msg.userPhoto),
+                createdAt: msg.createdAt || new Date().toISOString(),
+              }));
+
+              setMessages((prev) => {
+                const map = new Map<string, ChatMessage>();
+                [...prev, ...history].forEach(m => {
+                  if (m && m.id) map.set(m.id, m);
+                });
+                return Array.from(map.values());
+              });
+            }
+          })
+          .catch(error => {
+            console.warn("⚠️ [CHAT] Histórico da API indisponível ou em off-line:", error?.message);
+          });
+      }
     } else if (!visible) {
       if (activePlayerRef.current) {
         try { activePlayerRef.current.pause(); } catch (e) {}
@@ -165,60 +196,70 @@ export function ChatModal({
     }
   }, [visible, rideId, storageKey]);
 
-  // 5. Socket Listeners com Antiduplicação
+  // 5. Socket Listeners Antiduplicação
   useEffect(() => {
     if (!socket || !visible) return;
 
     const handleReceiveMessage = (msg: any) => {
       if (!msg) return;
 
-      const msgSender = (msg.sender === 'passenger' || msg.senderType === 'PASSENGER' || msg.senderRole === 'passenger') ? 'passenger' : 'driver';
-      const msgText = msg.text || msg.message || '';
-      const msgAudio = msg.audioUrl || msg.audio || null;
+      try {
+        const msgSender = (msg.sender === 'passenger' || msg.senderType === 'PASSENGER' || msg.senderRole === 'passenger') ? 'passenger' : 'driver';
+        const msgText = msg.text || msg.message || '';
+        const msgAudio = msg.audioUrl || msg.audio || null;
 
-      const formattedMsg: ChatMessage = {
-        id: String(msg.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`),
-        sender: msgSender,
-        text: msgText,
-        audioUrl: msgAudio,
-        audioDuration: msg.audioDuration || msg.duration || 0,
-        senderPhoto: formatPhotoUrl(msg.senderPhoto),
-        createdAt: msg.createdAt || new Date().toISOString(),
-      };
+        const formattedMsg: ChatMessage = {
+          id: String(msg.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`),
+          sender: msgSender,
+          text: msgText,
+          audioUrl: msgAudio,
+          audioDuration: Number(msg.audioDuration || msg.duration || 0),
+          senderPhoto: formatPhotoUrl(msg.senderPhoto),
+          createdAt: msg.createdAt || new Date().toISOString(),
+        };
 
-      setMessages((prev) => {
-        if (prev.some((item) => item.id === formattedMsg.id)) return prev;
+        setMessages((prev) => {
+          if (prev.some((item) => item.id === formattedMsg.id)) return prev;
 
-        if (formattedMsg.sender === currentRole) {
-          const isOptimisticDuplicate = prev.some(
-            (item) => item.sender === currentRole && 
-            ((msgText && item.text === msgText) || (msgAudio && item.audioUrl === msgAudio))
-          );
-          if (isOptimisticDuplicate) return prev;
-        }
+          if (formattedMsg.sender === currentRole) {
+            const isOptimisticDuplicate = prev.some(
+              (item) => item.sender === currentRole && 
+              ((msgText && item.text === msgText) || (msgAudio && item.audioUrl === msgAudio))
+            );
+            if (isOptimisticDuplicate) return prev;
+          }
 
-        return [...prev, formattedMsg];
-      });
+          return [...prev, formattedMsg];
+        });
+      } catch (err) {
+        console.warn('⚠️ Erro ao processar mensagem recebida do socket:', err);
+      }
     };
 
-    socket.off('chat:receive_message');
-    socket.off('chat:message');
-    socket.off('chat:new_message');
-
-    socket.on('chat:receive_message', handleReceiveMessage);
-    socket.on('chat:message', handleReceiveMessage);
-    socket.on('chat:new_message', handleReceiveMessage);
-
-    return () => {
+    try {
       socket.off('chat:receive_message', handleReceiveMessage);
       socket.off('chat:message', handleReceiveMessage);
       socket.off('chat:new_message', handleReceiveMessage);
+
+      socket.on('chat:receive_message', handleReceiveMessage);
+      socket.on('chat:message', handleReceiveMessage);
+      socket.on('chat:new_message', handleReceiveMessage);
+    } catch (sErr) {
+      console.warn('⚠️ Erro ao registrar ouvintes de socket no Chat:', sErr);
+    }
+
+    return () => {
+      try {
+        socket.off('chat:receive_message', handleReceiveMessage);
+        socket.off('chat:message', handleReceiveMessage);
+        socket.off('chat:new_message', handleReceiveMessage);
+      } catch (e) {}
     };
   }, [socket, visible, currentRole]);
 
   // 6. Envio de Texto
   const sendMessage = () => {
-    if (!inputText.trim() || !socket) return;
+    if (!inputText.trim()) return;
 
     const text = inputText.trim();
     const uniqueId = `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
@@ -233,7 +274,7 @@ export function ChatModal({
 
     setMessages((prev) => [...prev, newMsg]);
 
-    socket.emit('chat:send_message', { 
+    safeEmit('chat:send_message', { 
       rideId, 
       text, 
       message: text,
@@ -247,6 +288,11 @@ export function ChatModal({
 
   // 7. Iniciar Gravação de Áudio
   const startRecording = async () => {
+    if (!audioRecorder) {
+      Alert.alert(t('error_title', 'Erro'), 'Gravador de áudio indisponível neste dispositivo.');
+      return;
+    }
+
     try {
       const permission = await AudioModule.requestRecordingPermissionsAsync();
       if (!permission.granted) {
@@ -281,7 +327,7 @@ export function ChatModal({
     }
   };
 
-  // 8. Finalizar e Enviar Áudio Base64
+  // 8. Finalizar e Enviar Áudio
   const stopAndSendRecording = async (finalDuration?: number) => {
     if (recordTimerRef.current) {
       clearInterval(recordTimerRef.current);
@@ -290,8 +336,10 @@ export function ChatModal({
 
     try {
       setIsRecording(false);
-      await audioRecorder.stop();
-      const uri = audioRecorder.uri;
+      if (audioRecorder) {
+        await audioRecorder.stop();
+      }
+      const uri = audioRecorder?.uri;
 
       if (!uri) return;
 
@@ -303,7 +351,7 @@ export function ChatModal({
         const base64Audio = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
         audioPayload = `data:audio/m4a;base64,${base64Audio}`;
       } catch (b64Err) {
-        console.warn('⚠️ Não foi possível converter áudio para base64:', b64Err);
+        console.warn('⚠️ Não foi possível converter áudio para base64, usando URI local:', b64Err);
       }
 
       const newMsg: ChatMessage = {
@@ -317,7 +365,7 @@ export function ChatModal({
 
       setMessages((prev) => [...prev, newMsg]);
 
-      socket.emit('chat:send_message', { 
+      safeEmit('chat:send_message', { 
         rideId, 
         audioUrl: audioPayload,
         audio: audioPayload, 
@@ -344,13 +392,13 @@ export function ChatModal({
       recordTimerRef.current = null;
     }
     try {
-      await audioRecorder.stop();
+      if (audioRecorder) await audioRecorder.stop();
     } catch (e) {}
     setIsRecording(false);
     setRecordDuration(0);
   };
 
-  // 10. Player de Áudio
+  // 10. Player de Áudio Blindado
   const togglePlayAudio = async (msgId: string, audioUrl?: string | null) => {
     if (!audioUrl) return;
 
@@ -368,19 +416,27 @@ export function ChatModal({
       }
 
       const player = createAudioPlayer({ uri: audioUrl });
+      if (!player) return;
+
       activePlayerRef.current = player;
       setPlayingAudioId(msgId);
-      player.play();
+      
+      if (typeof player.play === 'function') {
+        player.play();
+      }
 
-      player.addListener('playbackStatusUpdate', (status: any) => {
-        if (status?.didJustFinish) {
-          setPlayingAudioId(null);
-          activePlayerRef.current = null;
-        }
-      });
+      if (typeof player.addListener === 'function') {
+        player.addListener('playbackStatusUpdate', (status: any) => {
+          if (status?.didJustFinish || status?.error) {
+            setPlayingAudioId(null);
+            activePlayerRef.current = null;
+          }
+        });
+      }
     } catch (error) {
-      console.warn("Erro ao reproduzir áudio:", error);
+      console.warn("⚠️ Erro ao reproduzir áudio:", error);
       setPlayingAudioId(null);
+      activePlayerRef.current = null;
     }
   };
 
@@ -397,6 +453,25 @@ export function ChatModal({
   };
 
   const dynamicBottomPadding = Math.max(insets.bottom + 8, Platform.OS === 'android' ? 20 : 16);
+
+  // Fallback visual de erro se ocorrer qualquer falha crítica de renderização
+  if (hasRenderError) {
+    return (
+      <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+        <View style={styles.chatOverlay}>
+          <View style={[styles.chatContainer, { justifyContent: 'center', alignItems: 'center', padding: 20 }]}>
+            <Ionicons name="alert-circle-outline" size={48} color="#EF4444" />
+            <Text style={{ color: '#FFF', fontSize: 16, fontWeight: 'bold', marginTop: 12 }}>
+              Chat indisponível no momento
+            </Text>
+            <TouchableOpacity style={styles.closeButton} onPress={onClose}>
+              <Text style={{ color: '#EAB308', fontWeight: 'bold' }}>Fechar Chat</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    );
+  }
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
@@ -438,8 +513,11 @@ export function ChatModal({
             keyExtractor={(item, index) => item.id ? `${item.id}-${index}` : `msg-${index}`}
             contentContainerStyle={styles.messageList}
             keyboardShouldPersistTaps="handled"
-            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+            onContentSizeChange={() => {
+              try { flatListRef.current?.scrollToEnd({ animated: true }); } catch (e) {}
+            }}
             renderItem={({ item }) => {
+              if (!item) return null;
               const isMe = item.sender === currentRole;
               const isPlaying = playingAudioId === item.id;
 

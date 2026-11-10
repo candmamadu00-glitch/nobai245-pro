@@ -13,23 +13,23 @@ import { useBilingualVoice } from '../hooks/useBilingualVoice';
 export const STORAGE_VOICE_MODE_KEY = '@nobai245:driver_voice_mode';
 export type VoiceMode = 'BOTH' | 'CRI' | 'PT' | 'OFF';
 
-// 🏎️ Mapeamento do ícone/imagem do veículo por tipo e cor (.jpg)
+// 🏎️ Mapeamento seguro de imagens 3D existentes em assets/images/vehicles/
 function getVehicle3DIconAsset(vehicleType?: string, vehicleColor?: string) {
   const type = (vehicleType || 'PARTICULAR').toUpperCase().trim();
   const color = (vehicleColor || 'BRANCO').toUpperCase().trim();
 
-  // 1. Tipos Especiais
+  // 1. Tipos Especiais com assets seguros
   if (type === 'MOTO') {
     return require('../../assets/images/vehicles/moto.png');
   }
   if (type === 'TOCA_TOCA' || type === 'VAN' || type === 'MOTO_CARRO') {
-    return require('../../assets/images/vehicles/toca_toca.png');
+    return require('../../assets/images/vehicles/car_yellow.png');
   }
   if (type === 'TAXI') {
-    return require('../../assets/images/vehicles/taxi_yellow.png');
+    return require('../../assets/images/vehicles/car_yellow.png');
   }
 
-  // 2. Mapeamento por Cores (com Fallback Seguro)
+  // 2. Mapeamento por Cores
   switch (color) {
     case 'BLACK':
     case 'PRETO':
@@ -75,7 +75,7 @@ function getVehicle3DIconAsset(vehicleType?: string, vehicleColor?: string) {
     case 'WHITE':
     case 'BRANCO':
     default:
-      return require('../../assets/images/vehicles/car_white.png'); // Fallback padrão
+      return require('../../assets/images/vehicles/car_white.png');
   }
 }
 

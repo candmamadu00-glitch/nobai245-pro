@@ -1,35 +1,38 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { 
   View, Text, StyleSheet, TouchableOpacity, Alert, 
-  FlatList, Platform, StatusBar, BackHandler, Linking, Vibration,
+  Platform, StatusBar, BackHandler, Linking, Vibration,
   Share, AppState, KeyboardAvoidingView, Modal, TextInput, 
-  ActivityIndicator, Image, Animated, PanResponder, Dimensions, ScrollView, TouchableWithoutFeedback, Keyboard
+  ActivityIndicator, Image, Animated, PanResponder, Dimensions, 
+  ScrollView, TouchableWithoutFeedback, Keyboard, Easing
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Mapbox from '@rnmapbox/maps';
 import * as Location from 'expo-location';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useTranslation } from 'react-i18next';
+import * as Haptics from 'expo-haptics';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+import * as Notifications from 'expo-notifications';
+
 import { useAuth } from '../contexts/AuthContext';
 import { 
   socket, 
   connectPassengerSocket, 
   requestRide as emitRequestRide,  
   cancelRideByPassenger, 
-  rateDriver, 
-  sendChatMessage 
+  rateDriver 
 } from '../services/passengerSocket';
 import { CancelModal } from '../components/CancelModal';
 import { RatingModal } from '../components/RatingModal';
 import { ChatModal } from '../components/ChatModal';
 import { api } from '../services/api';
-import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { registerAndSendPushToken } from '../services/notifications';
 import { updateOngoingRideNotification, dismissOngoingRideNotification } from '../services/ongoingNotification';
-import * as Notifications from 'expo-notifications';
-import * as Haptics from 'expo-haptics';
 import { speakRideStatusUpdate, speakText, triggerHapticFeedback } from '../utils/accessibility';
 
 // Token Mapbox
@@ -41,6 +44,7 @@ if (MAPBOX_ACCESS_TOKEN) {
 const STORAGE_RIDE_KEY = '@bai245:active_ride_state';
 const STORAGE_FAVORITES_KEY = '@bai245:favorite_places';
 const STORAGE_RECENT_SEARCHES_KEY = '@bai245:recent_searches';
+const STORAGE_GLOW_BORDER_KEY = '@bai245:border_glow_enabled';
 const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com').replace(/\/api\/?$/, '');
 
 const BISSAU_CENTER = { latitude: 11.8636, longitude: -15.5977 };
@@ -206,7 +210,7 @@ export const getVehicle3DIconAsset = (type?: string, colorName?: string) => {
     return require('../assets/vehicles/moto.png');
   }
   if (normType === 'moto-carro' || normType === 'toca-toca') {
-    return require('../assets/vehicles/motocarro.jng');
+    return require('../assets/vehicles/carro_yellow.png');
   }
   if (normType === 'taxi') {
     return require('../assets/vehicles/taxi_yellow.png');
@@ -241,7 +245,7 @@ export const getVehicle3DIconAsset = (type?: string, colorName?: string) => {
     case 'WHITE':
     case 'BRANCO':
     default:
-      return require('../assets/vehicles/carro_white.png'); // Fallback padrão
+      return require('../assets/vehicles/carro_white.png');
   }
 };
 
@@ -273,6 +277,112 @@ const findNearestLocalBairro = (lat: number, lng: number) => {
     return nearest.description;
   }
   return null;
+};
+
+// ⚡ COMPONENTE DE BOTÃO COM EFEITO DE RAIO LUMINOSO CONTINUO E DESATIVÁVEL
+interface GlowingButtonProps {
+  onPress: () => void;
+  style?: any;
+  textStyle?: any;
+  title: string;
+  icon?: string;
+  isGlowEnabled?: boolean;
+  gradientColors?: string[];
+  disabled?: boolean;
+  activeOpacity?: number;
+}
+
+const GlowingButton: React.FC<GlowingButtonProps> = ({
+  onPress,
+  style,
+  textStyle,
+  title,
+  icon,
+  isGlowEnabled = true,
+  gradientColors = ['#FACC15', '#EAB308', '#CA8A04'],
+  disabled = false,
+  activeOpacity = 0.85,
+}) => {
+  const glowAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (isGlowEnabled) {
+      const animation = Animated.loop(
+        Animated.timing(glowAnim, {
+          toValue: 1,
+          duration: 2400,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        })
+      );
+      animation.start();
+      return () => animation.stop();
+    } else {
+      glowAnim.setValue(0);
+    }
+  }, [isGlowEnabled, glowAnim]);
+
+  const borderOpacity = glowAnim.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [0.3, 1, 0.3],
+  });
+
+  const borderScale = glowAnim.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [1, 1.02, 1],
+  });
+
+  const handlePress = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    onPress();
+  };
+
+  return (
+    <View style={[{ position: 'relative', borderRadius: 14 }, style]}>
+      {isGlowEnabled && (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              borderRadius: 16,
+              borderWidth: 2,
+              borderColor: '#FFFFFF',
+              opacity: borderOpacity,
+              transform: [{ scale: borderScale }],
+              shadowColor: '#FFFFFF',
+              shadowOffset: { width: 0, height: 0 },
+              shadowOpacity: 0.9,
+              shadowRadius: 8,
+              elevation: 8,
+            },
+          ]}
+        />
+      )}
+      <TouchableOpacity
+        activeOpacity={activeOpacity}
+        onPress={handlePress}
+        disabled={disabled}
+        style={{ width: '100%', height: '100%', borderRadius: 14, overflow: 'hidden' }}
+      >
+        <LinearGradient
+      colors={gradientColors as [string, string, ...string[]]}
+      start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+          style={{
+            flex: 1,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            paddingHorizontal: 16,
+          }}
+        >
+          {icon ? <Ionicons name={icon as any} size={20} color="#0F172A" style={{ marginRight: 8 }} /> : null}
+          <Text style={[styles.requestButtonText, textStyle]}>{title}</Text>
+        </LinearGradient>
+      </TouchableOpacity>
+    </View>
+  );
 };
 
 export function Home() {
@@ -338,14 +448,13 @@ export function Home() {
   const [searchResults, setSearchResults] = useState<MapboxGeocodingFeature[]>([]);
   const [isSearchingMapbox, setIsSearchingMapbox] = useState(false);
   const [isVoiceAssistEnabled, setIsVoiceAssistEnabled] = useState<boolean>(true);
+  const [isBorderGlowEnabled, setIsBorderGlowEnabled] = useState<boolean>(true);
+  
   const [showCancelModal, setShowCancelModal] = useState<boolean>(false);
   const handleCloseCancelModal = useCallback(() => setShowCancelModal(false), []);
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [isChatVisible, setIsChatVisible] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [ratingStars, setRatingStars] = useState<number>(5);
-  const [ratingTags, setRatingTags] = useState<string[]>([]);
-  const [ratingComment, setRatingComment] = useState<string>('');
 
   const [homeLocation, setHomeLocation] = useState<FavoritePlace | null>(null);
   const [workLocation, setWorkLocation] = useState<FavoritePlace | null>(null);
@@ -378,8 +487,24 @@ export function Home() {
     { id: 'moto' as VehicleType, title: 'Moto', subtitle: t('moto_subtitle', 'Rápido e econômico'), image: require('../assets/vehicles/moto.png') },
     { id: 'particular' as VehicleType, title: t('standard_vehicle', 'Particular'), subtitle: t('particular_subtitle', 'Viagem exclusiva'), image: require('../assets/vehicles/carro_white.png') },
     { id: 'taxi' as VehicleType, title: 'Táxi', subtitle: t('taxi_subtitle', 'Conforto e tradição'), image: require('../assets/vehicles/taxi_yellow.png') },
-    { id: 'moto-carro' as VehicleType, title: 'Moto-carro', subtitle: t('motocarro_subtitle', 'Ideal para bagagens leves'), image: require('../assets/vehicles/motocarro.jg') },
+    { id: 'moto-carro' as VehicleType, title: 'Moto-carro', subtitle: t('motocarro_subtitle', 'Ideal para bagagens leves'), image: require('../assets/vehicles/carro_yellow.png') },
   ];
+
+  // Carrega configuração de iluminação de bordas salva
+  useEffect(() => {
+    AsyncStorage.getItem(STORAGE_GLOW_BORDER_KEY).then((val) => {
+      if (val !== null) setIsBorderGlowEnabled(val === 'true');
+    }).catch(() => {});
+  }, []);
+
+  const toggleBorderGlow = async () => {
+    const next = !isBorderGlowEnabled;
+    setIsBorderGlowEnabled(next);
+    triggerHapticFeedback('BUTTON_PRESS');
+    try {
+      await AsyncStorage.setItem(STORAGE_GLOW_BORDER_KEY, String(next));
+    } catch (e) {}
+  };
 
   const resetRideState = useCallback(() => {
     console.log('🔄 [STATE_DEBUG] Resetando estado completo da corrida no passageiro...');
@@ -393,6 +518,18 @@ export function Home() {
     setStartOtp('');
     setRouteGeometry(null);
     setIsSearchingRide(false);
+    
+    setDropoffCoords(null);
+    setDropoffAddress('');
+    setPickupReferencePoint('');
+    setDropoffReferencePoint('');
+    setExtraStopCoords(null);
+    setExtraStopAddress('');
+    setExtraStopReferencePoint('');
+    setShowExtraStop(false);
+    setEstimatedPrice(null);
+    setEstimatedDistance(null);
+
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     AsyncStorage.removeItem(STORAGE_RIDE_KEY).catch(() => {});
   }, []);
@@ -671,8 +808,9 @@ export function Home() {
     const sw = [Math.min(...lngs), Math.min(...lats)];
 
     try {
-      console.log('📍 [MAP_DEBUG] Enquadrando limites no mapa Mapbox.');
-      cameraRef.current.fitBounds(ne, sw, [120, 60, 360, 60], 1000);
+      console.log('📍 [MAP_DEBUG] Enquadrando limites no mapa Mapbox com offset seguro.');
+      // Padding ajustado [top, right, bottom, left] -> Bottom 320px evita sobreposição pelo painel inferior
+      cameraRef.current.fitBounds(ne, sw, [120, 60, 320, 60], 1000);
     } catch (err) {
       console.warn('Erro ao ajustar enquadramento do mapa Mapbox:', err);
     }
@@ -863,38 +1001,6 @@ export function Home() {
       console.warn('⚠️ [SYNC_DEBUG] Erro na rede ao sincronizar corrida - mantendo cache local:', err);
     }
   }, [fetchMapboxRoute, fitMapBounds, extraStopCoords]);
-
-  useEffect(() => {
-    if (!socket) return;
-
-    const handleRideCancelledEvent = async (data: { rideId?: string; cancelledBy?: string; reason?: string }) => {
-      if (!data.rideId || data.rideId === activeRideId) {
-        console.warn(`❌ [CANCEL_DEBUG] Evento "ride:cancelled" recebido! Solicitante: ${data.cancelledBy || 'Desconhecido'} | Motivo: ${data.reason || 'N/A'}`);
-        Vibration.vibrate([0, 400, 200, 400]);
-
-        Alert.alert(
-          'Corrida Cancelada ⚠️',
-          data.reason || (data.cancelledBy === 'DRIVER' ? 'O motorista cancelou a corrida.' : 'A corrida foi encerrada.'),
-          [{ text: 'OK', onPress: () => resetRideState() }]
-        );
-
-        await AsyncStorage.multiRemove([
-          '@nobai245:active_ride_id',
-          '@nobai245:active_ride_data',
-          '@bai245:active_ride',
-          STORAGE_RIDE_KEY
-        ]).catch(() => {});
-
-        resetRideState();
-      }
-    };
-
-    socket.on('ride:cancelled', handleRideCancelledEvent);
-
-    return () => {
-      socket.off('ride:cancelled', handleRideCancelledEvent);
-    };
-  }, [socket, activeRideId, resetRideState]);
 
   const handleMapboxSearch = async (text: string) => {
     setSearchQuery(text);
@@ -1100,6 +1206,7 @@ export function Home() {
   }, []);
 
   const handleFavoritePress = (type: 'home' | 'work') => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     const favorite = type === 'home' ? homeLocation : workLocation;
     if (favorite && typeof favorite.latitude === 'number' && typeof favorite.longitude === 'number') {
       setDropoffAddress(favorite.address);
@@ -1607,10 +1714,10 @@ export function Home() {
   // =======================================================
   async function handleInitialRequestRide() {
     const needsDropoff = serviceType !== 'aluguel';
-    if (!pickupCoords || (needsDropoff && !dropoffCoords) || !user?.id) {
+    if (!pickupCoords || (needsDropoff && (!dropoffCoords || !dropoffAddress.trim())) || !user?.id) {
       Alert.alert(
         t('warning_title', 'Aviso ⚠️'), 
-        t('select_origin_destination_msg', 'Selecione a origem e o destino antes de solicitar.')
+        t('select_origin_destination_msg', 'Preencha obrigatoriamente o local de partida e o destino final.')
       );
       return;
     }
@@ -1638,8 +1745,8 @@ export function Home() {
   }
 
   function executeRideRequest() {
-    if (!user?.id || !pickupCoords) {
-      Alert.alert(t('warning_title', 'Aviso ⚠️'), t('missing_data_msg', 'Dados insuficientes para iniciar a corrida. Verifique sua localização.'));
+    if (!user?.id || !pickupCoords || !dropoffCoords) {
+      Alert.alert(t('warning_title', 'Aviso ⚠️'), t('missing_data_msg', 'Preencha o local de partida e o destino final para continuar.'));
       return;
     }
 
@@ -1729,22 +1836,17 @@ export function Home() {
 
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
-    if (!activeRideId || !user?.id) {
-      resetRideState();
-      return;
+    if (activeRideId && user?.id) {
+      cancelRideByPassenger(activeRideId, user.id, reason);
     }
     
-    cancelRideByPassenger(activeRideId, user.id, reason);
-    
-    persistRideState(null, 'idle');
-    setActiveRideId(null);
-    setRideStatus('idle');
-    setBookingStep('ADDRESS');
-    setDriverInfo(null);
-    setDriverLocation(null);
-    setStartOtp('');
-    
-    if (activeRideIdRef.current) activeRideIdRef.current = null;
+    AsyncStorage.multiRemove([
+      '@nobai245:active_ride_id',
+      '@nobai245:active_ride_data',
+      '@bai245:active_ride',
+      STORAGE_RIDE_KEY
+    ]).catch(() => {});
+
     resetRideState();
   }, [activeRideId, user?.id, resetRideState]);
 
@@ -1807,12 +1909,6 @@ export function Home() {
     resetRideState();
   }, [activeRideId, driverInfo, user?.id, resetRideState]);
 
-  const handleResetToMyGps = () => {
-    console.log('📍 [LOCATION_DEBUG] Resetando pino de embarque para o GPS atual do passageiro.');
-    isManualPickupRef.current = false;
-    getCurrentLocationWithFallback();
-  };
-
   const handleCallDriver = () => {
     setIsChatVisible(true);
     Alert.alert(
@@ -1858,39 +1954,13 @@ export function Home() {
   };
 
   function openSearchModal(type: 'pickup' | 'dropoff' | 'extraStop') {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     console.log(`🔍 [SEARCH_DEBUG] Abrindo modal de busca de endereço para o tipo: "${type}"`);
     setSearchType(type);
     setSearchQuery('');
     setSearchResults([]);
     setIsSearchModalVisible(true);
   }
-
-  const handleSelectSearchResult = (address: string, coords: { latitude: number; longitude: number }) => {
-    console.log(`📍 [SEARCH_DEBUG] Local selecionado: "${address}" [${coords.latitude}, ${coords.longitude}]`);
-    const selectedFeature: MapboxGeocodingFeature = {
-      id: `recent_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      description: address,
-      latitude: coords.latitude,
-      longitude: coords.longitude,
-    };
-
-    saveToRecentSearches(selectedFeature);
-
-    if (searchType === 'pickup') {
-      isManualPickupRef.current = true;
-      setPickupAddress(address);
-      setPickupCoords(coords);
-    } else if (searchType === 'dropoff') {
-      setDropoffAddress(address);
-      setDropoffCoords(coords);
-      setBookingStep('SERVICE_AND_PRICE');
-    } else if (searchType === 'extraStop') {
-      setExtraStopAddress(address);
-      setExtraStopCoords(coords);
-    }
-
-    setIsSearchModalVisible(false);
-  };
 
   const handleSosPress = () => {
     console.log('🚨 [SOS_DEBUG] Modal de emergência acionado pelo passageiro.');
@@ -1976,63 +2046,64 @@ export function Home() {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
-      {/* 1. HEADER FLUTUANTE */}
+      {/* 1. HEADER FLUTUANTE COM VIDRO FOSCO (GLASSMORPHISM) */}
       <View style={[styles.floatingHeader, { top: topHeaderInset }]}>
-        <View style={styles.headerContent}>
-          <TouchableOpacity 
-            style={styles.headerUserInfo} 
-            activeOpacity={0.8}
-            onPress={() => navigation.navigate('Profile')}
-          >
-            <View style={styles.avatarPlaceholder}>
-              {user?.profilePicture ? (
-                <Image 
-                  source={{ uri: formatPhotoUrl(user.profilePicture) }} 
-                  style={{ width: '100%', height: '100%', borderRadius: 50 }} 
-                />
-              ) : (
-                <Ionicons name="person" size={18} color="#0F172A" />
-              )}
-            </View>
-            <Text style={styles.greetingText}>
-              {t('greeting', 'Olá')}, {user?.fullName ? user.fullName.split(' ')[0] : t('passenger', 'Passageiro')}
-            </Text>
-          </TouchableOpacity>
+        <BlurView intensity={75} tint="dark" style={styles.headerBlurWrapper}>
+          <View style={styles.headerContent}>
+            <TouchableOpacity 
+              style={styles.headerUserInfo} 
+              activeOpacity={0.8}
+              onPress={() => navigation.navigate('Profile')}
+            >
+              <View style={styles.avatarPlaceholder}>
+                {user?.profilePicture ? (
+                  <Image 
+                    source={{ uri: formatPhotoUrl(user.profilePicture) }} 
+                    style={{ width: '100%', height: '100%', borderRadius: 50 }} 
+                  />
+                ) : (
+                  <Ionicons name="person" size={18} color="#0F172A" />
+                )}
+              </View>
+              <Text style={styles.greetingText}>
+                {t('greeting', 'Olá')}, {user?.fullName ? user.fullName.split(' ')[0] : t('passenger', 'Passageiro')}
+              </Text>
+            </TouchableOpacity>
 
-          {/* 🔊 BOTÃO TOGGLE DA ASSISTÊNCIA DE VOZ */}
-          <TouchableOpacity 
-            style={[
-              styles.voiceToggleHeaderBtn, 
-              { backgroundColor: isVoiceAssistEnabled ? '#EAB308' : '#1E293B' }
-            ]} 
-            onPress={toggleVoiceAssist}
-            activeOpacity={0.8}
-          >
-            <Ionicons 
-              name={isVoiceAssistEnabled ? "volume-high" : "volume-mute"} 
-              size={18} 
-              color={isVoiceAssistEnabled ? "#0F172A" : "#94A3B8"} 
-            />
-          </TouchableOpacity>
+            <TouchableOpacity 
+              style={[
+                styles.voiceToggleHeaderBtn, 
+                { backgroundColor: isVoiceAssistEnabled ? '#EAB308' : '#1E293B' }
+              ]} 
+              onPress={toggleVoiceAssist}
+              activeOpacity={0.8}
+            >
+              <Ionicons 
+                name={isVoiceAssistEnabled ? "volume-high" : "volume-mute"} 
+                size={18} 
+                color={isVoiceAssistEnabled ? "#0F172A" : "#94A3B8"} 
+              />
+            </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={styles.langHeaderBtn} 
-            onPress={() => setLangModalVisible(true)}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.langHeaderBtnText}>{i18n.language?.toUpperCase() || 'PT'}</Text>
-          </TouchableOpacity>
+            <TouchableOpacity 
+              style={styles.langHeaderBtn} 
+              onPress={() => setLangModalVisible(true)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.langHeaderBtnText}>{i18n.language?.toUpperCase() || 'PT'}</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity style={styles.menuIcon} activeOpacity={0.7} onPress={() => setIsMenuVisible(true)}>
-            <Ionicons name="menu" size={22} color="#EAB308" />
-          </TouchableOpacity>
-        </View>
+            <TouchableOpacity style={styles.menuIcon} activeOpacity={0.7} onPress={() => setIsMenuVisible(true)}>
+              <Ionicons name="menu" size={22} color="#EAB308" />
+            </TouchableOpacity>
+          </View>
+        </BlurView>
       </View>
 
       {/* 2. MAPA DE NAVEGAÇÃO MAPBOX */}
       <Mapbox.MapView
         style={StyleSheet.absoluteFill}
-        styleURL={Mapbox.StyleURL.Street}
+        styleURL={Mapbox.StyleURL.Dark}
         logoEnabled={false}
         attributionEnabled={false}
         onCameraChanged={(e) => {
@@ -2192,6 +2263,7 @@ export function Home() {
         style={[styles.recenterButton, { bottom: Math.max((insets?.bottom || 0) + 260, 270) }]} 
         activeOpacity={0.85}
         onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
           console.log('📍 [MAP_DEBUG] Recentralizando câmera no passageiro/motorista.');
           if (cameraRef.current) {
             cameraRef.current.setCamera({
@@ -2286,13 +2358,10 @@ export function Home() {
                     <Ionicons name="compass-outline" size={16} color="#94A3B8" style={{ marginRight: 8 }} />
                     <TextInput
                       style={styles.referenceTextInput}
-                      placeholder="Ref. Partida (ex: Perto da Farmácia Central)"
+                      placeholder="Ref. Partida (opcional: ex: Perto da Farmácia Central)"
                       placeholderTextColor="#64748B"
                       value={pickupReferencePoint}
-                      onChangeText={(val) => {
-                        setPickupReferencePoint(val);
-                        console.log(`📍 [LOCATION_DEBUG] Ref. Embarque atualizada: "${val}"`);
-                      }}
+                      onChangeText={(val) => setPickupReferencePoint(val)}
                       maxLength={80}
                     />
                   </View>
@@ -2310,7 +2379,6 @@ export function Home() {
                     <TouchableOpacity 
                       style={{ padding: 10, marginLeft: 6, backgroundColor: 'rgba(239,68,68,0.15)', borderRadius: 12 }} 
                       onPress={() => { 
-                        console.log('🗑️ [UI_DEBUG] Parada intermediária removida.');
                         setShowExtraStop(false); 
                         setExtraStopAddress(''); 
                         setExtraStopCoords(null); 
@@ -2335,13 +2403,10 @@ export function Home() {
                       <Ionicons name="compass-outline" size={16} color="#94A3B8" style={{ marginRight: 8 }} />
                       <TextInput
                         style={styles.referenceTextInput}
-                        placeholder="Ref. Destino (ex: Em frente ao Mercado)"
+                        placeholder="Ref. Destino (opcional: ex: Em frente ao Mercado)"
                         placeholderTextColor="#64748B"
                         value={dropoffReferencePoint}
-                        onChangeText={(val) => {
-                          setDropoffReferencePoint(val);
-                          console.log(`🚩 [LOCATION_DEBUG] Ref. Destino atualizada: "${val}"`);
-                        }}
+                        onChangeText={(val) => setDropoffReferencePoint(val)}
                         maxLength={80}
                       />
                     </View>
@@ -2352,7 +2417,6 @@ export function Home() {
                   <TouchableOpacity 
                     style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 6, paddingHorizontal: 4 }} 
                     onPress={() => { 
-                      console.log('➕ [UI_DEBUG] Abrindo busca para adicionar parada intermediária.');
                       setShowExtraStop(true); 
                       openSearchModal('extraStop'); 
                     }}
@@ -2362,19 +2426,20 @@ export function Home() {
                   </TouchableOpacity>
                 )}
 
-                {dropoffCoords ? (
-                  <TouchableOpacity 
-                    style={styles.requestButton} 
-                    activeOpacity={0.85} 
-                    onPress={() => {
-                      console.log('📱 [UI_DEBUG] Avançando para a etapa SERVICE_AND_PRICE.');
-                      setBookingStep('SERVICE_AND_PRICE');
-                    }}
-                  >
-                    <Text style={styles.requestButtonText}>{t('next_btn', 'Avançar')}</Text>
-                  </TouchableOpacity>
+                {/* 🔒 VALIDAÇÃO OBRIGATÓRIA DE CAMPOS DE ORIGEM E DESTINO */}
+                {Boolean(pickupCoords && dropoffCoords && dropoffAddress.trim()) ? (
+                  <GlowingButton
+                    title={t('next_btn', 'Avançar')}
+                    onPress={() => setBookingStep('SERVICE_AND_PRICE')}
+                    isGlowEnabled={isBorderGlowEnabled}
+                    style={{ height: 48, marginTop: 8 }}
+                  />
                 ) : (
-                  <TouchableOpacity style={[styles.requestButton, { backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155' }]} activeOpacity={0.8} onPress={() => openSearchModal('dropoff')}>
+                  <TouchableOpacity 
+                    style={[styles.requestButton, { backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155' }]} 
+                    activeOpacity={0.8} 
+                    onPress={() => openSearchModal('dropoff')}
+                  >
                     <Text style={[styles.requestButtonText, { color: '#EAB308' }]}>{t('where_do_you_want_to_go', 'Aonde você quer ir?')}</Text>
                   </TouchableOpacity>
                 )}
@@ -2429,12 +2494,14 @@ export function Home() {
                     <Text style={styles.cancelButtonOutlineText}>{t('back_btn', 'Voltar')}</Text>
                   </TouchableOpacity>
 
-                  <TouchableOpacity 
-                    style={[styles.requestButton, { flex: 1, marginLeft: 10 }]} 
-                    onPress={handleInitialRequestRide}
-                  >
-                    <Text style={styles.requestButtonText}>{t('request_now_btn', 'Pedir Agora')}</Text>
-                  </TouchableOpacity>
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <GlowingButton
+                      title={t('request_now_btn', 'Pedir Agora')}
+                      onPress={handleInitialRequestRide}
+                      isGlowEnabled={isBorderGlowEnabled}
+                      style={{ height: 48 }}
+                    />
+                  </View>
                 </View>
               </View>
             )}
@@ -2508,7 +2575,7 @@ export function Home() {
                     </Text>
 
                     {estimatedDistance ? (
-                      <View style={{ backgroundColor: '#1E293B', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, marginTop: 4, alignSelf: 'flex-start' }}>
+                      <View style={{ backgroundColor: '#0F172A', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, marginTop: 4, alignSelf: 'flex-start' }}>
                         <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: 'bold' }}>
                           📍 {estimatedDistance.toFixed(1)} km
                         </Text>
@@ -2610,7 +2677,6 @@ export function Home() {
                   <TouchableOpacity 
                     style={styles.actionBtnPrimary} 
                     onPress={() => {
-                      console.log('💬 [UI_DEBUG] Abrindo modal de chat e zerando unreadCount.');
                       setUnreadCount(0);
                       setIsChatVisible(true);
                     }} 
@@ -2705,10 +2771,7 @@ export function Home() {
             <View style={styles.serviceTypesContainer}>
               <TouchableOpacity 
                 style={[styles.serviceTypeButton, serviceType === 'viagem' && styles.serviceTypeActive]}
-                onPress={() => {
-                  console.log('🚖 [SERVICE_DEBUG] Serviço selecionado: VIAGEM');
-                  setServiceType('viagem');
-                }}
+                onPress={() => setServiceType('viagem')}
               >
                 <Ionicons name="car-outline" size={18} color={serviceType === 'viagem' ? '#0F172A' : '#94A3B8'} />
                 <Text style={[styles.serviceTypeText, serviceType === 'viagem' && styles.serviceTypeTextActive]}>Viagem</Text>
@@ -2716,10 +2779,7 @@ export function Home() {
 
               <TouchableOpacity 
                 style={[styles.serviceTypeButton, serviceType === 'entrega' && styles.serviceTypeActive]}
-                onPress={() => {
-                  console.log('📦 [SERVICE_DEBUG] Serviço selecionado: ENTREGA');
-                  setServiceType('entrega');
-                }}
+                onPress={() => setServiceType('entrega')}
               >
                 <Ionicons name="cube-outline" size={18} color={serviceType === 'entrega' ? '#0F172A' : '#94A3B8'} />
                 <Text style={[styles.serviceTypeText, serviceType === 'entrega' && styles.serviceTypeTextActive]}>Entrega</Text>
@@ -2727,10 +2787,7 @@ export function Home() {
 
               <TouchableOpacity 
                 style={[styles.serviceTypeButton, serviceType === 'aluguel' && styles.serviceTypeActive]}
-                onPress={() => {
-                  console.log('🔑 [SERVICE_DEBUG] Serviço selecionado: ALUGUEL');
-                  setServiceType('aluguel');
-                }}
+                onPress={() => setServiceType('aluguel')}
               >
                 <Ionicons name="key-outline" size={18} color={serviceType === 'aluguel' ? '#0F172A' : '#94A3B8'} />
                 <Text style={[styles.serviceTypeText, serviceType === 'aluguel' && styles.serviceTypeTextActive]}>Aluguel</Text>
@@ -2769,10 +2826,7 @@ export function Home() {
                           { paddingVertical: 14, paddingHorizontal: 16, borderRadius: 16 }
                         ]}
                         activeOpacity={0.85}
-                        onPress={() => {
-                          console.log(`🚗 [SERVICE_DEBUG] Categoria selecionada: "${item.id}" (${price} XOF)`);
-                          setVehicleType(item.id);
-                        }}
+                        onPress={() => setVehicleType(item.id)}
                       >
                         <Image source={item.image} style={{ width: 55, height: 40 }} resizeMode="contain" />
                         <View style={[styles.categoryTextWrapper, { marginLeft: 12 }]}>
@@ -2795,13 +2849,12 @@ export function Home() {
               borderTopColor: '#1E293B',
               backgroundColor: '#0F172A'
             }}>
-              <TouchableOpacity 
-                style={[styles.requestButton, { height: 52 }]} 
+              <GlowingButton
+                title="Continuar para Pagamento ➔"
                 onPress={() => setBookingStep('PAYMENT')}
-                activeOpacity={0.85}
-              >
-                <Text style={[styles.requestButtonText, { fontSize: 16 }]}>Continuar para Pagamento ➔</Text>
-              </TouchableOpacity>
+                isGlowEnabled={isBorderGlowEnabled}
+                style={{ height: 52 }}
+              />
             </View>
           </ScrollView>
         </SafeAreaView>
@@ -2819,10 +2872,7 @@ export function Home() {
                     <TouchableOpacity
                       key={lang.code}
                       style={styles.langOption}
-                      onPress={() => {
-                        console.log(`🌐 [UI_DEBUG] Idioma alterado para: ${lang.code}`);
-                        changeLanguage(lang.code);
-                      }}
+                      onPress={() => changeLanguage(lang.code)}
                       activeOpacity={0.7}
                     >
                       <Text style={styles.langOptionText}>{lang.label}</Text>
@@ -2867,10 +2917,7 @@ export function Home() {
 
                   <TouchableOpacity 
                     style={styles.cancelButtonOutline} 
-                    onPress={() => {
-                      console.log('📍 [LOCATION_DEBUG] Tentando obter localização novamente via botão do modal.');
-                      getCurrentLocationWithFallback();
-                    }}
+                    onPress={getCurrentLocationWithFallback}
                     activeOpacity={0.8}
                   >
                     <Text style={styles.cancelButtonOutlineText}>{t('try_again', 'Já ativei / Tentar novamente')}</Text>
@@ -2882,7 +2929,7 @@ export function Home() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* 📑 MENU LATERAL DRAWER */}
+      {/* 📑 MENU LATERAL DRAWER COM TOGGLE DE RAIO LUMINOSO */}
       <Modal visible={isMenuVisible} animationType="fade" transparent onRequestClose={() => setIsMenuVisible(false)}>
         <TouchableOpacity style={styles.menuOverlay} activeOpacity={1} onPress={() => setIsMenuVisible(false)}>
           <View style={[styles.menuDrawer, { paddingTop: Math.max((insets?.top || 0) + 16, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 20), paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
@@ -2899,18 +2946,42 @@ export function Home() {
             </View>
 
             <View style={styles.menuItems}>
+              {/* ⚡ TOGGLE DE EFEITO RAIO LUMINOSO */}
               <TouchableOpacity 
                 style={styles.menuItem} 
-                onPress={() => {
-                  console.log('🎙️ [MENU_DEBUG] Alternando Assistência por Voz via Menu Lateral.');
-                  toggleVoiceAssist();
-                }} 
+                onPress={toggleBorderGlow} 
+                activeOpacity={0.7}
+              >
+                <Ionicons 
+                  name="flash-outline" 
+                  size={20} 
+                  color={isBorderGlowEnabled ? "#EAB308" : "#94A3B8"} 
+                />
+                <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingRight: 8 }}>
+                  <Text style={styles.menuItemText}>Efeito Raio Luminoso</Text>
+                  <View style={{
+                    paddingHorizontal: 8,
+                    paddingVertical: 2,
+                    borderRadius: 10,
+                    backgroundColor: isBorderGlowEnabled ? '#EAB308' : '#334155'
+                  }}>
+                    <Text style={{ fontSize: 10, fontWeight: 'bold', color: isBorderGlowEnabled ? '#0F172A' : '#FFF' }}>
+                      {isBorderGlowEnabled ? 'LIGADO' : 'DESLIGADO'}
+                    </Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+
+              {/* 🎙️ ASSISTÊNCIA POR VOZ */}
+              <TouchableOpacity 
+                style={styles.menuItem} 
+                onPress={toggleVoiceAssist} 
                 activeOpacity={0.7}
               >
                 <Ionicons 
                   name={isVoiceAssistEnabled ? "volume-high-outline" : "volume-mute-outline"} 
                   size={20} 
-                  color={isVoiceAssistEnabled ? "#EAB308" : "#0F172A"} 
+                  color={isVoiceAssistEnabled ? "#EAB308" : "#94A3B8"} 
                 />
                 <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingRight: 8 }}>
                   <Text style={styles.menuItemText}>{t('voice_assist', 'Assistência por Voz')}</Text>
@@ -2930,52 +3001,48 @@ export function Home() {
               <TouchableOpacity 
                 style={styles.menuItem} 
                 onPress={() => { 
-                  console.log('📱 [MENU_DEBUG] Navegando para: Profile');
                   setIsMenuVisible(false); 
                   navigation.navigate('Profile'); 
                 }} 
                 activeOpacity={0.7}
               >
-                <Ionicons name="person-outline" size={20} color="#0F172A" />
+                <Ionicons name="person-outline" size={20} color="#F8FAFC" />
                 <Text style={styles.menuItemText}>{t('my_profile', 'Meu Perfil')}</Text>
               </TouchableOpacity>
 
               <TouchableOpacity 
                 style={styles.menuItem} 
                 onPress={() => { 
-                  console.log('📱 [MENU_DEBUG] Navegando para: RideHistory');
                   setIsMenuVisible(false); 
                   navigation.navigate('RideHistory'); 
                 }} 
                 activeOpacity={0.7}
               >
-                <Ionicons name="time-outline" size={20} color="#0F172A" />
+                <Ionicons name="time-outline" size={20} color="#F8FAFC" />
                 <Text style={styles.menuItemText}>{t('my_rides', 'Minhas Corridas')}</Text>
               </TouchableOpacity>
 
               <TouchableOpacity 
                 style={styles.menuItem} 
                 onPress={() => { 
-                  console.log('📱 [MENU_DEBUG] Navegando para: EmergencyContacts');
                   setIsMenuVisible(false); 
                   navigation.navigate('EmergencyContacts'); 
                 }} 
                 activeOpacity={0.7}
               >
-                <Ionicons name="shield-checkmark-outline" size={20} color="#0F172A" />
+                <Ionicons name="shield-checkmark-outline" size={20} color="#F8FAFC" />
                 <Text style={styles.menuItemText}>{t('emergency_contacts', 'Contatos de Emergência')}</Text>
               </TouchableOpacity>
 
               <TouchableOpacity 
                 style={styles.menuItem} 
                 onPress={() => { 
-                  console.log('📱 [MENU_DEBUG] Navegando para: HelpCenter');
                   setIsMenuVisible(false); 
                   navigation.navigate('HelpCenter'); 
                 }} 
                 activeOpacity={0.7}
               >
-                <Ionicons name="help-buoy-outline" size={20} color="#0F172A" />
+                <Ionicons name="help-buoy-outline" size={20} color="#F8FAFC" />
                 <Text style={styles.menuItemText}>{t('help_center', 'Central de Ajuda')}</Text>
               </TouchableOpacity>
 
@@ -2984,7 +3051,6 @@ export function Home() {
               <TouchableOpacity 
                 style={styles.menuItem} 
                 onPress={() => { 
-                  console.log('🚪 [MENU_DEBUG] Efetuando logout da conta do passageiro...');
                   setIsMenuVisible(false); 
                   signOut(); 
                 }} 
@@ -3012,10 +3078,7 @@ export function Home() {
           >
             <View style={styles.searchHeader}>
               <TouchableOpacity 
-                onPress={() => {
-                  console.log('🔍 [SEARCH_DEBUG] Modal de busca fechado pelo passageiro.');
-                  setIsSearchModalVisible(false);
-                }} 
+                onPress={() => setIsSearchModalVisible(false)} 
                 style={styles.backButton} 
                 activeOpacity={0.7}
               >
@@ -3024,10 +3087,7 @@ export function Home() {
               
               <TouchableOpacity 
                 style={styles.passengerSelector} 
-                onPress={() => {
-                  console.log('👤 [GUEST_DEBUG] Abrindo configuração de viagem para outra pessoa.');
-                  setIsGuestModalVisible(true);
-                }} 
+                onPress={() => setIsGuestModalVisible(true)} 
                 activeOpacity={0.8}
               >
                 <Ionicons name="person" size={13} color="#EAB308" style={{ marginRight: 6 }} />
@@ -3062,7 +3122,7 @@ export function Home() {
                     {/* EMBARQUE */}
                     <View style={{ marginBottom: 12 }}>
                       <Text style={{ color: '#EAB308', fontSize: 11, fontWeight: '800', marginBottom: 4 }}>
-                        PONTO DE PARTIDA (EMBARQUE)
+                        PONTO DE PARTIDA (EMBARQUE) *
                       </Text>
                       <View style={[
                         styles.mapboxSearchInputWrapper, 
@@ -3076,7 +3136,6 @@ export function Home() {
                           value={searchType === 'pickup' ? searchQuery : pickupAddress}
                           autoCorrect={false}
                           onFocus={() => { 
-                            console.log('🔍 [SEARCH_DEBUG] Foco definido em: PICKUP');
                             setSearchType('pickup'); 
                             setSearchQuery(pickupAddress); 
                           }}
@@ -3088,7 +3147,7 @@ export function Home() {
                         {isSearchingMapbox && searchType === 'pickup' ? (
                           <ActivityIndicator size="small" color="#EAB308" style={{ marginRight: 6 }} />
                         ) : (searchType === 'pickup' ? searchQuery : pickupAddress) ? (
-                          <TouchableOpacity onPress={() => { setSearchQuery(''); setPickupAddress(''); }}>
+                          <TouchableOpacity onPress={() => { setSearchQuery(''); setPickupAddress(''); setPickupCoords(null); }}>
                             <Ionicons name="close-circle" size={18} color="#64748B" />
                           </TouchableOpacity>
                         ) : null}
@@ -3098,7 +3157,7 @@ export function Home() {
                         <Ionicons name="compass" size={15} color="#EAB308" style={{ marginRight: 8 }} />
                         <TextInput
                           style={styles.referenceTextInput}
-                          placeholder="Ref. Partida (ex: Perto da Farmácia Central)"
+                          placeholder="Ref. Partida (opcional: ex: Perto da Farmácia Central)"
                           placeholderTextColor="#64748B"
                           value={pickupReferencePoint}
                           onChangeText={setPickupReferencePoint}
@@ -3115,7 +3174,6 @@ export function Home() {
                             PARADA INTERMEDIÁRIA
                           </Text>
                           <TouchableOpacity onPress={() => { 
-                            console.log('🗑️ [SEARCH_DEBUG] Parada extra zerada no modal de busca.');
                             setShowExtraStop(false); 
                             setExtraStopAddress(''); 
                             setExtraStopCoords(null); 
@@ -3137,7 +3195,6 @@ export function Home() {
                             value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
                             autoCorrect={false}
                             onFocus={() => { 
-                              console.log('🔍 [SEARCH_DEBUG] Foco definido em: EXTRA_STOP');
                               setSearchType('extraStop'); 
                               setSearchQuery(extraStopAddress); 
                             }}
@@ -3152,7 +3209,7 @@ export function Home() {
                           <Ionicons name="compass-outline" size={15} color="#3B82F6" style={{ marginRight: 8 }} />
                           <TextInput
                             style={styles.referenceTextInput}
-                            placeholder="Ref. Parada (ex: Em frente à Loja Amarela)"
+                            placeholder="Ref. Parada (opcional)"
                             placeholderTextColor="#64748B"
                             value={extraStopReferencePoint}
                             onChangeText={setExtraStopReferencePoint}
@@ -3165,7 +3222,7 @@ export function Home() {
                     {/* DESTINO FINAL */}
                     <View style={{ marginBottom: 8 }}>
                       <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: '800', marginBottom: 4 }}>
-                        DESTINO FINAL (DESEMBARQUE)
+                        DESTINO FINAL (DESEMBARQUE) *
                       </Text>
                       <View style={[
                         styles.mapboxSearchInputWrapper, 
@@ -3179,7 +3236,6 @@ export function Home() {
                           value={searchType === 'dropoff' ? searchQuery : dropoffAddress}
                           autoCorrect={false}
                           onFocus={() => { 
-                            console.log('🔍 [SEARCH_DEBUG] Foco definido em: DROPOFF');
                             setSearchType('dropoff'); 
                             setSearchQuery(dropoffAddress); 
                           }}
@@ -3191,7 +3247,7 @@ export function Home() {
                         {isSearchingMapbox && searchType === 'dropoff' ? (
                           <ActivityIndicator size="small" color="#EF4444" style={{ marginRight: 6 }} />
                         ) : (searchType === 'dropoff' ? searchQuery : dropoffAddress) ? (
-                          <TouchableOpacity onPress={() => { setSearchQuery(''); setDropoffAddress(''); }}>
+                          <TouchableOpacity onPress={() => { setSearchQuery(''); setDropoffAddress(''); setDropoffCoords(null); }}>
                             <Ionicons name="close-circle" size={18} color="#64748B" />
                           </TouchableOpacity>
                         ) : null}
@@ -3201,7 +3257,7 @@ export function Home() {
                         <Ionicons name="compass" size={15} color="#EF4444" style={{ marginRight: 8 }} />
                         <TextInput
                           style={styles.referenceTextInput}
-                          placeholder="Ref. Destino (ex: Em frente ao Mercado)"
+                          placeholder="Ref. Destino (opcional: ex: Em frente ao Mercado)"
                           placeholderTextColor="#64748B"
                           value={dropoffReferencePoint}
                           onChangeText={setDropoffReferencePoint}
@@ -3214,7 +3270,6 @@ export function Home() {
                       <TouchableOpacity 
                         style={{ marginTop: 6, flexDirection: 'row', alignItems: 'center' }} 
                         onPress={() => { 
-                          console.log('➕ [SEARCH_DEBUG] Ativando parada intermediária.');
                           setShowExtraStop(true); 
                           setSearchType('extraStop'); 
                           setSearchQuery(''); 
@@ -3238,7 +3293,6 @@ export function Home() {
                       onPress={() => handleFavoritePress('home')}
                       onLongPress={() => {
                         if (pickupCoords) {
-                          console.log('💾 [SEARCH_DEBUG] Salvando local de embarque atual como CASA.');
                           saveFavoritePlace('home', { address: pickupAddress, ...pickupCoords });
                         }
                       }}
@@ -3259,7 +3313,6 @@ export function Home() {
                       onPress={() => handleFavoritePress('work')}
                       onLongPress={() => {
                         if (pickupCoords) {
-                          console.log('💾 [SEARCH_DEBUG] Salvando local de embarque atual como TRABALHO.');
                           saveFavoritePlace('work', { address: pickupAddress, ...pickupCoords });
                         }
                       }}
@@ -3283,7 +3336,6 @@ export function Home() {
                             <TouchableOpacity 
                               style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 }}
                               onPress={() => {
-                                console.log(`📍 [SEARCH_DEBUG] Pesquisa recente selecionada: "${item.description}"`);
                                 if (searchType === 'pickup') {
                                   isManualPickupRef.current = true;
                                   setPickupAddress(item.description);
@@ -3304,10 +3356,7 @@ export function Home() {
                             </TouchableOpacity>
                             
                             <TouchableOpacity 
-                              onPress={() => {
-                                console.log(`🗑️ [SEARCH_DEBUG] Removendo pesquisa recente ID: ${item.id}`);
-                                removeRecentSearch(item.id);
-                              }} 
+                              onPress={() => removeRecentSearch(item.id)} 
                               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                             >
                               <Ionicons name="close-circle" size={18} color="#94A3B8" />
@@ -3325,7 +3374,6 @@ export function Home() {
                         style={styles.searchResultItem}
                         activeOpacity={0.7}
                         onPress={() => {
-                          console.log(`✅ [SEARCH_DEBUG] Resultado selecionado: "${item.description}" [${item.latitude}, ${item.longitude}]`);
                           if (searchType === 'pickup') {
                             isManualPickupRef.current = true;
                             setPickupAddress(item.description);
@@ -3431,7 +3479,6 @@ export function Home() {
                     <TouchableOpacity
                       style={[styles.cancelButtonOutline, { flex: 1 }]}
                       onPress={() => {
-                        console.log('👤 [GUEST_DEBUG] Configurações de viagem para outra pessoa removidas.');
                         setIsForAnotherPerson(false);
                         setGuestName('');
                         setGuestPhone('');
@@ -3445,7 +3492,6 @@ export function Home() {
                       style={[styles.requestButton, { flex: 1 }]}
                       onPress={() => {
                         if (guestName.trim() && guestPhone.trim()) {
-                          console.log(`👤 [GUEST_DEBUG] Viagem salva para: ${guestName} (${guestPhone})`);
                           setIsForAnotherPerson(true);
                           setIsGuestModalVisible(false);
                         } else {
@@ -3463,13 +3509,10 @@ export function Home() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* 💬 CHATMODAL COM TODAS AS PROPS DE ÁUDIO E SESSÃO SINCRONIZADAS */}
+      {/* 💬 CHATMODAL */}
       <ChatModal 
         visible={isChatVisible} 
-        onClose={() => {
-          console.log('💬 [CHAT_DEBUG] Modal de Chat fechado.');
-          setIsChatVisible(false);
-        }} 
+        onClose={() => setIsChatVisible(false)} 
         socket={socket} 
         rideId={activeRideId || ''} 
         currentRole="passenger" 
@@ -3497,6 +3540,7 @@ export function Home() {
   );
 }
 
+// 🎨 ESTILOS PROFISSIONAIS DA GIGANTE NÔ BAI 245 (CORRIGIDOS)
 const styles = StyleSheet.create({
   container: { 
     flex: 1, 
@@ -3577,17 +3621,19 @@ const styles = StyleSheet.create({
     right: 16,
     zIndex: 10,
   },
+  headerBlurWrapper: {
+    borderRadius: 18,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#334155',
+    elevation: 6,
+  },
   headerContent: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: 'rgba(15, 23, 42, 0.92)',
-    borderRadius: 16,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: '#334155',
-    elevation: 6,
   },
   headerUserInfo: {
     flexDirection: 'row',
@@ -3716,7 +3762,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderColor: '#334155',
     elevation: 20,
-    maxHeight: '52%',
+    maxHeight: '68%',
   },
   dragHandlerArea: {
     width: '100%',
@@ -4154,19 +4200,6 @@ const styles = StyleSheet.create({
   },
   
   // MARCADORES 3D
-  vehicle3DContainer: {
-    width: 44,
-    height: 44,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'transparent',
-  },
-  vehicle3DImage: {
-    width: 38,
-    height: 38,
-    resizeMode: 'contain',
-    backgroundColor: 'transparent',
-  },
   driverMarkerWrapper: {
     width: 36,
     height: 36,
@@ -4191,71 +4224,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
-  // 🇬🇼 ESTILOS DO BOTÃO FLUTUANTE GUINÉ-BISSAU
-  gbFloatingWidgetContainer: {
-    position: 'absolute',
-    zIndex: 9999,
-    elevation: 12,
-  },
-  gbFloatingWidgetInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#0F172A',
-    borderRadius: 25,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderWidth: 1.5,
-    borderColor: '#EAB308',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 6,
-    elevation: 10,
-    gap: 8,
-  },
-  gbFlagBorder: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    overflow: 'hidden',
-    flexDirection: 'row',
-    borderWidth: 1,
-    borderColor: '#FFF',
-  },
-  gbFlagRed: {
-    width: '40%',
-    backgroundColor: '#DC2626',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  gbFlagRightCol: {
-    width: '60%',
-    height: '100%',
-  },
-  gbFlagYellow: {
-    height: '50%',
-    backgroundColor: '#EAB308',
-  },
-  gbFlagGreen: {
-    height: '50%',
-    backgroundColor: '#16A34A',
-  },
-  gbWidgetInfo: {
-    justifyContent: 'center',
-  },
-  gbWidgetStatusTitle: {
-    color: '#F8FAFC',
-    fontSize: 11,
-    fontWeight: '800',
-    maxWidth: 110,
-  },
-  gbWidgetPriceText: {
-    color: '#EAB308',
-    fontSize: 12,
-    fontWeight: '900',
-  },
-
-  // 📊 ESTILOS DA TELA PROFISSIONAL DE CORRIDA ATIVA
+  // ESTILOS DA TELA PROFISSIONAL DE CORRIDA ATIVA
   activeRideContainer: {
     width: '100%',
     paddingTop: 4,
@@ -4272,8 +4241,6 @@ const styles = StyleSheet.create({
     borderColor: '#334155',
   },
   statusPulseBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
     flex: 1,
   },
   statusPulseDot: {
@@ -4281,13 +4248,12 @@ const styles = StyleSheet.create({
     height: 10,
     borderRadius: 5,
     backgroundColor: '#10B981',
-    marginRight: 8,
+    marginBottom: 4,
   },
   activeRideStatusTitle: {
     color: '#F8FAFC',
     fontSize: 13,
     fontWeight: '800',
-    flex: 1,
   },
   priceBadgeHeader: {
     alignItems: 'flex-end',
@@ -4447,53 +4413,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // 🇬🇼 ESTILOS DO BOTÃO FLUTUANTE COM BANDEIRA
-  floatingRideBadgeContainer: {
-    position: 'absolute',
-    top: 100,
-    right: 16,
-    zIndex: 99,
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-  },
-  floatingRideBadgeContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1E293B',
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 24,
-    borderWidth: 1.5,
-    borderColor: '#EAB308',
-    minWidth: 170,
-    maxWidth: 220,
-  },
-  flagIconCircle: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: '#EAB308',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  floatingBadgeStatusText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  floatingBadgePriceText: {
-    color: '#EAB308',
-    fontSize: 11,
-    fontWeight: '900',
-  },
-  closeFloatingBadgeBtn: {
-    padding: 2,
-    marginLeft: 4,
-  },
-
   // 📡 ESTILOS DO RADAR DE BUSCA
   radarWaveCircle: {
     position: 'absolute',
@@ -4520,7 +4439,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.5,
     shadowRadius: 6,
   },
-
   sectionHeaderTitle: {
     fontSize: 13,
     fontWeight: '700',

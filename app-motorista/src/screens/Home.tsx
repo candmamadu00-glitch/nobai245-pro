@@ -229,11 +229,11 @@ function getVehicle3DIconAsset(vehicleType?: string, vehicleColor?: string) {
     case 'BLUE': case 'AZUL': return require('../../assets/images/vehicles/car_blue.png');
     case 'RED': case 'VERMELHO': return require('../../assets/images/vehicles/car_red.png');
     case 'ORANGE': case 'LARANJA': return require('../../assets/images/vehicles/car_orange.png');
-    case 'GREEN': case 'VERDE': return require('../../assets/images/vehicles/car_green.jng');
-    case 'GRAY': case 'SILVER': case 'CINZA': case 'PRATA': return require('../../assets/images/vehicles/car_gray.jng');
-    case 'BROWN': case 'CASTANHO': case 'MARROM': return require('../../assets/images/vehicles/car_brown.jng');
-    case 'YELLOW': case 'AMARELO': return require('../../assets/images/vehicles/car_yellow.jng');
-    case 'WHITE': case 'BRANCO': default: return require('../../assets/images/vehicles/car_white.jng');
+    case 'GREEN': case 'VERDE': return require('../../assets/images/vehicles/car_green.png');
+    case 'GRAY': case 'SILVER': case 'CINZA': case 'PRATA': return require('../../assets/images/vehicles/car_gray.png');
+    case 'BROWN': case 'CASTANHO': case 'MARROM': return require('../../assets/images/vehicles/car_brown.png');
+    case 'YELLOW': case 'AMARELO': return require('../../assets/images/vehicles/car_yellow.png');
+    case 'WHITE': case 'BRANCO': default: return require('../../assets/images/vehicles/car_white.png');
   }
 }
 
@@ -823,915 +823,912 @@ export function Home() {
   }, [incomingRide, rideState, playBilingualVoice]);
 
   useEffect(() => { if (route.params?.openChat) setIsChatVisible(true); }, [route.params]);
-// 🟢 CARREGAMENTO INICIAL DE GPS (Garante que o ícone do carro apareça assim que o app abre)
-useEffect(() => {
-  async function loadInitialPosition() {
-    try {
-      const foreground = await Location.requestForegroundPermissionsAsync();
-      if (foreground.status === 'granted') {
-        const currentLoc = await Location.getCurrentPositionAsync({ 
-          accuracy: Location.Accuracy.Balanced 
-        });
 
-        if (currentLoc?.coords && isMountedRef.current) {
-          console.log(`📍 [GPS_DEBUG] Posição inicial obtida: [${currentLoc.coords.latitude}, ${currentLoc.coords.longitude}]`);
-          setLocation(currentLoc);
-          lastDriverCoordsRef.current = {
-            latitude: currentLoc.coords.latitude,
-            longitude: currentLoc.coords.longitude,
-            heading: currentLoc.coords.heading || 0,
-          };
+  // 🟢 CARREGAMENTO INICIAL DE GPS
+  useEffect(() => {
+    async function loadInitialPosition() {
+      try {
+        const foreground = await Location.requestForegroundPermissionsAsync();
+        if (foreground.status === 'granted') {
+          const currentLoc = await Location.getCurrentPositionAsync({ 
+            accuracy: Location.Accuracy.Balanced 
+          });
 
-          if (cameraRef.current) {
-            cameraRef.current.setCamera({
-              centerCoordinate: [currentLoc.coords.longitude, currentLoc.coords.latitude],
-              zoomLevel: 16,
-            });
+          if (currentLoc?.coords && isMountedRef.current) {
+            console.log(`📍 [GPS_DEBUG] Posição inicial obtida: [${currentLoc.coords.latitude}, ${currentLoc.coords.longitude}]`);
+            setLocation(currentLoc);
+            lastDriverCoordsRef.current = {
+              latitude: currentLoc.coords.latitude,
+              longitude: currentLoc.coords.longitude,
+              heading: currentLoc.coords.heading || 0,
+            };
+
+            if (cameraRef.current) {
+              cameraRef.current.setCamera({
+                centerCoordinate: [currentLoc.coords.longitude, currentLoc.coords.latitude],
+                zoomLevel: 16,
+              });
+            }
           }
+        }
+      } catch (err) {
+        console.warn('⚠️ [GPS_DEBUG] Não foi possível obter posição inicial prévia do motorista:', err);
+      }
+    }
+
+    loadInitialPosition();
+  }, []);
+
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval>;
+    if (rideState === 'arrived') {
+      console.log('⏳ [STATE_DEBUG] Motorista no local de embarque. Contador de 5 minutos iniciado.');
+      interval = setInterval(() => {
+        if (!isMountedRef.current) return;
+        setWaitTimeLeft((prev) => {
+          if (prev <= 1) {
+            console.warn('⚠️ [CANCEL_DEBUG] Tempo limite de espera esgotado (300s). No-Show liberado.');
+            setCanCancelNoShow(true);
+            clearInterval(interval);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    } else {
+      setWaitTimeLeft(300);
+      setCanCancelNoShow(false);
+    }
+    return () => clearInterval(interval);
+  }, [rideState]);
+
+  useEffect(() => {
+    let syncInterval: ReturnType<typeof setInterval>;
+    if (isRideActive && activeRideId) {
+      syncInterval = setInterval(() => {
+        if (socket && socket.connected) {
+          socket.timeout(5000).emit('driver:request_state', (err: any) => {}); 
+        } else if (socket) socket.connect();
+      }, 10000);
+    }
+    return () => clearInterval(syncInterval);
+  }, [isRideActive, activeRideId]);
+
+  const updateCameraThrottled = useCallback((lng: number, lat: number) => {
+    if (!isMapReady || !cameraRef.current) return;
+    const now = Date.now();
+    if (now - lastCameraUpdateRef.current > 2000) {
+      lastCameraUpdateRef.current = now;
+      try {
+        cameraRef.current.setCamera({ 
+          centerCoordinate: [lng, lat], 
+          heading: lastDriverCoordsRef.current?.heading || 0,
+          zoomLevel: 17, 
+          animationDuration: 1000 
+        });
+      } catch (e) {}
+    }
+  }, [isMapReady]);
+
+  const persistActiveRideState = async (rideData: IncomingRideData | null, state: RideState, rideId: string | null) => {
+    try {
+      if (rideData && rideId && state !== 'idle' && state !== 'completed') {
+        await AsyncStorage.multiSet([
+          [STORAGE_ACTIVE_RIDE_ID, rideId],
+          [STORAGE_ACTIVE_RIDE_DATA, JSON.stringify(rideData)],
+          [STORAGE_ACTIVE_RIDE_STATE, state]
+        ]);
+      } else {
+        await AsyncStorage.multiRemove([STORAGE_ACTIVE_RIDE_ID, STORAGE_ACTIVE_RIDE_DATA, STORAGE_ACTIVE_RIDE_STATE]);
+      }
+    } catch (err) {}
+  };
+
+  useEffect(() => {
+    async function restoreLocalState() {
+      try {
+        const storedRideId = await AsyncStorage.getItem(STORAGE_ACTIVE_RIDE_ID);
+        const storedRideData = await AsyncStorage.getItem(STORAGE_ACTIVE_RIDE_DATA);
+        const storedRideState = await AsyncStorage.getItem(STORAGE_ACTIVE_RIDE_STATE);
+
+        if (storedRideId && storedRideData && storedRideState && isMountedRef.current) {
+          console.log(`🔄 [STATE_DEBUG] Estado da corrida restaurado do AsyncStorage: ID ${storedRideId} | Estado: ${storedRideState}`);
+          setActiveRideId(storedRideId);
+          setIncomingRide(JSON.parse(storedRideData));
+          setRideState(storedRideState as RideState);
+        }
+      } catch (err) {}
+    }
+    restoreLocalState();
+  }, []);
+
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleRideFinishedConfirm = (data: any) => {
+      if (data) {
+        console.log('🏁 [FINALIZE_DEBUG] Confirmação de finalização recebida do Socket:', data);
+        setFinishedRideSummary((prev: any) => ({
+          rideId: data.rideId || prev?.rideId,
+          passengerName: prev?.passengerName || 'Passageiro',
+          totalAmount: Number(data.priceXof || data.totalAmount || data.amount || prev?.totalAmount || 0),
+          paymentMethod: data.paymentMethod || prev?.paymentMethod || 'CASH',
+          transactionId: data.transactionId || data.paymentId || prev?.transactionId || `TRX-${Date.now().toString().slice(-6)}`,
+        }));
+      }
+    };
+
+    socket.on('ride:finished', handleRideFinishedConfirm);
+    socket.on('driver:ride_finished_confirm', handleRideFinishedConfirm);
+
+    return () => {
+      socket.off('ride:finished', handleRideFinishedConfirm);
+      socket.off('driver:ride_finished_confirm', handleRideFinishedConfirm);
+    };
+  }, [socket]);
+
+  const fetchMapboxRoute = async (
+    startLng: number, 
+    startLat: number, 
+    endLng: number, 
+    endLat: number,
+    waypoints: Array<any> = []
+  ) => {
+    try {
+      const validWaypoints = (waypoints || [])
+        .map(w => {
+          const lat = Number(w?.lat ?? w?.latitude);
+          const lng = Number(w?.lng ?? w?.longitude);
+          return (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) ? `${lng},${lat}` : null;
+        })
+        .filter((wp): wp is string => wp !== null);
+
+      const waypointsString = validWaypoints.length > 0 ? `${validWaypoints.join(';')};` : '';
+      const token = MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '';
+      const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${startLng},${startLat};${waypointsString}${endLng},${endLat}?geometries=geojson&steps=true&voice_instructions=true&banner_instructions=true&language=pt&access_token=${token}`;
+      
+      console.log(`🗺️ [ROUTE_DEBUG] Buscando rota Mapbox de [${startLat}, ${startLng}] para [${endLat}, ${endLng}]`);
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Falha rota Mapbox: ${response.status}`);
+      const data = await response.json();
+
+      if (data.routes && data.routes.length > 0 && isMountedRef.current) {
+        const route = data.routes[0];
+        setRouteCoordinates(route.geometry.coordinates);
+        
+        const eta = Math.ceil(route.duration / 60);
+        setDriverEta(eta);
+        console.log(`🗺️ [ROUTE_DEBUG] Rota obtida! Distância: ${(route.distance / 1000).toFixed(1)}km | Tempo: ${eta} min`);
+
+        if (route.legs && route.legs.length > 0) {
+          const steps = route.legs.flatMap((leg: any) => leg.steps || []);
+          setRouteSteps(steps);
+          setCurrentStepIndex(0);
+        }
+
+        if ((activeRideId || incomingRide?.rideId) && driver?.id && location?.coords && socket?.connected) {
+          socket.emit('driver:location_update', {
+            rideId: activeRideId || incomingRide?.rideId,
+            driverId: driver.id,
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+            speed: location.coords.speed || 0,
+            heading: location.coords.heading || 0,
+            durationMinutes: eta
+          });
         }
       }
     } catch (err) {
-      console.warn('⚠️ [GPS_DEBUG] Não foi possível obter posição inicial prévia do motorista:', err);
-    }
-  }
-
-  loadInitialPosition();
-}, []);
-
-useEffect(() => {
-  let interval: ReturnType<typeof setInterval>;
-  if (rideState === 'arrived') {
-    console.log('⏳ [STATE_DEBUG] Motorista no local de embarque. Contador de 5 minutos iniciado.');
-    interval = setInterval(() => {
-      if (!isMountedRef.current) return;
-      setWaitTimeLeft((prev) => {
-        if (prev <= 1) {
-          console.warn('⚠️ [CANCEL_DEBUG] Tempo limite de espera esgotado (300s). No-Show liberado.');
-          setCanCancelNoShow(true);
-          clearInterval(interval);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-  } else {
-    setWaitTimeLeft(300);
-    setCanCancelNoShow(false);
-  }
-  return () => clearInterval(interval);
-}, [rideState]);
-
-useEffect(() => {
-  let syncInterval: ReturnType<typeof setInterval>;
-  if (isRideActive && activeRideId) {
-    syncInterval = setInterval(() => {
-      if (socket && socket.connected) {
-        socket.timeout(5000).emit('driver:request_state', (err: any) => {}); 
-      } else if (socket) socket.connect();
-    }, 10000);
-  }
-  return () => clearInterval(syncInterval);
-}, [isRideActive, activeRideId]);
-
-const updateCameraThrottled = useCallback((lng: number, lat: number) => {
-  if (!isMapReady || !cameraRef.current) return;
-  const now = Date.now();
-  if (now - lastCameraUpdateRef.current > 2000) {
-    lastCameraUpdateRef.current = now;
-    try {
-      cameraRef.current.setCamera({ 
-        centerCoordinate: [lng, lat], 
-        heading: lastDriverCoordsRef.current?.heading || 0,
-        zoomLevel: 17, 
-        animationDuration: 1000 
-      });
-    } catch (e) {}
-  }
-}, [isMapReady]);
-
-const persistActiveRideState = async (rideData: IncomingRideData | null, state: RideState, rideId: string | null) => {
-  try {
-    if (rideData && rideId && state !== 'idle' && state !== 'completed') {
-      await AsyncStorage.multiSet([
-        [STORAGE_ACTIVE_RIDE_ID, rideId],
-        [STORAGE_ACTIVE_RIDE_DATA, JSON.stringify(rideData)],
-        [STORAGE_ACTIVE_RIDE_STATE, state]
-      ]);
-    } else {
-      await AsyncStorage.multiRemove([STORAGE_ACTIVE_RIDE_ID, STORAGE_ACTIVE_RIDE_DATA, STORAGE_ACTIVE_RIDE_STATE]);
-    }
-  } catch (err) {}
-};
-
-useEffect(() => {
-  async function restoreLocalState() {
-    try {
-      const storedRideId = await AsyncStorage.getItem(STORAGE_ACTIVE_RIDE_ID);
-      const storedRideData = await AsyncStorage.getItem(STORAGE_ACTIVE_RIDE_DATA);
-      const storedRideState = await AsyncStorage.getItem(STORAGE_ACTIVE_RIDE_STATE);
-
-      if (storedRideId && storedRideData && storedRideState && isMountedRef.current) {
-        console.log(`🔄 [STATE_DEBUG] Estado da corrida restaurado do AsyncStorage: ID ${storedRideId} | Estado: ${storedRideState}`);
-        setActiveRideId(storedRideId);
-        setIncomingRide(JSON.parse(storedRideData));
-        setRideState(storedRideState as RideState);
-      }
-    } catch (err) {}
-  }
-  restoreLocalState();
-}, []);
-
-useEffect(() => {
-  if (!socket) return;
-
-  const handleRideFinishedConfirm = (data: any) => {
-    if (data) {
-      console.log('🏁 [FINALIZE_DEBUG] Confirmação de finalização recebida do Socket:', data);
-      setFinishedRideSummary((prev: any) => ({
-        rideId: data.rideId || prev?.rideId,
-        passengerName: prev?.passengerName || 'Passageiro',
-        totalAmount: Number(data.priceXof || data.totalAmount || data.amount || prev?.totalAmount || 0),
-        paymentMethod: data.paymentMethod || prev?.paymentMethod || 'CASH',
-        transactionId: data.transactionId || data.paymentId || prev?.transactionId || `TRX-${Date.now().toString().slice(-6)}`,
-      }));
-    }
-  };
-
-  socket.on('ride:finished', handleRideFinishedConfirm);
-  socket.on('driver:ride_finished_confirm', handleRideFinishedConfirm);
-
-  return () => {
-    socket.off('ride:finished', handleRideFinishedConfirm);
-    socket.off('driver:ride_finished_confirm', handleRideFinishedConfirm);
-  };
-}, [socket]);
-
-const fetchMapboxRoute = async (
-  startLng: number, 
-  startLat: number, 
-  endLng: number, 
-  endLat: number,
-  waypoints: Array<any> = []
-) => {
-  try {
-    const validWaypoints = (waypoints || [])
-      .map(w => {
-        const lat = Number(w?.lat ?? w?.latitude);
-        const lng = Number(w?.lng ?? w?.longitude);
-        return (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) ? `${lng},${lat}` : null;
-      })
-      .filter((wp): wp is string => wp !== null);
-
-    const waypointsString = validWaypoints.length > 0 ? `${validWaypoints.join(';')};` : '';
-    const token = MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '';
-    const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${startLng},${startLat};${waypointsString}${endLng},${endLat}?geometries=geojson&steps=true&voice_instructions=true&banner_instructions=true&language=pt&access_token=${token}`;
-    
-    console.log(`🗺️ [ROUTE_DEBUG] Buscando rota Mapbox de [${startLat}, ${startLng}] para [${endLat}, ${endLng}]`);
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Falha rota Mapbox: ${response.status}`);
-    const data = await response.json();
-
-    if (data.routes && data.routes.length > 0 && isMountedRef.current) {
-      const route = data.routes[0];
-      setRouteCoordinates(route.geometry.coordinates);
-      
-      const eta = Math.ceil(route.duration / 60);
-      setDriverEta(eta);
-      console.log(`🗺️ [ROUTE_DEBUG] Rota obtida! Distância: ${(route.distance / 1000).toFixed(1)}km | Tempo: ${eta} min`);
-
-      if (route.legs && route.legs.length > 0) {
-        const steps = route.legs.flatMap((leg: any) => leg.steps || []);
-        setRouteSteps(steps);
-        setCurrentStepIndex(0);
-      }
-
-      if ((activeRideId || incomingRide?.rideId) && driver?.id && location?.coords && socket?.connected) {
-        socket.emit('driver:location_update', {
-          rideId: activeRideId || incomingRide?.rideId,
-          driverId: driver.id,
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude,
-          speed: location.coords.speed || 0,
-          heading: location.coords.heading || 0,
-          durationMinutes: eta
-        });
-      }
-    }
-  } catch (err) {
-    console.warn('⚠️ [ROUTE_DEBUG] Erro ao buscar rota Mapbox, aplicando fallback de reta direta:', err);
-    if (isMountedRef.current) {
-      setRouteCoordinates([[startLng, startLat], [endLng, endLat]]);
-      const distKm = calculateDirectDistance(startLat, startLng, endLat, endLng);
-      setDriverEta(Math.max(1, Math.ceil((distKm / 30) * 60)));
-    }
-  }
-};
-
-useEffect(() => {
-  if (!location?.coords || routeSteps.length === 0 || currentStepIndex >= routeSteps.length) return;
-
-  const currentStep = routeSteps[currentStepIndex];
-  if (!currentStep?.maneuver?.location) return;
-
-  const [stepLng, stepLat] = currentStep.maneuver.location;
-  const distToStepKm = calculateDirectDistance(
-    location.coords.latitude,
-    location.coords.longitude,
-    stepLat,
-    stepLng
-  );
-
-  if (distToStepKm * 1000 <= 40) {
-    const nextIndex = currentStepIndex + 1;
-    if (nextIndex < routeSteps.length) {
-      setCurrentStepIndex(nextIndex);
-      const nextInstruction = routeSteps[nextIndex]?.maneuver?.instruction;
-      if (nextInstruction) {
-        playBilingualVoice('navigation', translateToKriol(nextInstruction));
-      }
-    } else {
-      playBilingualVoice('navigation', 'Bu sta kuazi pa tchega na bu distinu');
-    }
-  }
-}, [location?.coords, routeSteps, currentStepIndex, playBilingualVoice]);
-
-// 🟢 useEffect UNIFICADO: Desenha a rota, enquadra a câmera e persiste o estado
-useEffect(() => {
-  if (!location?.coords || !incomingRide) return;
-
-  const driverLat = location.coords.latitude;
-  const driverLng = location.coords.longitude;
-
-  const pLat = Number(incomingRide.pickupLat);
-  const pLng = Number(incomingRide.pickupLng);
-  const dLat = Number(incomingRide.destinationLat);
-  const dLng = Number(incomingRide.destinationLng);
-
-  if (rideState === 'accepted' || rideState === 'arrived') {
-    if (!isNaN(pLat) && !isNaN(pLng) && pLat !== 0 && pLng !== 0) {
-      fetchMapboxRoute(driverLng, driverLat, pLng, pLat);
-      fitMapBounds(driverLng, driverLat, pLng, pLat);
-    }
-  } else if (rideState === 'in_progress') {
-    if (!isNaN(dLat) && !isNaN(dLng) && dLat !== 0 && dLng !== 0) {
-      let rawStops = incomingRide.stops;
-      if (typeof rawStops === 'string') {
-        try { rawStops = JSON.parse(rawStops); } catch (e) { rawStops = []; }
-      }
-
-      let pendingStops: any[] = [];
-      if (Array.isArray(rawStops) && rawStops.length > 0) {
-        pendingStops = rawStops.filter((s: any) => {
-          const lat = Number(s.lat ?? s.latitude);
-          const lng = Number(s.lng ?? s.longitude);
-          return s.status !== 'COMPLETED' && !isNaN(lat) && !isNaN(lng) && lat !== 0;
-        });
-      }
-      fetchMapboxRoute(driverLng, driverLat, dLng, dLat, pendingStops);
-      fitMapBounds(driverLng, driverLat, dLng, dLat);
-    }
-  } else if (rideState === 'idle' && incomingRide) {
-    if (!isNaN(pLat) && !isNaN(pLng) && !isNaN(dLat) && !isNaN(dLng)) {
-      fetchMapboxRoute(pLng, pLat, dLng, dLat);
-    }
-  } else {
-    setRouteCoordinates(null);
-  }
-
-  persistActiveRideState(incomingRide, rideState, activeRideId);
-}, [rideState, activeRideId, location?.coords?.latitude, location?.coords?.longitude, incomingRide, fitMapBounds]);
-
-const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean; rideId?: string }) => {
-  if (!isMountedRef.current) return;
-
-  const currentRideId = activeRideIdRef.current || activeRideId;
-  const currentRideState = rideStateRef.current || rideState;
-  const newRideId = data.rideId || (data as any).id;
-
-  console.log(`🚕 [SOCKET_DEBUG] Nova oferta de corrida recebida: ID ${newRideId} | Passageiro: ${data.passengerName || 'Passageiro'}`);
-
-  const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState) || !!currentRideId;
-  if (isCurrentlyInRide) {
-    console.log('⚠️ [SOCKET_DEBUG] Motorista em corrida ativa. Nova oferta ignorada.');
-    return;
-  }
-
-  if (incomingRideRef.current?.rideId === newRideId && currentRideState !== 'idle') return;
-
-  setShowReceiptModal(false);
-  setShowRatingModal(false);
-
-  const rawType = (data.serviceType || 'RIDE').toString().toUpperCase();
-  let normalizedService: 'RIDE' | 'DELIVERY' | 'RENTAL' = 'RIDE';
-  if (['ENTREGA', 'DELIVERY'].includes(rawType)) normalizedService = 'DELIVERY';
-  if (['ALUGUEL', 'RENTAL'].includes(rawType)) normalizedService = 'RENTAL';
-
-  if (serviceFiltersRef.current && serviceFiltersRef.current[normalizedService] === false) {
-    console.log(`⚠️ [SOCKET_DEBUG] Oferta recusada pelo filtro de serviço: ${normalizedService}`);
-    return;
-  }
-
-  const rawPrice = (data as any).fareXOF ?? data.priceXof ?? 0;
-  let rawStops = data.stops;
-  if (typeof rawStops === 'string') {
-    try { rawStops = JSON.parse(rawStops); } catch { rawStops = []; }
-  }
-
-  let stopsArray: any[] = [];
-  if (Array.isArray(rawStops) && rawStops.length > 0) {
-    stopsArray = rawStops.map((s: any, index: number) => ({
-      ...s,
-      id: s.id || `stop_${index}`,
-      lat: Number(s.lat ?? s.latitude),
-      lng: Number(s.lng ?? s.longitude),
-      address: s.address || s.name || `Parada ${index + 1}`,
-      status: s.status || 'PENDING'
-    }));
-  }
-  const formattedOffer = {
-    ...data,
-    rideId: newRideId,
-    pickupReferencePoint: (data as any).pickupReferencePoint || (data as any).referencePoint || (data as any).reference_point || '',
-    dropoffReferencePoint: (data as any).dropoffReferencePoint || '',
-    referencePoint: (data as any).referencePoint || (data as any).reference_point || '',
-    
-    isQueuedOffer: false,
-    passengerName: data.passengerName || 'Passageiro',
-    passengerRating: data.passengerRating || 5.0,
-    serviceType: normalizedService,
-    paymentMethod: data.paymentMethod || 'CASH',
-    priceXof: typeof rawPrice === 'string' ? parseFloat(rawPrice) : Number(rawPrice),
-    pickupLat: Number(data.pickupLat ?? (data as any).originLat),
-    pickupLng: Number(data.pickupLng ?? (data as any).originLng),
-    destinationLat: Number(data.destinationLat),
-    destinationLng: Number(data.destinationLng),
-    stops: stopsArray,
-  };
-
-  setTimeLeft(15);
-  setQueuedOfferData(null);
-  setIncomingRide(formattedOffer);
-
-  snapToState(true);
-  Vibration.vibrate([0, 500, 200, 500], false);
-};
-
-const handleRideAccepted = async (data: any) => {
-  Vibration.cancel();
-  if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
-  if (!isMountedRef.current) return;
-  setIsLoading(false);
-
-  console.log('⚡ [SOCKET_DEBUG] Evento "ride:accepted" confirmado para a corrida:', data.rideId);
-
-  const currentRideState = rideStateRef.current || rideState;
-  const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
-
-  if (data.driverId === driver?.id || data.rideId) {
-    if (!isCurrentlyInRide || activeRideIdRef.current === data.rideId) {
-      setActiveRideId(data.rideId);
-      setRideState('accepted');
-      setIncomingRide((prev) => ({
-        ...prev,
-        ...data,
-        rideId: data.rideId,
-        passengerName: data.passengerName || prev?.passengerName || 'Passageiro',
-        pickupLat: Number(data.pickupLat || prev?.pickupLat || 0),
-        pickupLng: Number(data.pickupLng || prev?.pickupLng || 0),
-        destinationLat: Number(data.destinationLat || prev?.destinationLat || 0),
-        destinationLng: Number(data.destinationLng || prev?.destinationLng || 0),
-        priceXof: Number(data.priceXof || prev?.priceXof || 0),
-      }));
-      if (incomingRideRef.current) {
-        persistActiveRideState(incomingRideRef.current, 'accepted', data.rideId);
-      }
-      snapToState(true);
-    }
-  } else {
-    setQueuedOfferData(null);
-    setIncomingRide(null);
-  }
-};
-
-const handleRideStarted = () => {
-  if (!isMountedRef.current) return;
-  console.log('🚀 [STATE_DEBUG] Corrida iniciada! Estado alterado para "in_progress".');
-  setIsLoading(false);
-  setRideState('in_progress');
-  setShowOtpModal(false);
-  snapToState(true);
-  if (incomingRideRef.current && activeRideIdRef.current) {
-    persistActiveRideState(incomingRideRef.current, 'in_progress', activeRideIdRef.current);
-  }
-};
-
-const handleRideFinished = async (data: any) => {
-  if (!isMountedRef.current) return;
-  console.log('🏁 [FINALIZE_DEBUG] Corrida finalizada com sucesso. Dados:', data);
-  setIsLoading(false);
-  setCompletedInfo({ fareXOF: data.fareXOF, distanceKm: data.distanceKm, transactionId: data.transactionId });
-
-  if (data.hasQueuedRide && data.nextRideId) {
-    setActiveRideId(data.nextRideId);
-    setRideState('accepted');
-    setShowReceiptModal(false);
-    fetchTodayEarnings();
-    await syncActiveRideWithServer();
-  } else {
-    setActiveRideId(null);
-    setIncomingRide(null);
-    setQueuedOfferData(null);
-    setRideState('idle'); 
-    setShowReceiptModal(true);
-    setShowNavSheet(false);
-    persistActiveRideState(null, 'idle', null);
-    fetchTodayEarnings();
-  }
-};
-
-const handleQueuedNowActive = async (data: { rideId: string; status: string }) => {
-  if (!isMountedRef.current) return;
-  console.log('🔄 [STATE_DEBUG] Corrida da fila promovida para ativa:', data.rideId);
-  setActiveRideId(data.rideId);
-  setRideState('accepted');
-  snapToState(true);
-  await syncActiveRideWithServer();
-};
-
-// 🟢 3. REGISTRO LIMPO DOS EVENTOS DO SOCKET
-useEffect(() => {
-  const handleConnect = async () => {
-    if (driver?.id) {
-      console.log('⚡ [SOCKET_DEBUG] Socket conectado! Processando fila offline e sincronizando...');
-      await processOfflineQueue(socket);
-      socket.emit('driver:request_state');
-      
-      if (isOnlineRef.current && location?.coords) {
-        socket.emit('driver:online', { 
-          driverId: driver.id, 
-          lat: location.coords.latitude, 
-          lng: location.coords.longitude 
-        });
-      }
-    }
-  };
-
-  if (socket && !socket.connected) socket.connect();
-
-  socket.on('connect', handleConnect);
-  socket.on('ride:new_request', handleNewRideRequest);
-  socket.on('ride:accepted', handleRideAccepted);
-  socket.on('driver:accept_ride_success', handleRideAccepted);
-  socket.on('ride:started', handleRideStarted);
-  socket.on('ride:finished', handleRideFinished);
-  socket.on('ride:queued_now_active', handleQueuedNowActive);
-  socket.on('ride:cancelled', handleRideCancelled);
-
-  return () => {
-    Vibration.cancel();
-    socket.off('connect', handleConnect);
-    socket.off('ride:new_request', handleNewRideRequest);
-    socket.off('ride:accepted', handleRideAccepted);
-    socket.off('driver:accept_ride_success', handleRideAccepted);
-    socket.off('ride:started', handleRideStarted);
-    socket.off('ride:finished', handleRideFinished);
-    socket.off('ride:queued_now_active', handleQueuedNowActive);
-    socket.off('ride:cancelled', handleRideCancelled);
-  };
-}, [driver?.id, resetDriverState, snapToState, syncActiveRideWithServer, handleRideCancelled]);
-
-useEffect(() => {
-  let timer: ReturnType<typeof setTimeout>;
-  const currentOffer = queuedOfferData || (rideState === 'idle' ? incomingRide : null);
-
-  if (currentOffer) {
-    if (timeLeft > 0) {
-      timer = setInterval(() => {
-        if (isMountedRef.current) setTimeLeft((prev) => prev - 1);
-      }, 1000);
-    } else {
-      Vibration.cancel();
+      console.warn('⚠️ [ROUTE_DEBUG] Erro ao buscar rota Mapbox, aplicando fallback de reta direta:', err);
       if (isMountedRef.current) {
-        console.log('⏳ [SOCKET_DEBUG] Tempo de aceite expirado (15s). Limpando oferta.');
-        setQueuedOfferData(null);
-        if (rideState === 'idle') setIncomingRide(null);
-        setTimeLeft(15);
+        setRouteCoordinates([[startLng, startLat], [endLng, endLat]]);
+        const distKm = calculateDirectDistance(startLat, startLng, endLat, endLng);
+        setDriverEta(Math.max(1, Math.ceil((distKm / 30) * 60)));
       }
     }
-  }
-  return () => clearInterval(timer);
-}, [queuedOfferData, incomingRide, timeLeft, rideState]);
+  };
 
-useEffect(() => {
-  const subscription = AppState.addEventListener('change', async (nextAppState: AppStateStatus) => {
-    if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
-      console.log('📱 [STATE_DEBUG] Aplicativo retornou do background para primeiro plano.');
-      if (socket && !socket.connected) {
-        await connectDriverSocket();
+  useEffect(() => {
+    if (!location?.coords || routeSteps.length === 0 || currentStepIndex >= routeSteps.length) return;
+
+    const currentStep = routeSteps[currentStepIndex];
+    if (!currentStep?.maneuver?.location) return;
+
+    const [stepLng, stepLat] = currentStep.maneuver.location;
+    const distToStepKm = calculateDirectDistance(
+      location.coords.latitude,
+      location.coords.longitude,
+      stepLat,
+      stepLng
+    );
+
+    if (distToStepKm * 1000 <= 40) {
+      const nextIndex = currentStepIndex + 1;
+      if (nextIndex < routeSteps.length) {
+        setCurrentStepIndex(nextIndex);
+        const nextInstruction = routeSteps[nextIndex]?.maneuver?.instruction;
+        if (nextInstruction) {
+          playBilingualVoice('navigation', translateToKriol(nextInstruction));
+        }
+      } else {
+        playBilingualVoice('navigation', 'Bu sta kuazi pa tchega na bu distinu');
       }
+    }
+  }, [location?.coords, routeSteps, currentStepIndex, playBilingualVoice]);
+
+  useEffect(() => {
+    if (!location?.coords || !incomingRide) return;
+
+    const driverLat = location.coords.latitude;
+    const driverLng = location.coords.longitude;
+
+    const pLat = Number(incomingRide.pickupLat);
+    const pLng = Number(incomingRide.pickupLng);
+    const dLat = Number(incomingRide.destinationLat);
+    const dLng = Number(incomingRide.destinationLng);
+
+    if (rideState === 'accepted' || rideState === 'arrived') {
+      if (!isNaN(pLat) && !isNaN(pLng) && pLat !== 0 && pLng !== 0) {
+        fetchMapboxRoute(driverLng, driverLat, pLng, pLat);
+        fitMapBounds(driverLng, driverLat, pLng, pLat);
+      }
+    } else if (rideState === 'in_progress') {
+      if (!isNaN(dLat) && !isNaN(dLng) && dLat !== 0 && dLng !== 0) {
+        let rawStops = incomingRide.stops;
+        if (typeof rawStops === 'string') {
+          try { rawStops = JSON.parse(rawStops); } catch (e) { rawStops = []; }
+        }
+
+        let pendingStops: any[] = [];
+        if (Array.isArray(rawStops) && rawStops.length > 0) {
+          pendingStops = rawStops.filter((s: any) => {
+            const lat = Number(s.lat ?? s.latitude);
+            const lng = Number(s.lng ?? s.longitude);
+            return s.status !== 'COMPLETED' && !isNaN(lat) && !isNaN(lng) && lat !== 0;
+          });
+        }
+        fetchMapboxRoute(driverLng, driverLat, dLng, dLat, pendingStops);
+        fitMapBounds(driverLng, driverLat, dLng, dLat);
+      }
+    } else if (rideState === 'idle' && incomingRide) {
+      if (!isNaN(pLat) && !isNaN(pLng) && !isNaN(dLat) && !isNaN(dLng)) {
+        fetchMapboxRoute(pLng, pLat, dLng, dLat);
+      }
+    } else {
+      setRouteCoordinates(null);
+    }
+
+    persistActiveRideState(incomingRide, rideState, activeRideId);
+  }, [rideState, activeRideId, location?.coords?.latitude, location?.coords?.longitude, incomingRide, fitMapBounds]);
+
+  const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean; rideId?: string }) => {
+    if (!isMountedRef.current) return;
+
+    const currentRideId = activeRideIdRef.current || activeRideId;
+    const currentRideState = rideStateRef.current || rideState;
+    const newRideId = data.rideId || (data as any).id;
+
+    console.log(`🚕 [SOCKET_DEBUG] Nova oferta de corrida recebida: ID ${newRideId} | Passageiro: ${data.passengerName || 'Passageiro'}`);
+
+    const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState) || !!currentRideId;
+    if (isCurrentlyInRide) {
+      console.log('⚠️ [SOCKET_DEBUG] Motorista em corrida ativa. Nova oferta ignorada.');
+      return;
+    }
+
+    if (incomingRideRef.current?.rideId === newRideId && currentRideState !== 'idle') return;
+
+    setShowReceiptModal(false);
+    setShowRatingModal(false);
+
+    const rawType = (data.serviceType || 'RIDE').toString().toUpperCase();
+    let normalizedService: 'RIDE' | 'DELIVERY' | 'RENTAL' = 'RIDE';
+    if (['ENTREGA', 'DELIVERY'].includes(rawType)) normalizedService = 'DELIVERY';
+    if (['ALUGUEL', 'RENTAL'].includes(rawType)) normalizedService = 'RENTAL';
+
+    if (serviceFiltersRef.current && serviceFiltersRef.current[normalizedService] === false) {
+      console.log(`⚠️ [SOCKET_DEBUG] Oferta recusada pelo filtro de serviço: ${normalizedService}`);
+      return;
+    }
+
+    const rawPrice = (data as any).fareXOF ?? data.priceXof ?? 0;
+    let rawStops = data.stops;
+    if (typeof rawStops === 'string') {
+      try { rawStops = JSON.parse(rawStops); } catch { rawStops = []; }
+    }
+
+    let stopsArray: any[] = [];
+    if (Array.isArray(rawStops) && rawStops.length > 0) {
+      stopsArray = rawStops.map((s: any, index: number) => ({
+        ...s,
+        id: s.id || `stop_${index}`,
+        lat: Number(s.lat ?? s.latitude),
+        lng: Number(s.lng ?? s.longitude),
+        address: s.address || s.name || `Parada ${index + 1}`,
+        status: s.status || 'PENDING'
+      }));
+    }
+    const formattedOffer = {
+      ...data,
+      rideId: newRideId,
+      pickupReferencePoint: (data as any).pickupReferencePoint || (data as any).referencePoint || (data as any).reference_point || '',
+      dropoffReferencePoint: (data as any).dropoffReferencePoint || '',
+      referencePoint: (data as any).referencePoint || (data as any).reference_point || '',
+      
+      isQueuedOffer: false,
+      passengerName: data.passengerName || 'Passageiro',
+      passengerRating: data.passengerRating || 5.0,
+      serviceType: normalizedService,
+      paymentMethod: data.paymentMethod || 'CASH',
+      priceXof: typeof rawPrice === 'string' ? parseFloat(rawPrice) : Number(rawPrice),
+      pickupLat: Number(data.pickupLat ?? (data as any).originLat),
+      pickupLng: Number(data.pickupLng ?? (data as any).originLng),
+      destinationLat: Number(data.destinationLat),
+      destinationLng: Number(data.destinationLng),
+      stops: stopsArray,
+    };
+
+    setTimeLeft(15);
+    setQueuedOfferData(null);
+    setIncomingRide(formattedOffer);
+
+    snapToState(true);
+    Vibration.vibrate([0, 500, 200, 500], false);
+  };
+
+  const handleRideAccepted = async (data: any) => {
+    Vibration.cancel();
+    if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
+    if (!isMountedRef.current) return;
+    setIsLoading(false);
+
+    console.log('⚡ [SOCKET_DEBUG] Evento "ride:accepted" confirmado para a corrida:', data.rideId);
+
+    const currentRideState = rideStateRef.current || rideState;
+    const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
+
+    if (data.driverId === driver?.id || data.rideId) {
+      if (!isCurrentlyInRide || activeRideIdRef.current === data.rideId) {
+        setActiveRideId(data.rideId);
+        setRideState('accepted');
+        setIncomingRide((prev) => ({
+          ...prev,
+          ...data,
+          rideId: data.rideId,
+          passengerName: data.passengerName || prev?.passengerName || 'Passageiro',
+          pickupLat: Number(data.pickupLat || prev?.pickupLat || 0),
+          pickupLng: Number(data.pickupLng || prev?.pickupLng || 0),
+          destinationLat: Number(data.destinationLat || prev?.destinationLat || 0),
+          destinationLng: Number(data.destinationLng || prev?.destinationLng || 0),
+          priceXof: Number(data.priceXof || prev?.priceXof || 0),
+        }));
+        if (incomingRideRef.current) {
+          persistActiveRideState(incomingRideRef.current, 'accepted', data.rideId);
+        }
+        snapToState(true);
+      }
+    } else {
+      setQueuedOfferData(null);
+      setIncomingRide(null);
+    }
+  };
+
+  const handleRideStarted = () => {
+    if (!isMountedRef.current) return;
+    console.log('🚀 [STATE_DEBUG] Corrida iniciada! Estado alterado para "in_progress".');
+    setIsLoading(false);
+    setRideState('in_progress');
+    setShowOtpModal(false);
+    snapToState(true);
+    if (incomingRideRef.current && activeRideIdRef.current) {
+      persistActiveRideState(incomingRideRef.current, 'in_progress', activeRideIdRef.current);
+    }
+  };
+
+  const handleRideFinished = async (data: any) => {
+    if (!isMountedRef.current) return;
+    console.log('🏁 [FINALIZE_DEBUG] Corrida finalizada com sucesso. Dados:', data);
+    setIsLoading(false);
+    setCompletedInfo({ fareXOF: data.fareXOF, distanceKm: data.distanceKm, transactionId: data.transactionId });
+
+    if (data.hasQueuedRide && data.nextRideId) {
+      setActiveRideId(data.nextRideId);
+      setRideState('accepted');
+      setShowReceiptModal(false);
+      fetchTodayEarnings();
       await syncActiveRideWithServer();
+    } else {
+      setActiveRideId(null);
+      setIncomingRide(null);
+      setQueuedOfferData(null);
+      setRideState('idle'); 
+      setShowReceiptModal(true);
+      setShowNavSheet(false);
+      persistActiveRideState(null, 'idle', null);
+      fetchTodayEarnings();
     }
-    appStateRef.current = nextAppState;
-  });
+  };
 
-  return () => { subscription.remove(); };
-}, [syncActiveRideWithServer]);
+  const handleQueuedNowActive = async (data: { rideId: string; status: string }) => {
+    if (!isMountedRef.current) return;
+    console.log('🔄 [STATE_DEBUG] Corrida da fila promovida para ativa:', data.rideId);
+    setActiveRideId(data.rideId);
+    setRideState('accepted');
+    snapToState(true);
+    await syncActiveRideWithServer();
+  };
 
-async function stopBackgroundLocation() {
-  const hasTask = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
-  if (hasTask) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-}
+  useEffect(() => {
+    const handleConnect = async () => {
+      if (driver?.id) {
+        console.log('⚡ [SOCKET_DEBUG] Socket conectado! Processando fila offline e sincronizando...');
+        await processOfflineQueue(socket);
+        socket.emit('driver:request_state');
+        
+        if (isOnlineRef.current && location?.coords) {
+          socket.emit('driver:online', { 
+            driverId: driver.id, 
+            lat: location.coords.latitude, 
+            lng: location.coords.longitude 
+          });
+        }
+      }
+    };
 
-const startTrackingForState = async (currentState: RideState) => {
-  if (locationWatcherRef.current) { 
-    locationWatcherRef.current.remove(); 
-    locationWatcherRef.current = null; 
+    if (socket && !socket.connected) socket.connect();
+
+    socket.on('connect', handleConnect);
+    socket.on('ride:new_request', handleNewRideRequest);
+    socket.on('ride:accepted', handleRideAccepted);
+    socket.on('driver:accept_ride_success', handleRideAccepted);
+    socket.on('ride:started', handleRideStarted);
+    socket.on('ride:finished', handleRideFinished);
+    socket.on('ride:queued_now_active', handleQueuedNowActive);
+    socket.on('ride:cancelled', handleRideCancelled);
+
+    return () => {
+      Vibration.cancel();
+      socket.off('connect', handleConnect);
+      socket.off('ride:new_request', handleNewRideRequest);
+      socket.off('ride:accepted', handleRideAccepted);
+      socket.off('driver:accept_ride_success', handleRideAccepted);
+      socket.off('ride:started', handleRideStarted);
+      socket.off('ride:finished', handleRideFinished);
+      socket.off('ride:queued_now_active', handleQueuedNowActive);
+      socket.off('ride:cancelled', handleRideCancelled);
+    };
+  }, [driver?.id, resetDriverState, snapToState, syncActiveRideWithServer, handleRideCancelled]);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const currentOffer = queuedOfferData || (rideState === 'idle' ? incomingRide : null);
+
+    if (currentOffer) {
+      if (timeLeft > 0) {
+        timer = setInterval(() => {
+          if (isMountedRef.current) setTimeLeft((prev) => prev - 1);
+        }, 1000);
+      } else {
+        Vibration.cancel();
+        if (isMountedRef.current) {
+          console.log('⏳ [SOCKET_DEBUG] Tempo de aceite expirado (15s). Limpando oferta.');
+          setQueuedOfferData(null);
+          if (rideState === 'idle') setIncomingRide(null);
+          setTimeLeft(15);
+        }
+      }
+    }
+    return () => clearInterval(timer);
+  }, [queuedOfferData, incomingRide, timeLeft, rideState]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', async (nextAppState: AppStateStatus) => {
+      if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
+        console.log('📱 [STATE_DEBUG] Aplicativo retornou do background para primeiro plano.');
+        if (socket && !socket.connected) {
+          await connectDriverSocket();
+        }
+        await syncActiveRideWithServer();
+      }
+      appStateRef.current = nextAppState;
+    });
+
+    return () => { subscription.remove(); };
+  }, [syncActiveRideWithServer]);
+
+  async function stopBackgroundLocation() {
+    const hasTask = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
+    if (hasTask) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
   }
 
-  const isActive = ['accepted', 'arrived', 'in_progress'].includes(currentState);
-  
-  let timeInterval = isActive ? 2000 : 6000;
-  let distanceInterval = isActive ? 3 : 10;
+  const startTrackingForState = async (currentState: RideState) => {
+    if (locationWatcherRef.current) { 
+      locationWatcherRef.current.remove(); 
+      locationWatcherRef.current = null; 
+    }
 
-  if (isLowBattery) {
-    timeInterval = isActive ? 5000 : 12000;
-    distanceInterval = isActive ? 8 : 20;
-  }
+    const isActive = ['accepted', 'arrived', 'in_progress'].includes(currentState);
+    
+    let timeInterval = isActive ? 2000 : 6000;
+    let distanceInterval = isActive ? 3 : 10;
 
-  try {
-    const hasStartedBg = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
-    if (!hasStartedBg) {
-      await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-        accuracy: isActive ? Location.Accuracy.BestForNavigation : Location.Accuracy.Balanced,
-        timeInterval,
-        distanceInterval,
-        showsBackgroundLocationIndicator: true,
-        foregroundService: {
-          notificationTitle: 'Nô Bai 245 Motorista',
-          notificationBody: isActive ? 'Navegação de corrida ativa' : 'Você está online e visível',
-          notificationColor: '#0E243C',
+    if (isLowBattery) {
+      timeInterval = isActive ? 5000 : 12000;
+      distanceInterval = isActive ? 8 : 20;
+    }
+
+    try {
+      const hasStartedBg = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
+      if (!hasStartedBg) {
+        await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+          accuracy: isActive ? Location.Accuracy.BestForNavigation : Location.Accuracy.Balanced,
+          timeInterval,
+          distanceInterval,
+          showsBackgroundLocationIndicator: true,
+          foregroundService: {
+            notificationTitle: 'Nô Bai 245 Motorista',
+            notificationBody: isActive ? 'Navegação de corrida ativa' : 'Você está online e visível',
+            notificationColor: '#0E243C',
+          },
+        }).catch(() => {});
+      }
+
+      locationWatcherRef.current = await Location.watchPositionAsync(
+        { 
+          accuracy: isActive ? Location.Accuracy.BestForNavigation : Location.Accuracy.Balanced, 
+          timeInterval, 
+          distanceInterval 
         },
-      }).catch(() => {});
-    }
+        (newLocation) => {
+          if (!isMountedRef.current) return;
+          setLocation(newLocation);
 
-    locationWatcherRef.current = await Location.watchPositionAsync(
-      { 
-        accuracy: isActive ? Location.Accuracy.BestForNavigation : Location.Accuracy.Balanced, 
-        timeInterval, 
-        distanceInterval 
-      },
-      (newLocation) => {
-        if (!isMountedRef.current) return;
-        setLocation(newLocation);
+          const { latitude, longitude } = newLocation.coords;
+          let calculatedHeading = newLocation.coords.heading;
 
-        const { latitude, longitude } = newLocation.coords;
-        let calculatedHeading = newLocation.coords.heading;
-
-        if (calculatedHeading == null || calculatedHeading < 0) {
-          if (lastDriverCoordsRef.current) {
-            const distKm = calculateDirectDistance(
-              lastDriverCoordsRef.current.latitude,
-              lastDriverCoordsRef.current.longitude,
-              latitude,
-              longitude
-            );
-
-            if (distKm * 1000 > 2) {
-              calculatedHeading = calculateBearing(
+          if (calculatedHeading == null || calculatedHeading < 0) {
+            if (lastDriverCoordsRef.current) {
+              const distKm = calculateDirectDistance(
                 lastDriverCoordsRef.current.latitude,
                 lastDriverCoordsRef.current.longitude,
                 latitude,
                 longitude
               );
+
+              if (distKm * 1000 > 2) {
+                calculatedHeading = calculateBearing(
+                  lastDriverCoordsRef.current.latitude,
+                  lastDriverCoordsRef.current.longitude,
+                  latitude,
+                  longitude
+                );
+              } else {
+                calculatedHeading = lastDriverCoordsRef.current.heading || 0;
+              }
             } else {
-              calculatedHeading = lastDriverCoordsRef.current.heading || 0;
+              calculatedHeading = 0;
             }
-          } else {
-            calculatedHeading = 0;
+          }
+
+          const prevCoords = lastDriverCoordsRef.current;
+          let smoothLat = latitude;
+          let smoothLng = longitude;
+
+          if (prevCoords) {
+            smoothLat = lerp(prevCoords.latitude, latitude, 0.3);
+            smoothLng = lerp(prevCoords.longitude, longitude, 0.3);
+          }
+
+          lastDriverCoordsRef.current = { 
+            latitude: smoothLat, 
+            longitude: smoothLng, 
+            heading: calculatedHeading 
+          };
+
+          updateCameraThrottled(smoothLng, smoothLat);
+
+          if (driver?.id && socket?.connected) {
+            socket.emit('driver:location_update', {
+              driverId: driver.id,
+              rideId: activeRideIdRef.current || undefined,
+              latitude: smoothLat,
+              longitude: smoothLng,
+              speed: Math.max(0, newLocation.coords.speed || 0),
+              heading: calculatedHeading,
+            });
           }
         }
+      );
+    } catch (e) {}
+  };
 
-        const prevCoords = lastDriverCoordsRef.current;
-        let smoothLat = latitude;
-        let smoothLng = longitude;
+  async function startTracking() {
+    if (driver?.status !== 'APPROVED') {
+      return Alert.alert('Conta em Análise 📄', 'Aguarde a aprovação dos seus documentos para poder rodar.');
+    }
 
-        if (prevCoords) {
-          smoothLat = lerp(prevCoords.latitude, latitude, 0.3);
-          smoothLng = lerp(prevCoords.longitude, longitude, 0.3);
-        }
+    const walletBalance = Number((driver as any)?.walletBalance || 0);
+    if (walletBalance <= 0) {
+      console.warn(`🛑 [ONLINE_DEBUG] Tentativa de ficar online com saldo ${walletBalance} XOF recusada.`);
+      return Alert.alert(
+        'Saldo Insuficiente na Carteira 💳',
+        `Seu saldo atual é de ${walletBalance.toLocaleString()} XOF. Para ficar online e receber corridas em dinheiro, recarregue sua carteira efetuando o pagamento para a conta administrativa.`,
+        [
+          { text: 'Entendido', style: 'cancel' },
+          { 
+            text: 'Ver Carteira', 
+            onPress: () => navigation.navigate('Wallet' as never) 
+          }
+        ]
+      );
+    }
 
-        lastDriverCoordsRef.current = { 
-          latitude: smoothLat, 
-          longitude: smoothLng, 
-          heading: calculatedHeading 
-        };
+    const foreground = await Location.requestForegroundPermissionsAsync();
+    if (foreground.status !== 'granted') {
+      return Alert.alert('Permissão Necessária 📍', 'Permita o acesso à localização para ficar online.');
+    }
 
-        updateCameraThrottled(smoothLng, smoothLat);
+    try {
+      const currentLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
+      
+      if (isMocked && !__DEV__) {
+        if (isMountedRef.current) setIsOnline(false);
+        return Alert.alert('GPS Simulado Detectado 🚨', 'Desative o aplicativo de GPS Falso para continuar.');
+      }
 
-        if (driver?.id && socket?.connected) {
-          socket.emit('driver:location_update', {
-            driverId: driver.id,
-            rideId: activeRideIdRef.current || undefined,
-            latitude: smoothLat,
-            longitude: smoothLng,
-            speed: Math.max(0, newLocation.coords.speed || 0),
-            heading: calculatedHeading,
+      setIsOnline(true);
+      console.log(`🟢 [ONLINE_DEBUG] Motorista ${driver?.id} mudou para status Online.`);
+      const activeSocket = await connectDriverSocket();
+
+      if (isMountedRef.current) {
+        setLocation(currentLoc);
+        if (cameraRef.current) {
+          cameraRef.current.setCamera({ 
+            centerCoordinate: [currentLoc.coords.longitude, currentLoc.coords.latitude], 
+            zoomLevel: 16 
           });
         }
       }
-    );
-  } catch (e) {}
-};
 
-// =======================================================
-// 🟢 FICAR ONLINE (VALIDAÇÃO DE APROVAÇÃO E SALDO DA CARTEIRA)
-// =======================================================
-async function startTracking() {
-  if (driver?.status !== 'APPROVED') {
-    return Alert.alert('Conta em Análise 📄', 'Aguarde a aprovação dos seus documentos para poder rodar.');
-  }
+      const socketToUse = (activeSocket as any) || socket;
+      if (socketToUse) {
+        const payload = {
+          driverId: driver?.id,
+          latitude: currentLoc.coords.latitude,
+          longitude: currentLoc.coords.longitude,
+          lat: currentLoc.coords.latitude,
+          lng: currentLoc.coords.longitude,
+          heading: currentLoc.coords.heading || 0,
+          speed: currentLoc.coords.speed || 0,
+        };
 
-  const walletBalance = Number((driver as any)?.walletBalance || 0);
-  if (walletBalance <= 0) {
-    console.warn(`🛑 [ONLINE_DEBUG] Tentativa de ficar online com saldo ${walletBalance} XOF recusada.`);
-    return Alert.alert(
-      'Saldo Insuficiente na Carteira 💳',
-      `Seu saldo atual é de ${walletBalance.toLocaleString()} XOF. Para ficar online e receber corridas em dinheiro, recarregue sua carteira efetuando o pagamento para a conta administrativa.`,
-      [
-        { text: 'Entendido', style: 'cancel' },
-        { 
-          text: 'Ver Carteira', 
-          onPress: () => navigation.navigate('Wallet' as never) 
-        }
-      ]
-    );
-  }
-
-  const foreground = await Location.requestForegroundPermissionsAsync();
-  if (foreground.status !== 'granted') {
-    return Alert.alert('Permissão Necessária 📍', 'Permita o acesso à localização para ficar online.');
-  }
-
-  try {
-    const currentLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-    const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
-    
-    if (isMocked && !__DEV__) {
-      if (isMountedRef.current) setIsOnline(false);
-      return Alert.alert('GPS Simulado Detectado 🚨', 'Desative o aplicativo de GPS Falso para continuar.');
-    }
-
-    setIsOnline(true);
-    console.log(`🟢 [ONLINE_DEBUG] Motorista ${driver?.id} mudou para status Online.`);
-    const activeSocket = await connectDriverSocket();
-
-    if (isMountedRef.current) {
-      setLocation(currentLoc);
-      if (cameraRef.current) {
-        cameraRef.current.setCamera({ 
-          centerCoordinate: [currentLoc.coords.longitude, currentLoc.coords.latitude], 
-          zoomLevel: 16 
-        });
+        socketToUse.emit('driver:online', payload);
+        socketToUse.emit('driver:location_update', payload);
       }
+
+      await startTrackingForState(rideState);
+    } catch (e) {
+      if (isMountedRef.current) setIsOnline(false);
     }
-
-    const socketToUse = (activeSocket as any) || socket;
-    if (socketToUse) {
-      const payload = {
-        driverId: driver?.id,
-        latitude: currentLoc.coords.latitude,
-        longitude: currentLoc.coords.longitude,
-        lat: currentLoc.coords.latitude,
-        lng: currentLoc.coords.longitude,
-        heading: currentLoc.coords.heading || 0,
-        speed: currentLoc.coords.speed || 0,
-      };
-
-      socketToUse.emit('driver:online', payload);
-      socketToUse.emit('driver:location_update', payload);
-    }
-
-    await startTrackingForState(rideState);
-  } catch (e) {
-    if (isMountedRef.current) setIsOnline(false);
-  }
-}
-
-function stopTracking() {
-  console.log(`🔴 [OFFLINE_DEBUG] Desconectando rastreamento manual do motorista.`);
-  if (driver?.id && socket && socket.connected) {
-    socket.timeout(2000).emit('driver:offline', { driverId: driver.id });
-  }
-  setIsOnline(false);
-  if (locationWatcherRef.current) { 
-    locationWatcherRef.current.remove(); 
-    locationWatcherRef.current = null; 
-  }
-  stopBackgroundLocation();
-}
-
-useEffect(() => { if (isOnline) startTrackingForState(rideState); }, [rideState, isOnline, isLowBattery]);
-
-function acceptRide(rideId: string, driverId: string, currentLat: number, currentLng: number) {
-  Vibration.cancel();
-  setIsLoading(true);
-
-  console.log(`⚡ [SOCKET_DEBUG] Disparando "driver:accept_ride" para a corrida ${rideId}`);
-  activeRideIdRef.current = rideId;
-  rideStateRef.current = 'accepted';
-  setQueuedOfferData(null);
-
-  if (!socket || !socket.connected) {
-    setIsLoading(false);
-    return Alert.alert('Sem Conexão', 'Sinal de internet insuficiente.');
   }
 
-  socket.timeout(8000).emit('driver:accept_ride', { 
-    rideId, driverId, driverLat: currentLat, driverLng: currentLng 
-  }, (err: any, response: any) => {
-    if (!isMountedRef.current) return;
-    setIsLoading(false);
-
-    if (err) return Alert.alert('Sinal Fraco 📡', 'Não foi possível confirmar a tempo.');
-    
-    if (response?.error) {
-      setQueuedOfferData(null); 
-      return Alert.alert('Aviso', response.message);
+  function stopTracking() {
+    console.log(`🔴 [OFFLINE_DEBUG] Desconectando rastreamento manual do motorista.`);
+    if (driver?.id && socket && socket.connected) {
+      socket.timeout(2000).emit('driver:offline', { driverId: driver.id });
     }
-
-    setActiveRideId(rideId);
-    setRideState('accepted');
-    if (queuedOfferDataRef.current) {
-      setIncomingRide(queuedOfferDataRef.current);
-      persistActiveRideState(queuedOfferDataRef.current, 'accepted', rideId);
+    setIsOnline(false);
+    if (locationWatcherRef.current) { 
+      locationWatcherRef.current.remove(); 
+      locationWatcherRef.current = null; 
     }
+    stopBackgroundLocation();
+  }
+
+  useEffect(() => { if (isOnline) startTrackingForState(rideState); }, [rideState, isOnline, isLowBattery]);
+
+  function acceptRide(rideId: string, driverId: string, currentLat: number, currentLng: number) {
+    Vibration.cancel();
+    setIsLoading(true);
+
+    console.log(`⚡ [SOCKET_DEBUG] Disparando "driver:accept_ride" para a corrida ${rideId}`);
+    activeRideIdRef.current = rideId;
+    rideStateRef.current = 'accepted';
     setQueuedOfferData(null);
-    snapToState(true);
-  });
-}
 
-async function handleArrived() {
-  if (!activeRideId) return;
-  setIsLoading(true);
-  const payload = { rideId: activeRideId };
-  console.log(`📍 [STATE_DEBUG] Confirmando chegada ao local na corrida ${activeRideId}`);
-
-  const processOffline = async () => {
-    await saveActionToQueue('driver:arrived', payload);
-    if (isMountedRef.current) {
-      setRideState('arrived');
-      if (incomingRide) persistActiveRideState(incomingRide, 'arrived', activeRideId);
-      setDriverEta(null);
+    if (!socket || !socket.connected) {
       setIsLoading(false);
+      return Alert.alert('Sem Conexão', 'Sinal de internet insuficiente.');
     }
-  };
 
-  if (socket && socket.connected) {
-    socket.timeout(4000).emit('driver:arrived', payload, async (err: any) => {
+    socket.timeout(8000).emit('driver:accept_ride', { 
+      rideId, driverId, driverLat: currentLat, driverLng: currentLng 
+    }, (err: any, response: any) => {
       if (!isMountedRef.current) return;
-      if (err) {
-        await processOffline();
-      } else {
+      setIsLoading(false);
+
+      if (err) return Alert.alert('Sinal Fraco 📡', 'Não foi possível confirmar a tempo.');
+      
+      if (response?.error) {
+        setQueuedOfferData(null); 
+        return Alert.alert('Aviso', response.message);
+      }
+
+      setActiveRideId(rideId);
+      setRideState('accepted');
+      if (queuedOfferDataRef.current) {
+        setIncomingRide(queuedOfferDataRef.current);
+        persistActiveRideState(queuedOfferDataRef.current, 'accepted', rideId);
+      }
+      setQueuedOfferData(null);
+      snapToState(true);
+    });
+  }
+
+  async function handleArrived() {
+    if (!activeRideId) return;
+    setIsLoading(true);
+    const payload = { rideId: activeRideId };
+    console.log(`📍 [STATE_DEBUG] Confirmando chegada ao local na corrida ${activeRideId}`);
+
+    const processOffline = async () => {
+      await saveActionToQueue('driver:arrived', payload);
+      if (isMountedRef.current) {
         setRideState('arrived');
         if (incomingRide) persistActiveRideState(incomingRide, 'arrived', activeRideId);
         setDriverEta(null);
         setIsLoading(false);
       }
-    });
-  } else {
-    await processOffline();
-  }
-}
+    };
 
-function handleConfirmCancel(reason: string) {
-  if (!activeRideId) return;
-  console.log(`❌ [CANCEL_DEBUG] Motorista cancelando corrida ${activeRideId}. Motivo: ${reason}`);
-  setShowCancelModal(false);
-  resetDriverState(); 
-
-  if (socket && socket.connected) {
-    socket.timeout(3000).emit('ride:cancel', { rideId: activeRideId, userId: driver?.id, userType: 'DRIVER', reason }, (err: any) => {
-      if (err) saveActionToQueue('ride:cancel', { rideId: activeRideId, userId: driver?.id, userType: 'DRIVER', reason });
-    });
-  } else {
-    saveActionToQueue('ride:cancel', { rideId: activeRideId, userId: driver?.id, userType: 'DRIVER', reason });
-  }
-}
-
-async function handleStartRideWithOtp(otp: string) {
-  if (!activeRideId) return;
-  setIsLoading(true);
-  const payload = { rideId: activeRideId, otp };
-  console.log(`🚀 [STATE_DEBUG] Validando PIN/OTP "${otp}" para iniciar corrida ${activeRideId}`);
-
-  const processOfflineStart = async () => {
-    await saveActionToQueue('driver:start_ride', payload);
-    if (isMountedRef.current) {
-      setRideState('in_progress');
-      setShowOtpModal(false);
-      if (incomingRide) persistActiveRideState(incomingRide, 'in_progress', activeRideId);
-      setIsLoading(false);
+    if (socket && socket.connected) {
+      socket.timeout(4000).emit('driver:arrived', payload, async (err: any) => {
+        if (!isMountedRef.current) return;
+        if (err) {
+          await processOffline();
+        } else {
+          setRideState('arrived');
+          if (incomingRide) persistActiveRideState(incomingRide, 'arrived', activeRideId);
+          setDriverEta(null);
+          setIsLoading(false);
+        }
+      });
+    } else {
+      await processOffline();
     }
-  };
+  }
 
-  if (socket && socket.connected) {
-    socket.timeout(5000).emit('driver:start_ride', payload, async (err: any, response: any) => {
-      if (!isMountedRef.current) return;
-      if (err) {
-        await processOfflineStart();
-      } else if (response?.error) {
-        Alert.alert('Erro no PIN', response.message || 'PIN incorreto. Tente novamente.');
-        setIsLoading(false);
-      } else {
+  function handleConfirmCancel(reason: string) {
+    if (!activeRideId) return;
+    console.log(`❌ [CANCEL_DEBUG] Motorista cancelando corrida ${activeRideId}. Motivo: ${reason}`);
+    setShowCancelModal(false);
+    resetDriverState(); 
+
+    if (socket && socket.connected) {
+      socket.timeout(3000).emit('ride:cancel', { rideId: activeRideId, userId: driver?.id, userType: 'DRIVER', reason }, (err: any) => {
+        if (err) saveActionToQueue('ride:cancel', { rideId: activeRideId, userId: driver?.id, userType: 'DRIVER', reason });
+      });
+    } else {
+      saveActionToQueue('ride:cancel', { rideId: activeRideId, userId: driver?.id, userType: 'DRIVER', reason });
+    }
+  }
+
+  async function handleStartRideWithOtp(otp: string) {
+    if (!activeRideId) return;
+    setIsLoading(true);
+    const payload = { rideId: activeRideId, otp };
+    console.log(`🚀 [STATE_DEBUG] Validando PIN/OTP "${otp}" para iniciar corrida ${activeRideId}`);
+
+    const processOfflineStart = async () => {
+      await saveActionToQueue('driver:start_ride', payload);
+      if (isMountedRef.current) {
         setRideState('in_progress');
         setShowOtpModal(false);
         if (incomingRide) persistActiveRideState(incomingRide, 'in_progress', activeRideId);
         setIsLoading(false);
       }
+    };
+
+    if (socket && socket.connected) {
+      socket.timeout(5000).emit('driver:start_ride', payload, async (err: any, response: any) => {
+        if (!isMountedRef.current) return;
+        if (err) {
+          await processOfflineStart();
+        } else if (response?.error) {
+          Alert.alert('Erro no PIN', response.message || 'PIN incorreto. Tente novamente.');
+          setIsLoading(false);
+        } else {
+          setRideState('in_progress');
+          setShowOtpModal(false);
+          if (incomingRide) persistActiveRideState(incomingRide, 'in_progress', activeRideId);
+          setIsLoading(false);
+        }
+      });
+    } else {
+      await processOfflineStart();
+    }
+  }
+
+  async function handleFinishRide() {
+    if (!activeRideId) return;
+    setIsLoading(true);
+
+    const fallbackLat = Number(location?.coords?.latitude || incomingRide?.destinationLat || BISSAU_CENTER_LAT);
+    const fallbackLng = Number(location?.coords?.longitude || incomingRide?.destinationLng || BISSAU_CENTER_LNG);
+    const payload = { rideId: activeRideId, dropoffLat: fallbackLat, dropoffLng: fallbackLng };
+
+    const finalPrice = Number(incomingRide?.priceXof || incomingRide?.estimatedPrice || 0);
+    const paymentMethod = incomingRide?.paymentMethod || 'CASH';
+    const transactionId = incomingRide?.transactionId || `TRX-${Date.now().toString().slice(-6)}`;
+
+    console.log(`🏁 [FINALIZE_DEBUG] Solicitando finalização da corrida ${activeRideId}. Total: ${finalPrice} XOF`);
+
+    setFinishedRideSummary({
+      rideId: activeRideId,
+      passengerName: displayPassengerName,
+      totalAmount: finalPrice,
+      paymentMethod: paymentMethod,
+      transactionId: transactionId,
     });
-  } else {
-    await processOfflineStart();
-  }
-}
 
-async function handleFinishRide() {
-  if (!activeRideId) return;
-  setIsLoading(true);
+    setFinishedRideId(activeRideId);
+    setFinishedTargetName(displayPassengerName);
 
-  const fallbackLat = Number(location?.coords?.latitude || incomingRide?.destinationLat || BISSAU_CENTER_LAT);
-  const fallbackLng = Number(location?.coords?.longitude || incomingRide?.destinationLng || BISSAU_CENTER_LNG);
-  const payload = { rideId: activeRideId, dropoffLat: fallbackLat, dropoffLng: fallbackLng };
+    if (socket && socket.connected) {
+      socket.emit('driver:finish_ride', payload);
+    } else {
+      await saveActionToQueue('driver:finish_ride', payload);
+    }
 
-  const finalPrice = Number(incomingRide?.priceXof || incomingRide?.estimatedPrice || 0);
-  const paymentMethod = incomingRide?.paymentMethod || 'CASH';
-  const transactionId = incomingRide?.transactionId || `TRX-${Date.now().toString().slice(-6)}`;
-
-  console.log(`🏁 [FINALIZE_DEBUG] Solicitando finalização da corrida ${activeRideId}. Total: ${finalPrice} XOF`);
-
-  setFinishedRideSummary({
-    rideId: activeRideId,
-    passengerName: displayPassengerName,
-    totalAmount: finalPrice,
-    paymentMethod: paymentMethod,
-    transactionId: transactionId,
-  });
-
-  setFinishedRideId(activeRideId);
-  setFinishedTargetName(displayPassengerName);
-
-  if (socket && socket.connected) {
-    socket.emit('driver:finish_ride', payload);
-  } else {
-    await saveActionToQueue('driver:finish_ride', payload);
+    setIsLoading(false);
+    setShowReceiptModal(true);
   }
 
-  setIsLoading(false);
-  setShowReceiptModal(true);
-}
-
-function handleNoShowCancel() {
-  Alert.alert(
-    'Cancelar por Ausência?',
-    'O tempo limite de espera expirou. Deseja cancelar esta corrida e receber a taxa de cancelamento?',
-    [
-      { text: 'Aguardar mais um pouco', style: 'cancel' },
-      { text: 'Confirmar No-Show', style: 'destructive', onPress: () => handleConfirmCancel('PASSENGER_NO_SHOW') }
-    ]
-  );
-}
-
-function handleSubmitRating(stars: number, tags: string[], comment: string) {
-  const rideToRate = finishedRideId || activeRideId;
-  console.log(`⭐ [STATE_DEBUG] Submetendo avaliação de ${stars} estrelas para a corrida ${rideToRate}`);
-  if (rideToRate && incomingRide && socket && socket.connected) {
-    socket.emit('ride:rate', { 
-      rideId: rideToRate, 
-      reviewerId: driver?.id, 
-      reviewerType: 'DRIVER', 
-      receiverId: incomingRide.passengerId, 
-      stars, 
-      tags, 
-      comment 
-    });
+  function handleNoShowCancel() {
+    Alert.alert(
+      'Cancelar por Ausência?',
+      'O tempo limite de espera expirou. Deseja cancelar esta corrida e receber a taxa de cancelamento?',
+      [
+        { text: 'Aguardar mais um pouco', style: 'cancel' },
+        { text: 'Confirmar No-Show', style: 'destructive', onPress: () => handleConfirmCancel('PASSENGER_NO_SHOW') }
+      ]
+    );
   }
-  setShowRatingModal(false);
-  setFinishedRideId(null);
-  resetDriverState();
-}
 
-function handleCallPassenger() {
-  setIsChatVisible(true);
-}
-
-const handleRecenterMap = () => {
-  if (location?.coords && cameraRef.current) {
-    cameraRef.current.setCamera({
-      centerCoordinate: [location.coords.longitude, location.coords.latitude],
-      zoomLevel: 16,
-      animationDuration: 1000,
-    });
+  function handleSubmitRating(stars: number, tags: string[], comment: string) {
+    const rideToRate = finishedRideId || activeRideId;
+    console.log(`⭐ [STATE_DEBUG] Submetendo avaliação de ${stars} estrelas para a corrida ${rideToRate}`);
+    if (rideToRate && incomingRide && socket && socket.connected) {
+      socket.emit('ride:rate', { 
+        rideId: rideToRate, 
+        reviewerId: driver?.id, 
+        reviewerType: 'DRIVER', 
+        receiverId: incomingRide.passengerId, 
+        stars, 
+        tags, 
+        comment 
+      });
+    }
+    setShowRatingModal(false);
+    setFinishedRideId(null);
+    resetDriverState();
   }
-};
+
+  function handleCallPassenger() {
+    setIsChatVisible(true);
+  }
+
+  const handleRecenterMap = () => {
+    if (location?.coords && cameraRef.current) {
+      cameraRef.current.setCamera({
+        centerCoordinate: [location.coords.longitude, location.coords.latitude],
+        zoomLevel: 16,
+        animationDuration: 1000,
+      });
+    }
+  };
+
   const toggleAudioRecording = async () => {
     try {
       if ((audioRecorder as any)?.isRecording) {
@@ -1755,12 +1752,10 @@ const handleRecenterMap = () => {
   const topHeaderInset = Math.max((insets?.top || 0) + 10, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 16);
   const bottomInset = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 24 : 16);
 
-  // 1º Declare activeOffer PRIMEIRO:
   const activeOffer = (queuedOfferData && queuedOfferData.rideId !== activeRideId) 
     ? queuedOfferData 
     : (rideState === 'idle' ? incomingRide : null);
 
-  // 2º Mapeamento limpo das Paradas com Pontos de Referência
   const formattedStops = useMemo(() => {
     const stopsSource = activeOffer?.stops || incomingRide?.stops;
     if (!stopsSource) return [];
@@ -1852,14 +1847,14 @@ const handleRecenterMap = () => {
                 ]}
               >
                 <Image
-                 source={getVehicle3DIconAsset(
-                (driver as any)?.vehicleType || incomingRide?.vehicleType || 'PARTICULAR',
-                  (driver as any)?.carColor || (driver as any)?.vehicleColor || 'BRANCO'
-               )}
-                 style={styles.vehicle3DImage}
-                     fadeDuration={0}
+                  source={getVehicle3DIconAsset(
+                    (driver as any)?.vehicleType || incomingRide?.vehicleType || 'PARTICULAR',
+                    (driver as any)?.carColor || (driver as any)?.vehicleColor || 'BRANCO'
+                  )}
+                  style={styles.vehicle3DImage}
+                  fadeDuration={0}
                   resizeMode="contain"
-                  />
+                />
               </View>
             </View>
           </Mapbox.PointAnnotation>
@@ -1930,7 +1925,6 @@ const handleRecenterMap = () => {
             <Text style={styles.earningsPillText}>{formatCurrency(todayEarnings)} XOF</Text>
           </TouchableOpacity>
 
-          {/* 🔊 BOTÃO TOGGLE DA ASSISTÊNCIA DE VOZ DO MOTORISTA */}
           <TouchableOpacity 
             style={[
               styles.voiceToggleHeaderBtn, 
@@ -2088,7 +2082,6 @@ const handleRecenterMap = () => {
                       : (driverEta ? `Chegando ao destino em ${driverEta} min` : 'Viagem em Andamento')}
                   </Text>
 
-                  {/* 🟢 BADGE DE DISTÂNCIA DINÂMICA */}
                   {incomingRide?.pickupLat && incomingRide?.destinationLat ? (
                     <View style={{
                       backgroundColor: 'rgba(59, 130, 246, 0.15)',
@@ -2146,7 +2139,7 @@ const handleRecenterMap = () => {
                   )}
                 </View>
 
-                {/* 📍 ROTA E PARADAS NA CORRIDA ATIVA (SEM DUPLICAÇÕES) */}
+                {/* 📍 ROTA E PARADAS NA CORRIDA ATIVA */}
                 <View style={styles.routeAddressesContainer}>
                   
                   {/* 🟡 1. ORIGEM / EMBARQUE */}
@@ -2158,7 +2151,6 @@ const handleRecenterMap = () => {
                         {incomingRide?.originAddress || 'Local de Embarque'}
                       </Text>
 
-                      {/* Ref. de Embarque / Partida */}
                       {Boolean((incomingRide as any)?.pickupReferencePoint || (incomingRide as any)?.referencePoint) && (
                         <View style={{
                           flexDirection: 'row',
@@ -2250,7 +2242,6 @@ const handleRecenterMap = () => {
                         {incomingRide?.destinationAddress || 'Local de Desembarque'}
                       </Text>
 
-                      {/* 📍 Ponto de Referência do Destino Final */}
                       {Boolean(
                         (incomingRide as any)?.dropoffReferencePoint || 
                         (incomingRide as any)?.destinationReferencePoint ||
@@ -2290,7 +2281,7 @@ const handleRecenterMap = () => {
                   </View>
                 )}
 
-                {/* BOTAO DE AÇÕES DA CORRIDA */}
+                {/* BOTÕES DE AÇÃO DA CORRIDA */}
                 {rideState !== 'in_progress' && (
                   <View style={styles.actionRow}>
                     <TouchableOpacity 
@@ -2305,7 +2296,6 @@ const handleRecenterMap = () => {
                       <Ionicons name="chatbubbles-outline" size={16} color="#EAB308" />
                       <Text style={styles.actionButtonSecondaryText}>Chat</Text>
 
-                      {/* 🔴 BADGE DE MENSAGENS NÃO LIDAS */}
                       {unreadCount > 0 && (
                         <View style={styles.chatBadgeContainer}>
                           <Text style={styles.chatBadgeText}>
@@ -2463,7 +2453,6 @@ const handleRecenterMap = () => {
             <Text style={styles.filterModalTitle}>Preferências de Chamada</Text>
             <Text style={styles.filterModalSub}>Selecione os serviços que deseja receber e opcionalidades:</Text>
             
-            {/* 🔊 CHAVE DA ASSISTÊNCIA POR VOZ */}
             <View style={styles.filterRow}>
               <View style={styles.filterLabelContainer}>
                 <Ionicons name="volume-high" size={18} color="#EAB308" />
@@ -2521,98 +2510,126 @@ const handleRecenterMap = () => {
         onConfirmStop={() => setCurrentStopIndex(prev => prev + 1)} 
       />
 
-    {/* 🔔 MODAL DE OFERTA DE CORRIDA / CORRIDA EM FILA */}
-    <Modal visible={!!activeOffer} transparent animationType="fade">
-      <View style={styles.newRequestOverlay}>
-        <View style={styles.newRequestCard}>
-          {isRideActive && (
-            <View style={{ backgroundColor: '#3B82F6', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Ionicons name="layers-outline" size={16} color="#FFFFFF" />
-              <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 12 }}>
-                PRÓXIMA CORRIDA (ADICIONAR À FILA)
-              </Text>
-            </View>
-          )}
+      {/* 🔔 MODAL DE OFERTA DE CORRIDA / CORRIDA EM FILA */}
+      <Modal visible={!!activeOffer} transparent animationType="fade">
+        <View style={styles.newRequestOverlay}>
+          <View style={styles.newRequestCard}>
+            {isRideActive && (
+              <View style={{ backgroundColor: '#3B82F6', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="layers-outline" size={16} color="#FFFFFF" />
+                <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 12 }}>
+                  PRÓXIMA CORRIDA (ADICIONAR À FILA)
+                </Text>
+              </View>
+            )}
 
-          <View style={styles.newRequestHeader}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Ionicons name={activeOffer?.serviceType === 'DELIVERY' ? 'cube' : 'car-sport'} size={18} color="#EAB308" />
-              <Text style={styles.newRequestTitle}>
-                {isRideActive ? 'Nova Oferta em Fila!' : 'Nova Corrida!'}
-              </Text>
-            </View>
-            <View style={styles.newRequestPriceBadge}>
-              <Text style={styles.newRequestPriceText}>{formatCurrency(activeOffer?.priceXof)} XOF</Text>
-            </View>
-          </View>
-
-          <View style={styles.progressBarContainer}>
-            <View style={[styles.progressBarFill, { width: `${Math.max(0, (timeLeft / 15) * 100)}%` }]} />
-          </View>
-          <Text style={styles.timerText}>Tempo restante: {timeLeft}s</Text>
-
-          <View style={styles.modalPassengerRow}>
-            <View style={styles.passengerPhotoContainerSm}>
-              {activeOffer?.passengerPhoto ? (
-                <Image source={{ uri: formatImageUrl(activeOffer.passengerPhoto) }} style={{ width: '100%', height: '100%', borderRadius: 18 }} />
-              ) : (
-                <Ionicons name="person" size={16} color="#94A3B8" />
-              )}
-            </View>
-            <View style={{ flex: 1, marginLeft: 10 }}>
-              <Text style={styles.modalPassengerName}>{activeOffer?.guestName || activeOffer?.passengerName || 'Passageiro'}</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-                <Ionicons name="star" size={12} color="#EAB308" />
-                <Text style={styles.modalPassengerRating}>{activeOffer?.passengerRating?.toFixed(1) || '5.0'}</Text>
+            <View style={styles.newRequestHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name={activeOffer?.serviceType === 'DELIVERY' ? 'cube' : 'car-sport'} size={18} color="#EAB308" />
+                <Text style={styles.newRequestTitle}>
+                  {isRideActive ? 'Nova Oferta em Fila!' : 'Nova Corrida!'}
+                </Text>
+              </View>
+              <View style={styles.newRequestPriceBadge}>
+                <Text style={styles.newRequestPriceText}>{formatCurrency(activeOffer?.priceXof)} XOF</Text>
               </View>
             </View>
-          </View>
 
-          <View style={styles.routeTimelineContainer}>
-            {/* EMBARQUE NA OFERTA */}
-            <View style={styles.timelineRow}>
-              <Ionicons name="location" size={16} color="#10B981" />
-              <View style={styles.timelineTextContainer}>
-                <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
-                <Text style={styles.timelineAddress} numberOfLines={2}>
-                  {activeOffer?.originAddress || 'Local de origem'}
-                </Text>
+            <View style={styles.progressBarContainer}>
+              <View style={[styles.progressBarFill, { width: `${Math.max(0, (timeLeft / 15) * 100)}%` }]} />
+            </View>
+            <Text style={styles.timerText}>Tempo restante: {timeLeft}s</Text>
 
-                {/* Ref. Embarque da Oferta */}
-                {Boolean((activeOffer as any)?.pickupReferencePoint || (activeOffer as any)?.referencePoint) && (
-                  <View style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    backgroundColor: 'rgba(234, 179, 8, 0.15)',
-                    borderWidth: 1,
-                    borderColor: '#EAB308',
-                    paddingHorizontal: 8,
-                    paddingVertical: 4,
-                    borderRadius: 6,
-                    marginTop: 4
-                  }}>
-                    <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
-                    <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
-                      Ref. Embarque: {(activeOffer as any)?.pickupReferencePoint || (activeOffer as any)?.referencePoint}
-                    </Text>
-                  </View>
+            <View style={styles.modalPassengerRow}>
+              <View style={styles.passengerPhotoContainerSm}>
+                {activeOffer?.passengerPhoto ? (
+                  <Image source={{ uri: formatImageUrl(activeOffer.passengerPhoto) }} style={{ width: '100%', height: '100%', borderRadius: 18 }} />
+                ) : (
+                  <Ionicons name="person" size={16} color="#94A3B8" />
                 )}
               </View>
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={styles.modalPassengerName}>{activeOffer?.guestName || activeOffer?.passengerName || 'Passageiro'}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                  <Ionicons name="star" size={12} color="#EAB308" />
+                  <Text style={styles.modalPassengerRating}>{activeOffer?.passengerRating?.toFixed(1) || '5.0'}</Text>
+                </View>
+              </View>
             </View>
 
-            {/* PARADAS INTERMEDIÁRIAS NA OFERTA */}
-            {formattedStops.length > 0 ? (
-              formattedStops.map((stop: any, idx: number) => (
-                <View key={`offer-stop-${idx}`} style={[styles.timelineRow, { backgroundColor: 'rgba(59, 130, 246, 0.08)', paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, marginVertical: 3 }]}>
+            <View style={styles.routeTimelineContainer}>
+              {/* EMBARQUE NA OFERTA */}
+              <View style={styles.timelineRow}>
+                <Ionicons name="location" size={16} color="#10B981" />
+                <View style={styles.timelineTextContainer}>
+                  <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
+                  <Text style={styles.timelineAddress} numberOfLines={2}>
+                    {activeOffer?.originAddress || 'Local de origem'}
+                  </Text>
+
+                  {Boolean((activeOffer as any)?.pickupReferencePoint || (activeOffer as any)?.referencePoint) && (
+                    <View style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: 'rgba(234, 179, 8, 0.15)',
+                      borderWidth: 1,
+                      borderColor: '#EAB308',
+                      paddingHorizontal: 8,
+                      paddingVertical: 4,
+                      borderRadius: 6,
+                      marginTop: 4
+                    }}>
+                      <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
+                      <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
+                        Ref. Embarque: {(activeOffer as any)?.pickupReferencePoint || (activeOffer as any)?.referencePoint}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+
+              {/* PARADAS INTERMEDIÁRIAS NA OFERTA */}
+              {formattedStops.length > 0 ? (
+                formattedStops.map((stop: any, idx: number) => (
+                  <View key={`offer-stop-${idx}`} style={[styles.timelineRow, { backgroundColor: 'rgba(59, 130, 246, 0.08)', paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, marginVertical: 3 }]}>
+                    <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
+                    <View style={styles.timelineTextContainer}>
+                      <Text style={[styles.timelineLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>
+                        PARADA {idx + 1} DE {formattedStops.length}:
+                      </Text>
+                      <Text style={styles.timelineAddress} numberOfLines={2}>
+                        {stop.address}
+                      </Text>
+                      {Boolean(stop.referencePoint) && (
+                        <View style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          backgroundColor: 'rgba(59, 130, 246, 0.15)',
+                          borderWidth: 1,
+                          borderColor: '#3B82F6',
+                          paddingHorizontal: 8,
+                          paddingVertical: 4,
+                          borderRadius: 6,
+                          marginTop: 4
+                        }}>
+                          <Ionicons name="compass-outline" size={14} color="#3B82F6" style={{ marginRight: 4 }} />
+                          <Text style={{ color: '#3B82F6', fontSize: 12, fontWeight: '700', flex: 1 }}>
+                            Ref. Parada: {stop.referencePoint}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                ))
+              ) : (activeOffer?.extraStopAddress || incomingRide?.extraStopAddress) ? (
+                <View style={[styles.timelineRow, { backgroundColor: 'rgba(59, 130, 246, 0.08)', paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, marginVertical: 3 }]}>
                   <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
                   <View style={styles.timelineTextContainer}>
-                    <Text style={[styles.timelineLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>
-                      PARADA {idx + 1} DE {formattedStops.length}:
-                    </Text>
+                    <Text style={[styles.timelineLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>PARADA INTERMEDIÁRIA:</Text>
                     <Text style={styles.timelineAddress} numberOfLines={2}>
-                      {stop.address}
+                      {activeOffer?.extraStopAddress || incomingRide?.extraStopAddress}
                     </Text>
-                    {Boolean(stop.referencePoint) && (
+                    {Boolean((activeOffer as any)?.extraStopReferencePoint) && (
                       <View style={{
                         flexDirection: 'row',
                         alignItems: 'center',
@@ -2626,176 +2643,146 @@ const handleRecenterMap = () => {
                       }}>
                         <Ionicons name="compass-outline" size={14} color="#3B82F6" style={{ marginRight: 4 }} />
                         <Text style={{ color: '#3B82F6', fontSize: 12, fontWeight: '700', flex: 1 }}>
-                          Ref. Parada: {stop.referencePoint}
+                          Ref. Parada: {(activeOffer as any)?.extraStopReferencePoint}
                         </Text>
                       </View>
                     )}
                   </View>
                 </View>
-              ))
-            ) : (activeOffer?.extraStopAddress || incomingRide?.extraStopAddress) ? (
-              <View style={[styles.timelineRow, { backgroundColor: 'rgba(59, 130, 246, 0.08)', paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, marginVertical: 3 }]}>
-                <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
+              ) : null}
+
+              {/* DESTINO NA OFERTA */}
+              <View style={styles.timelineRow}>
+                <Ionicons name="flag" size={16} color="#EF4444" />
                 <View style={styles.timelineTextContainer}>
-                  <Text style={[styles.timelineLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>PARADA INTERMEDIÁRIA:</Text>
+                  <Text style={styles.timelineLabel}>LEVAR PARA:</Text>
                   <Text style={styles.timelineAddress} numberOfLines={2}>
-                    {activeOffer?.extraStopAddress || incomingRide?.extraStopAddress}
+                    {activeOffer?.destinationAddress || 'Local de destino'}
                   </Text>
-                  {Boolean((activeOffer as any)?.extraStopReferencePoint) && (
+
+                  {Boolean(
+                    (activeOffer as any)?.dropoffReferencePoint || 
+                    (activeOffer as any)?.destinationReferencePoint || 
+                    ((activeOffer as any)?.referencePoint && !((activeOffer as any)?.pickupReferencePoint))
+                  ) && (
                     <View style={{
                       flexDirection: 'row',
                       alignItems: 'center',
-                      backgroundColor: 'rgba(59, 130, 246, 0.15)',
+                      backgroundColor: 'rgba(239, 68, 68, 0.15)',
                       borderWidth: 1,
-                      borderColor: '#3B82F6',
+                      borderColor: '#EF4444',
                       paddingHorizontal: 8,
                       paddingVertical: 4,
                       borderRadius: 6,
                       marginTop: 4
                     }}>
-                      <Ionicons name="compass-outline" size={14} color="#3B82F6" style={{ marginRight: 4 }} />
-                      <Text style={{ color: '#3B82F6', fontSize: 12, fontWeight: '700', flex: 1 }}>
-                        Ref. Parada: {(activeOffer as any)?.extraStopReferencePoint}
+                      <Ionicons name="flag" size={14} color="#EF4444" style={{ marginRight: 4 }} />
+                      <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '700', flex: 1 }}>
+                        Ref. Destino: {
+                          (activeOffer as any).dropoffReferencePoint || 
+                          (activeOffer as any).destinationReferencePoint || 
+                          (activeOffer as any).referencePoint
+                        }
                       </Text>
                     </View>
                   )}
                 </View>
               </View>
-            ) : null}
+            </View>
 
-            {/* DESTINO NA OFERTA */}
-            <View style={styles.timelineRow}>
-              <Ionicons name="flag" size={16} color="#EF4444" />
-              <View style={styles.timelineTextContainer}>
-                <Text style={styles.timelineLabel}>LEVAR PARA:</Text>
-                <Text style={styles.timelineAddress} numberOfLines={2}>
-                  {activeOffer?.destinationAddress || 'Local de destino'}
+            <View style={styles.newRequestActions}>
+              <TouchableOpacity 
+                style={styles.rejectBtn} 
+                onPress={() => { 
+                  console.log('🛑 [OFFER_DEBUG] Oferta recusada manualmente pelo motorista.');
+                  Vibration.cancel(); 
+                  setQueuedOfferData(null); 
+                  if (rideState === 'idle') setIncomingRide(null); 
+                }} 
+                disabled={isLoading}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.rejectText}>Recusar</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[styles.acceptBtn, isLoading && { opacity: 0.7 }]} 
+                activeOpacity={0.85} 
+                disabled={isLoading} 
+                onPress={() => {
+                  if (isLoading) return;
+                  if (activeOffer?.rideId && driver?.id) {
+                    const lat = Number(location?.coords?.latitude || BISSAU_CENTER_LAT);
+                    const lng = Number(location?.coords?.longitude || BISSAU_CENTER_LNG);
+                    console.log(`✅ [OFFER_DEBUG] Aceitando oferta ID ${activeOffer.rideId} nas coordenadas [${lat}, ${lng}]`);
+                    acceptRide(activeOffer.rideId, driver.id, lat, lng);
+                  }
+                }}
+              >
+                <Text style={styles.acceptText}>
+                  {isLoading ? 'Aceitando...' : (isRideActive ? 'Adicionar à Fila 🔄' : 'Aceitar Chamada')}
                 </Text>
-
-                {/* 📍 Ponto de Referência do Destino na Oferta */}
-                {Boolean(
-                  (activeOffer as any)?.dropoffReferencePoint || 
-                  (activeOffer as any)?.destinationReferencePoint || 
-                  ((activeOffer as any)?.referencePoint && !((activeOffer as any)?.pickupReferencePoint))
-                ) && (
-                  <View style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                    borderWidth: 1,
-                    borderColor: '#EF4444',
-                    paddingHorizontal: 8,
-                    paddingVertical: 4,
-                    borderRadius: 6,
-                    marginTop: 4
-                  }}>
-                    <Ionicons name="flag" size={14} color="#EF4444" style={{ marginRight: 4 }} />
-                    <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '700', flex: 1 }}>
-                      Ref. Destino: {
-                        (activeOffer as any).dropoffReferencePoint || 
-                        (activeOffer as any).destinationReferencePoint || 
-                        (activeOffer as any).referencePoint
-                      }
-                    </Text>
-                  </View>
-                )}
-              </View>
+              </TouchableOpacity>
             </View>
           </View>
-
-          <View style={styles.newRequestActions}>
-            <TouchableOpacity 
-              style={styles.rejectBtn} 
-              onPress={() => { 
-                console.log('🛑 [OFFER_DEBUG] Oferta recusada manualmente pelo motorista.');
-                Vibration.cancel(); 
-                setQueuedOfferData(null); 
-                if (rideState === 'idle') setIncomingRide(null); 
-              }} 
-              disabled={isLoading}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.rejectText}>Recusar</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={[styles.acceptBtn, isLoading && { opacity: 0.7 }]} 
-              activeOpacity={0.85} 
-              disabled={isLoading} 
-              onPress={() => {
-                if (isLoading) return;
-                if (activeOffer?.rideId && driver?.id) {
-                  const lat = Number(location?.coords?.latitude || BISSAU_CENTER_LAT);
-                  const lng = Number(location?.coords?.longitude || BISSAU_CENTER_LNG);
-                  console.log(`✅ [OFFER_DEBUG] Aceitando oferta ID ${activeOffer.rideId} nas coordenadas [${lat}, ${lng}]`);
-                  acceptRide(activeOffer.rideId, driver.id, lat, lng);
-                }
-              }}
-            >
-              <Text style={styles.acceptText}>
-                {isLoading ? 'Aceitando...' : (isRideActive ? 'Adicionar à Fila 🔄' : 'Aceitar Chamada')}
-              </Text>
-            </TouchableOpacity>
-          </View>
         </View>
-      </View>
-    </Modal>
+      </Modal>
 
-    {/* 💬 CHAT INTERNO (Sincronizado para Texto, Áudio e Push) */}
-    <ChatModal 
-      visible={isChatVisible} 
-      onClose={() => {
-        console.log('💬 [CHAT_DEBUG] Modal de Chat fechado.');
-        setIsChatVisible(false);
-      }} 
-      socket={socket} 
-      rideId={activeRideId || ''} 
-      currentRole="driver" 
-      currentUserPhoto={profileImageUrl} 
-      otherUserName={displayPassengerName} 
-      otherUserPhoto={formatImageUrl(incomingRide?.passengerPhoto)} 
-    />
+      {/* 💬 CHAT INTERNO */}
+      <ChatModal 
+        visible={isChatVisible} 
+        onClose={() => {
+          console.log('💬 [CHAT_DEBUG] Modal de Chat fechado.');
+          setIsChatVisible(false);
+        }} 
+        socket={socket} 
+        rideId={activeRideId || ''} 
+        currentRole="driver" 
+        currentUserPhoto={profileImageUrl} 
+        otherUserName={displayPassengerName} 
+        otherUserPhoto={formatImageUrl(incomingRide?.passengerPhoto)} 
+      />
 
-    {/* 🔑 MODAL DE VALIDAÇÃO DE PIN/OTP DE INÍCIO */}
-    <StartRideOtpModal 
-      visible={showOtpModal} 
-      onCancel={() => {
-        console.log('🔑 [OTP_DEBUG] Modal de inserção de PIN cancelado.');
-        setShowOtpModal(false);
-      }} 
-      onSubmitOtp={handleStartRideWithOtp} 
-    />
+      {/* 🔑 MODAL DE VALIDAÇÃO DE PIN/OTP */}
+      <StartRideOtpModal 
+        visible={showOtpModal} 
+        onCancel={() => {
+          console.log('🔑 [OTP_DEBUG] Modal de inserção de PIN cancelado.');
+          setShowOtpModal(false);
+        }} 
+        onSubmitOtp={handleStartRideWithOtp} 
+      />
 
-    {/* 🛑 MODAL DE CANCELAMENTO UNIFICADA */}
-    <CancelModal 
-      visible={showCancelModal} 
-      userType="DRIVER"
-      isPenaltyApplicable={false}
-      onClose={() => setShowCancelModal(false)} 
-      onConfirm={handleConfirmCancel} 
-    />
-  </View>
+      {/* 🛑 MODAL DE CANCELAMENTO UNIFICADA */}
+      <CancelModal 
+        visible={showCancelModal} 
+        userType="DRIVER"
+        isPenaltyApplicable={false}
+        onClose={() => setShowCancelModal(false)} 
+        onConfirm={handleConfirmCancel} 
+      />
+    </View>
   );
 }
+
 // ---------------------------------------------------------------------------
-// ESTILOS UNIFICADOS
+// ESTILOS UNIFICADOS DO MOTORISTA
 // ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0F172A',
   },
-voiceToggleHeaderBtn: {
-  width: 42,
-  height: 42,
-  borderRadius: 21,
-  alignItems: 'center',
-  justifyContent: 'center',
-  borderWidth: 1,
-  borderColor: '#334155',
-  elevation: 6,
-},
-  // MARCADORES DO MAPA
+  voiceToggleHeaderBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+    elevation: 6,
+  },
   carMarkerContainer: {
     backgroundColor: '#EAB308',
     padding: 8,
@@ -2981,31 +2968,32 @@ voiceToggleHeaderBtn: {
     fontSize: 11,
     fontWeight: '800',
   },
-chatBadgeContainer: {
-  position: 'absolute',
-  top: -6,
-  right: -6,
-  backgroundColor: '#EF4444',
-  borderRadius: 10,
-  minWidth: 20,
-  height: 20,
-  justifyContent: 'center',
-  alignItems: 'center',
-  paddingHorizontal: 4,
-  borderWidth: 2,
-  borderColor: '#0F172A',
-  elevation: 4, // Sombra no Android
-  shadowColor: '#000', // Sombra no iOS
-  shadowOffset: { width: 0, height: 2 },
-  shadowOpacity: 0.25,
-  shadowRadius: 3.84,
-},
-chatBadgeText: {
-  color: '#FFFFFF',
-  fontSize: 10,
-  fontWeight: '900',
-  textAlign: 'center',
-},
+  chatBadgeContainer: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: '#EF4444',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 2,
+    borderColor: '#0F172A',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+  },
+  chatBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+
   // SLIDING BOTTOM SHEET
   bottomSheetWrapper: {
     position: 'absolute',
