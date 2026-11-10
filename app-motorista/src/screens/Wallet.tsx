@@ -131,14 +131,20 @@ export function Wallet() {
   const dynamicTopPadding = Math.max((insets?.top || 0) + 6, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 6 : 14);
   const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 28 : 16);
 
-  // Garantia de fallback dos números caso venham nulos do backend
-  const adminOrangeNumber = financeData?.adminOrangeNumber && financeData.adminOrangeNumber.trim() !== '' 
-    ? financeData.adminOrangeNumber 
-    : '245957330790';
+  // 🟢 CORREÇÃO: Ignora números fictícios zerados vindo do backend e força o fallback correto
+  const adminOrangeNumber = 
+    financeData?.adminOrangeNumber && 
+    financeData.adminOrangeNumber.trim() !== '' && 
+    !financeData.adminOrangeNumber.includes('000000')
+      ? financeData.adminOrangeNumber 
+      : '245957330790';
 
-  const adminMtnNumber = financeData?.adminMtnNumber && financeData.adminMtnNumber.trim() !== '' 
-    ? financeData.adminMtnNumber 
-    : '245966626730';
+  const adminMtnNumber = 
+    financeData?.adminMtnNumber && 
+    financeData.adminMtnNumber.trim() !== '' && 
+    !financeData.adminMtnNumber.includes('000000')
+      ? financeData.adminMtnNumber 
+      : (financeData?.mtnNumber || financeData?.mtn || '245966626730');
 
   return (
     <View style={styles.container}>

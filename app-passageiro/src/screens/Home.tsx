@@ -2009,6 +2009,8 @@ export function Home() {
 
   const hasActiveRestoredRide = rideStatus !== 'idle' && Boolean(activeRideId);
 
+  /* SUB-BLOCO DE CÓDIGO DA HOME.TSX: RETORNO DA RENDERIZAÇÃO E MODAIS */
+
   if (!passengerLocation && !hasActiveRestoredRide && locationError) {
     return (
       <View style={[styles.loadingContainer, { paddingTop: Math.max(insets?.top || 0, 40), paddingBottom: Math.max(insets?.bottom || 0, 20) }]}>
@@ -2060,7 +2062,7 @@ export function Home() {
             <TouchableOpacity 
               style={[
                 styles.voiceToggleHeaderBtn, 
-                { backgroundColor: isVoiceAssistEnabled ? '#EAB308' : '#1E293B' }
+                { backgroundColor: isVoiceAssistEnabled ? '#EAB308' : 'rgba(30, 41, 59, 0.8)' }
               ]} 
               onPress={toggleVoiceAssist}
               activeOpacity={0.8}
@@ -2124,7 +2126,7 @@ export function Home() {
           </Mapbox.ShapeSource>
         )}
 
-        {/* 📡 ONDAS DE RADAR NO MAPA DURANTE A BUSCA */}
+        {/* 📡 ONDAS DE RADAR */}
         {rideStatus === 'searching' && pickupCoords?.latitude != null && pickupCoords?.longitude != null && (
           <Mapbox.PointAnnotation
             id="searchingRadarMarker"
@@ -2210,7 +2212,7 @@ export function Home() {
           </Mapbox.PointAnnotation>
         )}
 
-        {/* 🏎️ MOTORISTA EM MOVIMENTO (INTERPOLAÇÃO SUAVE A 60 FPS + BALÃO ETA FLUTUANTE) */}
+        {/* 🏎️ MOTORISTA EM MOVIMENTO */}
         {driverLocation?.latitude != null && driverLocation?.longitude != null && !isNaN(Number(driverLocation.longitude)) && Number(driverLocation.latitude) !== 0 && (
           <Mapbox.PointAnnotation
             key="driverMarker"
@@ -2219,7 +2221,6 @@ export function Home() {
             anchor={{ x: 0.5, y: 0.8 }}
           >
             <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-              {/* 🏷️ ETA FLUTUANTE NO PRÓPRIO MARCADOR DO VEÍCULO */}
               {driverEta !== null && driverEta > 0 && ['accepted', 'arrived', 'in_progress'].includes(rideStatus) && (
                 <View style={styles.driverEtaBubble}>
                   <Ionicons name="time" size={10} color="#0F172A" style={{ marginRight: 3 }} />
@@ -2252,7 +2253,7 @@ export function Home() {
         </View>
       )}
 
-      {/* 🛡️ CENTRAL DE SEGURANÇA FLUTUANTE NO MAPA (SAFETY SHIELD WIDGET) */}
+      {/* 🛡️ CENTRAL DE SEGURANÇA FLUTUANTE */}
       {['accepted', 'arrived', 'in_progress'].includes(rideStatus) && (
         <TouchableOpacity
           style={[styles.floatingSafetyShieldBtn, { bottom: Math.max((insets?.bottom || 0) + 315, 325) }]}
@@ -2318,7 +2319,7 @@ export function Home() {
         </View>
       )}
 
-      {/* 3. PAINEL SLIDING BOTTOM SHEET */}
+      {/* 3. PAINEL SLIDING BOTTOM SHEET TRANSLÚCIDO */}
       <KeyboardAvoidingView 
         behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
         style={styles.bottomSheetWrapper} 
@@ -2349,7 +2350,7 @@ export function Home() {
               <View style={{ width: '100%', paddingTop: 4 }}>
                 <Text style={styles.sheetTitle}>{t('where_to', 'Para onde vamos?')}</Text>
                 
-                {/* 📍 EMBARQUE E REFERÊNCIA DE PARTIDA */}
+                {/* EMBARQUE */}
                 <View style={{ marginBottom: 10 }}>
                   <TouchableOpacity style={styles.mainSearchInput} activeOpacity={0.8} onPress={() => openSearchModal('pickup')}>
                     <Ionicons name="location" size={20} color="#EAB308" style={{ marginRight: 12 }} />
@@ -2371,7 +2372,7 @@ export function Home() {
                   </View>
                 </View>
 
-                {/* 🔵 PARADA EXTRA (SE HOUVER) */}
+                {/* PARADA EXTRA */}
                 {showExtraStop && (
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
                     <TouchableOpacity style={[styles.mainSearchInput, { flex: 1, borderColor: '#3B82F6', marginBottom: 0 }]} activeOpacity={0.8} onPress={() => openSearchModal('extraStop')}>
@@ -2393,7 +2394,7 @@ export function Home() {
                   </View>
                 )}
 
-                {/* 🚩 DESTINO E REFERÊNCIA DE CHEGADA */}
+                {/* DESTINO */}
                 <View style={{ marginBottom: 10 }}>
                   <TouchableOpacity style={styles.mainSearchInput} activeOpacity={0.8} onPress={() => openSearchModal('dropoff')}>
                     <Ionicons name="flag" size={20} color="#EF4444" style={{ marginRight: 12 }} />
@@ -2430,7 +2431,6 @@ export function Home() {
                   </TouchableOpacity>
                 )}
 
-                {/* 🔒 VALIDAÇÃO OBRIGATÓRIA DE CAMPOS DE ORIGEM E DESTINO */}
                 {Boolean(pickupCoords && dropoffCoords && dropoffAddress.trim()) ? (
                   <GlowingButton
                     title={t('next_btn', 'Avançar')}
@@ -2440,7 +2440,7 @@ export function Home() {
                   />
                 ) : (
                   <TouchableOpacity 
-                    style={[styles.requestButton, { backgroundColor: '#0F172A', borderWidth: 1, borderColor: '#334155' }]} 
+                    style={[styles.requestButton, { backgroundColor: 'rgba(30, 41, 59, 0.8)', borderWidth: 1, borderColor: '#334155' }]} 
                     activeOpacity={0.8} 
                     onPress={() => openSearchModal('dropoff')}
                   >
@@ -2450,7 +2450,7 @@ export function Home() {
               </View>
             )}
 
-            {/* 💳 FORMA DE PAGAMENTO (100% DINHEIRO EM ESPÉCIE) */}
+            {/* 💳 FORMA DE PAGAMENTO E BOTÃO CANCELAR/VOLTAR */}
             {rideStatus === 'idle' && bookingStep === 'PAYMENT' && (
               <View style={{ width: '100%' }}>
                 <Text style={styles.sectionLabel}>{t('payment_method', 'Forma de Pagamento')}</Text>
@@ -2461,7 +2461,7 @@ export function Home() {
                       styles.paymentBtn, 
                       styles.paymentBtnActive, 
                       { 
-                        backgroundColor: '#1E293B', 
+                        backgroundColor: 'rgba(30, 41, 59, 0.8)', 
                         borderColor: '#10B981', 
                         borderWidth: 1,
                         paddingVertical: 14 
@@ -2490,15 +2490,17 @@ export function Home() {
                   </TouchableOpacity>
                 </View>
 
+                {/* 🔴 BOTÕES DE AÇÃO COM BOTÃO DE CANCELAR */}
                 <View style={styles.actionRow}>
                   <TouchableOpacity 
                     style={styles.cancelButtonOutline} 
-                    onPress={() => setBookingStep('SERVICE_AND_PRICE')}
+                    onPress={() => setBookingStep('ADDRESS')}
+                    activeOpacity={0.8}
                   >
-                    <Text style={styles.cancelButtonOutlineText}>{t('back_btn', 'Voltar')}</Text>
+                    <Text style={styles.cancelButtonOutlineText}>Cancelar</Text>
                   </TouchableOpacity>
 
-                  <View style={{ flex: 1, marginLeft: 10 }}>
+                  <View style={{ flex: 1.5 }}>
                     <GlowingButton
                       title={t('request_now_btn', 'Pedir Agora')}
                       onPress={handleInitialRequestRide}
@@ -2510,7 +2512,7 @@ export function Home() {
               </View>
             )}
 
-            {/* 🔑 PIN DE EMBARQUE DE SEGURANÇA */}
+            {/* 🔑 PIN DE EMBARQUE */}
             {(rideStatus === 'accepted' || rideStatus === 'arrived') && Boolean(activeOtpPin) && (
               <View style={styles.pinCardContainer}>
                 <View style={styles.pinHeader}>
@@ -2528,7 +2530,7 @@ export function Home() {
               </View>
             )}
 
-            {/* 📡 STATUS DE BUSCA COM RADAR MODERNO */}
+            {/* 📡 BUSCANDO MOTORISTA */}
             {rideStatus === 'searching' && (
               <View style={styles.statusBox}>
                 <View style={{ height: 90, justifyContent: 'center', alignItems: 'center', marginBottom: 12 }}>
@@ -2562,11 +2564,11 @@ export function Home() {
               </View>
             )}
 
-            {/* 📊 PAINEL PROFISSIONAL DE ACOMPANHAMENTO DA CORRIDA */}
+            {/* 📊 ACOMPANHAMENTO DA CORRIDA */}
             {['accepted', 'arrived', 'in_progress'].includes(rideStatus) && driverInfo && (
               <View style={styles.activeRideContainer}>
                 
-                {/* STATUS & TEMPO DE CHEGADA */}
+                {/* HEADER DE STATUS E VALOR */}
                 <View style={styles.activeRideHeader}>
                   <View style={styles.statusPulseBox}>
                     <View style={styles.statusPulseDot} />
@@ -2579,7 +2581,7 @@ export function Home() {
                     </Text>
 
                     {estimatedDistance ? (
-                      <View style={{ backgroundColor: '#0F172A', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, marginTop: 4, alignSelf: 'flex-start' }}>
+                      <View style={{ backgroundColor: 'rgba(15, 23, 42, 0.8)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, marginTop: 4, alignSelf: 'flex-start' }}>
                         <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: 'bold' }}>
                           📍 {estimatedDistance.toFixed(1)} km
                         </Text>
@@ -2595,7 +2597,7 @@ export function Home() {
                   </View>
                 </View>
 
-                {/* ITINERÁRIO DA VIAGEM */}
+                {/* ITINERÁRIO */}
                 <View style={styles.routeTimelineContainer}>
                   <Text style={styles.routeTimelineHeaderTitle}>ITINERÁRIO DA VIAGEM</Text>
                   
@@ -2639,7 +2641,7 @@ export function Home() {
                   </View>
                 </View>
 
-                {/* DADOS DO MOTORISTA E VEÍCULO */}
+                {/* DADOS DO MOTORISTA */}
                 <View style={styles.driverCardCompact}>
                   <Image 
                     source={{ uri: driverInfo.photoUrl || driverInfo.profilePicture || 'https://via.placeholder.com/100' }} 
@@ -2708,7 +2710,7 @@ export function Home() {
         </Animated.View>
       </KeyboardAvoidingView>
 
-      {/* 🚗 CARTÃO DE RESUMO ACESSÍVEL PARA VOZ */}
+      {/* 🏎️ CARTÃO DE RESUMO PARA VOZ */}
       {rideStatus !== 'idle' && (
         <View style={styles.driverInfoCard} accessibilityRole="summary">
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -2737,15 +2739,15 @@ export function Home() {
         </View>
       )}
 
-      {/* MODAL DE SELEÇÃO DE VEÍCULO E SERVIÇO */}
+      {/* 🚕 MODAL DE SELEÇÃO DE VEÍCULO TRANSLÚCIDO COM BOTÃO CANCELAR */}
       <Modal
         visible={rideStatus === 'idle' && bookingStep === 'SERVICE_AND_PRICE'}
         animationType="slide"
-        transparent={false}
+        transparent={true}
         onRequestClose={() => setBookingStep('ADDRESS')}
       >
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#0F172A' }}>
-          <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
+        <SafeAreaView style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.88)' }}>
+          <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
           <View style={{
             flexDirection: 'row',
@@ -2753,12 +2755,12 @@ export function Home() {
             paddingHorizontal: 16,
             paddingVertical: 14,
             borderBottomWidth: 1,
-            borderBottomColor: '#1E293B',
-            backgroundColor: '#0F172A'
+            borderBottomColor: 'rgba(255,255,255,0.1)',
+            backgroundColor: 'rgba(15, 23, 42, 0.92)'
           }}>
             <TouchableOpacity 
               onPress={() => setBookingStep('ADDRESS')}
-              style={{ padding: 8, borderRadius: 20, backgroundColor: '#1E293B', marginRight: 12 }}
+              style={{ padding: 8, borderRadius: 20, backgroundColor: 'rgba(30, 41, 59, 0.8)', marginRight: 12 }}
             >
               <Ionicons name="arrow-back" size={22} color="#EAB308" />
             </TouchableOpacity>
@@ -2851,24 +2853,37 @@ export function Home() {
               </View>
             )}
 
+            {/* 🔴 BARRA INFERIOR DE ESCOLHA DE VEÍCULO COM BOTÃO CANCELAR */}
             <View style={{
               paddingVertical: 16,
               borderTopWidth: 1,
-              borderTopColor: '#1E293B',
-              backgroundColor: '#0F172A'
+              borderTopColor: 'rgba(255,255,255,0.1)',
+              backgroundColor: 'transparent',
+              flexDirection: 'row',
+              gap: 10
             }}>
-              <GlowingButton
-                title="Continuar para Pagamento ➔"
-                onPress={() => setBookingStep('PAYMENT')}
-                isGlowEnabled={isBorderGlowEnabled}
-                style={{ height: 52 }}
-              />
+              <TouchableOpacity 
+                style={styles.cancelButtonOutline} 
+                onPress={() => setBookingStep('ADDRESS')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.cancelButtonOutlineText}>Cancelar</Text>
+              </TouchableOpacity>
+
+              <View style={{ flex: 1.5 }}>
+                <GlowingButton
+                  title="Continuar para Pagamento ➔"
+                  onPress={() => setBookingStep('PAYMENT')}
+                  isGlowEnabled={isBorderGlowEnabled}
+                  style={{ height: 52 }}
+                />
+              </View>
             </View>
           </ScrollView>
         </SafeAreaView>
       </Modal>
 
-      {/* MODAL DE IDIOMAS */}
+      {/* 🌐 MODAL DE IDIOMAS TRANSLÚCIDO */}
       <Modal visible={langModalVisible} transparent animationType="slide" onRequestClose={() => setLangModalVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
           <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
@@ -2900,7 +2915,7 @@ export function Home() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* MODAL DE PERMISSÃO DE GPS */}
+      {/* 📍 MODAL DE PERMISSÃO DE GPS TRANSLÚCIDO */}
       <Modal visible={isLocationSettingsVisible} animationType="slide" transparent onRequestClose={() => setIsLocationSettingsVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
           <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
@@ -2937,7 +2952,7 @@ export function Home() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* 📑 MENU LATERAL DRAWER COM TOGGLE DE RAIO LUMINOSO */}
+      {/* 📑 MENU LATERAL DRAWER TRANSLÚCIDO */}
       <Modal visible={isMenuVisible} animationType="fade" transparent onRequestClose={() => setIsMenuVisible(false)}>
         <TouchableOpacity style={styles.menuOverlay} activeOpacity={1} onPress={() => setIsMenuVisible(false)}>
           <View style={[styles.menuDrawer, { paddingTop: Math.max((insets?.top || 0) + 16, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 20), paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
@@ -2954,7 +2969,6 @@ export function Home() {
             </View>
 
             <View style={styles.menuItems}>
-              {/* ⚡ TOGGLE DE EFEITO RAIO LUMINOSO */}
               <TouchableOpacity 
                 style={styles.menuItem} 
                 onPress={toggleBorderGlow} 
@@ -2980,7 +2994,6 @@ export function Home() {
                 </View>
               </TouchableOpacity>
 
-              {/* 🎙️ ASSISTÊNCIA POR VOZ */}
               <TouchableOpacity 
                 style={styles.menuItem} 
                 onPress={toggleVoiceAssist} 
@@ -3072,11 +3085,11 @@ export function Home() {
         </TouchableOpacity>
       </Modal>
 
-      {/* 🔀 MODAL DE BUSCA DE ENDEREÇO MAPBOX E HÍBRIDO */}
+      {/* 🔀 MODAL DE BUSCA TRANSLÚCIDO MAPBOX */}
       <Modal 
         visible={isSearchModalVisible} 
         animationType="slide" 
-        transparent={false} 
+        transparent={true} 
         onRequestClose={() => setIsSearchModalVisible(false)}
       >
         <SafeAreaView style={styles.searchModalContainer}>
@@ -3431,7 +3444,7 @@ export function Home() {
         </SafeAreaView>
       </Modal>
 
-      {/* 👤 MODAL: VIAGEM PARA OUTRA PESSOA */}
+      {/* 👤 MODAL: VIAGEM PARA OUTRA PESSOA TRANSLÚCIDO */}
       <Modal
         visible={isGuestModalVisible}
         animationType="slide"
@@ -3548,7 +3561,7 @@ export function Home() {
   );
 }
 
-// 🎨 ESTILOS UNIFICADOS PROFISSIONAIS E ENTERPRISE (SISTEMA NÔ BAI 245)
+// 🎨 ESTILOS UNIFICADOS COM GLASSMORPHISM E TRANSPARÊNCIA (SISTEMA NÔ BAI 245)
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -3586,6 +3599,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.15)',
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
   },
   headerContent: {
     flexDirection: 'row',
@@ -3621,12 +3635,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   langHeaderBtn: {
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(30, 41, 59, 0.8)',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   langHeaderBtnText: {
     color: '#EAB308',
@@ -3637,9 +3651,11 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(30, 41, 59, 0.8)',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   radarWaveCircle: {
     position: 'absolute',
@@ -3654,7 +3670,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#0F172A',
+    backgroundColor: 'rgba(15, 23, 42, 0.9)',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
@@ -3694,7 +3710,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#0F172A',
+    backgroundColor: 'rgba(15, 23, 42, 0.9)',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
@@ -3732,7 +3748,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#0F172A',
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1.5,
@@ -3746,11 +3762,11 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#0F172A',
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255,255,255,0.15)',
     elevation: 6,
     zIndex: 15,
   },
@@ -3766,12 +3782,12 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+    backgroundColor: 'rgba(15, 23, 42, 0.82)',
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255,255,255,0.12)',
     gap: 8,
   },
   favoriteIconBg: {
@@ -3792,7 +3808,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 16,
     right: 16,
-    backgroundColor: '#0F172A',
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
     borderRadius: 16,
     padding: 12,
     flexDirection: 'row',
@@ -3815,7 +3831,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   pinCodeBox: {
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(30, 41, 59, 0.85)',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
@@ -3836,12 +3852,12 @@ const styles = StyleSheet.create({
     zIndex: 25,
   },
   bottomSheet: {
-    backgroundColor: '#0F172A',
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingHorizontal: 16,
     borderTopWidth: 1,
-    borderTopColor: '#1E293B',
+    borderColor: 'rgba(255,255,255,0.12)',
     elevation: 12,
   },
   dragHandlerArea: {
@@ -3852,7 +3868,7 @@ const styles = StyleSheet.create({
   dragIndicator: {
     width: 36,
     height: 4,
-    backgroundColor: '#334155',
+    backgroundColor: 'rgba(255,255,255,0.3)',
     borderRadius: 2,
   },
   sheetTitle: {
@@ -3864,12 +3880,12 @@ const styles = StyleSheet.create({
   mainSearchInput: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(30, 41, 59, 0.8)',
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   mainSearchText: {
     color: '#F8FAFC',
@@ -3880,9 +3896,9 @@ const styles = StyleSheet.create({
   referenceInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0F172A',
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255,255,255,0.1)',
     borderRadius: 10,
     paddingHorizontal: 10,
     marginTop: 6,
@@ -3930,23 +3946,26 @@ const styles = StyleSheet.create({
   actionRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 10,
   },
   cancelButtonOutline: {
-    borderWidth: 1,
+    flex: 1,
+    borderWidth: 1.5,
     borderColor: '#EF4444',
     borderRadius: 14,
     paddingHorizontal: 16,
     paddingVertical: 12,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
   },
   cancelButtonOutlineText: {
     color: '#EF4444',
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   pinCardContainer: {
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(30, 41, 59, 0.85)',
     borderRadius: 16,
     padding: 14,
     borderWidth: 1,
@@ -3976,7 +3995,7 @@ const styles = StyleSheet.create({
   pinDigitBox: {
     flex: 1,
     height: 44,
-    backgroundColor: '#0F172A',
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
     borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
@@ -4028,13 +4047,13 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   priceBadgeHeader: {
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(30, 41, 59, 0.85)',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 10,
     alignItems: 'flex-end',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   priceBadgeLabel: {
     color: '#94A3B8',
@@ -4047,10 +4066,12 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   routeTimelineContainer: {
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(30, 41, 59, 0.8)',
     borderRadius: 16,
     padding: 12,
     gap: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
   routeTimelineHeaderTitle: {
     color: '#64748B',
@@ -4088,7 +4109,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
     paddingTop: 6,
     borderTopWidth: 1,
-    borderTopColor: '#334155',
+    borderTopColor: 'rgba(255,255,255,0.1)',
   },
   paymentMethodChipText: {
     color: '#EAB308',
@@ -4098,11 +4119,11 @@ const styles = StyleSheet.create({
   driverCardCompact: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(30, 41, 59, 0.85)',
     padding: 12,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   driverAvatarCompact: {
     width: 46,
@@ -4120,7 +4141,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   plateBadgeCompact: {
-    backgroundColor: '#0F172A',
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
@@ -4138,13 +4159,13 @@ const styles = StyleSheet.create({
   },
   actionBtnSecondary: {
     flex: 1,
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(30, 41, 59, 0.85)',
     paddingVertical: 10,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   actionBtnText: {
     fontSize: 11,
@@ -4203,12 +4224,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(30, 41, 59, 0.8)',
     paddingVertical: 10,
     borderRadius: 12,
     gap: 6,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   serviceTypeActive: {
     backgroundColor: '#EAB308',
@@ -4225,15 +4246,15 @@ const styles = StyleSheet.create({
   categoryCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(30, 41, 59, 0.8)',
     padding: 12,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   categoryCardActive: {
     borderColor: '#EAB308',
-    backgroundColor: 'rgba(234, 179, 8, 0.08)',
+    backgroundColor: 'rgba(234, 179, 8, 0.15)',
   },
   categoryTextWrapper: {
     flex: 1,
@@ -4260,7 +4281,7 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: 'rgba(0,0,0,0.65)',
     justifyContent: 'flex-end',
   },
   modalOverlayInner: {
@@ -4268,12 +4289,12 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContainer: {
-    backgroundColor: '#0F172A',
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 20,
     borderTopWidth: 1,
-    borderTopColor: '#1E293B',
+    borderColor: 'rgba(255,255,255,0.15)',
   },
   modalTitle: {
     color: '#F8FAFC',
@@ -4284,7 +4305,7 @@ const styles = StyleSheet.create({
   langOption: {
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
+    borderBottomColor: 'rgba(255,255,255,0.1)',
   },
   langOptionText: {
     color: '#F8FAFC',
@@ -4297,7 +4318,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   locationModalCard: {
-    backgroundColor: '#0F172A',
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 24,
@@ -4326,20 +4347,20 @@ const styles = StyleSheet.create({
   },
   menuOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
   menuDrawer: {
     width: '80%',
     height: '100%',
-    backgroundColor: '#0F172A',
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
     paddingHorizontal: 20,
     borderRightWidth: 1,
-    borderRightColor: '#1E293B',
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   menuHeader: {
     paddingVertical: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
+    borderBottomColor: 'rgba(255,255,255,0.1)',
   },
   avatarPlaceholderLarge: {
     width: 60,
@@ -4376,7 +4397,7 @@ const styles = StyleSheet.create({
   },
   menuDivider: {
     height: 1,
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(255,255,255,0.1)',
     marginVertical: 10,
   },
   searchModalContainer: {
@@ -4390,7 +4411,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
+    borderBottomColor: 'rgba(255,255,255,0.12)',
   },
   backButton: {
     padding: 6,
@@ -4398,12 +4419,12 @@ const styles = StyleSheet.create({
   passengerSelector: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(30, 41, 59, 0.85)',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   passengerSelectorText: {
     color: '#EAB308',
@@ -4418,7 +4439,7 @@ const styles = StyleSheet.create({
   mapboxSearchInputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(30, 41, 59, 0.85)',
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -4440,7 +4461,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
+    borderBottomColor: 'rgba(255,255,255,0.1)',
     gap: 12,
   },
   savedIconCircle: {
@@ -4464,7 +4485,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
+    borderBottomColor: 'rgba(255,255,255,0.1)',
   },
   recentText: {
     color: '#CBD5E1',
@@ -4475,7 +4496,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
+    borderBottomColor: 'rgba(255,255,255,0.1)',
   },
   searchResultText: {
     fontSize: 14,
@@ -4485,10 +4506,10 @@ const styles = StyleSheet.create({
   phoneInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(30, 41, 59, 0.85)',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   phoneInput: {
     flex: 1,

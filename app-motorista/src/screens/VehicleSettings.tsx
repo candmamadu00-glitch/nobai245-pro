@@ -237,17 +237,23 @@ export function VehicleSettings() {
 
           <View style={styles.infoRow}>
             <Text style={styles.label}>Marca / Modelo</Text>
-            <Text style={styles.value}>{(driver as any)?.vehicleBrand || 'Não informado'}</Text>
+            <Text style={styles.value}>
+              {(driver as any)?.vehicleBrand || (driver as any)?.carModel || (driver as any)?.vehicleModel || (driver as any)?.vehicle?.brand || 'Não informado'}
+            </Text>
           </View>
 
           <View style={styles.infoRow}>
             <Text style={styles.label}>Cor do Veículo</Text>
-            <Text style={styles.value}>{(driver as any)?.vehicleColor || 'Não informada'}</Text>
+            <Text style={styles.value}>
+              {(driver as any)?.vehicleColor || (driver as any)?.carColor || (driver as any)?.color || (driver as any)?.vehicle?.color || 'Não informada'}
+            </Text>
           </View>
 
           <View style={[styles.infoRow, { borderBottomWidth: 0, paddingBottom: 0 }]}>
             <Text style={styles.label}>Placa Cadastrada</Text>
-            <Text style={styles.plateBadge}>{driver?.vehiclePlate || 'N/A'}</Text>
+            <Text style={styles.plateBadge}>
+              {driver?.vehiclePlate || (driver as any)?.licensePlate || (driver as any)?.plate || 'N/A'}
+            </Text>
           </View>
         </View>
 
@@ -262,7 +268,9 @@ export function VehicleSettings() {
 
           <View style={[styles.infoRow, { borderBottomWidth: 0, paddingBottom: 0 }]}>
             <Text style={styles.label}>Nº do Documento</Text>
-            <Text style={styles.value}>{(driver as any)?.documentNumber || 'Não informado'}</Text>
+            <Text style={styles.value}>
+              {(driver as any)?.documentNumber || (driver as any)?.licenseNumber || (driver as any)?.idCardNumber || (driver as any)?.nif || (driver as any)?.documentId || 'Não informado'}
+            </Text>
           </View>
 
           <View style={styles.statusBox}>
