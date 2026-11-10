@@ -9,6 +9,17 @@ const isExpoGo =
   Constants.executionEnvironment === ExecutionEnvironment.StoreClient ||
   (Constants as any).appOwnership === 'expo';
 
+// 🟢 CORREÇÃO 1: Exibe alertas, banners e som mesmo com o app do motorista aberto
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
+
 export async function registerAndSendPushToken(deviceId?: string, accessToken?: string): Promise<string | null> {
   if (isExpoGo || !Device.isDevice) return null;
 
@@ -17,6 +28,7 @@ export async function registerAndSendPushToken(deviceId?: string, accessToken?: 
     if (!driverStored && !accessToken) return null;
 
     if (Platform.OS === 'android') {
+      // Canal de Nova Corrida (Alarme Alto)
       await Notifications.setNotificationChannelAsync('new-ride-alarm', {
         name: 'Chamada de Nova Corrida',
         importance: Notifications.AndroidImportance.MAX,
@@ -27,9 +39,19 @@ export async function registerAndSendPushToken(deviceId?: string, accessToken?: 
         bypassDnd: true,
       });
 
+      // Canal de Atualizações Gerais
       await Notifications.setNotificationChannelAsync('ride-updates', {
         name: 'Atualizações da Corrida',
         importance: Notifications.AndroidImportance.HIGH,
+      });
+
+      // 🟢 CORREÇÃO 2: Canal de Mensagens do Chat exclusivo para o Motorista
+      await Notifications.setNotificationChannelAsync('chat-messages', {
+        name: 'Mensagens do Chat',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 200, 200, 200],
+        lightColor: '#EAB308',
+        sound: 'default',
       });
     }
 
@@ -55,7 +77,7 @@ export async function registerAndSendPushToken(deviceId?: string, accessToken?: 
       await api.put('/drivers/device-token', {
         deviceToken: pushToken,
         deviceId,
-      });
+      }).catch(() => {});
       return pushToken;
     }
   } catch (err) {

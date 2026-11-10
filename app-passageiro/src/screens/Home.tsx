@@ -546,6 +546,47 @@ export function Home() {
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     AsyncStorage.removeItem(STORAGE_RIDE_KEY).catch(() => {});
   }, []);
+  // 🧹 Reset Completo do Fluxo da Corrida (Retorna à tela inicial limpa "Para onde vamos?")
+const handleFullCancelAndReset = useCallback(() => {
+  // 1. Limpa locais de destino e paradas
+  setDropoffCoords(null);
+  setDropoffAddress('');
+  setDropoffReferencePoint('');
+  setPickupReferencePoint('');
+  setExtraStopCoords(null);
+  setExtraStopAddress('');
+  setExtraStopReferencePoint('');
+  setShowExtraStop(false);
+
+  // 2. Limpa rota calculada e estimativa de valores
+  setRouteGeometry(null);
+  setEstimatedPrice(null);
+  setEstimatedDistance(null);
+
+  // 3. Reseta status de busca, corrida e etapas
+  setActiveRideId(null);
+  activeRideIdRef.current = null;
+  setRideStatus('idle');
+  setBookingStep('ADDRESS');
+  setDriverInfo(null);
+  setDriverLocation(null);
+  setDriverEta(null);
+  setStartOtp('');
+  setIsSearchingRide(false);
+
+  // 4. Limpa temporizadores e armazenamento local
+  if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+  AsyncStorage.removeItem(STORAGE_RIDE_KEY).catch(() => {});
+
+  // 5. Centraliza a câmera no passageiro se a localização estiver disponível
+  if (passengerLocation?.coords && cameraRef.current) {
+    cameraRef.current.setCamera({
+      centerCoordinate: [passengerLocation.coords.longitude, passengerLocation.coords.latitude],
+      zoomLevel: 15,
+      animationDuration: 800,
+    });
+  }
+}, [passengerLocation]);
 // 🟢 VEHICLE_OPTIONS movido para dentro do componente com useMemo
   const VEHICLE_OPTIONS = useMemo(() => [
     { 
@@ -1613,6 +1654,7 @@ export function Home() {
       }
     };
 
+    // 🟢 OUVINTES DE SOCKET (COM SUPORTE MULTI-EVENTO PARA CHAT)
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on('passenger:state_recovered', handleStateRecovered);
@@ -1624,7 +1666,12 @@ export function Home() {
     socket.on('ride:finished', handleRideFinished);
     socket.on('ride:completed', handleRideFinished);
     socket.on('ride:cancelled', handleRideCancelled);
+    
+    // 💬 OUVINTES DE CHAT GARANTIDOS (RECEIVE, MESSAGE E NEW_MESSAGE)
+    socket.on('chat:receive_message', handleIncomingChatMessage);
     socket.on('chat:message', handleIncomingChatMessage);
+    socket.on('chat:new_message', handleIncomingChatMessage);
+    
     socket.on('ride:no_drivers_found', handleNoDriversFound);
     socket.on('ride:price_calculated', handlePriceCalculated);
     socket.on('ride:inaccessible_location', handleInaccessibleLocationAlert);
@@ -1641,10 +1688,16 @@ export function Home() {
       socket.off('ride:finished', handleRideFinished);
       socket.off('ride:completed', handleRideFinished);
       socket.off('ride:cancelled', handleRideCancelled);
+      
+      // 💬 LIMPEZA DOS OUVINTES DE CHAT
+      socket.off('chat:receive_message', handleIncomingChatMessage);
       socket.off('chat:message', handleIncomingChatMessage);
+      socket.off('chat:new_message', handleIncomingChatMessage);
+      
       socket.off('ride:no_drivers_found', handleNoDriversFound);
       socket.off('ride:price_calculated', handlePriceCalculated);
       socket.off('ride:inaccessible_location', handleInaccessibleLocationAlert);
+      
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     };
   }, [
@@ -1826,23 +1879,25 @@ export function Home() {
   };
 
   const handleConfirmCancel = useCallback((reason: string) => {
-    setShowCancelModal(false);
+  setShowCancelModal(false);
 
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+  if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
-    if (activeRideId && user?.id) {
-      cancelRideByPassenger(activeRideId, user.id, reason);
-    }
-    
-    AsyncStorage.multiRemove([
-      '@nobai245:active_ride_id',
-      '@nobai245:active_ride_data',
-      '@bai245:active_ride',
-      STORAGE_RIDE_KEY
-    ]).catch(() => {});
+  // Se houver uma corrida ativa no banco, cancela via Socket/API
+  if (activeRideId && user?.id) {
+    cancelRideByPassenger(activeRideId, user.id, reason);
+  }
 
-    resetRideState();
-  }, [activeRideId, user?.id, resetRideState]);
+  AsyncStorage.multiRemove([
+    '@nobai245:active_ride_id',
+    '@nobai245:active_ride_data',
+    '@bai245:active_ride',
+    STORAGE_RIDE_KEY
+  ]).catch(() => {});
+
+  // Executa o reset completo da tela
+  handleFullCancelAndReset();
+}, [activeRideId, user?.id, handleFullCancelAndReset]);
 
   const onMapRegionDidChange = useCallback(async (feature: any) => {
     setIsMapMoving(false);
@@ -2039,25 +2094,43 @@ export function Home() {
       <View style={[styles.floatingHeader, { top: topHeaderInset }]}>
         <BlurView intensity={75} tint="dark" style={styles.headerBlurWrapper}>
           <View style={styles.headerContent}>
-            <TouchableOpacity 
-              style={styles.headerUserInfo} 
-              activeOpacity={0.8}
-              onPress={() => navigation.navigate('Profile')}
-            >
-              <View style={styles.avatarPlaceholder}>
-                {user?.profilePicture ? (
-                  <Image 
-                    source={{ uri: formatPhotoUrl(user.profilePicture) }} 
-                    style={{ width: '100%', height: '100%', borderRadius: 50 }} 
-                  />
-                ) : (
-                  <Ionicons name="person" size={18} color="#0F172A" />
-                )}
-              </View>
-              <Text style={styles.greetingText}>
-                {t('greeting', 'Olá')}, {user?.fullName ? user.fullName.split(' ')[0] : t('passenger', 'Passageiro')}
-              </Text>
-            </TouchableOpacity>
+            
+            {/* 🟢 VOLTAR (SE ESTIVER ESCOLHENDO VEÍCULO OU PAGAMENTO) OU PERFIL DO PASSAGEIRO */}
+            {(bookingStep === 'SERVICE_AND_PRICE' || bookingStep === 'PAYMENT') ? (
+              <TouchableOpacity 
+                style={styles.backButton} 
+                onPress={() => {
+                  if (bookingStep === 'SERVICE_AND_PRICE' || bookingStep === 'PAYMENT') {
+                    handleFullCancelAndReset();
+                  } else if (navigation.canGoBack()) {
+                    navigation.goBack();
+                  }
+                }}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="arrow-back" size={24} color="#FFF" />
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity 
+                style={styles.headerUserInfo} 
+                activeOpacity={0.8}
+                onPress={() => navigation.navigate('Profile')}
+              >
+                <View style={styles.avatarPlaceholder}>
+                  {user?.profilePicture ? (
+                    <Image 
+                      source={{ uri: formatPhotoUrl(user.profilePicture) }} 
+                      style={{ width: '100%', height: '100%', borderRadius: 50 }} 
+                    />
+                  ) : (
+                    <Ionicons name="person" size={18} color="#0F172A" />
+                  )}
+                </View>
+                <Text style={styles.greetingText}>
+                  {t('greeting', 'Olá')}, {user?.fullName ? user.fullName.split(' ')[0] : t('passenger', 'Passageiro')}
+                </Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity 
               style={[
@@ -2493,12 +2566,12 @@ export function Home() {
                 {/* 🔴 BOTÕES DE AÇÃO COM BOTÃO DE CANCELAR */}
                 <View style={styles.actionRow}>
                   <TouchableOpacity 
-                    style={styles.cancelButtonOutline} 
-                    onPress={() => setBookingStep('ADDRESS')}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.cancelButtonOutlineText}>Cancelar</Text>
-                  </TouchableOpacity>
+               style={styles.cancelButtonOutline} 
+                    onPress={handleFullCancelAndReset}
+                activeOpacity={0.8}
+              >
+              <Text style={styles.cancelButtonOutlineText}>Cancelar</Text>
+              </TouchableOpacity>
 
                   <View style={{ flex: 1.5 }}>
                     <GlowingButton
@@ -2701,9 +2774,12 @@ export function Home() {
                   </TouchableOpacity>
                 </View>
 
-                <TouchableOpacity style={styles.cancelRideLink} onPress={() => setShowCancelModal(true)} activeOpacity={0.7}>
-                  <Text style={styles.cancelRideLinkText}>Cancelar Corrida</Text>
-                </TouchableOpacity>
+                <TouchableOpacity 
+                       style={styles.cancelRideLink} 
+                        onPress={() => setShowCancelModal(true)}
+                        >
+                      <Text style={styles.cancelRideLinkText}>Cancelar Viagem</Text>
+                       </TouchableOpacity>
               </View>
             )}
           </ScrollView>
@@ -3530,17 +3606,20 @@ export function Home() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* 💬 CHATMODAL */}
-      <ChatModal 
-        visible={isChatVisible} 
-        onClose={() => setIsChatVisible(false)} 
-        socket={socket} 
-        rideId={activeRideId || ''} 
-        currentRole="passenger" 
-        currentUserPhoto={user?.profilePicture ? formatPhotoUrl(user.profilePicture) : null} 
-        otherUserName={driverInfo?.name || 'Motorista'} 
-        otherUserPhoto={driverInfo?.photoUrl || driverInfo?.profilePicture} 
-      />
+      {/* 💬 CHATMODAL DO PASSAGEIRO */}
+<ChatModal 
+  visible={isChatVisible} 
+  onClose={() => {
+    setIsChatVisible(false);
+    setUnreadCount(0); // 🟢 Zera o badge de não lidas ao fechar
+  }} 
+  socket={socket} 
+  rideId={activeRideId || ''} 
+  currentRole="passenger" 
+  currentUserPhoto={user?.profilePicture ? formatPhotoUrl(user.profilePicture) : null} 
+  otherUserName={driverInfo?.name || 'Motorista'} 
+  otherUserPhoto={driverInfo?.photoUrl || driverInfo?.profilePicture} 
+/>
 
       {/* 🛑 MODAL DE CANCELAMENTO */}
       <CancelModal
@@ -3549,7 +3628,7 @@ export function Home() {
         isPenaltyApplicable={checkPenaltyApplicable()}
         onClose={handleCloseCancelModal} 
         onConfirm={handleConfirmCancel} 
-      />
+      /> 
 
       {/* ⭐ MODAL DE AVALIAÇÃO COM GORJETA */}
       <RatingModal

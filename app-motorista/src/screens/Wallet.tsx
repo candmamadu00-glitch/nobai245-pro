@@ -137,7 +137,7 @@ export function Wallet() {
     financeData.adminOrangeNumber.trim() !== '' && 
     !financeData.adminOrangeNumber.includes('000000')
       ? financeData.adminOrangeNumber 
-      : '245957330790';
+      : '245957341832';
 
   const adminMtnNumber = 
     financeData?.adminMtnNumber && 

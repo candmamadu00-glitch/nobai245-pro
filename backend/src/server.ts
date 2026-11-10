@@ -1662,98 +1662,86 @@ io.on('connection', (socket: any) => {
     }
   });
 
-  // =============================================================================
-  // 💬 EVENTO DE CHAT UNIFICADO (TEXTO, ÁUDIO E PUSH NOTIFICATION)
-  // =============================================================================
-  handleSocketEvent(socket, 'chat:send_message', async (data) => {
-    try {
-      const { rideId, text, audioUrl, audioDuration, id } = data || {};
-      const senderRole = (data?.sender || data?.senderRole || 'passenger').toLowerCase();
+ // 🟢 NO BACKEND: backend/src/server.ts (ou socket handler)
+handleSocketEvent(socket, 'chat:send_message', async (data) => {
+  try {
+    const { rideId, text, audioUrl, audioDuration, id } = data || {};
+    const senderRole = (data?.sender || data?.senderRole || 'passenger').toLowerCase();
 
-      if (!rideId || !isUuid(rideId)) return;
+    if (!rideId || !isUuid(rideId)) return;
 
-      console.log(`💬 [CHAT_DEBUG] Mensagem enviada na corrida ${rideId} por ${senderRole}: "${text || (audioUrl ? '[ÁUDIO]' : '')}"`);
+    const ride = await prisma.ride.findUnique({
+      where: { id: rideId },
+      include: { driver: true, passenger: true }
+    });
 
-      const ride = await prisma.ride.findUnique({
-        where: { id: rideId },
-        include: { driver: true, passenger: true }
-      });
+    if (!ride) return;
 
-      if (!ride) {
-        console.warn(`⚠️ [CHAT_WARN] Corrida ID ${rideId} não foi encontrada para registrar mensagem.`);
-        return;
-      }
+    const messageText = text || (audioUrl ? '🎤 Mensagem de áudio' : '');
+    const senderTypeEnum = senderRole === 'driver' ? 'DRIVER' : 'PASSENGER';
+    const senderUserId = socket.data.user?.id || (senderRole === 'driver' ? ride.driverId : ride.passengerId);
 
-      const messageText = text || (audioUrl ? '🎤 Mensagem de áudio' : '');
-      const senderTypeEnum = senderRole === 'driver' ? 'DRIVER' : 'PASSENGER';
-      const senderUserId = socket.data.user?.id || (senderRole === 'driver' ? ride.driverId : ride.passengerId);
+    const messagePayload = {
+      id: id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      rideId,
+      sender: senderRole,
+      senderType: senderTypeEnum,
+      text: text || '',
+      message: text || '',
+      audioUrl: audioUrl || null,
+      audioDuration: audioDuration || 0,
+      createdAt: new Date().toISOString()
+    };
 
-      const messagePayload = {
-        id: id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-        rideId,
-        sender: senderRole,
-        senderType: senderTypeEnum,
-        text: text || '',
-        message: text || '',
-        audioUrl: audioUrl || null,
-        audioDuration: audioDuration || 0,
-        createdAt: new Date().toISOString()
-      };
-
-      if (senderUserId) {
-        prisma.rideChatMessage.create({
-          data: {
-            rideId,
-            senderId: senderUserId,
-            senderType: senderTypeEnum,
-            message: messageText
-          }
-        }).catch(err => console.error('❌ [CHAT_DB_ERROR] Falha ao persistir mensagem no banco:', err?.message));
-      }
-
-      const targetRooms = [
-        rideId,
-        `ride_${rideId}`,
-        ride.passengerId,
-        `passenger_${ride.passengerId}`,
-        `passenger:${ride.passengerId}`,
-        ride.driverId,
-        `driver_${ride.driverId}`,
-        `driver:${ride.driverId}`
-      ].filter(Boolean) as string[];
-
-      targetRooms.forEach(room => {
-        io.to(room).emit('chat:receive_message', messagePayload);
-        io.to(room).emit('chat:message', messagePayload);
-      });
-
-      const recipientToken = senderRole === 'driver'
-        ? ride.passenger?.deviceToken
-        : ride.driver?.deviceToken;
-
-      const senderName = senderRole === 'driver'
-        ? (ride.driver?.fullName || 'Motorista')
-        : (ride.passenger?.fullName || 'Passageiro');
-
-      const notificationBody = audioUrl ? '🎤 Mensagem de áudio recebida' : (text || 'Nova mensagem no chat');
-
-      if (recipientToken) {
-        sendPushNotification(
-          recipientToken,
-          `💬 ${senderName}`,
-          notificationBody,
-          { 
-            rideId, 
-            type: 'CHAT_MESSAGE', 
-            channelId: 'chat-messages' 
-          },
-          PUSH_CHANNELS.RIDE_UPDATE
-        ).catch(err => console.error('❌ Erro ao enviar Push de Chat:', err));
-      }
-    } catch (err) {
-      console.error('❌ Erro no processamento da mensagem do chat:', err);
+    // Persiste de forma assíncrona no banco de dados
+    if (senderUserId) {
+      prisma.rideChatMessage.create({
+        data: {
+          rideId,
+          senderId: senderUserId,
+          senderType: senderTypeEnum,
+          message: messageText
+        }
+      }).catch(err => console.error('❌ [CHAT_DB_ERROR]:', err?.message));
     }
-  });
+
+    // Dispara em tempo real para todas as salas vinculadas
+    const targetRooms = [
+      rideId,
+      `ride_${rideId}`,
+      ride.passengerId,
+      `passenger_${ride.passengerId}`,
+      ride.driverId,
+      `driver_${ride.driverId}`,
+    ].filter(Boolean) as string[];
+
+    targetRooms.forEach(room => {
+      io.to(room).emit('chat:receive_message', messagePayload);
+      io.to(room).emit('chat:message', messagePayload);
+    });
+
+    // Envia a Notificação Push para o destinatário
+    const recipientToken = senderRole === 'driver' ? ride.passenger?.deviceToken : ride.driver?.deviceToken;
+    const senderName = senderRole === 'driver' ? (ride.driver?.fullName || 'Motorista') : (ride.passenger?.fullName || 'Passageiro');
+    const notificationBody = audioUrl ? '🎤 Mensagem de áudio recebida' : (text || 'Nova mensagem no chat');
+
+    if (recipientToken) {
+      sendPushNotification(
+        recipientToken,
+        `💬 ${senderName}`,
+        notificationBody,
+        { 
+          rideId, 
+          type: 'CHAT_MESSAGE', 
+          channelId: 'chat-messages' 
+        },
+        PUSH_CHANNELS.CHAT // 🟢 CORRIGIDO: Canal exclusivo de Chat
+      ).catch(err => console.error('❌ Erro ao enviar Push de Chat:', err));
+    }
+  } catch (err) {
+    console.error('❌ Erro no processamento da mensagem do chat:', err);
+  }
+});
 
   // =============================================================================
   // 🛑 CANCELAMENTO DE CORRIDA SINCRONIZADO

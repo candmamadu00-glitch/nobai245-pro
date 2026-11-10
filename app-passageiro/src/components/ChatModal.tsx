@@ -62,7 +62,7 @@ export function ChatModal({
   onClose, 
   socket, 
   rideId, 
-  currentRole,
+  currentRole = 'passenger',
   currentUserPhoto,
   otherUserName,
   otherUserPhoto
@@ -73,12 +73,12 @@ export function ChatModal({
   const [inputText, setInputText] = useState('');
   const [hasRenderError, setHasRenderError] = useState(false);
 
-  // Inicialização defensiva do gravador
+  // Inicialização defensiva do gravador de áudio
   let audioRecorder: any = null;
   try {
     audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   } catch (recorderErr) {
-    console.warn('⚠️ [CHAT] Não foi possível inicializar gravador de áudio:', recorderErr);
+    console.warn('⚠️ [CHAT_PASSENGER] Gravador de áudio não inicializado:', recorderErr);
   }
 
   const [isRecording, setIsRecording] = useState(false);
@@ -91,21 +91,21 @@ export function ChatModal({
 
   const storageKey = `@bai245:chat_${rideId}`;
 
-  // Helper para emissão segura via Socket (Impede crash se socket estiver nulo ou desconectado)
+  // Helper para emissão segura via Socket (Impede crash se desconectado)
   const safeEmit = (event: string, payload: any) => {
     try {
       if (socket && socket.connected) {
         socket.emit(event, payload);
-        console.log(`📡 [CHAT_SOCKET] Evento "${event}" emitido com sucesso.`);
+        console.log(`📡 [CHAT_PASSENGER_SOCKET] Evento "${event}" emitido com sucesso.`);
       } else {
-        console.warn(`⚠️ [CHAT_SOCKET] Socket desconectado. Evento "${event}" não enviado ao servidor.`);
+        console.warn(`⚠️ [CHAT_PASSENGER_SOCKET] Socket desconectado. Evento "${event}" não enviado.`);
       }
     } catch (err) {
-      console.error(`❌ [CHAT_SOCKET] Erro ao emitir evento "${event}":`, err);
+      console.error(`❌ [CHAT_PASSENGER_SOCKET] Erro ao emitir evento "${event}":`, err);
     }
   };
 
-  // 1. Limpa mensagens se alterar o ID da viagem
+  // 1. Limpa mensagens se alterar o ID da corrida
   useEffect(() => {
     if (!rideId) {
       setMessages([]);
@@ -120,7 +120,7 @@ export function ChatModal({
     }
   }, [messages, rideId, storageKey]);
 
-  // 3. Limpeza ao desmontar
+  // 3. Limpeza de timers e áudios ao desmontar
   useEffect(() => {
     return () => {
       if (activePlayerRef.current) {
@@ -133,10 +133,10 @@ export function ChatModal({
     };
   }, []);
 
-  // 4. Carrega mensagens do Cache e API com tratamento rigoroso
+  // 4. Carrega mensagens do Cache Local e Sincroniza via API
   useEffect(() => {
     if (visible && rideId) {
-      // Tenta recuperar do cache local
+      // Restaura do cache AsyncStorage primeiro
       AsyncStorage.getItem(storageKey).then((cached) => {
         if (cached) {
           try {
@@ -144,13 +144,11 @@ export function ChatModal({
             if (Array.isArray(parsed) && parsed.length > 0) {
               setMessages(parsed);
             }
-          } catch (e) {
-            console.warn('⚠️ Cache de chat corrompido, ignorando...');
-          }
+          } catch (e) {}
         }
       }).catch(() => {});
 
-      // Busca na API backend
+      // Sincroniza com histórico da API
       if (api && typeof api.get === 'function') {
         api.get(`/rides/${rideId}/chat`)
           .then(response => {
@@ -184,7 +182,7 @@ export function ChatModal({
             }
           })
           .catch(error => {
-            console.warn("⚠️ [CHAT] Histórico da API indisponível ou em off-line:", error?.message);
+            console.warn("⚠️ [CHAT PASSAGEIRO] Histórico da API offline/indisponível:", error?.message);
           });
       }
     } else if (!visible) {
@@ -196,7 +194,7 @@ export function ChatModal({
     }
   }, [visible, rideId, storageKey]);
 
-  // 5. Socket Listeners Antiduplicação
+  // 5. Escuta de mensagens via Socket com deduplicação
   useEffect(() => {
     if (!socket || !visible) return;
 
@@ -232,7 +230,7 @@ export function ChatModal({
           return [...prev, formattedMsg];
         });
       } catch (err) {
-        console.warn('⚠️ Erro ao processar mensagem recebida do socket:', err);
+        console.warn('⚠️ Erro ao processar mensagem recebida no socket:', err);
       }
     };
 
@@ -245,7 +243,7 @@ export function ChatModal({
       socket.on('chat:message', handleReceiveMessage);
       socket.on('chat:new_message', handleReceiveMessage);
     } catch (sErr) {
-      console.warn('⚠️ Erro ao registrar ouvintes de socket no Chat:', sErr);
+      console.warn('⚠️ Erro ao registrar ouvintes de socket:', sErr);
     }
 
     return () => {
@@ -322,12 +320,12 @@ export function ChatModal({
       }, 1000);
 
     } catch (err) {
-      console.error('Falha ao iniciar gravação:', err);
+      console.error('Falha ao iniciar gravação no passageiro:', err);
       setIsRecording(false);
     }
   };
 
-  // 8. Finalizar e Enviar Áudio
+  // 8. Parar e Enviar Gravação em Base64
   const stopAndSendRecording = async (finalDuration?: number) => {
     if (recordTimerRef.current) {
       clearInterval(recordTimerRef.current);
@@ -351,7 +349,7 @@ export function ChatModal({
         const base64Audio = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
         audioPayload = `data:audio/m4a;base64,${base64Audio}`;
       } catch (b64Err) {
-        console.warn('⚠️ Não foi possível converter áudio para base64, usando URI local:', b64Err);
+        console.warn('⚠️ Não foi possível converter áudio para base64:', b64Err);
       }
 
       const newMsg: ChatMessage = {
@@ -380,7 +378,7 @@ export function ChatModal({
 
       setRecordDuration(0);
     } catch (error) {
-      console.error('Erro ao finalizar áudio:', error);
+      console.error('Erro ao finalizar áudio no passageiro:', error);
       setIsRecording(false);
     }
   };
@@ -398,7 +396,7 @@ export function ChatModal({
     setRecordDuration(0);
   };
 
-  // 10. Player de Áudio Blindado
+  // 10. Reprodução de Áudio Blindada (Suporta HTTP, HTTPS, local e Base64)
   const togglePlayAudio = async (msgId: string, audioUrl?: string | null) => {
     if (!audioUrl) return;
 
@@ -415,7 +413,11 @@ export function ChatModal({
         activePlayerRef.current = null;
       }
 
-      const player = createAudioPlayer({ uri: audioUrl });
+      const formattedUri = audioUrl.startsWith('data:') || audioUrl.startsWith('http') 
+        ? audioUrl 
+        : `${API_URL}${audioUrl.startsWith('/') ? '' : '/'}${audioUrl}`;
+
+      const player = createAudioPlayer({ uri: formattedUri });
       if (!player) return;
 
       activePlayerRef.current = player;
@@ -434,7 +436,7 @@ export function ChatModal({
         });
       }
     } catch (error) {
-      console.warn("⚠️ Erro ao reproduzir áudio:", error);
+      console.warn("⚠️ Erro ao reproduzir áudio no passageiro:", error);
       setPlayingAudioId(null);
       activePlayerRef.current = null;
     }
@@ -454,7 +456,6 @@ export function ChatModal({
 
   const dynamicBottomPadding = Math.max(insets.bottom + 8, Platform.OS === 'android' ? 20 : 16);
 
-  // Fallback visual de erro se ocorrer qualquer falha crítica de renderização
   if (hasRenderError) {
     return (
       <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
@@ -484,7 +485,7 @@ export function ChatModal({
         </TouchableWithoutFeedback>
 
         <View style={styles.chatContainer}>
-          {/* CABEÇALHO */}
+          {/* CABEÇALHO DO CHAT */}
           <View style={styles.chatHeader}>
             <View style={styles.headerTitleRow}>
               {renderAvatar(otherUserPhoto)}
@@ -506,7 +507,7 @@ export function ChatModal({
             </TouchableOpacity>
           </View>
 
-          {/* MENSAGENS */}
+          {/* LISTA DE MENSAGENS */}
           <FlatList
             ref={flatListRef}
             data={messages}
@@ -527,6 +528,7 @@ export function ChatModal({
                   
                   <View style={styles.messageContent}>
                     <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleOther]}>
+                      
                       {item.audioUrl ? (
                         <TouchableOpacity 
                           style={styles.audioContainer}
@@ -554,6 +556,7 @@ export function ChatModal({
                           {item.text}
                         </Text>
                       )}
+
                     </View>
                     {item.createdAt && (
                       <Text style={[styles.timestamp, isMe ? styles.timestampMe : styles.timestampOther]}>
@@ -568,7 +571,7 @@ export function ChatModal({
             }}
           />
 
-          {/* INPUT + CONTROLE DE ÁUDIO */}
+          {/* CAIXA DE ENTRADA / CONTROLE DE GRAVAÇÃO */}
           <View style={[styles.chatInputContainer, { paddingBottom: dynamicBottomPadding }]}>
             {isRecording ? (
               <View style={styles.recordingBar}>

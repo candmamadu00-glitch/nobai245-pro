@@ -40,7 +40,7 @@ const DISABLED_STATUSES = ['SUSPENDED', 'BANNED', 'REJECTED', 'INACTIVE'];
 export class DriverAuthController {
 
   // ==========================================
-  // 🔑 LOGIN DO MOTORISTA
+  // 🔑 LOGIN DO MOTORISTA (CORRIGIDO)
   // ==========================================
   async login(req: Request, res: Response): Promise<Response> {
     try {
@@ -109,6 +109,9 @@ export class DriverAuthController {
           vehiclePlate: driver.vehiclePlate,
           vehicleBrand: driver.vehicleBrand,
           vehicleType: driver.vehicleType,
+          vehicleColor: driver.vehicleColor,       // 🟢 ADICIONADO AQUI
+          documentNumber: driver.documentNumber,   // 🟢 ADICIONADO AQUI
+          documentType: driver.documentType,       // 🟢 ADICIONADO AQUI
           profilePicture: driver.profilePicture,
           walletBalance: Number(driver.walletBalance || 0),
           ratingAverage: Number(driver.ratingAverage || 5.0)

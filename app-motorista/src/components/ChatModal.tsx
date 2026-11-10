@@ -398,47 +398,55 @@ export function ChatModal({
     setRecordDuration(0);
   };
 
-  // 10. Reproduzir ou Pausar Mensagem de Voz Blindado
-  const togglePlayAudio = async (msgId: string, audioUrl?: string | null) => {
-    if (!audioUrl) return;
+  // 🟢 NOS DOIS APPS: ChatModal.tsx
+const togglePlayAudio = async (msgId: string, audioUrl?: string | null) => {
+  if (!audioUrl) return;
 
-    try {
-      if (playingAudioId === msgId && activePlayerRef.current) {
-        try { activePlayerRef.current.pause(); } catch (e) {}
-        activePlayerRef.current = null;
-        setPlayingAudioId(null);
-        return;
-      }
-
-      if (activePlayerRef.current) {
-        try { activePlayerRef.current.pause(); } catch (e) {}
-        activePlayerRef.current = null;
-      }
-
-      const player = createAudioPlayer({ uri: audioUrl });
-      if (!player) return;
-
-      activePlayerRef.current = player;
-      setPlayingAudioId(msgId);
-      
-      if (typeof player.play === 'function') {
-        player.play();
-      }
-
-      if (typeof player.addListener === 'function') {
-        player.addListener('playbackStatusUpdate', (status: any) => {
-          if (status?.didJustFinish || status?.error) {
-            setPlayingAudioId(null);
-            activePlayerRef.current = null;
-          }
-        });
-      }
-    } catch (error) {
-      console.warn("Erro ao reproduzir áudio no motorista:", error);
+  try {
+    // Se o áudio clicado já estiver tocando, pausa
+    if (playingAudioId === msgId && activePlayerRef.current) {
+      try { activePlayerRef.current.pause(); } catch (e) {}
+      activePlayerRef.current = null;
       setPlayingAudioId(null);
+      return;
+    }
+
+    // Pausa qualquer outro áudio ativo antes de iniciar
+    if (activePlayerRef.current) {
+      try { activePlayerRef.current.pause(); } catch (e) {}
       activePlayerRef.current = null;
     }
-  };
+
+    // Prepara a URL ou Base64 para execução
+    const formattedUri = audioUrl.startsWith('data:') || audioUrl.startsWith('http') 
+      ? audioUrl 
+      : `${API_URL}${audioUrl.startsWith('/') ? '' : '/'}${audioUrl}`;
+
+    const player = createAudioPlayer({ uri: formattedUri });
+    if (!player) return;
+
+    activePlayerRef.current = player;
+    setPlayingAudioId(msgId);
+    
+    if (typeof player.play === 'function') {
+      player.play();
+    }
+
+    // Monitora o término da reprodução para restaurar o ícone de Play
+    if (typeof player.addListener === 'function') {
+      player.addListener('playbackStatusUpdate', (status: any) => {
+        if (status?.didJustFinish || status?.error) {
+          setPlayingAudioId(null);
+          activePlayerRef.current = null;
+        }
+      });
+    }
+  } catch (error) {
+    console.warn("⚠️ [CHAT] Falha ao reproduzir áudio:", error);
+    setPlayingAudioId(null);
+    activePlayerRef.current = null;
+  }
+};
  
   const renderAvatar = (photoUrl?: string | null) => {
     const formatted = formatPhotoUrl(photoUrl);

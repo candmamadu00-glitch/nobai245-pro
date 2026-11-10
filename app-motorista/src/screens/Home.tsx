@@ -2745,21 +2745,22 @@ export function Home() {
         </View>
       </Modal>
 
-      {/* 💬 CHAT INTERNO */}
-      <ChatModal 
-        visible={isChatVisible} 
-        onClose={() => {
-          console.log('💬 [CHAT_DEBUG] Modal de Chat fechado.');
-          setIsChatVisible(false);
-        }} 
-        socket={socket} 
-        rideId={activeRideId || ''} 
-        currentRole="driver" 
-        currentUserPhoto={profileImageUrl} 
-        otherUserName={displayPassengerName} 
-        otherUserPhoto={formatImageUrl(incomingRide?.passengerPhoto)} 
-      />
-
+      {/* 💬 CHAT INTERNO DO MOTORISTA */}
+<ChatModal 
+  visible={isChatVisible} 
+  onClose={() => {
+    console.log('💬 [CHAT_DEBUG] Modal de Chat fechado.');
+    setIsChatVisible(false);
+    setUnreadCount(0); // 🟢 Zera o badge de não lidas ao fechar
+  }} 
+  socket={socket} 
+  rideId={activeRideId || incomingRide?.rideId || ''} // 🟢 Fallback caso activeRideId leve milissegundos para atualizar
+  currentRole="driver" 
+  currentUserPhoto={profileImageUrl} 
+  otherUserName={displayPassengerName} 
+  otherUserPhoto={formatImageUrl(incomingRide?.passengerPhoto)} 
+/>
+ 
       {/* 🔑 MODAL DE VALIDAÇÃO DE PIN/OTP */}
       <StartRideOtpModal 
         visible={showOtpModal} 
