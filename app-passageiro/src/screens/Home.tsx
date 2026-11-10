@@ -200,19 +200,49 @@ const normalizeVehicleType = (type?: string): string => {
 
 export const getVehicle3DIconAsset = (type?: string, colorName?: string) => {
   const normType = normalizeVehicleType(type);
-  const color = (colorName || 'WHITE').toUpperCase().trim();
+  const color = (colorName || 'BRANCO').toUpperCase().trim();
 
   if (normType === 'moto') {
     return require('../assets/vehicles/moto.png');
   }
   if (normType === 'moto-carro' || normType === 'toca-toca') {
-    return require('../assets/vehicles/motocarro.jpg');
+    return require('../assets/vehicles/motocarro.jng');
   }
   if (normType === 'taxi') {
     return require('../assets/vehicles/taxi_yellow.png');
   }
 
-  return require('../assets/vehicles/carro_white.png');
+  switch (color) {
+    case 'BLACK':
+    case 'PRETO':
+    case 'ESCURO':
+      return require('../assets/vehicles/carro_black.png');
+
+    case 'BLUE':
+    case 'AZUL':
+      return require('../assets/vehicles/carro_blue.png');
+
+    case 'RED':
+    case 'VERMELHO':
+    case 'VINHO':
+      return require('../assets/vehicles/carro_red.png');
+
+    case 'YELLOW':
+    case 'AMARELO':
+    case 'DOURADO':
+      return require('../assets/vehicles/carro_yellow.png');
+
+    case 'GRAY':
+    case 'SILVER':
+    case 'CINZA':
+    case 'PRATA':
+      return require('../assets/vehicles/carro_gray.png');
+
+    case 'WHITE':
+    case 'BRANCO':
+    default:
+      return require('../assets/vehicles/carro_white.png'); // Fallback padrão
+  }
 };
 
 const getHaversineDistance = (p1: any, p2: any) => {
@@ -348,7 +378,7 @@ export function Home() {
     { id: 'moto' as VehicleType, title: 'Moto', subtitle: t('moto_subtitle', 'Rápido e econômico'), image: require('../assets/vehicles/moto.png') },
     { id: 'particular' as VehicleType, title: t('standard_vehicle', 'Particular'), subtitle: t('particular_subtitle', 'Viagem exclusiva'), image: require('../assets/vehicles/carro_white.png') },
     { id: 'taxi' as VehicleType, title: 'Táxi', subtitle: t('taxi_subtitle', 'Conforto e tradição'), image: require('../assets/vehicles/taxi_yellow.png') },
-    { id: 'moto-carro' as VehicleType, title: 'Moto-carro', subtitle: t('motocarro_subtitle', 'Ideal para bagagens leves'), image: require('../assets/vehicles/motocarro.jpg') },
+    { id: 'moto-carro' as VehicleType, title: 'Moto-carro', subtitle: t('motocarro_subtitle', 'Ideal para bagagens leves'), image: require('../assets/vehicles/motocarro.jg') },
   ];
 
   const resetRideState = useCallback(() => {

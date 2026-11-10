@@ -220,20 +220,20 @@ function getVehicle3DIconAsset(vehicleType?: string, vehicleColor?: string) {
   const type = (vehicleType || 'PARTICULAR').toUpperCase().trim();
   const color = (vehicleColor || 'BRANCO').toUpperCase().trim();
 
-  if (type === 'MOTO') return require('../../assets/images/vehicles/moto.jpg');
-  if (type === 'TOCA_TOCA' || type === 'VAN') return require('../../assets/images/vehicles/toca_toca.jpg');
-  if (type === 'TAXI') return require('../../assets/images/vehicles/taxi_yellow.jpg');
+  if (type === 'MOTO') return require('../../assets/images/vehicles/moto.png');
+  if (type === 'TOCA_TOCA' || type === 'VAN') return require('../../assets/images/vehicles/toca_toca.png');
+  if (type === 'TAXI') return require('../../assets/images/vehicles/taxi_yellow.png');
 
   switch (color) {
-    case 'BLACK': case 'PRETO': return require('../../assets/images/vehicles/car_black.jpg');
-    case 'BLUE': case 'AZUL': return require('../../assets/images/vehicles/car_blue.jpg');
-    case 'RED': case 'VERMELHO': return require('../../assets/images/vehicles/car_red.jpg');
-    case 'ORANGE': case 'LARANJA': return require('../../assets/images/vehicles/car_orange.jpg');
-    case 'GREEN': case 'VERDE': return require('../../assets/images/vehicles/car_green.jpg');
-    case 'GRAY': case 'SILVER': case 'CINZA': case 'PRATA': return require('../../assets/images/vehicles/car_gray.jpg');
-    case 'BROWN': case 'CASTANHO': case 'MARROM': return require('../../assets/images/vehicles/car_brown.jpg');
-    case 'YELLOW': case 'AMARELO': return require('../../assets/images/vehicles/car_yellow.jpg');
-    case 'WHITE': case 'BRANCO': default: return require('../../assets/images/vehicles/car_white.jpg');
+    case 'BLACK': case 'PRETO': return require('../../assets/images/vehicles/car_black.png');
+    case 'BLUE': case 'AZUL': return require('../../assets/images/vehicles/car_blue.png');
+    case 'RED': case 'VERMELHO': return require('../../assets/images/vehicles/car_red.png');
+    case 'ORANGE': case 'LARANJA': return require('../../assets/images/vehicles/car_orange.png');
+    case 'GREEN': case 'VERDE': return require('../../assets/images/vehicles/car_green.jng');
+    case 'GRAY': case 'SILVER': case 'CINZA': case 'PRATA': return require('../../assets/images/vehicles/car_gray.jng');
+    case 'BROWN': case 'CASTANHO': case 'MARROM': return require('../../assets/images/vehicles/car_brown.jng');
+    case 'YELLOW': case 'AMARELO': return require('../../assets/images/vehicles/car_yellow.jng');
+    case 'WHITE': case 'BRANCO': default: return require('../../assets/images/vehicles/car_white.jng');
   }
 }
 
@@ -1852,14 +1852,14 @@ const handleRecenterMap = () => {
                 ]}
               >
                 <Image
-                  source={getVehicle3DIconAsset(
-                    (driver as any)?.vehicleType || incomingRide?.vehicleType || 'PARTICULAR',
-                    (driver as any)?.carColor || 'BRANCO'
-                  )}
-                  style={styles.vehicle3DImage}
-                  fadeDuration={0}
+                 source={getVehicle3DIconAsset(
+                (driver as any)?.vehicleType || incomingRide?.vehicleType || 'PARTICULAR',
+                  (driver as any)?.carColor || (driver as any)?.vehicleColor || 'BRANCO'
+               )}
+                 style={styles.vehicle3DImage}
+                     fadeDuration={0}
                   resizeMode="contain"
-                />
+                  />
               </View>
             </View>
           </Mapbox.PointAnnotation>

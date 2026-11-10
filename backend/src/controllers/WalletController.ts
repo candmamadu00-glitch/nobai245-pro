@@ -2,7 +2,9 @@ import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { getIo } from '../server';
 
-// GET: Obter Saldo do Motorista
+// -----------------------------------------------------------------------------
+// GET: Obter Saldo e Status da Carteira do Motorista
+// -----------------------------------------------------------------------------
 export async function getDriverWalletBalance(req: Request, res: Response) {
   try {
     const driverId = (req as any).user?.id;
@@ -24,7 +26,7 @@ export async function getDriverWalletBalance(req: Request, res: Response) {
     }
 
     const balance = Number(driver.walletBalance || 0);
-    const minThreshold = -500;
+    const minThreshold = 1000; // Saldo mínimo de 1.000 XOF para ficar online
 
     return res.json({
       balance,
@@ -34,12 +36,14 @@ export async function getDriverWalletBalance(req: Request, res: Response) {
       currency: 'XOF',
     });
   } catch (error) {
-    console.error('Erro ao buscar saldo da carteira:', error);
+    console.error('❌ [WALLET_CTRL] Erro ao buscar saldo da carteira:', error);
     return res.status(500).json({ error: 'Erro interno ao consultar carteira.' });
   }
 }
 
+// -----------------------------------------------------------------------------
 // GET: Extrato de Transações do Motorista
+// -----------------------------------------------------------------------------
 export async function getDriverTransactions(req: Request, res: Response) {
   try {
     const driverId = (req as any).user?.id;
@@ -55,12 +59,14 @@ export async function getDriverTransactions(req: Request, res: Response) {
 
     return res.json({ transactions });
   } catch (error) {
-    console.error('Erro ao buscar extrato de transações:', error);
+    console.error('❌ [WALLET_CTRL] Erro ao buscar extrato de transações:', error);
     return res.status(500).json({ error: 'Erro ao carregar extrato.' });
   }
 }
 
-// POST: Webhook do Leitor de SMS (App Android Gateway da Empresa)
+// -----------------------------------------------------------------------------
+// POST: Webhook do Leitor de SMS (Gateway Android)
+// -----------------------------------------------------------------------------
 export async function handleSmsGatewayWebhook(req: Request, res: Response) {
   try {
     const { secretKey, smsBody, transactionRef } = req.body;
@@ -77,7 +83,7 @@ export async function handleSmsGatewayWebhook(req: Request, res: Response) {
       return res.status(400).json({ error: 'Corpo do SMS ausente.' });
     }
 
-    const cleanSms = smsBody.replace(/,/g, '');
+    const cleanSms = String(smsBody).replace(/,/g, '');
 
     // Parser dos padrões Orange Money / MTN MoMo da Guiné-Bissau
     const amountMatch = cleanSms.match(/(?:recebeu|montant|valor)[:\s]*(\d+)\s*(?:fcfa|xof)?/i) || cleanSms.match(/(\d+)\s*(?:fcfa|xof)/i);
@@ -102,7 +108,7 @@ export async function handleSmsGatewayWebhook(req: Request, res: Response) {
       return res.status(200).json({ message: 'Transação já processada.' });
     }
 
-    // Busca motorista pelo número de telefone cadastrado
+    // Busca motorista pelo número de telefone cadastrado (Orange, MTN ou Principal)
     const driver = await prisma.driver.findFirst({
       where: {
         deletedAt: null,
@@ -111,14 +117,13 @@ export async function handleSmsGatewayWebhook(req: Request, res: Response) {
           { orangeNumber: `245${cleanPhone}` },
           { mtnNumber: cleanPhone },
           { mtnNumber: `245${cleanPhone}` },
-          { phone: cleanPhone },
-          { phone: `245${cleanPhone}` },
+          { phone: { contains: cleanPhone.slice(-8) } },
         ],
       },
     });
 
     if (!driver) {
-      // Salva como PENDING_VERIFICATION para permitir resgate via TxID pelo motorista
+      // Salva como PENDING_VERIFICATION para permitir resgate manual via TxID
       await prisma.transaction.create({
         data: {
           type: 'MANUAL_RECHARGE',
@@ -130,13 +135,13 @@ export async function handleSmsGatewayWebhook(req: Request, res: Response) {
           failureReason: 'Número remetente não associado a nenhum motorista ativo.',
         },
       });
-      return res.status(200).json({ message: 'Telefone não encontrado. Transação mantida aguardando código de resgate.' });
+      return res.status(200).json({ message: 'Telefone não encontrado. Transação salva aguardando código de resgate.' });
     }
 
     // Atualização do Saldo
     const updatedDriver = await prisma.$transaction(async (tx) => {
-      const balanceBefore = driver.walletBalance;
-      const newBalance = Number(balanceBefore) + amount;
+      const balanceBefore = Number(driver.walletBalance || 0);
+      const newBalance = balanceBefore + amount;
 
       const updated = await tx.driver.update({
         where: { id: driver.id },
@@ -164,19 +169,19 @@ export async function handleSmsGatewayWebhook(req: Request, res: Response) {
       return updated;
     });
 
-    // Emissão no Socket.io para atualização instantânea da UI
+    // Emissão no Socket.io para atualização instantânea na UI do aplicativo
     const io = getIo();
     if (io) {
-      io.to(`driver:${driver.id}`).emit('wallet:updated', {
+      const payload = {
+        walletBalance: Number(updatedDriver.walletBalance),
         balance: Number(updatedDriver.walletBalance),
         message: `Sua recarga de ${amount.toLocaleString('pt-GW')} XOF foi confirmada!`,
-      });
+      };
 
-      io.to(`driver:${driver.id}`).emit('wallet:recharge_status', {
-        reference: externalRef,
-        status: 'COMPLETED',
-        message: `Sua recarga de ${amount.toLocaleString('pt-GW')} XOF foi confirmada!`,
-      });
+      io.to(driver.id)
+        .to(`driver_${driver.id}`)
+        .to(`driver:${driver.id}`)
+        .emit('wallet:updated', payload);
     }
 
     return res.status(200).json({
@@ -185,12 +190,14 @@ export async function handleSmsGatewayWebhook(req: Request, res: Response) {
       newBalance: updatedDriver.walletBalance,
     });
   } catch (error) {
-    console.error('Erro na Webhook SMS:', error);
+    console.error('❌ [WALLET_CTRL] Erro na Webhook SMS:', error);
     return res.status(500).json({ error: 'Erro ao processar recarga SMS.' });
   }
 }
 
-// POST: Resgatar recarga feita por outro número usando a Referência/TxID da operadora
+// -----------------------------------------------------------------------------
+// POST: Resgatar Recarga por TxID / Referência SMS (Envio por Telefone Terceiro)
+// -----------------------------------------------------------------------------
 export async function claimRechargeByTxId(req: Request, res: Response) {
   try {
     const driverId = (req as any).user?.id;
@@ -206,7 +213,7 @@ export async function claimRechargeByTxId(req: Request, res: Response) {
 
     const cleanTxId = txId.trim();
 
-    // Busca insensível a maiúsculas/minúsculas para evitar erros de digitação do motorista
+    // Busca insensível a maiúsculas/minúsculas para evitar falhas de digitação
     const pendingTransaction = await prisma.transaction.findFirst({
       where: {
         externalRef: { contains: cleanTxId, mode: 'insensitive' },
@@ -218,7 +225,7 @@ export async function claimRechargeByTxId(req: Request, res: Response) {
     if (!pendingTransaction) {
       return res.status(404).json({
         success: false,
-        error: 'Transação não encontrada ou já resgatada. Verifique o código e tente novamente.',
+        error: 'Transação não encontrada ou já resgatada. Verifique o código no SMS e tente novamente.',
       });
     }
 
@@ -245,7 +252,7 @@ export async function claimRechargeByTxId(req: Request, res: Response) {
           status: 'COMPLETED',
           balanceBefore: currentBalance,
           balanceAfter: newBalance,
-          description: `Recarga resgatada por ID (${cleanTxId}) de telefone terceiro`,
+          description: `Recarga resgatada por ID (${cleanTxId}) enviada por número de terceiro`,
         },
       });
 
@@ -255,12 +262,16 @@ export async function claimRechargeByTxId(req: Request, res: Response) {
     // Notifica a interface via Socket.io em tempo real
     const io = getIo();
     if (io) {
-      io.to(`driver:${driver.id}`)
-        .to(driver.id)
-        .emit('wallet:updated', {
-          balance: Number(updatedDriver.walletBalance),
-          message: `Recarga de ${pendingTransaction.amount} XOF resgatada com sucesso!`,
-        });
+      const payload = {
+        walletBalance: Number(updatedDriver.walletBalance),
+        balance: Number(updatedDriver.walletBalance),
+        message: `Recarga de ${pendingTransaction.amount} XOF resgatada com sucesso!`,
+      };
+
+      io.to(driver.id)
+        .to(`driver_${driver.id}`)
+        .to(`driver:${driver.id}`)
+        .emit('wallet:updated', payload);
     }
 
     return res.status(200).json({
@@ -269,7 +280,7 @@ export async function claimRechargeByTxId(req: Request, res: Response) {
       newBalance: Number(updatedDriver.walletBalance),
     });
   } catch (error: any) {
-    console.error('❌ Erro ao resgatar recarga por TxID:', error);
+    console.error('❌ [WALLET_CTRL] Erro ao resgatar recarga por TxID:', error);
     return res.status(500).json({ success: false, error: 'Erro ao validar o código da recarga.' });
   }
 }

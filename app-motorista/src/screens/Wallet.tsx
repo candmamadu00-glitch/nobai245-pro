@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, Text, StyleSheet, TouchableOpacity, 
-  ScrollView, Platform, StatusBar, ActivityIndicator, RefreshControl, Modal, TextInput, Alert, Clipboard 
+  ScrollView, Platform, StatusBar, ActivityIndicator, RefreshControl, Modal, TextInput, Alert, Clipboard,
+  KeyboardAvoidingView, TouchableWithoutFeedback, Keyboard 
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -286,14 +287,21 @@ export function Wallet() {
         </ScrollView>
       </View>
 
-      {/* 📲 MODAL COM NÚMEROS DA EMPRESA E RECONFIRMAÇÃO POR TXID */}
+      {/* 📲 MODAL COM KEYBOARD AVOIDING VIEW */}
       <Modal
         visible={isRechargeModalVisible}
         animationType="slide"
         transparent
         onRequestClose={() => toggleRechargeModal(false)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView 
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={styles.modalBackdropTouch} />
+          </TouchableWithoutFeedback>
+
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Recarga de Saldo Instantânea</Text>
@@ -302,7 +310,11 @@ export function Wallet() {
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 480 }}>
+            <ScrollView 
+              showsVerticalScrollIndicator={false} 
+              style={styles.modalScrollView}
+              keyboardShouldPersistTaps="handled"
+            >
               <Text style={styles.modalDescription}>
                 Envie o valor da recarga via USSD para um dos números oficiais da plataforma abaixo:
               </Text>
@@ -383,7 +395,7 @@ export function Wallet() {
               <Text style={styles.modalCloseButtonText}>Fechar</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -481,11 +493,15 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'flex-end',
   },
+  modalBackdropTouch: {
+    flex: 1,
+  },
   modalContent: {
     backgroundColor: '#FFF',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 24,
+    maxHeight: '80%',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -503,6 +519,9 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
     lineHeight: 18,
     marginBottom: 14,
+  },
+  modalScrollView: {
+    flexGrow: 0,
   },
   numberCard: {
     flexDirection: 'row',
@@ -556,6 +575,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     borderWidth: 1,
     borderColor: '#BAE6FD',
+    marginBottom: 10,
   },
   claimSectionTitle: {
     fontSize: 13,
@@ -602,7 +622,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: 'center',
-    marginTop: 14,
+    marginTop: 10,
   },
   modalCloseButtonText: {
     color: '#FFF',

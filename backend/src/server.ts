@@ -116,8 +116,19 @@ app.use(express.json({
     req.rawBody = buf;
   }
 }));
+app.use(express.urlencoded({ extended: true }));
 
-// Rastreamento estático de fotos/mídias enviadas via upload
+// 🛡️ MIDDLEWARE DE BLINDAGEM: Intercepta payloads URL-Encoded enviados com Content-Type JSON incorreto pelo SMS Gateway
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+  if (err instanceof SyntaxError && (err as any).status === 400 && 'body' in err) {
+    console.warn(`⚠️ [PARSER_WARNING] Payload malformatado em ${req.url}. Recuperando via rawBody...`);
+    if (req.rawBody) {
+      req.body = req.rawBody.toString('utf-8');
+    }
+    return next();
+  }
+  next(err);
+});
 app.use('/uploads', (req, res, next) => {
   console.log(`📸 [FOTO_DEBUG] Acessando arquivo estático: /uploads${req.url}`);
   next();

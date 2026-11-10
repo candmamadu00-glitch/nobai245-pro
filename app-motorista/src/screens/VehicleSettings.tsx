@@ -18,58 +18,64 @@ function getVehicle3DIconAsset(vehicleType?: string, vehicleColor?: string) {
   const type = (vehicleType || 'PARTICULAR').toUpperCase().trim();
   const color = (vehicleColor || 'BRANCO').toUpperCase().trim();
 
-  // 1. Tipos de Veículos Especiais
+  // 1. Tipos Especiais
   if (type === 'MOTO') {
-    return require('../../assets/images/vehicles/moto.jpg');
+    return require('../../assets/images/vehicles/moto.png');
   }
-  if (type === 'TOCA_TOCA' || type === 'VAN') {
-    return require('../../assets/images/vehicles/toca_toca.jpg');
+  if (type === 'TOCA_TOCA' || type === 'VAN' || type === 'MOTO_CARRO') {
+    return require('../../assets/images/vehicles/toca_toca.png');
   }
   if (type === 'TAXI') {
-    return require('../../assets/images/vehicles/taxi_yellow.jpg');
+    return require('../../assets/images/vehicles/taxi_yellow.png');
   }
 
-  // 2. Carros Particulares / Aluguel mapeados por Cor
+  // 2. Mapeamento por Cores (com Fallback Seguro)
   switch (color) {
     case 'BLACK':
     case 'PRETO':
-      return require('../../assets/images/vehicles/car_black.jpg');
+    case 'ESCURO':
+      return require('../../assets/images/vehicles/car_black.png');
 
     case 'BLUE':
     case 'AZUL':
-      return require('../../assets/images/vehicles/car_blue.jpg');
+      return require('../../assets/images/vehicles/car_blue.png');
 
     case 'RED':
     case 'VERMELHO':
-      return require('../../assets/images/vehicles/car_red.jpg');
+    case 'VINHO':
+    case 'ENCARNADO':
+      return require('../../assets/images/vehicles/car_red.png');
 
     case 'ORANGE':
     case 'LARANJA':
-      return require('../../assets/images/vehicles/car_orange.jpg');
+      return require('../../assets/images/vehicles/car_orange.png');
 
     case 'GREEN':
     case 'VERDE':
-      return require('../../assets/images/vehicles/car_green.jpg');
+      return require('../../assets/images/vehicles/car_green.png');
 
     case 'GRAY':
     case 'SILVER':
     case 'CINZA':
     case 'PRATA':
-      return require('../../assets/images/vehicles/car_gray.jpg');
+    case 'GRAFITE':
+      return require('../../assets/images/vehicles/car_gray.png');
 
     case 'BROWN':
     case 'CASTANHO':
     case 'MARROM':
-      return require('../../assets/images/vehicles/car_brown.jpg');
+      return require('../../assets/images/vehicles/car_brown.png');
 
     case 'YELLOW':
     case 'AMARELO':
-      return require('../../assets/images/vehicles/car_yellow.jpg');
+    case 'OURO':
+    case 'DOURADO':
+      return require('../../assets/images/vehicles/car_yellow.png');
 
     case 'WHITE':
     case 'BRANCO':
     default:
-      return require('../../assets/images/vehicles/car_white.jpg');
+      return require('../../assets/images/vehicles/car_white.png'); // Fallback padrão
   }
 }
 

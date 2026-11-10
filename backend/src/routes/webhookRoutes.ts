@@ -81,18 +81,49 @@ async function emitSuccessSockets(rideId?: string | null, passengerId?: string |
 }
 
 // -----------------------------------------------------------------------------
-// 🤖 GAMBIARRA AUTOMÁTICA: RECARGA DE MOTORISTA VIA LEITURA DE SMS (ANDROID)
+// 🤖 RECARGA DE MOTORISTA VIA LEITURA DE SMS (COMPATÍVEL COM QUALQUER FORMATO)
 // -----------------------------------------------------------------------------
-router.post('/sms-gateway', async (req: Request, res: Response): Promise<any> => {
+router.all('/sms-gateway', async (req: Request, res: Response): Promise<any> => {
   try {
-    const secret = (req.headers['x-secret'] || req.body.secret || req.query.secret) as string;
+    // 1. Extração flexível de payload (Body, Query String ou URL Encoded)
+    let payload: any = req.body;
+
+    if (typeof req.body === 'string') {
+      try {
+        payload = JSON.parse(req.body);
+      } catch {
+        const params = new URLSearchParams(req.body);
+        payload = Object.fromEntries(params.entries());
+      }
+    }
+
+    if (!payload || typeof payload !== 'object' || Object.keys(payload).length === 0) {
+      payload = req.query;
+    }
+
+    // 2. Extração do secret de autenticação
+    const secret = (req.headers['x-secret'] || payload?.secret || req.query?.secret) as string;
 
     if (!secureCompare(secret, SMS_GATEWAY_SECRET)) {
       console.warn('🚨 [SMS GATEWAY] Tentativa de acesso com secret inválido.');
       return res.status(401).json({ error: 'Secret de autenticação inválido.' });
     }
 
-    const { message, sender } = req.body;
+    // 3. Busca de campos com nomes alternativos enviáveis por gateways de SMS
+    let rawMessage = payload?.message || payload?.text || payload?.content || payload?.body || req.query?.message || req.query?.text || '';
+    let rawSender = payload?.sender || payload?.from || payload?.phone || req.query?.sender || req.query?.from || '';
+
+    // 4. Decodificação de URL (remove %20, %25, etc.)
+    if (typeof rawMessage === 'string') {
+      try { rawMessage = decodeURIComponent(rawMessage); } catch {}
+    }
+    if (typeof rawSender === 'string') {
+      try { rawSender = decodeURIComponent(rawSender); } catch {}
+    }
+
+    const message = String(rawMessage).trim();
+    const sender = String(rawSender).trim();
+
     if (!message) {
       return res.status(400).json({ error: 'Mensagem do SMS não informada.' });
     }
@@ -113,7 +144,7 @@ router.post('/sms-gateway', async (req: Request, res: Response): Promise<any> =>
 
     // Se o número não veio no texto do SMS, pega do campo sender
     if (!driverPhone && sender) {
-      driverPhone = String(sender).replace(/\D/g, '');
+      driverPhone = sender.replace(/\D/g, '');
     }
 
     if (!driverPhone) {
