@@ -21,6 +21,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { useTranslation } from 'react-i18next';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../services/api';
 import { PrivacyPolicyModal } from '../components/PrivacyPolicyModal';
@@ -263,10 +264,10 @@ export function Profile() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
 
-      {/* HEADER */}
+      {/* HEADER ELEGANTE */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#1A202C" />
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton} activeOpacity={0.7}>
+          <Ionicons name="arrow-back" size={20} color="#0F172A" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{t('my_profile', 'Meu Perfil')}</Text>
         <View style={{ width: 40 }} />
@@ -278,71 +279,91 @@ export function Profile() {
       >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-            {/* AVATAR & RATING */}
+            {/* AVATAR & RATING PREMIUM */}
             <View style={styles.avatarContainer}>
-              <TouchableOpacity activeOpacity={0.8} onPress={handlePickImage} style={styles.avatarWrapper}>
-                {avatarUri ? (
-                  <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
-                ) : (
-                  <View style={styles.avatarFallback}>
-                    <Ionicons name="person" size={40} color="#A0AEC0" />
-                  </View>
-                )}
+              <TouchableOpacity activeOpacity={0.85} onPress={handlePickImage} style={styles.avatarWrapper}>
+                <View style={styles.avatarGlowRing}>
+                  {avatarUri ? (
+                    <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
+                  ) : (
+                    <View style={styles.avatarFallback}>
+                      <Ionicons name="person" size={44} color="#94A3B8" />
+                    </View>
+                  )}
+                </View>
                 <View style={styles.cameraBadge}>
-                  <Ionicons name="camera" size={16} color="#FFF" />
+                  <Ionicons name="camera" size={15} color="#0F172A" />
                 </View>
               </TouchableOpacity>
+
               <Text style={styles.userName}>{user?.fullName || t('passenger', 'Passageiro')}</Text>
-              <View style={styles.ratingContainer}>
-                <Ionicons name="star" size={16} color="#EAB308" />
+
+              <View style={styles.ratingBadgeContainer}>
+                <Ionicons name="star" size={14} color="#EAB308" />
                 <Text style={styles.ratingText}>
                   {Number(user?.ratingAverage || 5.0).toFixed(1)}
                 </Text>
+                <Text style={styles.ratingSubtext}>• Passageiro VIP</Text>
               </View>
             </View>
 
-            {/* WALLET CARD */}
-            <View style={styles.walletCard}>
-              <Ionicons name="wallet-outline" size={22} color="#854D0E" />
-              <View style={styles.walletInfo}>
-                <Text style={styles.walletLabel}>{t('wallet_balance', 'Saldo da Carteira')}</Text>
+            {/* WALLET CARD ESTILO LUXURY CARD */}
+            <LinearGradient
+              colors={['#0F172A', '#1E293B']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.walletCardGradient}
+            >
+              <View style={styles.walletCardHeader}>
+                <View style={styles.walletIconCircle}>
+                  <Ionicons name="wallet" size={20} color="#EAB308" />
+                </View>
+                <View style={styles.walletChipBadge}>
+                  <Ionicons name="sparkles" size={12} color="#EAB308" style={{ marginRight: 4 }} />
+                  <Text style={styles.walletChipText}>NÔ BAI WALLET</Text>
+                </View>
+              </View>
+
+              <View style={{ marginTop: 14 }}>
+                <Text style={styles.walletLabel}>{t('wallet_balance', 'Saldo Disponível')}</Text>
                 <Text style={styles.walletValue}>
-                  {Number(user?.walletBalance || 0).toLocaleString('pt-PT', { minimumFractionDigits: 2 })} XOF
+                  {Number(user?.walletBalance || 0).toLocaleString('pt-PT', { minimumFractionDigits: 2 })} <Text style={styles.walletCurrency}>XOF</Text>
                 </Text>
               </View>
-            </View>
+            </LinearGradient>
 
             {/* SELEÇÃO DE IDIOMA */}
-            <TouchableOpacity style={styles.historyButton} onPress={() => setIsLangModalOpen(true)}>
-              <View style={styles.historyButtonLeft}>
-                <View style={[styles.iconBox, { backgroundColor: '#E0E7FF' }]}>
-                  <Ionicons name="language" size={22} color="#4338CA" />
+            <TouchableOpacity style={styles.menuRowCard} activeOpacity={0.8} onPress={() => setIsLangModalOpen(true)}>
+              <View style={styles.menuRowLeft}>
+                <View style={[styles.iconBox, { backgroundColor: '#EEF2FF' }]}>
+                  <Ionicons name="language" size={20} color="#4338CA" />
                 </View>
-                <View>
-                  <Text style={styles.historyButtonText}>{t('select_language', 'Idioma')}</Text>
-                  <Text style={styles.subText}>{currentLangObj.flag} {currentLangObj.label}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.menuRowTitle}>{t('select_language', 'Idioma do aplicativo')}</Text>
+                  <Text style={styles.menuRowSubtext}>{currentLangObj.flag}  {currentLangObj.label}</Text>
                 </View>
               </View>
-              <Ionicons name="chevron-forward" size={20} color="#A0AEC0" />
+              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
             </TouchableOpacity>
 
             {/* EDITAR DADOS PESSOAIS */}
-            <Text style={styles.sectionTitle}>{t('edit_personal_data', 'Editar Dados Pessoais')}</Text>
+            <Text style={styles.sectionTitle}>{t('edit_personal_data', 'Dados Pessoais')}</Text>
             <View style={styles.formCard}>
               <Text style={styles.inputLabel}>{t('full_name', 'Nome Completo')}</Text>
               <View style={styles.inputContainer}>
-                <Ionicons name="person-outline" size={20} color="#A0AEC0" />
+                <Ionicons name="person-outline" size={18} color="#64748B" />
                 <TextInput 
                   style={styles.input} 
                   value={fullName} 
                   onChangeText={setFullName}
                   editable={!isSavingProfile}
+                  placeholderTextColor="#94A3B8"
                 />
               </View>
 
               <Text style={styles.inputLabel}>{t('email_label', 'E-mail')}</Text>
               <View style={styles.inputContainer}>
-                <Ionicons name="mail-outline" size={20} color="#A0AEC0" />
+                <Ionicons name="mail-outline" size={18} color="#64748B" />
                 <TextInput 
                   style={styles.input} 
                   value={email} 
@@ -350,43 +371,50 @@ export function Profile() {
                   keyboardType="email-address"
                   autoCapitalize="none"
                   placeholder={t('email_placeholder', 'seu@email.com')}
-                  placeholderTextColor="#A0AEC0"
+                  placeholderTextColor="#94A3B8"
                   editable={!isSavingProfile}
                 />
               </View>
 
-              <Text style={styles.inputLabel}>{t('phone_unalterable', 'Telefone (Não alterável)')}</Text>
+              <Text style={styles.inputLabel}>{t('phone_unalterable', 'Telefone de Conta (Protegido)')}</Text>
               <View style={[styles.inputContainer, styles.disabledInputContainer]}>
-                <Ionicons name="call-outline" size={20} color="#94A3B8" />
+                <Ionicons name="call-outline" size={18} color="#94A3B8" />
                 <TextInput 
                   style={[styles.input, styles.disabledInput]} 
                   value={user?.phone || ''} 
                   editable={false} 
                 />
-                <Ionicons name="lock-closed" size={16} color="#94A3B8" />
+                <Ionicons name="lock-closed" size={15} color="#94A3B8" />
               </View>
 
               <TouchableOpacity 
-                style={[styles.saveButton, isSavingProfile && styles.saveButtonDisabled]} 
+                style={[styles.primarySaveButton, isSavingProfile && styles.buttonDisabled]} 
                 onPress={handleSaveProfileInfo} 
                 disabled={isSavingProfile}
+                activeOpacity={0.85}
               >
-                {isSavingProfile ? <ActivityIndicator color="#1A202C" /> : <Text style={styles.saveButtonText}>{t('save_personal_data', 'Salvar Dados Pessoais')}</Text>}
+                {isSavingProfile ? (
+                  <ActivityIndicator color="#0F172A" />
+                ) : (
+                  <Text style={styles.primarySaveButtonText}>{t('save_personal_data', 'Atualizar Dados Pessoais')}</Text>
+                )}
               </TouchableOpacity>
             </View>
 
             {/* CONFIGURAR PAGAMENTO */}
-            <Text style={styles.sectionTitle}>{t('setup_payment', 'Configurar Pagamento')}</Text>
+            <Text style={styles.sectionTitle}>{t('setup_payment', 'Forma de Pagamento')}</Text>
             <View style={styles.formCard}>
               
               <View style={styles.cashNoticeBox}>
-                <Ionicons name="cash-outline" size={22} color="#166534" />
+                <View style={styles.cashNoticeIconCircle}>
+                  <Ionicons name="cash" size={18} color="#166534" />
+                </View>
                 <Text style={styles.cashNoticeText}>
-                  O pagamento está temporariamente definido como <Text style={{ fontWeight: '800' }}>Dinheiro em Espécie 💵</Text>. As operadoras Mobile Money estão em atualização técnica.
+                  Pagamentos temporariamente definidos como <Text style={{ fontWeight: '800' }}>Dinheiro em Espécie 💵</Text>. As operadoras Mobile Money estão em manutenção preventiva.
                 </Text>
               </View>
 
-              <Text style={styles.inputLabel}>{t('mobile_money_provider', 'Operadoras Mobile Money')}</Text>
+              <Text style={styles.inputLabel}>{t('mobile_money_provider', 'Operadoras de Pagamento Móvel')}</Text>
               <View style={styles.providerContainer}>
                 
                 <TouchableOpacity 
@@ -426,7 +454,7 @@ export function Profile() {
 
               <Text style={styles.inputLabel}>{t('account_phone_number', 'Número da Conta / Telefone (Opcional)')}</Text>
               <View style={styles.inputContainer}>
-                <Ionicons name="phone-portrait-outline" size={20} color="#A0AEC0" />
+                <Ionicons name="phone-portrait-outline" size={18} color="#64748B" />
                 <TextInput 
                   style={styles.input} 
                   keyboardType="phone-pad" 
@@ -440,69 +468,74 @@ export function Profile() {
               </View>
 
               <TouchableOpacity 
-                style={[styles.saveButton, isSavingPayment && styles.saveButtonDisabled]} 
+                style={[styles.primarySaveButton, isSavingPayment && styles.buttonDisabled]} 
                 onPress={handleSavePaymentInfo} 
                 disabled={isSavingPayment}
                 activeOpacity={0.85}
               >
                 {isSavingPayment ? (
-                  <ActivityIndicator color="#1A202C" />
+                  <ActivityIndicator color="#0F172A" />
                 ) : (
-                  <Text style={styles.saveButtonText}>{t('save_payment', 'Salvar Pagamento')}</Text>
+                  <Text style={styles.primarySaveButtonText}>{t('save_payment', 'Salvar Pagamento')}</Text>
                 )}
               </TouchableOpacity>
             </View>
 
             {/* OUTRAS NAVEGAÇÕES */}
-            <TouchableOpacity style={styles.historyButton} onPress={() => navigation.navigate('EmergencyContacts')}>
-              <View style={styles.historyButtonLeft}>
+            <Text style={styles.sectionTitle}>Segurança e Suporte</Text>
+
+            <TouchableOpacity style={styles.menuRowCard} activeOpacity={0.8} onPress={() => navigation.navigate('EmergencyContacts')}>
+              <View style={styles.menuRowLeft}>
                 <View style={[styles.iconBox, { backgroundColor: '#FEE2E2' }]}>
-                  <Ionicons name="shield-checkmark" size={22} color="#EF4444" />
+                  <Ionicons name="shield-checkmark" size={20} color="#EF4444" />
                 </View>
-                <Text style={styles.historyButtonText}>{t('emergency_contacts', 'Contatos de Emergência')}</Text>
+                <Text style={styles.menuRowTitle}>{t('emergency_contacts', 'Contatos de Emergência')}</Text>
               </View>
-              <Ionicons name="chevron-forward" size={20} color="#A0AEC0" />
+              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.historyButton} onPress={() => navigation.navigate('RideHistory')}>
-              <View style={styles.historyButtonLeft}>
-                <View style={styles.iconBox}>
-                  <Ionicons name="time" size={22} color="#EAB308" />
-                </View>
-                <Text style={styles.historyButtonText}>{t('my_rides', 'Minhas Corridas')}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color="#A0AEC0" />
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.historyButton} onPress={() => navigation.navigate('HelpCenter')}>
-              <View style={styles.historyButtonLeft}>
+            <TouchableOpacity style={styles.menuRowCard} activeOpacity={0.8} onPress={() => navigation.navigate('RideHistory')}>
+              <View style={styles.menuRowLeft}>
                 <View style={[styles.iconBox, { backgroundColor: '#FEF3C7' }]}>
-                  <Ionicons name="help-buoy" size={22} color="#D97706" />
+                  <Ionicons name="time" size={20} color="#D97706" />
                 </View>
-                <Text style={styles.historyButtonText}>{t('help_center', 'Central de Ajuda')}</Text>
+                <Text style={styles.menuRowTitle}>{t('my_rides', 'Minhas Corridas')}</Text>
               </View>
-              <Ionicons name="chevron-forward" size={20} color="#A0AEC0" />
+              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.historyButton} onPress={() => setIsPrivacyModalOpen(true)}>
-              <View style={styles.historyButtonLeft}>
+            <TouchableOpacity style={styles.menuRowCard} activeOpacity={0.8} onPress={() => navigation.navigate('HelpCenter')}>
+              <View style={styles.menuRowLeft}>
+                <View style={[styles.iconBox, { backgroundColor: '#F0FDF4' }]}>
+                  <Ionicons name="help-buoy" size={20} color="#16A34A" />
+                </View>
+                <Text style={styles.menuRowTitle}>{t('help_center', 'Central de Ajuda')}</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.menuRowCard} activeOpacity={0.8} onPress={() => setIsPrivacyModalOpen(true)}>
+              <View style={styles.menuRowLeft}>
                 <View style={[styles.iconBox, { backgroundColor: '#E0F2FE' }]}>
-                  <Ionicons name="document-text" size={22} color="#0284C7" />
+                  <Ionicons name="document-text" size={20} color="#0284C7" />
                 </View>
-                <Text style={styles.historyButtonText}>{t('privacy_policy', 'Políticas de Privacidade')}</Text>
+                <Text style={styles.menuRowTitle}>{t('privacy_policy', 'Termos & Políticas de Privacidade')}</Text>
               </View>
-              <Ionicons name="chevron-forward" size={20} color="#A0AEC0" />
+              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.logoutButton} onPress={handleSignOut}>
-              <Ionicons name="log-out-outline" size={22} color="#EF4444" style={{ marginRight: 8 }} />
-              <Text style={styles.logoutButtonText}>{t('logout', 'Sair da conta')}</Text>
-            </TouchableOpacity>
+            {/* BOTÕES DE ENCERRAMENTO */}
+            <View style={{ marginTop: 12, gap: 8 }}>
+              <TouchableOpacity style={styles.logoutButton} activeOpacity={0.85} onPress={handleSignOut}>
+                <Ionicons name="log-out-outline" size={20} color="#EF4444" style={{ marginRight: 8 }} />
+                <Text style={styles.logoutButtonText}>{t('logout', 'Sair da Conta')}</Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity style={styles.deleteAccountButton} onPress={handleDeleteAccount}>
-              <Ionicons name="trash-outline" size={18} color="#94A3B8" style={{ marginRight: 6 }} />
-              <Text style={styles.deleteAccountButtonText}>{t('delete_my_account', 'Excluir minha conta')}</Text>
-            </TouchableOpacity>
+              <TouchableOpacity style={styles.deleteAccountButton} activeOpacity={0.7} onPress={handleDeleteAccount}>
+                <Ionicons name="trash-outline" size={16} color="#94A3B8" style={{ marginRight: 6 }} />
+                <Text style={styles.deleteAccountButtonText}>{t('delete_my_account', 'Excluir minha conta permanentemente')}</Text>
+              </TouchableOpacity>
+            </View>
 
             <View style={{ height: 40 }} />
           </ScrollView>
@@ -514,14 +547,14 @@ export function Profile() {
         onClose={() => setIsPrivacyModalOpen(false)} 
       />
 
-      {/* MODAL DE IDIOMAS */}
+      {/* MODAL DE IDIOMAS REDESENHADO */}
       <Modal visible={isLangModalOpen} transparent animationType="slide" onRequestClose={() => setIsLangModalOpen(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.langModalContainer}>
             <View style={styles.langModalHeader}>
-              <Text style={styles.langModalTitle}>{t('select_language', 'Idioma')}</Text>
-              <TouchableOpacity onPress={() => setIsLangModalOpen(false)}>
-                <Ionicons name="close" size={24} color="#0F172A" />
+              <Text style={styles.langModalTitle}>{t('select_language', 'Selecione o Idioma')}</Text>
+              <TouchableOpacity onPress={() => setIsLangModalOpen(false)} style={styles.modalCloseIcon}>
+                <Ionicons name="close" size={20} color="#64748B" />
               </TouchableOpacity>
             </View>
             {LANGUAGES.map((lang) => (
@@ -529,9 +562,10 @@ export function Profile() {
                 key={lang.code} 
                 style={[styles.langOption, i18n.language === lang.code && styles.langOptionActive]}
                 onPress={() => handleSelectLanguage(lang.code)}
+                activeOpacity={0.7}
               >
-                <Text style={styles.langOptionText}>{lang.flag}  {lang.label}</Text>
-                {i18n.language === lang.code && <Ionicons name="checkmark-circle" size={20} color="#4338CA" />}
+                <Text style={styles.langOptionText}>{lang.flag}   {lang.label}</Text>
+                {i18n.language === lang.code && <Ionicons name="checkmark-circle" size={22} color="#EAB308" />}
               </TouchableOpacity>
             ))}
           </View>
@@ -542,57 +576,419 @@ export function Profile() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 16, backgroundColor: '#F8FAFC' },
-  backButton: { padding: 8 },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: '#1A202C' },
-  content: { flex: 1, paddingHorizontal: 20, marginTop: 10 },
-  avatarContainer: { alignItems: 'center', marginBottom: 20 },
-  avatarWrapper: { position: 'relative', marginBottom: 12 },
-  avatarFallback: { width: 90, height: 90, borderRadius: 45, backgroundColor: '#E2E8F0', justifyContent: 'center', alignItems: 'center' },
-  avatarImage: { width: 90, height: 90, borderRadius: 45, backgroundColor: '#CBD5E1' },
-  cameraBadge: { position: 'absolute', bottom: 0, right: 0, backgroundColor: '#1E293B', padding: 6, borderRadius: 14, borderWidth: 2, borderColor: '#F8FAFC' },
-  userName: { fontSize: 20, fontWeight: '700', color: '#1A202C', marginBottom: 4 },
-  ratingContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FEF08A', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
-  ratingText: { fontSize: 14, fontWeight: '600', color: '#854D0E', marginLeft: 4 },
-  walletCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FEF9C3', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#FEF08A', marginBottom: 16 },
-  walletInfo: { marginLeft: 12 },
-  walletLabel: { fontSize: 12, fontWeight: '600', color: '#854D0E' },
-  walletValue: { fontSize: 18, fontWeight: '800', color: '#1A202C', marginTop: 2 },
-  sectionTitle: { fontSize: 16, fontWeight: '700', color: '#1A202C', marginBottom: 12, marginLeft: 4 },
-  formCard: { backgroundColor: '#FFF', borderRadius: 16, padding: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2, marginBottom: 24 },
-  inputLabel: { fontSize: 13, fontWeight: '600', color: '#4A5568', marginBottom: 8 },
-  inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, paddingHorizontal: 12, marginBottom: 16 },
-  disabledInputContainer: { backgroundColor: '#F1F5F9', borderColor: '#CBD5E1' },
-  input: { flex: 1, height: 48, marginLeft: 10, fontSize: 15, color: '#1A202C' },
-  disabledInput: { color: '#64748B' },
-  
-  cashNoticeBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#DCFCE7', borderWidth: 1, borderColor: '#86EFAC', borderRadius: 12, padding: 12, marginBottom: 16, gap: 10 },
-  cashNoticeText: { flex: 1, fontSize: 12, color: '#166534', lineHeight: 17 },
-
-  providerContainer: { flexDirection: 'row', gap: 12, marginBottom: 16 },
-  providerSquareButtonBlocked: { flex: 1, height: 85, borderRadius: 12, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center', opacity: 0.65 },
-  providerSquareText: { fontSize: 13, fontWeight: '700', color: '#64748B' },
-  badgeBlocked: { backgroundColor: '#E2E8F0', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, marginTop: 4 },
-  badgeBlockedText: { fontSize: 10, fontWeight: '800', color: '#64748B', textTransform: 'uppercase' },
-
-  saveButton: { backgroundColor: '#EAB308', paddingVertical: 14, borderRadius: 10, alignItems: 'center', marginTop: 4 },
-  saveButtonDisabled: { opacity: 0.7 },
-  saveButtonText: { fontSize: 15, fontWeight: '700', color: '#1A202C' },
-  historyButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#FFF', borderRadius: 16, padding: 16, marginBottom: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
-  historyButtonLeft: { flexDirection: 'row', alignItems: 'center' },
-  iconBox: { backgroundColor: '#FEF9C3', padding: 8, borderRadius: 10, marginRight: 12 },
-  historyButtonText: { fontSize: 16, fontWeight: '600', color: '#1A202C' },
-  subText: { fontSize: 12, color: '#64748B', marginTop: 2 },
-  logoutButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FEE2E2', paddingVertical: 16, borderRadius: 12, marginTop: 12, marginBottom: 12 },
-  logoutButtonText: { color: '#EF4444', fontSize: 16, fontWeight: '700' },
-  deleteAccountButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
-  deleteAccountButtonText: { color: '#64748B', fontSize: 14, fontWeight: '600' },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  langModalContainer: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24 },
-  langModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  langModalTitle: { fontSize: 18, fontWeight: '700', color: '#0F172A' },
-  langOption: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
-  langOptionActive: { backgroundColor: '#F5F3FF' },
-  langOptionText: { fontSize: 16, fontWeight: '600', color: '#0F172A' },
+  container: { 
+    flex: 1, 
+    backgroundColor: '#F8FAFC' 
+  },
+  header: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'space-between', 
+    paddingHorizontal: 16, 
+    paddingVertical: 14, 
+    backgroundColor: '#F8FAFC',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9'
+  },
+  backButton: { 
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+  },
+  headerTitle: { 
+    fontSize: 17, 
+    fontWeight: '800', 
+    color: '#0F172A' 
+  },
+  content: { 
+    flex: 1, 
+    paddingHorizontal: 18, 
+    marginTop: 8 
+  },
+  avatarContainer: { 
+    alignItems: 'center', 
+    marginVertical: 16 
+  },
+  avatarWrapper: { 
+    position: 'relative', 
+    marginBottom: 10 
+  },
+  avatarGlowRing: {
+    padding: 3,
+    borderRadius: 52,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#EAB308',
+    elevation: 4,
+    shadowColor: '#EAB308',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+  },
+  avatarFallback: { 
+    width: 90, 
+    height: 90, 
+    borderRadius: 45, 
+    backgroundColor: '#F1F5F9', 
+    justifyContent: 'center', 
+    alignItems: 'center' 
+  },
+  avatarImage: { 
+    width: 90, 
+    height: 90, 
+    borderRadius: 45, 
+    backgroundColor: '#CBD5E1' 
+  },
+  cameraBadge: { 
+    position: 'absolute', 
+    bottom: 2, 
+    right: 2, 
+    backgroundColor: '#EAB308', 
+    padding: 7, 
+    borderRadius: 16, 
+    borderWidth: 2, 
+    borderColor: '#FFFFFF',
+    elevation: 4
+  },
+  userName: { 
+    fontSize: 20, 
+    fontWeight: '800', 
+    color: '#0F172A', 
+    marginBottom: 4 
+  },
+  ratingBadgeContainer: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    backgroundColor: '#FEF08A', 
+    paddingHorizontal: 10, 
+    paddingVertical: 4, 
+    borderRadius: 12,
+    gap: 4
+  },
+  ratingText: { 
+    fontSize: 13, 
+    fontWeight: '800', 
+    color: '#854D0E'
+  },
+  ratingSubtext: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#854D0E'
+  },
+  walletCardGradient: { 
+    borderRadius: 20, 
+    padding: 18, 
+    marginBottom: 18,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    borderWidth: 1,
+    borderColor: '#334155'
+  },
+  walletCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  walletIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(234, 179, 8, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#EAB308'
+  },
+  walletChipBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)'
+  },
+  walletChipText: {
+    color: '#EAB308',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1
+  },
+  walletLabel: { 
+    fontSize: 12, 
+    fontWeight: '600', 
+    color: '#94A3B8' 
+  },
+  walletValue: { 
+    fontSize: 24, 
+    fontWeight: '900', 
+    color: '#FFFFFF', 
+    marginTop: 2 
+  },
+  walletCurrency: {
+    fontSize: 14,
+    color: '#EAB308',
+    fontWeight: '800'
+  },
+  sectionTitle: { 
+    fontSize: 14, 
+    fontWeight: '800', 
+    color: '#64748B', 
+    marginBottom: 10, 
+    marginLeft: 2,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5
+  },
+  formCard: { 
+    backgroundColor: '#FFFFFF', 
+    borderRadius: 18, 
+    padding: 16, 
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: 2 }, 
+    shadowOpacity: 0.04, 
+    shadowRadius: 8, 
+    elevation: 2, 
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#F1F5F9'
+  },
+  inputLabel: { 
+    fontSize: 12, 
+    fontWeight: '700', 
+    color: '#475569', 
+    marginBottom: 6 
+  },
+  inputContainer: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    backgroundColor: '#F8FAFC', 
+    borderWidth: 1, 
+    borderColor: '#E2E8F0', 
+    borderRadius: 12, 
+    paddingHorizontal: 12, 
+    marginBottom: 14,
+    height: 48
+  },
+  disabledInputContainer: { 
+    backgroundColor: '#F1F5F9', 
+    borderColor: '#CBD5E1' 
+  },
+  input: { 
+    flex: 1, 
+    height: '100%', 
+    marginLeft: 10, 
+    fontSize: 14, 
+    fontWeight: '600',
+    color: '#0F172A' 
+  },
+  disabledInput: { 
+    color: '#64748B' 
+  },
+  cashNoticeBox: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    backgroundColor: '#DCFCE7', 
+    borderWidth: 1, 
+    borderColor: '#86EFAC', 
+    borderRadius: 12, 
+    padding: 12, 
+    marginBottom: 16, 
+    gap: 10 
+  },
+  cashNoticeIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(22, 101, 52, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  cashNoticeText: { 
+    flex: 1, 
+    fontSize: 12, 
+    color: '#166534', 
+    lineHeight: 17 
+  },
+  providerContainer: { 
+    flexDirection: 'row', 
+    gap: 10, 
+    marginBottom: 14 
+  },
+  providerSquareButtonBlocked: { 
+    flex: 1, 
+    height: 80, 
+    borderRadius: 12, 
+    borderWidth: 1, 
+    borderColor: '#CBD5E1', 
+    backgroundColor: '#F8FAFC', 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    opacity: 0.7 
+  },
+  providerSquareText: { 
+    fontSize: 12, 
+    fontWeight: '700', 
+    color: '#64748B' 
+  },
+  badgeBlocked: { 
+    backgroundColor: '#E2E8F0', 
+    paddingHorizontal: 8, 
+    paddingVertical: 2, 
+    borderRadius: 6, 
+    marginTop: 4 
+  },
+  badgeBlockedText: { 
+    fontSize: 9, 
+    fontWeight: '800', 
+    color: '#64748B', 
+    textTransform: 'uppercase' 
+  },
+  primarySaveButton: { 
+    backgroundColor: '#EAB308', 
+    height: 48, 
+    borderRadius: 12, 
+    justifyContent: 'center',
+    alignItems: 'center', 
+    marginTop: 4,
+    elevation: 2,
+    shadowColor: '#EAB308',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4
+  },
+  buttonDisabled: { 
+    opacity: 0.7 
+  },
+  primarySaveButtonText: { 
+    fontSize: 14, 
+    fontWeight: '800', 
+    color: '#0F172A' 
+  },
+  menuRowCard: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'space-between', 
+    backgroundColor: '#FFFFFF', 
+    borderRadius: 16, 
+    padding: 14, 
+    marginBottom: 10, 
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: 1 }, 
+    shadowOpacity: 0.03, 
+    shadowRadius: 6, 
+    elevation: 1.5,
+    borderWidth: 1,
+    borderColor: '#F1F5F9'
+  },
+  menuRowLeft: { 
+    flexDirection: 'row', 
+    alignItems: 'center',
+    flex: 1
+  },
+  iconBox: { 
+    width: 38,
+    height: 38,
+    borderRadius: 12, 
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12 
+  },
+  menuRowTitle: { 
+    fontSize: 14, 
+    fontWeight: '700', 
+    color: '#0F172A' 
+  },
+  menuRowSubtext: { 
+    fontSize: 12, 
+    color: '#64748B', 
+    marginTop: 2 
+  },
+  logoutButton: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    backgroundColor: '#FEE2E2', 
+    paddingVertical: 14, 
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FECDD3'
+  },
+  logoutButtonText: { 
+    color: '#EF4444', 
+    fontSize: 15, 
+    fontWeight: '800' 
+  },
+  deleteAccountButton: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    paddingVertical: 10 
+  },
+  deleteAccountButtonText: { 
+    color: '#94A3B8', 
+    fontSize: 13, 
+    fontWeight: '600' 
+  },
+  modalOverlay: { 
+    flex: 1, 
+    backgroundColor: 'rgba(15, 23, 42, 0.65)', 
+    justifyContent: 'flex-end' 
+  },
+  langModalContainer: { 
+    backgroundColor: '#FFFFFF', 
+    borderTopLeftRadius: 24, 
+    borderTopRightRadius: 24, 
+    padding: 20 
+  },
+  langModalHeader: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    marginBottom: 14,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9'
+  },
+  langModalTitle: { 
+    fontSize: 17, 
+    fontWeight: '800', 
+    color: '#0F172A' 
+  },
+  modalCloseIcon: {
+    padding: 4,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 14
+  },
+  langOption: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    paddingVertical: 14, 
+    paddingHorizontal: 8,
+    borderBottomWidth: 1, 
+    borderBottomColor: '#F8FAFC' 
+  },
+  langOptionActive: { 
+    backgroundColor: '#FEF9C3',
+    borderRadius: 12
+  },
+  langOptionText: { 
+    fontSize: 15, 
+    fontWeight: '700', 
+    color: '#0F172A' 
+  },
 });
