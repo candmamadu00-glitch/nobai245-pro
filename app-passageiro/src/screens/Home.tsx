@@ -166,7 +166,6 @@ const formatPhotoUrl = (path?: string) => {
   const cleanBase = API_URL.replace(/\/$/, '');
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
   const fullUrl = `${cleanBase}${cleanPath}`;
-  console.log(`📸 [FOTO_DEBUG] Foto formatada para o passageiro: "${fullUrl}"`);
   return fullUrl;
 };
 
@@ -187,9 +186,7 @@ function calculateVehiclePrice(type: VehicleType, distanceKm: number | null): nu
 
   const rate = VEHICLE_RATES[type] || VEHICLE_RATES.particular;
   const calculatedPrice = rate.base + (distanceKm * rate.perKm);
-  const roundedPrice = Math.round(calculatedPrice / 50) * 50;
-  console.log(`💵 [PRICE_DEBUG] Categoria: ${type} | Distância: ${distanceKm.toFixed(2)}km | Valor: ${roundedPrice} XOF`);
-  return roundedPrice;
+  return Math.round(calculatedPrice / 50) * 50;
 }
 
 const normalizeVehicleType = (type?: string): string => {
@@ -279,6 +276,42 @@ const findNearestLocalBairro = (lat: number, lng: number) => {
   return null;
 };
 
+// 🌟 COMPONENTE SKELETON LOADER PARA ANIMAÇÕES DE CARREGAMENTO SUAVES
+const SkeletonLoader: React.FC<{ width?: any; height?: number; borderRadius?: number; style?: any }> = ({
+  width = '100%',
+  height = 20,
+  borderRadius = 8,
+  style,
+}) => {
+  const pulseAnim = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 0.3, duration: 800, useNativeDriver: true }),
+      ])
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [pulseAnim]);
+
+  return (
+    <Animated.View
+      style={[
+        {
+          width,
+          height,
+          borderRadius,
+          backgroundColor: '#334155',
+          opacity: pulseAnim,
+        },
+        style,
+      ]}
+    />
+  );
+};
+
 // ⚡ COMPONENTE DE BOTÃO COM EFEITO DE RAIO LUMINOSO CONTINUO E DESATIVÁVEL
 interface GlowingButtonProps {
   onPress: () => void;
@@ -366,9 +399,9 @@ const GlowingButton: React.FC<GlowingButtonProps> = ({
         style={{ width: '100%', height: '100%', borderRadius: 14, overflow: 'hidden' }}
       >
         <LinearGradient
-      colors={gradientColors as [string, string, ...string[]]}
-      start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
+          colors={gradientColors as [string, string, ...string[]]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
           style={{
             flex: 1,
             flexDirection: 'row',
@@ -441,6 +474,8 @@ export function Home() {
   
   const [estimatedPrice, setEstimatedPrice] = useState<number | null>(null);
   const [estimatedDistance, setEstimatedDistance] = useState<number | null>(null);
+  const [isCalculatingPrice, setIsCalculatingPrice] = useState<boolean>(false);
+  
   const [isMenuVisible, setIsMenuVisible] = useState(false);
   const [isSearchModalVisible, setIsSearchModalVisible] = useState(false);
   const [searchType, setSearchType] = useState<'pickup' | 'dropoff' | 'extraStop'>('dropoff');
@@ -490,7 +525,11 @@ export function Home() {
     { id: 'moto-carro' as VehicleType, title: 'Moto-carro', subtitle: t('motocarro_subtitle', 'Ideal para bagagens leves'), image: require('../assets/vehicles/carro_yellow.png') },
   ];
 
-  // Carrega configuração de iluminação de bordas salva
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
+
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_GLOW_BORDER_KEY).then((val) => {
       if (val !== null) setIsBorderGlowEnabled(val === 'true');
@@ -507,7 +546,6 @@ export function Home() {
   };
 
   const resetRideState = useCallback(() => {
-    console.log('🔄 [STATE_DEBUG] Resetando estado completo da corrida no passageiro...');
     setActiveRideId(null);
     activeRideIdRef.current = null;
     setRideStatus('idle');
@@ -571,7 +609,6 @@ export function Home() {
           estimatedPrice: extraData?.estimatedPrice ?? estimatedPrice,
         };
         await AsyncStorage.setItem(STORAGE_RIDE_KEY, JSON.stringify(payload));
-        console.log(`💾 [STATE_DEBUG] Estado salvo no AsyncStorage para a corrida ${rideId} (Status: ${status})`);
       } else {
         await AsyncStorage.removeItem(STORAGE_RIDE_KEY);
       }
@@ -586,15 +623,18 @@ export function Home() {
       destination: { latitude: number; longitude: number },
       extra?: { latitude: number; longitude: number } | null
     ) => {
+      setIsCalculatingPrice(true);
       if (serviceType === 'aluguel') {
         const price = RENTAL_PRICES[selectedRegion]?.price || 25000;
         setEstimatedPrice(price);
+        setIsCalculatingPrice(false);
         return;
       }
       const distanceKm = getHaversineDistance(origin, destination) + (extra ? getHaversineDistance(origin, extra) : 0);
       const price = calculateVehiclePrice(vehicleType, distanceKm);
       setEstimatedDistance(distanceKm);
       setEstimatedPrice(price);
+      setIsCalculatingPrice(false);
     },
     [serviceType, selectedRegion, vehicleType]
   );
@@ -644,6 +684,7 @@ export function Home() {
         Animated.timing(radarAnim, {
           toValue: 1,
           duration: 2200,
+          easing: Easing.linear,
           useNativeDriver: true,
         })
       ).start();
@@ -683,11 +724,10 @@ export function Home() {
 
   useEffect(() => {
     const notificationSubscription = Notifications.addNotificationReceivedListener((notification) => {
-      const { title, body, data } = notification.request.content;
+      const { data } = notification.request.content;
       if (data?.channelId === 'chat-messages' && !isChatVisibleRef.current) {
         triggerHapticFeedback('NEW_OFFER');
       }
-      console.log(`🔔 [PUSH RECEBIDO NA TELA]: ${title}\n${body}`);
     });
 
     const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
@@ -769,8 +809,6 @@ export function Home() {
     const normalizedSender: 'passenger' | 'driver' = isFromDriver ? 'driver' : 'passenger';
     const messageId = String(data.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`);
 
-    console.log(`💬 [CHAT_DEBUG] Mensagem recebida no passageiro: "${text || '[Áudio]'}" de ${normalizedSender}`);
-
     setMessages(prev => {
       const isDuplicate = prev.some(
         m => m.id === messageId || 
@@ -808,8 +846,6 @@ export function Home() {
     const sw = [Math.min(...lngs), Math.min(...lats)];
 
     try {
-      console.log('📍 [MAP_DEBUG] Enquadrando limites no mapa Mapbox com offset seguro.');
-      // Padding ajustado [top, right, bottom, left] -> Bottom 320px evita sobreposição pelo painel inferior
       cameraRef.current.fitBounds(ne, sw, [120, 60, 320, 60], 1000);
     } catch (err) {
       console.warn('Erro ao ajustar enquadramento do mapa Mapbox:', err);
@@ -845,7 +881,6 @@ export function Home() {
       const coordinatesString = waypoints.join(';');
       const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${coordinatesString}?geometries=geojson&overview=full&access_token=${MAPBOX_ACCESS_TOKEN}`;
       
-      console.log(`🗺️ [ROUTE_DEBUG] Solicitando rota Mapbox: ${coordinatesString}`);
       const res = await fetch(url);
       if (!res.ok) return;
 
@@ -862,8 +897,6 @@ export function Home() {
 
         const distanceKm = routeObj.distance / 1000;
         const durationMin = Math.ceil(routeObj.duration / 60);
-
-        console.log(`🗺️ [ROUTE_DEBUG] Rota obtida! Distância: ${distanceKm.toFixed(2)}km | ETA: ${durationMin} min`);
 
         setDriverEta(durationMin);
         if (rideStatus === 'idle' || rideStatus === 'searching') {
@@ -897,15 +930,12 @@ export function Home() {
       phone: d.phone || source.driverPhone,
       startOtp: otpCode,
     };
-
-    console.log(`🚘 [DRIVER_DEBUG] Motorista extraído: ${extracted.name} (${extracted.licensePlate}) | PIN: "${otpCode}"`);
     return extracted;
   };
 
   const syncPassengerActiveRide = useCallback(async () => {
     try {
       if (!api || typeof api.get !== 'function') return;
-      console.log('🔄 [SYNC_DEBUG] Sincronizando corrida ativa do passageiro via API...');
 
       let response = await api.get('/passengers/active-ride').catch(() => null);
       if (!response?.data?.ride) {
@@ -921,7 +951,6 @@ export function Home() {
           ride.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
 
         if (mappedStatus !== 'idle') {
-          console.log(`✅ [SYNC_DEBUG] Corrida em andamento restaurada! ID: ${ride.id} | Status: ${mappedStatus}`);
           setActiveRideId(ride.id);
           activeRideIdRef.current = ride.id;
           setRideStatus(mappedStatus);
@@ -993,12 +1022,11 @@ export function Home() {
 
           if (socket && socket.connected) {
             socket.emit('passenger:rejoin_ride', { rideId: ride.id });
-            console.log(`📡 [SOCKET_DEBUG] Passageiro reingressando na sala da corrida: ${ride.id}`);
           }
         }
       }
     } catch (err) {
-      console.warn('⚠️ [SYNC_DEBUG] Erro na rede ao sincronizar corrida - mantendo cache local:', err);
+      console.warn('⚠️ [SYNC_DEBUG] Erro na rede ao sincronizar corrida:', err);
     }
   }, [fetchMapboxRoute, fitMapBounds, extraStopCoords]);
 
@@ -1011,7 +1039,6 @@ export function Home() {
     }
 
     setIsSearchingMapbox(true);
-    console.log(`🔍 [SEARCH_DEBUG] Pesquisando local: "${text}"`);
 
     try {
       const response = await api.get(`/landmarks/search?q=${encodeURIComponent(text)}`).catch(() => null);
@@ -1025,7 +1052,7 @@ export function Home() {
           
           let description = mainTitle;
           if (!item.displayText && subTitle && !mainTitle.toLowerCase().includes(subTitle.toLowerCase())) {
-            description = `${mainTitle} - ${subTitle}`;
+            description = `${mainTitle}, ${subTitle}`;
           }
 
           if (!description || description.includes('undefined')) {
@@ -1043,13 +1070,11 @@ export function Home() {
       }
 
       if (dbResults.length > 0) {
-        console.log(`📍 [SEARCH_DEBUG] ${dbResults.length} locais encontrados no banco de pontos de referência.`);
         setSearchResults(dbResults);
         setIsSearchingMapbox(false);
         return;
       }
 
-      console.log('🌐 [SEARCH_DEBUG] Consultando API Mapbox Geocoding...');
       const mapboxRes = await fetch(
         `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(text)}.json?country=gw&proximity=${BISSAU_CENTER.longitude},${BISSAU_CENTER.latitude}&language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`
       );
@@ -1120,7 +1145,6 @@ export function Home() {
 
       if (!isMountedRef.current || !location) return;
 
-      console.log(`📍 [LOCATION_DEBUG] Posição do passageiro obtida: [${location.coords.latitude}, ${location.coords.longitude}]`);
       setPassengerLocation(location);
 
       if (!isManualPickupRef.current) {
@@ -1130,7 +1154,6 @@ export function Home() {
         const localName = findNearestLocalBairro(latitude, longitude);
 
         if (localName) {
-          console.log(`📍 [LOCATION_DEBUG] Bairro mais próximo identificado: "${localName}"`);
           setPickupAddress(localName);
         } else if (MAPBOX_ACCESS_TOKEN && isMountedRef.current) {
           try {
@@ -1150,7 +1173,6 @@ export function Home() {
               }
             }
           } catch (gErr) {
-            console.warn('Geocodificação reversa falhou:', gErr);
             if (!isManualPickupRef.current) setPickupAddress('Bissau, Centro');
           }
         }
@@ -1166,8 +1188,6 @@ export function Home() {
   const handleInaccessibleLocationAlert = useCallback((data: any) => {
     if (isInaccessibleAlertShowingRef.current) return;
     isInaccessibleAlertShowingRef.current = true;
-
-    console.warn(`📢 [ALERT_DEBUG] Alerta de local inacessível emitido pelo motorista:`, data);
 
     Alert.alert(
       data?.title || t('warning_title', 'Atenção ⚠️'), 
@@ -1305,7 +1325,6 @@ export function Home() {
   useEffect(() => {
     const subscription = AppState.addEventListener('change', async (nextAppState) => {
       if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
-        console.log('📱 [APP_STATE_DEBUG] Passageiro retornou ao primeiro plano.');
         getCurrentLocationWithFallback();
 
         if (socket && !socket.connected) {
@@ -1357,7 +1376,6 @@ export function Home() {
         if (savedState && isMountedRef.current) {
           const parsed = JSON.parse(savedState);
           if (parsed?.rideId && parsed?.status && parsed.status !== 'idle' && parsed.status !== 'completed') {
-            console.log(`🔄 [STATE_DEBUG] Recuperando estado salvo da corrida ID: ${parsed.rideId} | Status: ${parsed.status}`);
             setActiveRideId(parsed.rideId);
             activeRideIdRef.current = parsed.rideId;
             setRideStatus(parsed.status);
@@ -1408,7 +1426,6 @@ export function Home() {
 
     const handleConnect = () => {
       if (isMountedRef.current) setIsConnected(true);
-      console.log('⚡ [SOCKET_DEBUG] Passageiro conectado ao Socket Server!');
       if (socket && socket.connected) {
         socket.emit('passenger:request_state');
         if (activeRideIdRef.current) {
@@ -1419,7 +1436,6 @@ export function Home() {
 
     const handleDisconnect = () => {
       if (isMountedRef.current) setIsConnected(false);
-      console.warn('⚡ [SOCKET_DEBUG] Passageiro desconectado do Socket Server.');
     };
 
     const handleStateRecovered = async (data: any) => {
@@ -1438,7 +1454,6 @@ export function Home() {
         if (data?.hasActiveRide && data?.ride) {
           if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
           const ride = data.ride;
-          console.log('🔄 [SOCKET_DEBUG] Estado da corrida recuperado via Socket:', ride.status);
           setActiveRideId(ride.id);
           activeRideIdRef.current = ride.id;
 
@@ -1473,8 +1488,6 @@ export function Home() {
       if (!isMountedRef.current || !data) return;
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
-      console.log('🎉 [RIDE_DEBUG] Evento "ride:accepted" recebido no passageiro:', data);
-
       const otpCode = String(data.startOtp || data.otpPin || data.pin || '');
       setStartOtp(otpCode); 
       setActiveRideId(data.rideId || data.id);
@@ -1507,7 +1520,6 @@ export function Home() {
 
     const handleDriverArrived = (data: any) => {
       if (!isMountedRef.current) return;
-      console.log('📍 [RIDE_DEBUG] Motorista chegou ao local de embarque!');
       setRideStatus('arrived');
       if (data?.startOtp) setStartOtp(data.startOtp);
       if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'arrived');
@@ -1527,7 +1539,6 @@ export function Home() {
 
     const handleRideStarted = () => { 
       if (!isMountedRef.current) return;
-      console.log('🚀 [RIDE_DEBUG] Viagem iniciada!');
       setRideStatus('in_progress'); 
       setIsChatVisible(false); 
       speakRideStatusUpdate('in_progress');
@@ -1536,7 +1547,6 @@ export function Home() {
 
     const handleRideFinished = () => { 
       if (!isMountedRef.current) return;
-      console.log('🏁 [RIDE_DEBUG] Viagem concluída com sucesso!');
       setRideStatus('completed');
       setShowRatingModal(true); 
       speakRideStatusUpdate('completed');
@@ -1545,7 +1555,6 @@ export function Home() {
 
     const handleRideCancelled = (data: any) => {
       if (!isMountedRef.current) return;
-      console.warn('❌ [RIDE_DEBUG] Viagem cancelada:', data);
 
       const isDriverCancel = data?.cancelledBy === 'DRIVER';
       const title = isDriverCancel ? t('warning_title', 'Aviso ⚠️') : t('cancelled_title', 'Cancelado');
@@ -1569,8 +1578,6 @@ export function Home() {
     const handleNoDriversFound = () => {
       if (!isMountedRef.current) return;
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-
-      console.warn('⚠️ [RIDE_DEBUG] Nenhum motorista encontrado na região.');
 
       Notifications.scheduleNotificationAsync({
         content: {
@@ -1622,7 +1629,6 @@ export function Home() {
     socket.on('ride:inaccessible_location', handleInaccessibleLocationAlert);
 
     return () => {
-      console.log('⚡ [SOCKET_DEBUG] Removendo ouvintes de eventos do Socket do passageiro.');
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       socket.off('passenger:state_recovered', handleStateRecovered);
@@ -1670,7 +1676,6 @@ export function Home() {
       let fitPoints = [origin, destination];
       if (extra) fitPoints.push(extra);
       
-      console.log(`🗺️ [ROUTE_DEBUG] Recalculando limites da rota no mapa (Status: ${rideStatus})`);
       fitMapBounds(fitPoints);
       fetchMapboxRoute(origin, destination, extra);
     }
@@ -1678,7 +1683,6 @@ export function Home() {
 
   useEffect(() => {
     if (route.params?.openChat) {
-      console.log('💬 [CHAT_DEBUG] Abrindo chat automaticamente via parâmetros de navegação.');
       setIsChatVisible(true);
       navigation.setParams({ openChat: undefined });
     }
@@ -1696,10 +1700,7 @@ export function Home() {
     const isRideActive = activeRideStates.includes(rideStatus);
 
     if (isRideActive) {
-      console.log('📱 [KEEP_AWAKE_DEBUG] Ativando KeepAwake (Tela sempre acesa durante a corrida)');
-      activateKeepAwakeAsync('passenger_ride_tag').catch((err) => {
-        console.warn('⚠️ Não foi possível manter a tela acesa:', err);
-      });
+      activateKeepAwakeAsync('passenger_ride_tag').catch(() => {});
     } else {
       deactivateKeepAwake('passenger_ride_tag').catch(() => {});
     }
@@ -1709,9 +1710,6 @@ export function Home() {
     };
   }, [rideStatus]);
 
-  // =======================================================
-  // 🚖 SOLICITAR CORRIDA (MODELO 100% DINHEIRO FÍSICO)
-  // =======================================================
   async function handleInitialRequestRide() {
     const needsDropoff = serviceType !== 'aluguel';
     if (!pickupCoords || (needsDropoff && (!dropoffCoords || !dropoffAddress.trim())) || !user?.id) {
@@ -1729,7 +1727,6 @@ export function Home() {
       const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
 
       if (isMocked) {
-        console.warn('🚨 [SECURITY_DEBUG] Tentativa de solicitação com GPS Falso / Simulador!');
         Alert.alert(
           "🚨 Localização Simulada Detectada",
           "Por motivos de segurança, não é possível solicitar corridas utilizando aplicativos de GPS falso.",
@@ -1801,13 +1798,11 @@ export function Home() {
         extraStopAddress: extraStopAddress || undefined,
       };
 
-      console.log('📡 [RIDE_DEBUG] Emitindo evento "passenger:request_ride":', payload);
       emitRequestRide(payload);
 
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
       searchTimeoutRef.current = setTimeout(() => {
         if (isMountedRef.current) {
-          console.warn('⏱️ [RIDE_DEBUG] Tempo limite de 60s expirado sem resposta de motorista.');
           Alert.alert(
             t('no_response_title', 'Sem resposta'), 
             t('no_driver_accepted_msg', 'Nenhum motorista aceitou no momento. Tente novamente.')
@@ -1817,7 +1812,6 @@ export function Home() {
       }, 60000);
 
     } catch (error) {
-      console.error('❌ [RIDE_DEBUG] Erro ao emitir pedido de corrida:', error);
       Alert.alert(
         t('error_title', 'Erro'), 
         t('server_error_msg', 'Ocorreu um problema ao comunicar com os servidores.')
@@ -1831,7 +1825,6 @@ export function Home() {
   };
 
   const handleConfirmCancel = useCallback((reason: string) => {
-    console.log(`🛑 [CANCEL_DEBUG] Confirmação de cancelamento enviada pelo passageiro. Motivo: "${reason}"`);
     setShowCancelModal(false);
 
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
@@ -1861,7 +1854,6 @@ export function Home() {
     const [lng, lat] = coords;
     if (typeof lng !== 'number' || typeof lat !== 'number' || isNaN(lng) || isNaN(lat)) return;
 
-    console.log(`🗺️ [MAP_DEBUG] Mapa arrastado para as coordenadas: [${lat}, ${lng}]`);
     setPickupCoords({ latitude: lat, longitude: lng });
 
     const localName = findNearestLocalBairro(lat, lng);
@@ -1887,7 +1879,6 @@ export function Home() {
           setPickupAddress(cleanAddress);
         }
       } catch (err) {
-        console.warn('Geocodificação Mapbox falhou no arraste:', err);
         setPickupAddress('Bissau, Centro');
       }
     }
@@ -1895,7 +1886,6 @@ export function Home() {
 
   const handleSubmitRating = useCallback((stars: number, tags: string[], comment: string) => {
     if (activeRideId && driverInfo && user?.id) {
-      console.log(`⭐ [RATING_DEBUG] Enviando avaliação do motorista ${driverInfo.id}: ${stars} estrelas.`);
       rateDriver({ 
         rideId: activeRideId, 
         reviewerId: user.id, 
@@ -1931,8 +1921,6 @@ export function Home() {
       const baseUrl = apiDomain.replace(/\/api\/?$/, '').replace(/\/$/, '');
       const trackingUrl = `${baseUrl}/track/${activeRideId}`;
 
-      console.log(`🔗 [SHARE_DEBUG] Link de compartilhamento gerado: ${trackingUrl}`);
-
       const mensagem = 
         `🚕 *Acompanhe minha viagem no Nô Bai 245!*\n\n` +
         `👤 *Motorista:* ${driverInfo.name || 'Motorista'}\n` +
@@ -1955,7 +1943,6 @@ export function Home() {
 
   function openSearchModal(type: 'pickup' | 'dropoff' | 'extraStop') {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    console.log(`🔍 [SEARCH_DEBUG] Abrindo modal de busca de endereço para o tipo: "${type}"`);
     setSearchType(type);
     setSearchQuery('');
     setSearchResults([]);
@@ -1963,7 +1950,6 @@ export function Home() {
   }
 
   const handleSosPress = () => {
-    console.log('🚨 [SOS_DEBUG] Modal de emergência acionado pelo passageiro.');
     Alert.alert(
       t('emergency_sos', 'SOS / Emergência 🚨'),
       t('choose_emergency_service', 'Selecione o serviço de emergência que deseja contactar:'),
@@ -2223,22 +2209,29 @@ export function Home() {
           </Mapbox.PointAnnotation>
         )}
 
-        {/* 🏎️ MOTORISTA EM MOVIMENTO (INTERPOLAÇÃO SUAVE A 60 FPS) */}
+        {/* 🏎️ MOTORISTA EM MOVIMENTO (INTERPOLAÇÃO SUAVE A 60 FPS + BALÃO ETA FLUTUANTE) */}
         {driverLocation?.latitude != null && driverLocation?.longitude != null && !isNaN(Number(driverLocation.longitude)) && Number(driverLocation.latitude) !== 0 && (
           <Mapbox.PointAnnotation
             key="driverMarker"
             id="driverMarker"
             coordinate={interpolatedCoords}
-            anchor={{ x: 0.5, y: 0.5 }}
+            anchor={{ x: 0.5, y: 0.8 }}
           >
-            <View style={{ backgroundColor: 'transparent', width: 44, height: 44, justifyContent: 'center', alignItems: 'center' }}>
-              <View style={{ backgroundColor: 'transparent', transform: [{ rotate: `${driverLocation.heading || 0}deg` }] }}>
+            <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+              {/* 🏷️ ETA FLUTUANTE NO PRÓPRIO MARCADOR DO VEÍCULO */}
+              {driverEta !== null && driverEta > 0 && ['accepted', 'arrived', 'in_progress'].includes(rideStatus) && (
+                <View style={styles.driverEtaBubble}>
+                  <Ionicons name="time" size={10} color="#0F172A" style={{ marginRight: 3 }} />
+                  <Text style={styles.driverEtaText}>{driverEta} min</Text>
+                </View>
+              )}
+              <View style={{ transform: [{ rotate: `${driverLocation.heading || 0}deg` }] }}>
                 <Image
                   source={getVehicle3DIconAsset(
                     driverInfo?.vehicleType || vehicleType,
                     driverInfo?.carColor
                   )}
-                  style={{ width: 40, height: 40, backgroundColor: 'transparent' }}
+                  style={{ width: 44, height: 44, backgroundColor: 'transparent' }}
                   fadeDuration={0}
                   resizeMode="contain"
                 />
@@ -2258,13 +2251,23 @@ export function Home() {
         </View>
       )}
 
+      {/* 🛡️ CENTRAL DE SEGURANÇA FLUTUANTE NO MAPA (SAFETY SHIELD WIDGET) */}
+      {['accepted', 'arrived', 'in_progress'].includes(rideStatus) && (
+        <TouchableOpacity
+          style={[styles.floatingSafetyShieldBtn, { bottom: Math.max((insets?.bottom || 0) + 315, 325) }]}
+          activeOpacity={0.85}
+          onPress={handleSosPress}
+        >
+          <Ionicons name="shield-checkmark" size={20} color="#EF4444" />
+        </TouchableOpacity>
+      )}
+
       {/* BOTÃO RECENTRALIZAR */}
       <TouchableOpacity 
         style={[styles.recenterButton, { bottom: Math.max((insets?.bottom || 0) + 260, 270) }]} 
         activeOpacity={0.85}
         onPress={() => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-          console.log('📍 [MAP_DEBUG] Recentralizando câmera no passageiro/motorista.');
           if (cameraRef.current) {
             cameraRef.current.setCamera({
               centerCoordinate: safeCenterCoordinate,
@@ -2833,9 +2836,13 @@ export function Home() {
                           <Text style={[styles.categoryTitle, isSelected && styles.categoryTextActive, { fontSize: 15 }]}>{item.title}</Text>
                           <Text style={styles.categorySubtitle}>{item.subtitle}</Text>
                         </View>
-                        <Text style={[styles.categoryPriceText, isSelected && styles.categoryPriceTextActive, { fontSize: 15, fontWeight: '900' }]}>
-                          {price ? `${price} XOF` : 'Calculando...'}
-                        </Text>
+                        {isCalculatingPrice ? (
+                          <SkeletonLoader width={70} height={18} borderRadius={6} />
+                        ) : (
+                          <Text style={[styles.categoryPriceText, isSelected && styles.categoryPriceTextActive, { fontSize: 15, fontWeight: '900' }]}>
+                            {price ? `${price} XOF` : 'Calculando...'}
+                          </Text>
+                        )}
                       </TouchableOpacity>
                     );
                   })}
@@ -3530,7 +3537,7 @@ export function Home() {
         onConfirm={handleConfirmCancel} 
       />
 
-      {/* ⭐ MODAL DE AVALIAÇÃO */}
+      {/* ⭐ MODAL DE AVALIAÇÃO COM GORJETA */}
       <RatingModal
         visible={showRatingModal}
         targetName={driverInfo?.name || 'Motorista'}
@@ -3540,105 +3547,57 @@ export function Home() {
   );
 }
 
-// 🎨 ESTILOS PROFISSIONAIS DA GIGANTE NÔ BAI 245 (CORRIGIDOS)
+// 🎨 ESTILOS UNIFICADOS PROFISSIONAIS E ENTERPRISE (SISTEMA NÔ BAI 245)
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
-    backgroundColor: '#0F172A' 
-  },
-  loadingContainer: { 
-    flex: 1, 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    backgroundColor: '#0F172A', 
-    paddingHorizontal: 20 
-  },
-  loadingText: { 
-    color: '#F8FAFC', 
-    fontSize: 15, 
-    fontWeight: '600', 
-    marginTop: 16, 
-    textAlign: 'center' 
-  },
-  retryLocationBtn: { 
-    marginTop: 20, 
-    backgroundColor: '#EAB308', 
-    paddingHorizontal: 20, 
-    paddingVertical: 10, 
-    borderRadius: 10 
-  },
-  
-  // MARCADORES E PINOS
-  carMarker: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#EAB308',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#0F172A',
-    elevation: 4,
-  },
-  centerPinContainer: {
-    position: 'absolute',
-    top: '44%',
-    left: '50%',
-    marginLeft: -18,
-    marginTop: -36,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  centerPin: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pinShadow: {
-    width: 10,
-    height: 4,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    borderRadius: 5,
-    marginTop: -4,
-  },
-  recenterButton: {
-    position: 'absolute',
-    right: 16,
+  container: {
+    flex: 1,
     backgroundColor: '#0F172A',
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+  },
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: '#0F172A',
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#334155',
-    elevation: 5,
+    paddingHorizontal: 24,
   },
-
-  // CABEÇALHO FLUTUANTE
+  loadingText: {
+    color: '#F8FAFC',
+    fontSize: 15,
+    textAlign: 'center',
+    marginVertical: 16,
+    fontWeight: '500',
+  },
+  retryLocationBtn: {
+    backgroundColor: '#EAB308',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+    marginTop: 10,
+  },
   floatingHeader: {
     position: 'absolute',
     left: 16,
     right: 16,
-    zIndex: 10,
+    zIndex: 20,
   },
   headerBlurWrapper: {
-    borderRadius: 18,
+    borderRadius: 20,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#334155',
-    elevation: 6,
+    borderColor: 'rgba(255,255,255,0.15)',
   },
   headerContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    gap: 8,
   },
   headerUserInfo: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
+    gap: 8,
   },
   avatarPlaceholder: {
     width: 34,
@@ -3647,64 +3606,184 @@ const styles = StyleSheet.create({
     backgroundColor: '#EAB308',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 10,
-    overflow: 'hidden',
   },
   greetingText: {
     color: '#F8FAFC',
     fontSize: 14,
     fontWeight: '700',
   },
+  voiceToggleHeaderBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   langHeaderBtn: {
     backgroundColor: '#1E293B',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#475569',
-    marginRight: 8,
+    borderColor: '#334155',
   },
   langHeaderBtnText: {
     color: '#EAB308',
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '800',
   },
   menuIcon: {
-    padding: 6,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#1E293B',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-
-  // FAVORITOS E PIN DE SEGURANÇA
+  radarWaveCircle: {
+    position: 'absolute',
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: 'rgba(234, 179, 8, 0.25)',
+    borderWidth: 1.5,
+    borderColor: '#EAB308',
+  },
+  radarCenterPin: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#0F172A',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#EAB308',
+    elevation: 6,
+  },
+  driverMarkerWrapper: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  driverMarkerImage: {
+    width: 36,
+    height: 36,
+  },
+  driverEtaBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EAB308',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    marginBottom: 2,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+  },
+  driverEtaText: {
+    color: '#0F172A',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  pickupMarker: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#0F172A',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#EAB308',
+  },
+  carMarker: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  centerPinContainer: {
+    position: 'absolute',
+    top: '42%',
+    left: '50%',
+    marginLeft: -18,
+    marginTop: -36,
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  centerPin: {
+    alignItems: 'center',
+  },
+  pinShadow: {
+    width: 12,
+    height: 4,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    borderRadius: 6,
+    marginTop: -4,
+  },
+  floatingSafetyShieldBtn: {
+    position: 'absolute',
+    right: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#0F172A',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#EF4444',
+    elevation: 6,
+    zIndex: 15,
+  },
+  recenterButton: {
+    position: 'absolute',
+    right: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#0F172A',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+    elevation: 6,
+    zIndex: 15,
+  },
   favoritesContainer: {
     position: 'absolute',
     left: 16,
     right: 16,
     flexDirection: 'row',
-    gap: 8,
-    zIndex: 9,
+    gap: 10,
+    zIndex: 15,
   },
   favoriteButton: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0F172A',
-    paddingHorizontal: 10,
+    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+    paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#334155',
+    gap: 8,
   },
   favoriteIconBg: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     backgroundColor: '#EAB308',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 6,
   },
   favoriteText: {
     color: '#F8FAFC',
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
     flex: 1,
   },
@@ -3713,17 +3792,17 @@ const styles = StyleSheet.create({
     left: 16,
     right: 16,
     backgroundColor: '#0F172A',
+    borderRadius: 16,
     padding: 12,
-    borderRadius: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#EAB308',
-    zIndex: 9,
+    zIndex: 15,
+    gap: 10,
   },
   pinSecurityTextContainer: {
     flex: 1,
-    marginLeft: 10,
   },
   pinSecurityTitle: {
     color: '#EAB308',
@@ -3732,37 +3811,37 @@ const styles = StyleSheet.create({
   },
   pinSecuritySub: {
     color: '#94A3B8',
-    fontSize: 10,
+    fontSize: 11,
   },
   pinCodeBox: {
-    backgroundColor: '#FEF08A',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#EAB308',
   },
   pinCodeText: {
-    color: '#0F172A',
-    fontSize: 16,
+    color: '#EAB308',
+    fontSize: 18,
     fontWeight: '900',
     letterSpacing: 2,
   },
-
-  // SLIDING BOTTOM SHEET
   bottomSheetWrapper: {
     position: 'absolute',
-    bottom: 0,
     left: 0,
     right: 0,
+    bottom: 0,
+    zIndex: 25,
   },
   bottomSheet: {
     backgroundColor: '#0F172A',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     borderTopWidth: 1,
-    borderColor: '#334155',
-    elevation: 20,
-    maxHeight: '68%',
+    borderTopColor: '#1E293B',
+    elevation: 12,
   },
   dragHandlerArea: {
     width: '100%',
@@ -3770,54 +3849,349 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   dragIndicator: {
-    width: 40,
+    width: 36,
     height: 4,
-    backgroundColor: '#475569',
+    backgroundColor: '#334155',
     borderRadius: 2,
   },
   sheetTitle: {
+    color: '#F8FAFC',
     fontSize: 18,
     fontWeight: '800',
-    color: '#F8FAFC',
     marginBottom: 12,
   },
   mainSearchInput: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#1E293B',
-    borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    marginBottom: 14,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#334155',
   },
   mainSearchText: {
-    color: '#94A3B8',
+    color: '#F8FAFC',
     fontSize: 14,
+    fontWeight: '500',
     flex: 1,
+  },
+  referenceInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    borderWidth: 1,
+    borderColor: '#334155',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    marginTop: 6,
+  },
+  referenceTextInput: {
+    flex: 1,
+    color: '#F8FAFC',
+    fontSize: 12,
+    paddingVertical: 6,
   },
   requestButton: {
     backgroundColor: '#EAB308',
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
+    borderRadius: 14,
     justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 14,
   },
   requestButtonText: {
     color: '#0F172A',
     fontSize: 15,
     fontWeight: '800',
   },
-
-  // SERVIÇOS E VEÍCULOS
   sectionLabel: {
     color: '#94A3B8',
     fontSize: 12,
     fontWeight: '700',
+    textTransform: 'uppercase',
     marginBottom: 8,
+  },
+  paymentOptionsContainer: {
+    marginBottom: 16,
+  },
+  paymentBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+  },
+  paymentBtnActive: {
+    borderColor: '#10B981',
+  },
+  paymentBtnText: {
+    color: '#F8FAFC',
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  cancelButtonOutline: {
+    borderWidth: 1,
+    borderColor: '#EF4444',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cancelButtonOutlineText: {
+    color: '#EF4444',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  pinCardContainer: {
+    backgroundColor: '#1E293B',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#10B981',
+    marginBottom: 12,
+  },
+  pinHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  pinTitle: {
+    color: '#10B981',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  pinSubtitle: {
+    color: '#94A3B8',
+    fontSize: 11,
+    marginVertical: 4,
+  },
+  pinDigitsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 6,
+  },
+  pinDigitBox: {
+    flex: 1,
+    height: 44,
+    backgroundColor: '#0F172A',
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#10B981',
+  },
+  pinDigitText: {
+    color: '#F8FAFC',
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  statusBox: {
+    alignItems: 'center',
+    paddingVertical: 16,
+  },
+  statusTitle: {
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  statusSub: {
+    color: '#94A3B8',
+    fontSize: 13,
+    textAlign: 'center',
     marginTop: 4,
   },
+  activeRideContainer: {
+    gap: 12,
+  },
+  activeRideHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  statusPulseBox: {
+    flex: 1,
+  },
+  statusPulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+    marginBottom: 4,
+  },
+  activeRideStatusTitle: {
+    color: '#F8FAFC',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  priceBadgeHeader: {
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+    alignItems: 'flex-end',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  priceBadgeLabel: {
+    color: '#94A3B8',
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  priceBadgeValue: {
+    color: '#EAB308',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  routeTimelineContainer: {
+    backgroundColor: '#1E293B',
+    borderRadius: 16,
+    padding: 12,
+    gap: 8,
+  },
+  routeTimelineHeaderTitle: {
+    color: '#64748B',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  timelineItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  timelineIconBg: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  timelineTextWrapper: {
+    flex: 1,
+  },
+  timelineLabel: {
+    color: '#94A3B8',
+    fontSize: 10,
+  },
+  timelineValue: {
+    color: '#F8FAFC',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  paymentMethodChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#334155',
+  },
+  paymentMethodChipText: {
+    color: '#EAB308',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  driverCardCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  driverAvatarCompact: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#334155',
+  },
+  driverNameCompact: {
+    color: '#F8FAFC',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  vehicleModelCompact: {
+    color: '#94A3B8',
+    fontSize: 12,
+  },
+  plateBadgeCompact: {
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginTop: 4,
+  },
+  plateTextCompact: {
+    color: '#EAB308',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  actionRowGrid: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  actionBtnSecondary: {
+    flex: 1,
+    backgroundColor: '#1E293B',
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  actionBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  actionBtnPrimary: {
+    flex: 1.2,
+    backgroundColor: '#EAB308',
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  actionBtnPrimaryText: {
+    color: '#0F172A',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  chatBadgeContainer: {
+    backgroundColor: '#EF4444',
+    borderRadius: 8,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  chatBadgeText: {
+    color: '#FFF',
+    fontSize: 9,
+    fontWeight: '900',
+  },
+  cancelRideLink: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  cancelRideLinkText: {
+    color: '#EF4444',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  driverInfoCard: {
+    position: 'absolute',
+    top: -999,
+    left: 0,
+  },
+  cardTitle: { color: '#FFF' },
+  priceText: { color: '#EAB308', fontSize: 16, fontWeight: 'bold' },
   serviceTypesContainer: {
     flexDirection: 'row',
     gap: 8,
@@ -3828,12 +4202,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
     backgroundColor: '#1E293B',
-    borderRadius: 10,
+    paddingVertical: 10,
+    borderRadius: 12,
+    gap: 6,
     borderWidth: 1,
     borderColor: '#334155',
-    gap: 6,
   },
   serviceTypeActive: {
     backgroundColor: '#EAB308',
@@ -3852,13 +4226,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#1E293B',
     padding: 12,
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#334155',
   },
   categoryCardActive: {
     borderColor: '#EAB308',
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(234, 179, 8, 0.08)',
   },
   categoryTextWrapper: {
     flex: 1,
@@ -3872,181 +4246,74 @@ const styles = StyleSheet.create({
     color: '#EAB308',
   },
   categorySubtitle: {
-    color: '#64748B',
+    color: '#94A3B8',
     fontSize: 11,
   },
   categoryPriceText: {
-    color: '#94A3B8',
-    fontSize: 13,
+    color: '#F8FAFC',
+    fontSize: 14,
     fontWeight: '700',
   },
   categoryPriceTextActive: {
     color: '#EAB308',
-    fontSize: 14,
-    fontWeight: '800',
   },
-  actionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  cancelButtonOutline: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#475569',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cancelButtonOutlineText: {
-    color: '#94A3B8',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-
-  // PAGAMENTOS E CARDS DO MOTORISTA
-  paymentOptionsContainer: {
-    gap: 8,
-    marginBottom: 16,
-  },
-  paymentBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1E293B',
-    padding: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#334155',
-    gap: 10,
-  },
-  paymentBtnActive: {
-    borderColor: '#EAB308',
-  },
-  paymentBtnText: {
-    color: '#94A3B8',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  pinCardContainer: {
-    backgroundColor: '#064E3B',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#10B981',
-  },
-  pinHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 4,
-  },
-  pinTitle: {
-    color: '#10B981',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  pinSubtitle: {
-    color: '#A7F3D0',
-    fontSize: 11,
-    marginBottom: 8,
-  },
-  pinDigitsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    justifyContent: 'center',
-  },
-  pinDigitBox: {
-    backgroundColor: '#022C22',
-    width: 38,
-    height: 44,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#059669',
-  },
-  pinDigitText: {
-    color: '#A7F3D0',
-    fontSize: 20,
-    fontWeight: '900',
-  },
-  statusBox: {
-    alignItems: 'center',
-    paddingVertical: 10,
-  },
-  statusTitle: {
-    color: '#F8FAFC',
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  statusSub: {
-    color: '#94A3B8',
-    fontSize: 12,
-    marginTop: 4,
-  },
-
-  // MODAIS
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.7)',
     justifyContent: 'flex-end',
   },
   modalOverlayInner: {
-    width: '100%',
+    flex: 1,
+    justifyContent: 'flex-end',
   },
   modalContainer: {
     backgroundColor: '#0F172A',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     padding: 20,
     borderTopWidth: 1,
-    borderColor: '#334155',
+    borderTopColor: '#1E293B',
   },
   modalTitle: {
     color: '#F8FAFC',
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '800',
-    marginBottom: 16,
-    textAlign: 'center',
+    marginBottom: 12,
   },
   langOption: {
-    paddingVertical: 12,
+    paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#1E293B',
   },
   langOptionText: {
     color: '#F8FAFC',
-    fontSize: 14,
-    textAlign: 'center',
+    fontSize: 15,
+    fontWeight: '600',
   },
   closeButton: {
     marginTop: 16,
     alignItems: 'center',
-    paddingVertical: 10,
+    paddingVertical: 12,
   },
   locationModalCard: {
     backgroundColor: '#0F172A',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
     alignItems: 'center',
-    borderTopWidth: 1,
-    borderColor: '#334155',
   },
   locationIconBg: {
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: '#FEF08A',
-    alignItems: 'center',
+    backgroundColor: 'rgba(234, 179, 8, 0.15)',
     justifyContent: 'center',
-    marginBottom: 12,
+    alignItems: 'center',
+    marginBottom: 16,
   },
   locationModalTitle: {
     color: '#F8FAFC',
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '800',
     marginBottom: 8,
   },
@@ -4055,48 +4322,23 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: 'center',
     marginBottom: 20,
-    lineHeight: 18,
   },
-
-  // PHONE INPUT MODAL
-  inputLabel: {
-    color: '#94A3B8',
-    fontSize: 12,
-    fontWeight: '700',
-    marginBottom: 6,
-  },
-  phoneInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1E293B',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  phoneInput: {
-    flex: 1,
-    color: '#F8FAFC',
-    fontSize: 15,
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    fontWeight: '700',
-  },
-
-  // MENU LATERAL DRAWER
   menuOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
   },
   menuDrawer: {
-    width: '78%',
+    width: '80%',
     height: '100%',
     backgroundColor: '#0F172A',
     paddingHorizontal: 20,
     borderRightWidth: 1,
-    borderColor: '#334155',
+    borderRightColor: '#1E293B',
   },
   menuHeader: {
-    marginBottom: 24,
+    paddingVertical: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
   },
   avatarPlaceholderLarge: {
     width: 60,
@@ -4113,18 +4355,18 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   menuUserPhone: {
-    color: '#64748B',
+    color: '#94A3B8',
     fontSize: 12,
-    marginTop: 2,
   },
   menuItems: {
+    marginTop: 16,
     gap: 6,
   },
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 12,
-    gap: 12,
+    gap: 14,
   },
   menuItemText: {
     color: '#F8FAFC',
@@ -4136,8 +4378,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#1E293B',
     marginVertical: 10,
   },
-
-  // BUSCA MAPBOX
   searchModalContainer: {
     flex: 1,
     backgroundColor: '#0F172A',
@@ -4152,7 +4392,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#1E293B',
   },
   backButton: {
-    padding: 4,
+    padding: 6,
   },
   passengerSelector: {
     flexDirection: 'row',
@@ -4160,18 +4400,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#1E293B',
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 16,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: '#334155',
   },
   passengerSelectorText: {
-    color: '#F8FAFC',
+    color: '#EAB308',
     fontSize: 12,
     fontWeight: '700',
   },
   modalBody: {
     flex: 1,
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 12,
   },
   mapboxSearchInputWrapper: {
     flexDirection: 'row',
@@ -4179,11 +4420,53 @@ const styles = StyleSheet.create({
     backgroundColor: '#1E293B',
     borderRadius: 12,
     paddingHorizontal: 12,
-    height: 44,
+    paddingVertical: 8,
   },
   mapboxSearchInput: {
     flex: 1,
     color: '#F8FAFC',
+    fontSize: 14,
+  },
+  sectionHeaderTitle: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '800',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  savedPlaceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+    gap: 12,
+  },
+  savedIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  savedPlaceTitle: {
+    color: '#F8FAFC',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  savedPlaceSub: {
+    color: '#94A3B8',
+    fontSize: 12,
+  },
+  recentItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+  },
+  recentText: {
+    color: '#CBD5E1',
     fontSize: 13,
   },
   searchResultItem: {
@@ -4194,364 +4477,29 @@ const styles = StyleSheet.create({
     borderBottomColor: '#1E293B',
   },
   searchResultText: {
-    color: '#F8FAFC',
-    fontSize: 13,
+    fontSize: 14,
+    fontWeight: '500',
     flex: 1,
   },
-  
-  // MARCADORES 3D
-  driverMarkerWrapper: {
-    width: 36,
-    height: 36,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'transparent',
-  },
-  driverMarkerImage: {
-    width: 32,
-    height: 32,
-    resizeMode: 'contain',
-    backgroundColor: 'transparent',
-  },
-  pickupMarker: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#0F172A',
-    borderWidth: 2,
-    borderColor: '#EAB308',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  // ESTILOS DA TELA PROFISSIONAL DE CORRIDA ATIVA
-  activeRideContainer: {
-    width: '100%',
-    paddingTop: 4,
-  },
-  activeRideHeader: {
+  phoneInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     backgroundColor: '#1E293B',
-    padding: 12,
-    borderRadius: 14,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  statusPulseBox: {
-    flex: 1,
-  },
-  statusPulseDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#10B981',
-    marginBottom: 4,
-  },
-  activeRideStatusTitle: {
-    color: '#F8FAFC',
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  priceBadgeHeader: {
-    alignItems: 'flex-end',
-  },
-  priceBadgeLabel: {
-    color: '#94A3B8',
-    fontSize: 9,
-    fontWeight: '800',
-  },
-  priceBadgeValue: {
-    color: '#EAB308',
-    fontSize: 15,
-    fontWeight: '900',
-  },
-  routeTimelineContainer: {
-    backgroundColor: '#1E293B',
-    padding: 14,
-    borderRadius: 14,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  routeTimelineHeaderTitle: {
-    color: '#64748B',
-    fontSize: 10,
-    fontWeight: '900',
-    marginBottom: 10,
-    letterSpacing: 0.5,
-  },
-  timelineItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  timelineIconBg: {
-    width: 24,
-    height: 24,
     borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
   },
-  timelineTextWrapper: {
+  phoneInput: {
     flex: 1,
-  },
-  timelineLabel: {
-    color: '#94A3B8',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  timelineValue: {
     color: '#F8FAFC',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  paymentMethodChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#0F172A',
+    paddingVertical: 10,
     paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    marginTop: 4,
-    gap: 6,
+    fontSize: 14,
   },
-  paymentMethodChipText: {
-    color: '#EAB308',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  driverCardCompact: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1E293B',
-    padding: 12,
-    borderRadius: 14,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  driverAvatarCompact: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    borderWidth: 1.5,
-    borderColor: '#EAB308',
-  },
-  driverNameCompact: {
-    color: '#F8FAFC',
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  vehicleModelCompact: {
+  inputLabel: {
     color: '#94A3B8',
     fontSize: 12,
-    marginTop: 2,
-  },
-  plateBadgeCompact: {
-    backgroundColor: '#0F172A',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    alignSelf: 'flex-start',
-    marginTop: 4,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  plateTextCompact: {
-    color: '#EAB308',
-    fontSize: 11,
-    fontWeight: '900',
-  },
-  actionRowGrid: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 12,
-  },
-  actionBtnSecondary: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#1E293B',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#334155',
-    gap: 6,
-  },
-  actionBtnPrimary: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#EAB308',
-    paddingVertical: 12,
-    borderRadius: 12,
-    position: 'relative',
-  },
-  actionBtnText: {
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  actionBtnPrimaryText: {
-    color: '#0F172A',
-    fontSize: 13,
-    fontWeight: '900',
-    marginLeft: 6,
-  },
-  cancelRideLink: {
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  cancelRideLinkText: {
-    color: '#EF4444',
-    fontSize: 13,
     fontWeight: '700',
-  },
-
-  // 📡 ESTILOS DO RADAR DE BUSCA
-  radarWaveCircle: {
-    position: 'absolute',
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: 'rgba(234, 179, 8, 0.25)',
-    borderWidth: 1.5,
-    borderColor: '#EAB308',
-  },
-  radarCenterPin: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: '#0F172A',
-    borderWidth: 2,
-    borderColor: '#EAB308',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 10,
-    elevation: 6,
-    shadowColor: '#EAB308',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.5,
-    shadowRadius: 6,
-  },
-  sectionHeaderTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#64748B',
-    marginBottom: 10,
-    marginTop: 12,
-    textTransform: 'uppercase',
-  },
-  savedPlaceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
-  },
-  savedIconCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  savedPlaceTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#F8FAFC',
-  },
-  savedPlaceSub: {
-    fontSize: 12,
-    color: '#94A3B8',
-    marginTop: 2,
-  },
-  recentItemRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
-  },
-  recentText: {
-    fontSize: 14,
-    color: '#CBD5E1',
-  },
-  referenceInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1E293B',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginTop: 6,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  referenceTextInput: {
-    flex: 1,
-    color: '#F8FAFC',
-    fontSize: 13,
-    padding: 0,
-  },
-  driverInfoCard: {
-    backgroundColor: '#1E293B',
-    borderRadius: 12,
-    padding: 14,
-    marginVertical: 8,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  cardTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#F8FAFC',
-  },
-  priceText: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#EAB308',
-  },
-  voiceToggleHeaderBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 6,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  chatBadgeContainer: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    backgroundColor: '#EF4444',
-    borderRadius: 10,
-    minWidth: 20,
-    height: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 4,
-    borderWidth: 2,
-    borderColor: '#0F172A',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-  },
-  chatBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '900',
-    textAlign: 'center',
+    marginBottom: 4,
   },
 });
