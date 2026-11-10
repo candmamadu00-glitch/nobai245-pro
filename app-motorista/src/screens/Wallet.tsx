@@ -131,21 +131,9 @@ export function Wallet() {
   const dynamicTopPadding = Math.max((insets?.top || 0) + 6, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 6 : 14);
   const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 28 : 16);
 
-  // 🟢 CORREÇÃO: Ignora números fictícios zerados vindo do backend e força o fallback correto
- // 🟢 NÚMEROS OFICIAIS DA PLATAFORMA (OBTIDOS DA API OU FALLBACKS REAIS)
-  const adminOrangeNumber = 
-    financeData?.adminOrangeNumber && 
-    financeData.adminOrangeNumber.trim() !== '' && 
-    !financeData.adminOrangeNumber.includes('000000')
-      ? financeData.adminOrangeNumber 
-      : '245955219149'; // 👈 Número Orange Money oficial do .env
-
-  const adminMtnNumber = 
-    financeData?.adminMtnNumber && 
-    financeData.adminMtnNumber.trim() !== '' && 
-    !financeData.adminMtnNumber.includes('000000')
-      ? financeData.adminMtnNumber 
-      : (financeData?.mtnNumber || financeData?.mtn || '245966626730'); // 👈 Número MTN MoMo oficial do .env
+  // 🟢 NÚMEROS OFICIAIS FIXOS DA PLATAFORMA
+  const adminOrangeNumber = '245955219149';
+  const adminMtnNumber = '245966626730';
 
   return (
     <View style={styles.container}>
