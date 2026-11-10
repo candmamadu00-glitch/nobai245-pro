@@ -81,7 +81,7 @@ async function emitSuccessSockets(rideId?: string | null, passengerId?: string |
 }
 
 // -----------------------------------------------------------------------------
-// 🤖 RECARGA DE MOTORISTA VIA LEITURA DE SMS (COMPATÍVEL COM QUALQUER FORMATO)
+// 🤖 RECARGA DE MOTORISTA VIA LEITURA DE SMS (COMPATÍVEL COM FCFA E XOF)
 // -----------------------------------------------------------------------------
 router.all('/sms-gateway', async (req: Request, res: Response): Promise<any> => {
   try {
@@ -130,16 +130,24 @@ router.all('/sms-gateway', async (req: Request, res: Response): Promise<any> => 
 
     console.log(`📩 [SMS RECEBIDO] De: ${sender || 'Desconhecido'} | Conteúdo: "${message}"`);
 
-    // RegEx para extrair valor (ex: "5000 XOF", "5.000 XOF" ou "5000XOF") e telefone do remetente
-    const amountMatch = message.match(/(\d+[\d\.]*)\s*XOF/i);
-    const phoneMatch = message.match(/(?:de|from)\s+(\d{7,12})/i);
+    // 🟢 REGEX FLEXÍVEL: Aceita tanto FCFA quanto XOF (ex: "1000.00 FCFA", "5000 XOF", "5000FCFA")
+    const amountMatch = message.match(/(\d+(?:[\.,]\d+)?)\s*(?:FCFA|XOF)/i) || 
+                        message.match(/(?:FCFA|XOF)\s*(\d+(?:[\.,]\d+)?)/i);
+
+    const phoneMatch = message.match(/(?:de|para|from|to)\s+o?\s*(\d{7,12})/i);
 
     if (!amountMatch) {
-      console.warn('⚠️ [SMS GATEWAY] Valor em XOF não encontrado no texto do SMS.');
-      return res.status(200).json({ status: 'ignored', reason: 'Valor XOF não identificado' });
+      console.warn('⚠️ [SMS GATEWAY] Valor em FCFA/XOF não encontrado no texto do SMS.');
+      return res.status(200).json({ status: 'ignored', reason: 'Valor FCFA/XOF não identificado' });
     }
 
-    const amountXOF = Number(amountMatch[1].replace(/\./g, ''));
+    // Trata valores com decimais tipo "1000.00" removendo os centavos zerados antes de converter
+    let amountStr = amountMatch[1];
+    if (/[\.,]\d{2}$/.test(amountStr)) {
+      amountStr = amountStr.slice(0, -3);
+    }
+    const amountXOF = Math.floor(Number(amountStr.replace(/\D/g, '')));
+
     let driverPhone = phoneMatch ? phoneMatch[1].replace(/\D/g, '') : '';
 
     // Se o número não veio no texto do SMS, pega do campo sender
@@ -185,14 +193,14 @@ router.all('/sms-gateway', async (req: Request, res: Response): Promise<any> => 
           balanceAfter: newBalance,
           paymentMethod: 'ORANGE_MONEY',
           reference: `SMS-AUTO-${Date.now()}`,
-          description: `Recarga automática por SMS de ${amountXOF} XOF`
+          description: `Recarga automática por SMS de ${amountXOF} XOF/FCFA`
         }
       });
 
       return { driverId: driver.id, newBalance, fullName: driver.fullName };
     });
 
-    console.log(`✅ [RECARGA SMS CONCLUÍDA] Motorista: ${result.fullName} | Saldo Anterior: -> Novo Saldo: ${result.newBalance} XOF`);
+    console.log(`✅ [RECARGA SMS CONCLUÍDA] Motorista: ${result.fullName} | Saldo Creditado: ${amountXOF} FCFA | Novo Saldo: ${result.newBalance} FCFA`);
 
     // Notifica o app do motorista em tempo real via Socket
     const io = getIo();
@@ -201,7 +209,7 @@ router.all('/sms-gateway', async (req: Request, res: Response): Promise<any> => 
         .to(`driver_${driver.id}`)
         .to(`driver:${driver.id}`)
         .emit('wallet:updated', {
-          message: `Recarga de ${amountXOF} XOF confirmada com sucesso!`,
+          message: `Recarga de ${amountXOF} FCFA confirmada com sucesso!`,
           walletBalance: result.newBalance
         });
     }
