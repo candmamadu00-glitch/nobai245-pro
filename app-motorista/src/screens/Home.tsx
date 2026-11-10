@@ -139,7 +139,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) =>
     } catch (err) {}
   }
 });
-
+ 
 export type RideState = 'idle' | 'searching' | 'accepted' | 'arrived' | 'in_progress' | 'completed';
 
 export interface IncomingRideData {
@@ -220,20 +220,37 @@ function getVehicle3DIconAsset(vehicleType?: string, vehicleColor?: string) {
   const type = (vehicleType || 'PARTICULAR').toUpperCase().trim();
   const color = (vehicleColor || 'BRANCO').toUpperCase().trim();
 
-  if (type === 'MOTO') return require('../../assets/images/vehicles/moto.png');
-  if (type === 'TOCA_TOCA' || type === 'VAN') return require('../../assets/images/vehicles/toca_toca.png');
-  if (type === 'TAXI') return require('../../assets/images/vehicles/taxi_yellow.png');
+  // 1. Tipos específicos de veículos
+  if (type === 'MOTO') {
+    return require('../../assets/images/vehicles/moto.png');
+  }
+  
+  // 🟢 Mapeia Táxi, Toca-Toca e Van para o ícone amarelo existente (car_yellow.png)
+  if (type === 'TAXI' || type === 'TOCA_TOCA' || type === 'VAN' || type === 'MOTO_CARRO') {
+    return require('../../assets/images/vehicles/car_yellow.png');
+  }
 
+  // 2. Cores para veículos particulares
   switch (color) {
-    case 'BLACK': case 'PRETO': return require('../../assets/images/vehicles/car_black.png');
-    case 'BLUE': case 'AZUL': return require('../../assets/images/vehicles/car_blue.png');
-    case 'RED': case 'VERMELHO': return require('../../assets/images/vehicles/car_red.png');
-    case 'ORANGE': case 'LARANJA': return require('../../assets/images/vehicles/car_orange.png');
-    case 'GREEN': case 'VERDE': return require('../../assets/images/vehicles/car_green.png');
-    case 'GRAY': case 'SILVER': case 'CINZA': case 'PRATA': return require('../../assets/images/vehicles/car_gray.png');
-    case 'BROWN': case 'CASTANHO': case 'MARROM': return require('../../assets/images/vehicles/car_brown.png');
-    case 'YELLOW': case 'AMARELO': return require('../../assets/images/vehicles/car_yellow.png');
-    case 'WHITE': case 'BRANCO': default: return require('../../assets/images/vehicles/car_white.png');
+    case 'BLACK': case 'PRETO': 
+      return require('../../assets/images/vehicles/car_black.png');
+    case 'BLUE': case 'AZUL': 
+      return require('../../assets/images/vehicles/car_blue.png');
+    case 'RED': case 'VERMELHO': 
+      return require('../../assets/images/vehicles/car_red.png');
+    case 'ORANGE': case 'LARANJA': 
+      return require('../../assets/images/vehicles/car_orange.png');
+    case 'GREEN': case 'VERDE': 
+      return require('../../assets/images/vehicles/car_green.png');
+    case 'GRAY': case 'SILVER': case 'CINZA': case 'PRATA': 
+      return require('../../assets/images/vehicles/car_gray.png');
+    case 'BROWN': case 'CASTANHO': case 'MARROM': 
+      return require('../../assets/images/vehicles/car_brown.png');
+    case 'YELLOW': case 'AMARELO': 
+      return require('../../assets/images/vehicles/car_yellow.png');
+    case 'WHITE': case 'BRANCO': 
+    default: 
+      return require('../../assets/images/vehicles/car_white.png');
   }
 }
 
