@@ -85,7 +85,9 @@ async function emitSuccessSockets(rideId?: string | null, passengerId?: string |
 // -----------------------------------------------------------------------------
 router.all('/sms-gateway', async (req: Request, res: Response): Promise<any> => {
   try {
-    // 1. Extração flexível de payload (Body, Query String ou URL Encoded)
+    // 🔍 Log de diagnóstico bruto para inspecionar o envio do celular
+    console.log('🔍 [PAYLOAD BRUTO RECEBIDO]:', JSON.stringify({ body: req.body, query: req.query }, null, 2));
+
     let payload: any = req.body;
 
     if (typeof req.body === 'string') {

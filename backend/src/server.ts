@@ -938,10 +938,10 @@ io.on('connection', (socket: any) => {
     }
 
     // 🛑 TRAVA DE SEGURANÇA: Saldo mínimo na carteira digital para cobrir comissões
-    const MIN_REQUIRED_BALANCE = 1000;
-    const currentBalance = Number(driver.walletBalance || 0);
+    const MIN_REQUIRED_BALANCE = 0;
+const currentBalance = Number(driver.walletBalance || 0);
 
-    if (currentBalance < MIN_REQUIRED_BALANCE) {
+if (currentBalance < MIN_REQUIRED_BALANCE) {
       console.warn(`🛑 [ONLINE_DEBUG] Recusado: Motorista ${driverId} possui saldo insuficiente (${currentBalance} XOF < ${MIN_REQUIRED_BALANCE} XOF)`);
 
       await prisma.driver.update({
