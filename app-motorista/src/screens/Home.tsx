@@ -14,7 +14,6 @@ import { Ionicons } from '@expo/vector-icons';
 import Mapbox from '@rnmapbox/maps';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
-import * as Notifications from 'expo-notifications';
 import { registerAndSendPushToken as registerForPushNotifications } from '../services/notifications';
 import { ChatModal } from '../components/ChatModal';
 import { saveActionToQueue, processOfflineQueue } from '../services/offlineSync';
@@ -30,7 +29,6 @@ import { DriverSOSModal } from '../components/DriverSOSModal';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { createAudioPlayer } from 'expo-audio';
 import { useBilingualVoice } from '../hooks/useBilingualVoice';
-import { updateOngoingRideNotification, dismissOngoingRideNotification } from '../services/ongoingNotification';
 import { speakText, triggerHapticFeedback } from '../utils/accessibility';
 
 // 🛡️ Token Mapbox
@@ -123,10 +121,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) =>
             signal: controller.signal
           });
           clearTimeout(timeoutId);
-          console.log('📍 [LOCATION_DEBUG] Fallback HTTP de localização enviado com sucesso.');
-        } catch (e) {
-          console.warn('⚠️ [LOCATION_DEBUG] Falha no fallback HTTP de localização.');
-        }
+        } catch (e) {}
       };
 
       if (socket && socket.connected) {
@@ -155,13 +150,10 @@ export interface IncomingRideData {
   destinationLat?: number;
   destinationLng?: number;
   destinationAddress?: string;
-  
-  // 🟢 PONTOS DE REFERÊNCIA INDIVIDUAIS DE EMBARQUE E DESEMBARQUE
   pickupReferencePoint?: string;
   extraStopReferencePoint?: string;
   dropoffReferencePoint?: string;
   referencePoint?: string;
-  
   startOtp?: string;
   serviceType?: 'RIDE' | 'DELIVERY' | 'RENTAL';
   vehicleType?: 'PARTICULAR' | 'TAXI' | 'MOTO' | 'MOTO_CARRO' | 'TOCA_TOCA';
@@ -177,15 +169,6 @@ export interface IncomingRideData {
   estimatedPrice?: number;
   transactionId?: string;
   stops?: any[]; 
-}
-
-interface ChatMessage {
-  id: string;
-  sender: 'passenger' | 'driver';
-  text?: string;
-  audioUrl?: string | null;
-  audioDuration?: number;
-  senderPhoto?: string;
 }
 
 export interface CompletedRideInfo { fareXOF: number; distanceKm: number; transactionId: string; }
@@ -220,17 +203,13 @@ function getVehicle3DIconAsset(vehicleType?: string, vehicleColor?: string) {
   const type = (vehicleType || 'PARTICULAR').toUpperCase().trim();
   const color = (vehicleColor || 'BRANCO').toUpperCase().trim();
 
-  // 1. Tipos específicos de veículos
   if (type === 'MOTO') {
     return require('../../assets/images/vehicles/moto.png');
   }
-  
-  // 🟢 Mapeia Táxi, Toca-Toca e Van para o ícone amarelo existente (car_yellow.png)
   if (type === 'TAXI' || type === 'TOCA_TOCA' || type === 'VAN' || type === 'MOTO_CARRO') {
     return require('../../assets/images/vehicles/car_yellow.png');
   }
 
-  // 2. Cores para veículos particulares
   switch (color) {
     case 'BLACK': case 'PRETO': 
       return require('../../assets/images/vehicles/car_black.png');
@@ -270,12 +249,9 @@ const formatImageUrl = (path?: string | null): string | undefined => {
   if (!path) return undefined;
   if (path.startsWith('http://') || path.startsWith('https://')) return path;
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
-  const fullUrl = `${CLEAN_BASE_URL}${cleanPath}`;
-  console.log(`📸 [FOTO_DEBUG] URL de foto formatada: "${fullUrl}"`);
-  return fullUrl;
+  return `${CLEAN_BASE_URL}${cleanPath}`;
 };
 
-// 🏎️ UTILITÁRIO DE INTERPOLAÇÃO LINEAR (LERP) PARA SUAVIZAR MOVIMENTO
 function lerp(start: number, end: number, amt: number): number {
   return (1 - amt) * start + amt * end;
 }
@@ -388,7 +364,18 @@ export function Home() {
     })
   ).current;
 
-  // 🎯 FUNÇÃO PARA ENQUADRAR MOTORISTA E PONTO DE DESTINO/EMBARQUE NO MAPA
+  const cameraRef = useRef<Mapbox.Camera>(null);
+  const locationWatcherRef = useRef<Location.LocationSubscription | null>(null);
+  const acceptTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastCameraUpdateRef = useRef<number>(0);
+  const isChatVisibleRef = useRef(isChatVisible);
+
+  const [waitTimeLeft, setWaitTimeLeft] = useState(300);
+  const [canCancelNoShow, setCanCancelNoShow] = useState(false);
+  const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
+  const [isLowBattery, setIsLowBattery] = useState(false);
+  const [unreadCount, setUnreadCount] = useState<number>(0);
+
   const fitMapBounds = useCallback((
     driverLng: number, 
     driverLat: number, 
@@ -402,14 +389,11 @@ export function Home() {
     const minLat = Math.min(driverLat, targetLat);
     const maxLat = Math.max(driverLat, targetLat);
 
-    const ne = [maxLng, maxLat];
-    const sw = [minLng, minLat];
-
     try {
       cameraRef.current.setCamera({
         bounds: {
-          ne,
-          sw,
+          ne: [maxLng, maxLat],
+          sw: [minLng, minLat],
           paddingTop: 120,
           paddingBottom: 280,
           paddingLeft: 50,
@@ -417,27 +401,12 @@ export function Home() {
         },
         animationDuration: 1200,
       });
-      console.log('📍 [MAP_DEBUG] Ajustando enquadramento no mapa.');
-    } catch (err) {
-      console.warn('⚠️ Erro ao ajustar limites da câmera Mapbox:', err);
-    }
+    } catch (err) {}
   }, [isMapReady]);
 
   const stops = incomingRide?.stops || [];
   const isNavigatingToStop = currentStopIndex < stops.length;
   const displayPassengerName = incomingRide?.guestName || incomingRide?.passengerName || 'Passageiro';
-  
-  const [waitTimeLeft, setWaitTimeLeft] = useState(300);
-  const [canCancelNoShow, setCanCancelNoShow] = useState(false);
-  const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
-  const [isLowBattery, setIsLowBattery] = useState(false);
-  const [unreadCount, setUnreadCount] = useState<number>(0);
-  const isChatVisibleRef = useRef(isChatVisible);
-  const cameraRef = useRef<Mapbox.Camera>(null);
-  const locationWatcherRef = useRef<Location.LocationSubscription | null>(null);
-  const acceptTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastCameraUpdateRef = useRef<number>(0);
-
   const isRideActive = ['accepted', 'arrived', 'in_progress'].includes(rideState);
 
   const mapStyle = useMemo(() => {
@@ -449,7 +418,6 @@ export function Home() {
     if (!incomingRide) return null;
 
     const isHeadingToDestination = rideState === 'in_progress';
-
     const pLat = Number(incomingRide.pickupLat);
     const pLng = Number(incomingRide.pickupLng);
     const dLat = Number(incomingRide.destinationLat);
@@ -467,11 +435,15 @@ export function Home() {
   }, [incomingRide, rideState]);
 
   const resetDriverState = useCallback(async () => {
-    console.log('🔄 [STATE_DEBUG] Resetando estado completo do motorista...');
     Vibration.cancel();
     if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
     await AsyncStorage.multiRemove([STORAGE_ACTIVE_RIDE_ID, STORAGE_ACTIVE_RIDE_DATA, STORAGE_ACTIVE_RIDE_STATE]);
     if (!isMountedRef.current) return;
+    
+    rideStateRef.current = 'idle';
+    activeRideIdRef.current = null;
+    incomingRideRef.current = null;
+
     setRideState('idle'); 
     setActiveRideId(null);
     setIncomingRide(null); 
@@ -491,10 +463,23 @@ export function Home() {
 
   const profileImageUrl = formatImageUrl(driver?.profilePicture || undefined);
 
+  const persistActiveRideState = async (rideData: IncomingRideData | null, state: RideState, rideId: string | null) => {
+    try {
+      if (rideData && rideId && state !== 'idle' && state !== 'completed') {
+        await AsyncStorage.multiSet([
+          [STORAGE_ACTIVE_RIDE_ID, rideId],
+          [STORAGE_ACTIVE_RIDE_DATA, JSON.stringify(rideData)],
+          [STORAGE_ACTIVE_RIDE_STATE, state]
+        ]);
+      } else {
+        await AsyncStorage.multiRemove([STORAGE_ACTIVE_RIDE_ID, STORAGE_ACTIVE_RIDE_DATA, STORAGE_ACTIVE_RIDE_STATE]);
+      }
+    } catch (err) {}
+  };
+
   const syncActiveRideWithServer = useCallback(async () => {
     try {
       if (!api || typeof api.get !== 'function') return;
-      console.log('🔄 [SOCKET_DEBUG] Sincronizando corrida ativa com a API...');
       const response = await api.get('/drivers/active-ride').catch(() => null);
       
       if (isMountedRef.current) {
@@ -530,14 +515,12 @@ export function Home() {
             }));
           }
 
-          setActiveRideId(activeRide.id);
-          setRideState(mappedState);
-          setIncomingRide({
+          const formattedActiveData: IncomingRideData = {
             rideId: activeRide.id,
-            pickupReferencePoint: (activeRide as any)?.pickupReferencePoint || (activeRide as any)?.referencePoint || (activeRide as any)?.reference_point || '',
+            pickupReferencePoint: (activeRide as any)?.pickupReferencePoint || (activeRide as any)?.referencePoint || '',
             extraStopReferencePoint: (activeRide as any)?.extraStopReferencePoint || '',
             dropoffReferencePoint: (activeRide as any)?.dropoffReferencePoint || '',
-            referencePoint: (activeRide as any)?.referencePoint || (activeRide as any)?.reference_point || '',
+            referencePoint: (activeRide as any)?.referencePoint || '',
             passengerId: activeRide.passengerId,
             passengerName: activeRide.passenger?.fullName || 'Passageiro',
             passengerPhone: activeRide.passenger?.phone,
@@ -552,17 +535,56 @@ export function Home() {
             priceXof: Number(activeRide.priceXof),
             paymentMethod: activeRide.paymentMethod,
             stops: stopsArray,
-          } as any);
+          };
+
+          activeRideIdRef.current = activeRide.id;
+          rideStateRef.current = mappedState;
+          incomingRideRef.current = formattedActiveData;
+
+          setActiveRideId(activeRide.id);
+          setRideState(mappedState);
+          setIncomingRide(formattedActiveData);
+
+          await persistActiveRideState(formattedActiveData, mappedState, activeRide.id);
+
+          if (socket && socket.connected) {
+            socket.emit('ride:join', { rideId: activeRide.id });
+          }
         }
       }
     } catch (err) {}
   }, [resetDriverState]);
 
-  // 🟢 OUVINTE DE CANCELAMENTO UNIFICADO NO MOTORISTA
+  // 🛡️ RESTAURAÇÃO LOCAL INSTANTÂNEA NO INÍCIO + REVALIDAÇÃO NO SERVIDOR
+  useEffect(() => {
+    async function restoreLocalState() {
+      try {
+        const storedRideId = await AsyncStorage.getItem(STORAGE_ACTIVE_RIDE_ID);
+        const storedRideData = await AsyncStorage.getItem(STORAGE_ACTIVE_RIDE_DATA);
+        const storedRideState = await AsyncStorage.getItem(STORAGE_ACTIVE_RIDE_STATE);
+
+        if (storedRideId && storedRideData && storedRideState && isMountedRef.current) {
+          const parsedData = JSON.parse(storedRideData);
+          
+          activeRideIdRef.current = storedRideId;
+          rideStateRef.current = storedRideState as RideState;
+          incomingRideRef.current = parsedData;
+
+          setActiveRideId(storedRideId);
+          setIncomingRide(parsedData);
+          setRideState(storedRideState as RideState);
+        }
+      } catch (err) {}
+      
+      await syncActiveRideWithServer();
+    }
+
+    restoreLocalState();
+  }, [syncActiveRideWithServer]);
+
   const handleRideCancelled = useCallback(async (data: { cancelledBy?: string; rideId?: string; reason?: string }) => {
     if (!isMountedRef.current) return;
     setIsLoading(false);
-    console.log(`❌ [CANCEL_DEBUG] Tratando evento de cancelamento. Solicitante: ${data.cancelledBy || 'Desconhecido'} | Motivo: ${data.reason || 'Sem motivo'}`);
 
     if (data.rideId && queuedOfferDataRef.current && data.rideId === queuedOfferDataRef.current.rideId) {
       setQueuedOfferData(null);
@@ -571,14 +593,7 @@ export function Home() {
 
     if (!data.rideId || data.rideId === activeRideIdRef.current) {
       Vibration.vibrate([0, 300, 100, 300]);
-      
-      await AsyncStorage.multiRemove([
-        STORAGE_ACTIVE_RIDE_ID,
-        STORAGE_ACTIVE_RIDE_DATA,
-        STORAGE_ACTIVE_RIDE_STATE
-      ]).catch(() => {});
-
-      resetDriverState();
+      await resetDriverState();
 
       if (data.cancelledBy === 'PASSENGER') {
         Alert.alert(
@@ -633,39 +648,27 @@ export function Home() {
 
   useEffect(() => {
     isChatVisibleRef.current = isChatVisible;
-    if (isChatVisible) {
-      setUnreadCount(0);
-    }
+    if (isChatVisible) setUnreadCount(0);
   }, [isChatVisible]);
 
   useEffect(() => {
     if (!socket) return;
-
     const handleChatMessage = (data: any) => {
       if (data?.sender === 'driver' || data?.senderRole === 'driver') return;
-
       if (!isChatVisibleRef.current) {
         setUnreadCount((prev) => prev + 1);
-        try {
-          Vibration.vibrate(200);
-        } catch (e) {}
+        try { Vibration.vibrate(200); } catch (e) {}
       }
     };
-
     socket.on('chat:receive_message', handleChatMessage);
-
-    return () => {
-      socket.off('chat:receive_message', handleChatMessage);
-    };
+    return () => { socket.off('chat:receive_message', handleChatMessage); };
   }, [socket]);
 
   useEffect(() => {
     let heartbeatInterval: ReturnType<typeof setInterval>;
-
     if (isOnline) {
       heartbeatInterval = setInterval(async () => {
         if (!socket || !socket.connected) {
-          console.log('⚡ [SOCKET_DEBUG] Reconectando Socket do motorista...');
           await connectDriverSocket();
         }
 
@@ -682,18 +685,13 @@ export function Home() {
         }
       }, 8000);
     }
-
-    return () => {
-      if (heartbeatInterval) clearInterval(heartbeatInterval);
-    };
+    return () => { if (heartbeatInterval) clearInterval(heartbeatInterval); };
   }, [isOnline, syncActiveRideWithServer]);
 
   useEffect(() => {
     AsyncStorage.getItem('@nobai245:driver_voice_assist')
       .then((val) => {
-        if (val !== null) {
-          setIsVoiceAssistEnabled(val === 'true');
-        }
+        if (val !== null) setIsVoiceAssistEnabled(val === 'true');
       })
       .catch(() => {});
   }, []);
@@ -702,20 +700,13 @@ export function Home() {
     const nextState = !isVoiceAssistEnabled;
     setIsVoiceAssistEnabled(nextState);
     await AsyncStorage.setItem('@nobai245:driver_voice_assist', String(nextState)).catch(() => {});
-    
-    if (nextState) {
-      speakText('Assistência de voz do motorista ativada');
-    }
+    if (nextState) speakText('Assistência de voz do motorista ativada');
   };
 
   useEffect(() => {
     if (rideState === 'idle' || !isVoiceAssistEnabled) return;
-
     if (rideState === 'accepted') {
-      speakText(
-        `Corrida aceita. Vá ao local de embarque: ${incomingRide?.originAddress || 'Endereço de partida'}.`,
-        true
-      );
+      speakText(`Corrida aceita. Vá ao local de embarque: ${incomingRide?.originAddress || 'Endereço de partida'}.`, true);
       triggerHapticFeedback('NEW_OFFER');
     } else if (rideState === 'arrived') {
       speakText('Você chegou ao local. Aguarde o passageiro ou solicite o PIN de confirmação.');
@@ -726,70 +717,42 @@ export function Home() {
     }
   }, [rideState, incomingRide?.originAddress, incomingRide?.destinationAddress, isVoiceAssistEnabled]);
 
-  const setupBissauOfflineMap = async () => {
-    try {
-      const packs = await Mapbox.offlineManager.getPacks();
-      const exists = packs.some(p => p.name === 'bissau_city_map');
-
-      if (!exists) {
-        console.log('🌐 [OFFLINE_MAP] Criando pacote de mapas offline de Bissau...');
-        await Mapbox.offlineManager.createPack(
-          {
+  useEffect(() => {
+    async function setupBissauOfflineMap() {
+      try {
+        const packs = await Mapbox.offlineManager.getPacks();
+        const exists = packs.some(p => p.name === 'bissau_city_map');
+        if (!exists) {
+          await Mapbox.offlineManager.createPack({
             name: 'bissau_city_map',
             styleURL: 'mapbox://styles/mapbox/streets-v12',
             minZoom: 11,
             maxZoom: 16,
-            bounds: [
-              [-15.65, 11.80],
-              [-15.50, 11.92],
-            ],
-          },
-          (pack, status) => {
-            if (status.state === 'complete') {
-              console.log('✅ [OFFLINE_MAP] Mapa offline de Bissau gravado no armazenamento local.');
-            }
-          }
-        );
-      }
-    } catch (error) {
-      console.warn('⚠️ Erro ao salvar cache de mapa offline:', error);
+            bounds: [[-15.65, 11.80], [-15.50, 11.92]],
+          });
+        }
+      } catch (error) {}
     }
-  };
-
-  useEffect(() => {
     setupBissauOfflineMap();
   }, []);
 
   useEffect(() => {
     if (!socket) return;
 
-    const handleOnlineFailed = (data: { reason?: string; message?: string; minRequired?: number }) => {
-      console.warn('🛑 [ONLINE_DEBUG] Falha ao ficar online:', data.message);
+    const handleOnlineFailed = (data: { reason?: string; message?: string }) => {
       setIsOnline(false);
-      Alert.alert(
-        'Carteira com Saldo Insuficiente 💳',
-        data.message || 'Você precisa de no mínimo 1.000 XOF para ficar online e receber corridas.',
-        [
-          { text: 'Agora Não', style: 'cancel' },
-          { 
-            text: 'Recarregar Carteira', 
-            onPress: () => navigation.navigate('Wallet') 
-          }
-        ]
-      );
+      Alert.alert('Carteira com Saldo Insuficiente 💳', data.message || 'Você precisa de saldo suficiente para ficar online.', [
+        { text: 'Agora Não', style: 'cancel' },
+        { text: 'Recarregar Carteira', onPress: () => navigation.navigate('Wallet') }
+      ]);
     };
 
     const handleForcedOffline = (data: { message?: string }) => {
-      console.warn('🛑 [ONLINE_DEBUG] Modo Offline forçado pelo servidor:', data.message);
       setIsOnline(false);
-      Alert.alert(
-        'Modo Offline Ativado ⚠️',
-        data.message || 'A comissão cobrada deixou seu saldo abaixo de 1.000 XOF. Recarregue para voltar a trabalhar.',
-        [
-          { text: 'Entendi', style: 'default' },
-          { text: 'Ir para Carteira', onPress: () => navigation.navigate('Wallet') }
-        ]
-      );
+      Alert.alert('Modo Offline Ativado ⚠️', data.message || 'Recarregue sua carteira para continuar trabalhando.', [
+        { text: 'Entendi', style: 'default' },
+        { text: 'Ir para Carteira', onPress: () => navigation.navigate('Wallet') }
+      ]);
     };
 
     socket.on('driver:online_failed', handleOnlineFailed);
@@ -807,9 +770,7 @@ export function Home() {
 
     if (hasActiveOffer) {
       Vibration.vibrate([0, 800, 300, 800], false);
-      try {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      } catch (e) {}
+      try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning); } catch (e) {}
 
       try {
         const soundAsset = require('../../assets/sounds/alert.mp3');
@@ -818,9 +779,7 @@ export function Home() {
         player.play();
         alertPlayerRef.current = player;
         activePlayer = player;
-      } catch (audioErr) {
-        console.error('Erro ao tocar áudio de alerta:', audioErr);
-      }
+      } catch (audioErr) {}
 
       playBilingualVoice('new_ride', 'Nova viagem encontrada');
     } else {
@@ -833,26 +792,20 @@ export function Home() {
 
     return () => {
       Vibration.cancel();
-      if (activePlayer) {
-        try { activePlayer.pause(); } catch (e) {}
-      }
+      if (activePlayer) { try { activePlayer.pause(); } catch (e) {} }
     };
   }, [incomingRide, rideState, playBilingualVoice]);
 
   useEffect(() => { if (route.params?.openChat) setIsChatVisible(true); }, [route.params]);
 
-  // 🟢 CARREGAMENTO INICIAL DE GPS
   useEffect(() => {
     async function loadInitialPosition() {
       try {
         const foreground = await Location.requestForegroundPermissionsAsync();
         if (foreground.status === 'granted') {
-          const currentLoc = await Location.getCurrentPositionAsync({ 
-            accuracy: Location.Accuracy.Balanced 
-          });
+          const currentLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
 
           if (currentLoc?.coords && isMountedRef.current) {
-            console.log(`📍 [GPS_DEBUG] Posição inicial obtida: [${currentLoc.coords.latitude}, ${currentLoc.coords.longitude}]`);
             setLocation(currentLoc);
             lastDriverCoordsRef.current = {
               latitude: currentLoc.coords.latitude,
@@ -868,23 +821,18 @@ export function Home() {
             }
           }
         }
-      } catch (err) {
-        console.warn('⚠️ [GPS_DEBUG] Não foi possível obter posição inicial prévia do motorista:', err);
-      }
+      } catch (err) {}
     }
-
     loadInitialPosition();
   }, []);
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
     if (rideState === 'arrived') {
-      console.log('⏳ [STATE_DEBUG] Motorista no local de embarque. Contador de 5 minutos iniciado.');
       interval = setInterval(() => {
         if (!isMountedRef.current) return;
         setWaitTimeLeft((prev) => {
           if (prev <= 1) {
-            console.warn('⚠️ [CANCEL_DEBUG] Tempo limite de espera esgotado (300s). No-Show liberado.');
             setCanCancelNoShow(true);
             clearInterval(interval);
             return 0;
@@ -927,44 +875,10 @@ export function Home() {
     }
   }, [isMapReady]);
 
-  const persistActiveRideState = async (rideData: IncomingRideData | null, state: RideState, rideId: string | null) => {
-    try {
-      if (rideData && rideId && state !== 'idle' && state !== 'completed') {
-        await AsyncStorage.multiSet([
-          [STORAGE_ACTIVE_RIDE_ID, rideId],
-          [STORAGE_ACTIVE_RIDE_DATA, JSON.stringify(rideData)],
-          [STORAGE_ACTIVE_RIDE_STATE, state]
-        ]);
-      } else {
-        await AsyncStorage.multiRemove([STORAGE_ACTIVE_RIDE_ID, STORAGE_ACTIVE_RIDE_DATA, STORAGE_ACTIVE_RIDE_STATE]);
-      }
-    } catch (err) {}
-  };
-
-  useEffect(() => {
-    async function restoreLocalState() {
-      try {
-        const storedRideId = await AsyncStorage.getItem(STORAGE_ACTIVE_RIDE_ID);
-        const storedRideData = await AsyncStorage.getItem(STORAGE_ACTIVE_RIDE_DATA);
-        const storedRideState = await AsyncStorage.getItem(STORAGE_ACTIVE_RIDE_STATE);
-
-        if (storedRideId && storedRideData && storedRideState && isMountedRef.current) {
-          console.log(`🔄 [STATE_DEBUG] Estado da corrida restaurado do AsyncStorage: ID ${storedRideId} | Estado: ${storedRideState}`);
-          setActiveRideId(storedRideId);
-          setIncomingRide(JSON.parse(storedRideData));
-          setRideState(storedRideState as RideState);
-        }
-      } catch (err) {}
-    }
-    restoreLocalState();
-  }, []);
-
   useEffect(() => {
     if (!socket) return;
-
     const handleRideFinishedConfirm = (data: any) => {
       if (data) {
-        console.log('🏁 [FINALIZE_DEBUG] Confirmação de finalização recebida do Socket:', data);
         setFinishedRideSummary((prev: any) => ({
           rideId: data.rideId || prev?.rideId,
           passengerName: prev?.passengerName || 'Passageiro',
@@ -974,7 +888,6 @@ export function Home() {
         }));
       }
     };
-
     socket.on('ride:finished', handleRideFinishedConfirm);
     socket.on('driver:ride_finished_confirm', handleRideFinishedConfirm);
 
@@ -1004,7 +917,6 @@ export function Home() {
       const token = MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '';
       const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${startLng},${startLat};${waypointsString}${endLng},${endLat}?geometries=geojson&steps=true&voice_instructions=true&banner_instructions=true&language=pt&access_token=${token}`;
       
-      console.log(`🗺️ [ROUTE_DEBUG] Buscando rota Mapbox de [${startLat}, ${startLng}] para [${endLat}, ${endLng}]`);
       const response = await fetch(url);
       if (!response.ok) throw new Error(`Falha rota Mapbox: ${response.status}`);
       const data = await response.json();
@@ -1015,7 +927,6 @@ export function Home() {
         
         const eta = Math.ceil(route.duration / 60);
         setDriverEta(eta);
-        console.log(`🗺️ [ROUTE_DEBUG] Rota obtida! Distância: ${(route.distance / 1000).toFixed(1)}km | Tempo: ${eta} min`);
 
         if (route.legs && route.legs.length > 0) {
           const steps = route.legs.flatMap((leg: any) => leg.steps || []);
@@ -1036,7 +947,6 @@ export function Home() {
         }
       }
     } catch (err) {
-      console.warn('⚠️ [ROUTE_DEBUG] Erro ao buscar rota Mapbox, aplicando fallback de reta direta:', err);
       if (isMountedRef.current) {
         setRouteCoordinates([[startLng, startLat], [endLng, endLat]]);
         const distKm = calculateDirectDistance(startLat, startLng, endLat, endLng);
@@ -1047,26 +957,18 @@ export function Home() {
 
   useEffect(() => {
     if (!location?.coords || routeSteps.length === 0 || currentStepIndex >= routeSteps.length) return;
-
     const currentStep = routeSteps[currentStepIndex];
     if (!currentStep?.maneuver?.location) return;
 
     const [stepLng, stepLat] = currentStep.maneuver.location;
-    const distToStepKm = calculateDirectDistance(
-      location.coords.latitude,
-      location.coords.longitude,
-      stepLat,
-      stepLng
-    );
+    const distToStepKm = calculateDirectDistance(location.coords.latitude, location.coords.longitude, stepLat, stepLng);
 
     if (distToStepKm * 1000 <= 40) {
       const nextIndex = currentStepIndex + 1;
       if (nextIndex < routeSteps.length) {
         setCurrentStepIndex(nextIndex);
         const nextInstruction = routeSteps[nextIndex]?.maneuver?.instruction;
-        if (nextInstruction) {
-          playBilingualVoice('navigation', translateToKriol(nextInstruction));
-        }
+        if (nextInstruction) playBilingualVoice('navigation', translateToKriol(nextInstruction));
       } else {
         playBilingualVoice('navigation', 'Bu sta kuazi pa tchega na bu distinu');
       }
@@ -1078,7 +980,6 @@ export function Home() {
 
     const driverLat = location.coords.latitude;
     const driverLng = location.coords.longitude;
-
     const pLat = Number(incomingRide.pickupLat);
     const pLng = Number(incomingRide.pickupLng);
     const dLat = Number(incomingRide.destinationLat);
@@ -1125,14 +1026,8 @@ export function Home() {
     const currentRideState = rideStateRef.current || rideState;
     const newRideId = data.rideId || (data as any).id;
 
-    console.log(`🚕 [SOCKET_DEBUG] Nova oferta de corrida recebida: ID ${newRideId} | Passageiro: ${data.passengerName || 'Passageiro'}`);
-
     const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState) || !!currentRideId;
-    if (isCurrentlyInRide) {
-      console.log('⚠️ [SOCKET_DEBUG] Motorista em corrida ativa. Nova oferta ignorada.');
-      return;
-    }
-
+    if (isCurrentlyInRide) return;
     if (incomingRideRef.current?.rideId === newRideId && currentRideState !== 'idle') return;
 
     setShowReceiptModal(false);
@@ -1143,10 +1038,7 @@ export function Home() {
     if (['ENTREGA', 'DELIVERY'].includes(rawType)) normalizedService = 'DELIVERY';
     if (['ALUGUEL', 'RENTAL'].includes(rawType)) normalizedService = 'RENTAL';
 
-    if (serviceFiltersRef.current && serviceFiltersRef.current[normalizedService] === false) {
-      console.log(`⚠️ [SOCKET_DEBUG] Oferta recusada pelo filtro de serviço: ${normalizedService}`);
-      return;
-    }
+    if (serviceFiltersRef.current && serviceFiltersRef.current[normalizedService] === false) return;
 
     const rawPrice = (data as any).fareXOF ?? data.priceXof ?? 0;
     let rawStops = data.stops;
@@ -1168,10 +1060,9 @@ export function Home() {
     const formattedOffer = {
       ...data,
       rideId: newRideId,
-      pickupReferencePoint: (data as any).pickupReferencePoint || (data as any).referencePoint || (data as any).reference_point || '',
+      pickupReferencePoint: (data as any).pickupReferencePoint || (data as any).referencePoint || '',
       dropoffReferencePoint: (data as any).dropoffReferencePoint || '',
-      referencePoint: (data as any).referencePoint || (data as any).reference_point || '',
-      
+      referencePoint: (data as any).referencePoint || '',
       isQueuedOffer: false,
       passengerName: data.passengerName || 'Passageiro',
       passengerRating: data.passengerRating || 5.0,
@@ -1199,29 +1090,31 @@ export function Home() {
     if (!isMountedRef.current) return;
     setIsLoading(false);
 
-    console.log('⚡ [SOCKET_DEBUG] Evento "ride:accepted" confirmado para a corrida:', data.rideId);
-
     const currentRideState = rideStateRef.current || rideState;
     const isCurrentlyInRide = ['accepted', 'arrived', 'in_progress'].includes(currentRideState);
 
     if (data.driverId === driver?.id || data.rideId) {
       if (!isCurrentlyInRide || activeRideIdRef.current === data.rideId) {
+        activeRideIdRef.current = data.rideId;
+        rideStateRef.current = 'accepted';
+
         setActiveRideId(data.rideId);
         setRideState('accepted');
-        setIncomingRide((prev) => ({
-          ...prev,
-          ...data,
-          rideId: data.rideId,
-          passengerName: data.passengerName || prev?.passengerName || 'Passageiro',
-          pickupLat: Number(data.pickupLat || prev?.pickupLat || 0),
-          pickupLng: Number(data.pickupLng || prev?.pickupLng || 0),
-          destinationLat: Number(data.destinationLat || prev?.destinationLat || 0),
-          destinationLng: Number(data.destinationLng || prev?.destinationLng || 0),
-          priceXof: Number(data.priceXof || prev?.priceXof || 0),
-        }));
-        if (incomingRideRef.current) {
-          persistActiveRideState(incomingRideRef.current, 'accepted', data.rideId);
-        }
+        setIncomingRide((prev) => {
+          const updated = {
+            ...prev,
+            ...data,
+            rideId: data.rideId,
+            passengerName: data.passengerName || prev?.passengerName || 'Passageiro',
+            pickupLat: Number(data.pickupLat || prev?.pickupLat || 0),
+            pickupLng: Number(data.pickupLng || prev?.pickupLng || 0),
+            destinationLat: Number(data.destinationLat || prev?.destinationLat || 0),
+            destinationLng: Number(data.destinationLng || prev?.destinationLng || 0),
+            priceXof: Number(data.priceXof || prev?.priceXof || 0),
+          };
+          persistActiveRideState(updated as any, 'accepted', data.rideId);
+          return updated as any;
+        });
         snapToState(true);
       }
     } else {
@@ -1232,8 +1125,8 @@ export function Home() {
 
   const handleRideStarted = () => {
     if (!isMountedRef.current) return;
-    console.log('🚀 [STATE_DEBUG] Corrida iniciada! Estado alterado para "in_progress".');
     setIsLoading(false);
+    rideStateRef.current = 'in_progress';
     setRideState('in_progress');
     setShowOtpModal(false);
     snapToState(true);
@@ -1244,7 +1137,6 @@ export function Home() {
 
   const handleRideFinished = async (data: any) => {
     if (!isMountedRef.current) return;
-    console.log('🏁 [FINALIZE_DEBUG] Corrida finalizada com sucesso. Dados:', data);
     setIsLoading(false);
     setCompletedInfo({ fareXOF: data.fareXOF, distanceKm: data.distanceKm, transactionId: data.transactionId });
 
@@ -1268,7 +1160,6 @@ export function Home() {
 
   const handleQueuedNowActive = async (data: { rideId: string; status: string }) => {
     if (!isMountedRef.current) return;
-    console.log('🔄 [STATE_DEBUG] Corrida da fila promovida para ativa:', data.rideId);
     setActiveRideId(data.rideId);
     setRideState('accepted');
     snapToState(true);
@@ -1278,7 +1169,6 @@ export function Home() {
   useEffect(() => {
     const handleConnect = async () => {
       if (driver?.id) {
-        console.log('⚡ [SOCKET_DEBUG] Socket conectado! Processando fila offline e sincronizando...');
         await processOfflineQueue(socket);
         socket.emit('driver:request_state');
         
@@ -1328,7 +1218,6 @@ export function Home() {
       } else {
         Vibration.cancel();
         if (isMountedRef.current) {
-          console.log('⏳ [SOCKET_DEBUG] Tempo de aceite expirado (15s). Limpando oferta.');
           setQueuedOfferData(null);
           if (rideState === 'idle') setIncomingRide(null);
           setTimeLeft(15);
@@ -1338,20 +1227,29 @@ export function Home() {
     return () => clearInterval(timer);
   }, [queuedOfferData, incomingRide, timeLeft, rideState]);
 
+  // 🛡️ RECONEXÃO ROBUSTA AO VOLTAR DE SEGUNDO PLANO
   useEffect(() => {
     const subscription = AppState.addEventListener('change', async (nextAppState: AppStateStatus) => {
       if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
-        console.log('📱 [STATE_DEBUG] Aplicativo retornou do background para primeiro plano.');
         if (socket && !socket.connected) {
           await connectDriverSocket();
         }
+
+        if (isOnlineRef.current && driver?.id && location?.coords) {
+          socket.emit('driver:online', {
+            driverId: driver.id,
+            lat: location.coords.latitude,
+            lng: location.coords.longitude
+          });
+        }
+
         await syncActiveRideWithServer();
       }
       appStateRef.current = nextAppState;
     });
 
     return () => { subscription.remove(); };
-  }, [syncActiveRideWithServer]);
+  }, [syncActiveRideWithServer, driver?.id, location?.coords]);
 
   async function stopBackgroundLocation() {
     const hasTask = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
@@ -1464,25 +1362,6 @@ export function Home() {
       return Alert.alert('Conta em Análise 📄', 'Aguarde a aprovação dos seus documentos para poder rodar.');
     }
 
-    // 🔴 DESATIVADO PARA TESTES: Trava de saldo na carteira
-    /*
-    const walletBalance = Number((driver as any)?.walletBalance || 0);
-    if (walletBalance <= 0) {
-      console.warn(`🛑 [ONLINE_DEBUG] Tentativa de ficar online com saldo ${walletBalance} XOF recusada.`);
-      return Alert.alert(
-        'Saldo Insuficiente na Carteira 💳',
-        `Seu saldo atual é de ${walletBalance.toLocaleString()} XOF. Para ficar online e receber corridas em dinheiro, recarregue sua carteira efetuando o pagamento para a conta administrativa.`,
-        [
-          { text: 'Entendido', style: 'cancel' },
-          { 
-            text: 'Ver Carteira', 
-            onPress: () => navigation.navigate('Wallet' as never) 
-          }
-        ]
-      );
-    }
-    */
-
     const foreground = await Location.requestForegroundPermissionsAsync();
     if (foreground.status !== 'granted') {
       return Alert.alert('Permissão Necessária 📍', 'Permita o acesso à localização para ficar online.');
@@ -1498,7 +1377,6 @@ export function Home() {
       }
 
       setIsOnline(true);
-      console.log(`🟢 [ONLINE_DEBUG] Motorista ${driver?.id} mudou para status Online.`);
       const activeSocket = await connectDriverSocket();
 
       if (isMountedRef.current) {
@@ -1534,7 +1412,6 @@ export function Home() {
   }
 
   function stopTracking() {
-    console.log(`🔴 [OFFLINE_DEBUG] Desconectando rastreamento manual do motorista.`);
     if (driver?.id && socket && socket.connected) {
       socket.timeout(2000).emit('driver:offline', { driverId: driver.id });
     }
@@ -1548,11 +1425,11 @@ export function Home() {
 
   useEffect(() => { if (isOnline) startTrackingForState(rideState); }, [rideState, isOnline, isLowBattery]);
 
+  // 🛡️ ACEITAR CORRIDA BLINDADO (SEM ALERTA FALSO DE SINAL FRACO)
   function acceptRide(rideId: string, driverId: string, currentLat: number, currentLng: number) {
     Vibration.cancel();
     setIsLoading(true);
 
-    console.log(`⚡ [SOCKET_DEBUG] Disparando "driver:accept_ride" para a corrida ${rideId}`);
     activeRideIdRef.current = rideId;
     rideStateRef.current = 'accepted';
     setQueuedOfferData(null);
@@ -1564,12 +1441,24 @@ export function Home() {
 
     socket.timeout(8000).emit('driver:accept_ride', { 
       rideId, driverId, driverLat: currentLat, driverLng: currentLng 
-    }, (err: any, response: any) => {
+    }, async (err: any, response: any) => {
       if (!isMountedRef.current) return;
+
+      if (err) {
+        const activeRes = await api.get('/drivers/active-ride').catch(() => null);
+        const serverRide = activeRes?.data?.ride;
+
+        if (serverRide && serverRide.id === rideId && ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'].includes(serverRide.status)) {
+          handleRideAccepted(serverRide);
+          return;
+        }
+
+        setIsLoading(false);
+        return Alert.alert('Sinal Fraco 📡', 'Não foi possível confirmar a tempo.');
+      }
+      
       setIsLoading(false);
 
-      if (err) return Alert.alert('Sinal Fraco 📡', 'Não foi possível confirmar a tempo.');
-      
       if (response?.error) {
         setQueuedOfferData(null); 
         return Alert.alert('Aviso', response.message);
@@ -1590,7 +1479,6 @@ export function Home() {
     if (!activeRideId) return;
     setIsLoading(true);
     const payload = { rideId: activeRideId };
-    console.log(`📍 [STATE_DEBUG] Confirmando chegada ao local na corrida ${activeRideId}`);
 
     const processOffline = async () => {
       await saveActionToQueue('driver:arrived', payload);
@@ -1619,18 +1507,24 @@ export function Home() {
     }
   }
 
-  function handleConfirmCancel(reason: string) {
+  async function handleConfirmCancel(reason: string) {
     if (!activeRideId) return;
-    console.log(`❌ [CANCEL_DEBUG] Motorista cancelando corrida ${activeRideId}. Motivo: ${reason}`);
-    setShowCancelModal(false);
-    resetDriverState(); 
+    setIsLoading(true);
+    const rideToCancel = activeRideId;
 
     if (socket && socket.connected) {
-      socket.timeout(3000).emit('ride:cancel', { rideId: activeRideId, userId: driver?.id, userType: 'DRIVER', reason }, (err: any) => {
-        if (err) saveActionToQueue('ride:cancel', { rideId: activeRideId, userId: driver?.id, userType: 'DRIVER', reason });
+      socket.timeout(4000).emit('ride:cancel', { 
+        rideId: rideToCancel, 
+        userId: driver?.id, 
+        userType: 'DRIVER', 
+        reason 
+      }, async (err: any) => {
+        if (err) await saveActionToQueue('ride:cancel', { rideId: rideToCancel, userId: driver?.id, userType: 'DRIVER', reason });
+        await resetDriverState();
       });
     } else {
-      saveActionToQueue('ride:cancel', { rideId: activeRideId, userId: driver?.id, userType: 'DRIVER', reason });
+      await saveActionToQueue('ride:cancel', { rideId: rideToCancel, userId: driver?.id, userType: 'DRIVER', reason });
+      await resetDriverState();
     }
   }
 
@@ -1638,7 +1532,6 @@ export function Home() {
     if (!activeRideId) return;
     setIsLoading(true);
     const payload = { rideId: activeRideId, otp };
-    console.log(`🚀 [STATE_DEBUG] Validando PIN/OTP "${otp}" para iniciar corrida ${activeRideId}`);
 
     const processOfflineStart = async () => {
       await saveActionToQueue('driver:start_ride', payload);
@@ -1682,8 +1575,6 @@ export function Home() {
     const paymentMethod = incomingRide?.paymentMethod || 'CASH';
     const transactionId = incomingRide?.transactionId || `TRX-${Date.now().toString().slice(-6)}`;
 
-    console.log(`🏁 [FINALIZE_DEBUG] Solicitando finalização da corrida ${activeRideId}. Total: ${finalPrice} XOF`);
-
     setFinishedRideSummary({
       rideId: activeRideId,
       passengerName: displayPassengerName,
@@ -1718,7 +1609,6 @@ export function Home() {
 
   function handleSubmitRating(stars: number, tags: string[], comment: string) {
     const rideToRate = finishedRideId || activeRideId;
-    console.log(`⭐ [STATE_DEBUG] Submetendo avaliação de ${stars} estrelas para a corrida ${rideToRate}`);
     if (rideToRate && incomingRide && socket && socket.connected) {
       socket.emit('ride:rate', { 
         rideId: rideToRate, 
@@ -1752,21 +1642,17 @@ export function Home() {
   const toggleAudioRecording = async () => {
     try {
       if ((audioRecorder as any)?.isRecording) {
-        console.log('🎤 [AUDIO_DEBUG] Encerrando gravação de áudio de segurança.');
         if (typeof (audioRecorder as any)?.stopRecording === 'function') {
           await (audioRecorder as any).stopRecording();
         }
         Alert.alert('Gravação Encerrada', 'O áudio de segurança foi gravado localmente.');
       } else {
-        console.log('🎤 [AUDIO_DEBUG] Iniciando gravação de áudio de segurança...');
         if (typeof (audioRecorder as any)?.startRecording === 'function') {
           await (audioRecorder as any).startRecording();
         }
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       }
-    } catch (err) {
-      console.error('❌ [AUDIO_DEBUG] Erro ao alternar gravação de áudio:', err);
-    }
+    } catch (err) {}
   };
 
   const topHeaderInset = Math.max((insets?.top || 0) + 10, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 16);
@@ -1806,10 +1692,7 @@ export function Home() {
         compassEnabled={false}
         scaleBarEnabled={false}
         attributionEnabled={false}
-        onDidFinishLoadingMap={() => {
-          console.log('🗺️ [MAP_DEBUG] Mapa Mapbox carregado e operacional.');
-          setIsMapReady(true);
-        }}
+        onDidFinishLoadingMap={() => setIsMapReady(true)}
       >
         <Mapbox.Camera
           ref={cameraRef}
@@ -1902,7 +1785,7 @@ export function Home() {
           </Mapbox.ShapeSource>
         )}
 
-        {/* 📍 PARADAS INTERMEDIÁRIAS NO MAPA */}
+        {/* 📍 PARADAS INTERMEDIÁRIAS */}
         {formattedStops.length > 0 && formattedStops.map((stop: any, index: number) => {
           if (!stop.lng || !stop.lat) return null;
           const isPassed = index < currentStopIndex;
@@ -2007,7 +1890,6 @@ export function Home() {
         )}
       </View>
 
-      {/* 🛡️ MODAIS DE SEGURANÇA E AVALIAÇÃO */}
       <DriverSOSModal visible={showSosModal} onClose={() => setShowSosModal(false)} currentRideId={activeRideId} />
       <RatingModal visible={showRatingModal} targetName={finishedTargetName} isDriverEvaluating={true} onClose={() => setShowRatingModal(false)} onSubmit={handleSubmitRating} />
 
@@ -2034,11 +1916,7 @@ export function Home() {
         >
           <TouchableOpacity 
             activeOpacity={0.8}
-            onPress={() => {
-              const nextState = !isExpandedRef.current;
-              snapToState(nextState);
-              console.log(`📱 [UI_DEBUG] Painel inferior (BottomSheet) ${nextState ? 'expandido' : 'recolhido'}.`);
-            }}
+            onPress={() => snapToState(!isExpandedRef.current)}
             style={styles.dragHandleArea} 
             {...panResponder.panHandlers}
           >
@@ -2065,7 +1943,6 @@ export function Home() {
 
             {isRideActive && incomingRide && (
               <View style={styles.activeRideContainer}>
-                
                 <View style={styles.compactHeaderRow}>
                   <View style={styles.serviceBadgeRow}>
                     {incomingRide.serviceType === 'DELIVERY' ? (
@@ -2103,17 +1980,8 @@ export function Home() {
                   </Text>
 
                   {incomingRide?.pickupLat && incomingRide?.destinationLat ? (
-                    <View style={{
-                      backgroundColor: 'rgba(59, 130, 246, 0.15)',
-                      paddingHorizontal: 10,
-                      paddingVertical: 4,
-                      borderRadius: 8,
-                      borderWidth: 1,
-                      borderColor: '#3B82F6',
-                      alignSelf: 'flex-start',
-                      marginTop: 6
-                    }}>
-                      <Text style={{ color: '#60A5FA', fontSize: 13, fontWeight: '700' }}>
+                    <View style={styles.distanceBadge}>
+                      <Text style={styles.distanceBadgeText}>
                         📏 Distância: {(
                           (incomingRide as any)?.distance || 
                           calculateDirectDistance(
@@ -2161,8 +2029,6 @@ export function Home() {
 
                 {/* 📍 ROTA E PARADAS NA CORRIDA ATIVA */}
                 <View style={styles.routeAddressesContainer}>
-                  
-                  {/* 🟡 1. ORIGEM / EMBARQUE */}
                   <View style={styles.addressItem}>
                     <Ionicons name="location" size={16} color="#10B981" />
                     <View style={styles.addressTextWrapper}>
@@ -2172,19 +2038,9 @@ export function Home() {
                       </Text>
 
                       {Boolean((incomingRide as any)?.pickupReferencePoint || (incomingRide as any)?.referencePoint) && (
-                        <View style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          backgroundColor: 'rgba(234, 179, 8, 0.15)',
-                          borderWidth: 1,
-                          borderColor: '#EAB308',
-                          paddingHorizontal: 8,
-                          paddingVertical: 4,
-                          borderRadius: 6,
-                          marginTop: 4
-                        }}>
+                        <View style={styles.referenceBadgeYellow}>
                           <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
-                          <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
+                          <Text style={styles.referenceBadgeYellowText}>
                             Ref. Embarque: {(incomingRide as any).pickupReferencePoint || (incomingRide as any).referencePoint}
                           </Text>
                         </View>
@@ -2192,32 +2048,19 @@ export function Home() {
                     </View>
                   </View>
 
-                  {/* 🔵 2. PARADAS INTERMEDIÁRIAS */}
                   {formattedStops.length > 0 ? (
                     formattedStops.map((stop: any, idx: number) => (
-                      <View key={`active-stop-${idx}`} style={[styles.addressItem, { backgroundColor: 'rgba(59, 130, 246, 0.08)', padding: 8, borderRadius: 8, marginVertical: 3 }]}>
+                      <View key={`active-stop-${idx}`} style={styles.intermediateStopBox}>
                         <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
                         <View style={styles.addressTextWrapper}>
-                          <Text style={[styles.addressLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>
+                          <Text style={styles.intermediateStopLabel}>
                             Parada {idx + 1} de {formattedStops.length}:
                           </Text>
-                          <Text style={styles.addressValue} numberOfLines={2}>
-                            {stop.address}
-                          </Text>
+                          <Text style={styles.addressValue} numberOfLines={2}>{stop.address}</Text>
                           {Boolean(stop.referencePoint || stop.extraStopReferencePoint) && (
-                            <View style={{
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              backgroundColor: 'rgba(59, 130, 246, 0.15)',
-                              borderWidth: 1,
-                              borderColor: '#3B82F6',
-                              paddingHorizontal: 8,
-                              paddingVertical: 4,
-                              borderRadius: 6,
-                              marginTop: 4
-                            }}>
+                            <View style={styles.referenceBadgeBlue}>
                               <Ionicons name="compass-outline" size={14} color="#3B82F6" style={{ marginRight: 4 }} />
-                              <Text style={{ color: '#3B82F6', fontSize: 12, fontWeight: '700', flex: 1 }}>
+                              <Text style={styles.referenceBadgeBlueText}>
                                 Ref. Parada: {stop.referencePoint || stop.extraStopReferencePoint}
                               </Text>
                             </View>
@@ -2226,25 +2069,15 @@ export function Home() {
                       </View>
                     ))
                   ) : (incomingRide?.extraStopAddress) ? (
-                    <View style={[styles.addressItem, { backgroundColor: 'rgba(59, 130, 246, 0.08)', padding: 8, borderRadius: 8, marginVertical: 3 }]}>
+                    <View style={styles.intermediateStopBox}>
                       <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
                       <View style={styles.addressTextWrapper}>
-                        <Text style={[styles.addressLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>Parada Intermediária:</Text>
+                        <Text style={styles.intermediateStopLabel}>Parada Intermediária:</Text>
                         <Text style={styles.addressValue} numberOfLines={2}>{incomingRide.extraStopAddress}</Text>
                         {Boolean((incomingRide as any)?.extraStopReferencePoint) && (
-                          <View style={{
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            backgroundColor: 'rgba(59, 130, 246, 0.15)',
-                            borderWidth: 1,
-                            borderColor: '#3B82F6',
-                            paddingHorizontal: 8,
-                            paddingVertical: 4,
-                            borderRadius: 6,
-                            marginTop: 4
-                          }}>
+                          <View style={styles.referenceBadgeBlue}>
                             <Ionicons name="compass-outline" size={14} color="#3B82F6" style={{ marginRight: 4 }} />
-                            <Text style={{ color: '#3B82F6', fontSize: 12, fontWeight: '700', flex: 1 }}>
+                            <Text style={styles.referenceBadgeBlueText}>
                               Ref. Parada: {(incomingRide as any).extraStopReferencePoint}
                             </Text>
                           </View>
@@ -2253,7 +2086,6 @@ export function Home() {
                     </View>
                   ) : null}
 
-                  {/* 🔴 3. DESTINO FINAL / DESEMBARQUE */}
                   <View style={styles.addressItem}>
                     <Ionicons name="flag" size={16} color="#EF4444" />
                     <View style={styles.addressTextWrapper}>
@@ -2267,19 +2099,9 @@ export function Home() {
                         (incomingRide as any)?.destinationReferencePoint ||
                         ((incomingRide as any)?.referencePoint && !((incomingRide as any)?.pickupReferencePoint))
                       ) && (
-                        <View style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                          borderWidth: 1,
-                          borderColor: '#EF4444',
-                          paddingHorizontal: 8,
-                          paddingVertical: 4,
-                          borderRadius: 6,
-                          marginTop: 4
-                        }}>
+                        <View style={styles.referenceBadgeRed}>
                           <Ionicons name="flag" size={14} color="#EF4444" style={{ marginRight: 4 }} />
-                          <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '700', flex: 1 }}>
+                          <Text style={styles.referenceBadgeRedText}>
                             Ref. Destino: {
                               (incomingRide as any).dropoffReferencePoint || 
                               (incomingRide as any).destinationReferencePoint || 
@@ -2292,7 +2114,6 @@ export function Home() {
                   </View>
                 </View>
 
-                {/* DETALHES DE ENTREGA */}
                 {incomingRide?.serviceType === 'DELIVERY' && (
                   <View style={styles.deliveryDetailsCard}>
                     <Text style={styles.deliveryDetailsTitle}>📦 Instruções da Encomenda:</Text>
@@ -2307,7 +2128,6 @@ export function Home() {
                     <TouchableOpacity 
                       style={styles.actionButtonSecondary} 
                       onPress={() => {
-                        console.log('💬 [UI_DEBUG] Abrindo Chat da corrida e zerando contagem não lida.');
                         setUnreadCount(0);
                         setIsChatVisible(true);
                       }}
@@ -2315,12 +2135,9 @@ export function Home() {
                     >
                       <Ionicons name="chatbubbles-outline" size={16} color="#EAB308" />
                       <Text style={styles.actionButtonSecondaryText}>Chat</Text>
-
                       {unreadCount > 0 && (
                         <View style={styles.chatBadgeContainer}>
-                          <Text style={styles.chatBadgeText}>
-                            {unreadCount > 9 ? '9+' : unreadCount}
-                          </Text>
+                          <Text style={styles.chatBadgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
                         </View>
                       )}
                     </TouchableOpacity>
@@ -2381,7 +2198,7 @@ export function Home() {
         </Animated.View>
       </KeyboardAvoidingView>
 
-      {/* 🧾 MODAL UNIFICADO DE CONCLUSÃO DE SERVIÇO E RECIBO */}
+      {/* 🧾 MODAL UNIFICADO DE RECIBO */}
       <Modal 
         visible={showReceiptModal} 
         transparent 
@@ -2398,9 +2215,7 @@ export function Home() {
             </View>
 
             <Text style={styles.receiptTitle}>Serviço Concluído!</Text>
-            <Text style={styles.receiptSubtitle}>
-              Corrida finalizada com sucesso. Confira os detalhes abaixo:
-            </Text>
+            <Text style={styles.receiptSubtitle}>Corrida finalizada com sucesso. Confira os detalhes abaixo:</Text>
 
             {finishedRideSummary?.paymentMethod === 'ORANGE_MONEY' || finishedRideSummary?.paymentMethod === 'MTN_MOMO' ? (
               <View style={styles.paidOnlineBox}>
@@ -2419,9 +2234,7 @@ export function Home() {
                 <Ionicons name="cash-outline" size={22} color="#10B981" />
                 <View style={{ flex: 1, marginLeft: 10 }}>
                   <Text style={styles.collectCashTitle}>COBRAR EM DINHEIRO 💵</Text>
-                  <Text style={styles.collectCashSub}>
-                    Cobre o valor exato abaixo diretamente do passageiro.
-                  </Text>
+                  <Text style={styles.collectCashSub}>Cobre o valor exato abaixo diretamente do passageiro.</Text>
                 </View>
               </View>
             )}
@@ -2433,9 +2246,7 @@ export function Home() {
                   ? `${Number(finishedRideSummary.totalAmount).toLocaleString('pt-GW')} XOF` 
                   : '0 XOF'}
               </Text>
-              <Text style={styles.receiptTrxId}>
-                ID da Transação: {finishedRideSummary?.transactionId || 'N/A'}
-              </Text>
+              <Text style={styles.receiptTrxId}>ID da Transação: {finishedRideSummary?.transactionId || 'N/A'}</Text>
             </View>
 
             <View style={styles.receiptActionButtons}>
@@ -2492,6 +2303,7 @@ export function Home() {
               </View>
               <Switch value={serviceFilters.RIDE} onValueChange={(val) => setServiceFilters(prev => ({ ...prev, RIDE: val }))} trackColor={{ false: '#334155', true: '#EAB308' }} />
             </View>
+
             <View style={styles.filterRow}>
               <View style={styles.filterLabelContainer}>
                 <Ionicons name="cube" size={18} color="#3B82F6" />
@@ -2499,6 +2311,7 @@ export function Home() {
               </View>
               <Switch value={serviceFilters.DELIVERY} onValueChange={(val) => setServiceFilters(prev => ({ ...prev, DELIVERY: val }))} trackColor={{ false: '#334155', true: '#3B82F6' }} />
             </View>
+
             <View style={styles.filterRow}>
               <View style={styles.filterLabelContainer}>
                 <Ionicons name="time" size={18} color="#7C3AED" />
@@ -2509,10 +2322,7 @@ export function Home() {
 
             <TouchableOpacity 
               style={styles.closeFilterBtn} 
-              onPress={() => {
-                console.log('⚙️ [FILTER_DEBUG] Preferências de chamada atualizadas:', serviceFilters);
-                setShowFilterModal(false);
-              }} 
+              onPress={() => setShowFilterModal(false)} 
               activeOpacity={0.85}
             >
               <Text style={styles.closeFilterText}>Salvar Preferências</Text>
@@ -2530,12 +2340,12 @@ export function Home() {
         onConfirmStop={() => setCurrentStopIndex(prev => prev + 1)} 
       />
 
-      {/* 🔔 MODAL DE OFERTA DE CORRIDA / CORRIDA EM FILA */}
+      {/* 🔔 MODAL DE OFERTA DE CORRIDA */}
       <Modal visible={!!activeOffer} transparent animationType="fade">
         <View style={styles.newRequestOverlay}>
           <View style={styles.newRequestCard}>
             {isRideActive && (
-              <View style={{ backgroundColor: '#3B82F6', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <View style={styles.queuedBadge}>
                 <Ionicons name="layers-outline" size={16} color="#FFFFFF" />
                 <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 12 }}>
                   PRÓXIMA CORRIDA (ADICIONAR À FILA)
@@ -2578,7 +2388,6 @@ export function Home() {
             </View>
 
             <View style={styles.routeTimelineContainer}>
-              {/* EMBARQUE NA OFERTA */}
               <View style={styles.timelineRow}>
                 <Ionicons name="location" size={16} color="#10B981" />
                 <View style={styles.timelineTextContainer}>
@@ -2586,21 +2395,10 @@ export function Home() {
                   <Text style={styles.timelineAddress} numberOfLines={2}>
                     {activeOffer?.originAddress || 'Local de origem'}
                   </Text>
-
                   {Boolean((activeOffer as any)?.pickupReferencePoint || (activeOffer as any)?.referencePoint) && (
-                    <View style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      backgroundColor: 'rgba(234, 179, 8, 0.15)',
-                      borderWidth: 1,
-                      borderColor: '#EAB308',
-                      paddingHorizontal: 8,
-                      paddingVertical: 4,
-                      borderRadius: 6,
-                      marginTop: 4
-                    }}>
+                    <View style={styles.referenceBadgeYellow}>
                       <Ionicons name="compass" size={14} color="#EAB308" style={{ marginRight: 4 }} />
-                      <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: '700', flex: 1 }}>
+                      <Text style={styles.referenceBadgeYellowText}>
                         Ref. Embarque: {(activeOffer as any)?.pickupReferencePoint || (activeOffer as any)?.referencePoint}
                       </Text>
                     </View>
@@ -2608,61 +2406,34 @@ export function Home() {
                 </View>
               </View>
 
-              {/* PARADAS INTERMEDIÁRIAS NA OFERTA */}
               {formattedStops.length > 0 ? (
                 formattedStops.map((stop: any, idx: number) => (
-                  <View key={`offer-stop-${idx}`} style={[styles.timelineRow, { backgroundColor: 'rgba(59, 130, 246, 0.08)', paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, marginVertical: 3 }]}>
+                  <View key={`offer-stop-${idx}`} style={styles.intermediateStopBox}>
                     <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
                     <View style={styles.timelineTextContainer}>
-                      <Text style={[styles.timelineLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>
-                        PARADA {idx + 1} DE {formattedStops.length}:
-                      </Text>
-                      <Text style={styles.timelineAddress} numberOfLines={2}>
-                        {stop.address}
-                      </Text>
+                      <Text style={styles.intermediateStopLabel}>PARADA {idx + 1} DE {formattedStops.length}:</Text>
+                      <Text style={styles.timelineAddress} numberOfLines={2}>{stop.address}</Text>
                       {Boolean(stop.referencePoint) && (
-                        <View style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          backgroundColor: 'rgba(59, 130, 246, 0.15)',
-                          borderWidth: 1,
-                          borderColor: '#3B82F6',
-                          paddingHorizontal: 8,
-                          paddingVertical: 4,
-                          borderRadius: 6,
-                          marginTop: 4
-                        }}>
+                        <View style={styles.referenceBadgeBlue}>
                           <Ionicons name="compass-outline" size={14} color="#3B82F6" style={{ marginRight: 4 }} />
-                          <Text style={{ color: '#3B82F6', fontSize: 12, fontWeight: '700', flex: 1 }}>
-                            Ref. Parada: {stop.referencePoint}
-                          </Text>
+                          <Text style={styles.referenceBadgeBlueText}>Ref. Parada: {stop.referencePoint}</Text>
                         </View>
                       )}
                     </View>
                   </View>
                 ))
               ) : (activeOffer?.extraStopAddress || incomingRide?.extraStopAddress) ? (
-                <View style={[styles.timelineRow, { backgroundColor: 'rgba(59, 130, 246, 0.08)', paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, marginVertical: 3 }]}>
+                <View style={styles.intermediateStopBox}>
                   <Ionicons name="navigate-circle" size={16} color="#3B82F6" />
                   <View style={styles.timelineTextContainer}>
-                    <Text style={[styles.timelineLabel, { color: '#3B82F6', fontWeight: 'bold' }]}>PARADA INTERMEDIÁRIA:</Text>
+                    <Text style={styles.intermediateStopLabel}>PARADA INTERMEDIÁRIA:</Text>
                     <Text style={styles.timelineAddress} numberOfLines={2}>
                       {activeOffer?.extraStopAddress || incomingRide?.extraStopAddress}
                     </Text>
                     {Boolean((activeOffer as any)?.extraStopReferencePoint) && (
-                      <View style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        backgroundColor: 'rgba(59, 130, 246, 0.15)',
-                        borderWidth: 1,
-                        borderColor: '#3B82F6',
-                        paddingHorizontal: 8,
-                        paddingVertical: 4,
-                        borderRadius: 6,
-                        marginTop: 4
-                      }}>
+                      <View style={styles.referenceBadgeBlue}>
                         <Ionicons name="compass-outline" size={14} color="#3B82F6" style={{ marginRight: 4 }} />
-                        <Text style={{ color: '#3B82F6', fontSize: 12, fontWeight: '700', flex: 1 }}>
+                        <Text style={styles.referenceBadgeBlueText}>
                           Ref. Parada: {(activeOffer as any)?.extraStopReferencePoint}
                         </Text>
                       </View>
@@ -2671,7 +2442,6 @@ export function Home() {
                 </View>
               ) : null}
 
-              {/* DESTINO NA OFERTA */}
               <View style={styles.timelineRow}>
                 <Ionicons name="flag" size={16} color="#EF4444" />
                 <View style={styles.timelineTextContainer}>
@@ -2679,25 +2449,14 @@ export function Home() {
                   <Text style={styles.timelineAddress} numberOfLines={2}>
                     {activeOffer?.destinationAddress || 'Local de destino'}
                   </Text>
-
                   {Boolean(
                     (activeOffer as any)?.dropoffReferencePoint || 
                     (activeOffer as any)?.destinationReferencePoint || 
                     ((activeOffer as any)?.referencePoint && !((activeOffer as any)?.pickupReferencePoint))
                   ) && (
-                    <View style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                      borderWidth: 1,
-                      borderColor: '#EF4444',
-                      paddingHorizontal: 8,
-                      paddingVertical: 4,
-                      borderRadius: 6,
-                      marginTop: 4
-                    }}>
+                    <View style={styles.referenceBadgeRed}>
                       <Ionicons name="flag" size={14} color="#EF4444" style={{ marginRight: 4 }} />
-                      <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '700', flex: 1 }}>
+                      <Text style={styles.referenceBadgeRedText}>
                         Ref. Destino: {
                           (activeOffer as any).dropoffReferencePoint || 
                           (activeOffer as any).destinationReferencePoint || 
@@ -2714,7 +2473,6 @@ export function Home() {
               <TouchableOpacity 
                 style={styles.rejectBtn} 
                 onPress={() => { 
-                  console.log('🛑 [OFFER_DEBUG] Oferta recusada manualmente pelo motorista.');
                   Vibration.cancel(); 
                   setQueuedOfferData(null); 
                   if (rideState === 'idle') setIncomingRide(null); 
@@ -2734,7 +2492,6 @@ export function Home() {
                   if (activeOffer?.rideId && driver?.id) {
                     const lat = Number(location?.coords?.latitude || BISSAU_CENTER_LAT);
                     const lng = Number(location?.coords?.longitude || BISSAU_CENTER_LNG);
-                    console.log(`✅ [OFFER_DEBUG] Aceitando oferta ID ${activeOffer.rideId} nas coordenadas [${lat}, ${lng}]`);
                     acceptRide(activeOffer.rideId, driver.id, lat, lng);
                   }
                 }}
@@ -2748,33 +2505,26 @@ export function Home() {
         </View>
       </Modal>
 
-      {/* 💬 CHAT INTERNO DO MOTORISTA */}
-<ChatModal 
-  visible={isChatVisible} 
-  onClose={() => {
-    console.log('💬 [CHAT_DEBUG] Modal de Chat fechado.');
-    setIsChatVisible(false);
-    setUnreadCount(0); // 🟢 Zera o badge de não lidas ao fechar
-  }} 
-  socket={socket} 
-  rideId={activeRideId || incomingRide?.rideId || ''} // 🟢 Fallback caso activeRideId leve milissegundos para atualizar
-  currentRole="driver" 
-  currentUserPhoto={profileImageUrl} 
-  otherUserName={displayPassengerName} 
-  otherUserPhoto={formatImageUrl(incomingRide?.passengerPhoto)} 
-/>
- 
-      {/* 🔑 MODAL DE VALIDAÇÃO DE PIN/OTP */}
+      <ChatModal 
+        visible={isChatVisible} 
+        onClose={() => {
+          setIsChatVisible(false);
+          setUnreadCount(0);
+        }} 
+        socket={socket} 
+        rideId={activeRideId || incomingRide?.rideId || ''} 
+        currentRole="driver" 
+        currentUserPhoto={profileImageUrl} 
+        otherUserName={displayPassengerName} 
+        otherUserPhoto={formatImageUrl(incomingRide?.passengerPhoto)} 
+      />
+
       <StartRideOtpModal 
         visible={showOtpModal} 
-        onCancel={() => {
-          console.log('🔑 [OTP_DEBUG] Modal de inserção de PIN cancelado.');
-          setShowOtpModal(false);
-        }} 
+        onCancel={() => setShowOtpModal(false)} 
         onSubmitOtp={handleStartRideWithOtp} 
       />
 
-      {/* 🛑 MODAL DE CANCELAMENTO UNIFICADA */}
       <CancelModal 
         visible={showCancelModal} 
         userType="DRIVER"
@@ -2804,20 +2554,28 @@ const styles = StyleSheet.create({
     borderColor: '#334155',
     elevation: 6,
   },
+  vehicle3DContainer: {
+    width: 44,
+    height: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  vehicle3DRotator: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  vehicle3DImage: {
+    width: 36,
+    height: 36,
+  },
   carMarkerContainer: {
     backgroundColor: '#EAB308',
     padding: 8,
     borderRadius: 20,
     borderWidth: 2,
     borderColor: '#0F172A',
-    elevation: 5,
-  },
-  markerPickup: {
-    backgroundColor: '#10B981',
-    padding: 8,
-    borderRadius: 20,
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
     elevation: 5,
   },
   markerDestination: {
@@ -2828,8 +2586,6 @@ const styles = StyleSheet.create({
     borderColor: '#FFFFFF',
     elevation: 5,
   },
-
-  // HEADER SUPERIOR FLUTUANTE
   headerContainer: {
     position: 'absolute',
     left: 16,
@@ -2935,8 +2691,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
-
-  // BOTÕES FLUTUANTES LATERAIS
   floatingButtonsWrapper: {
     position: 'absolute',
     right: 16,
@@ -3002,11 +2756,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     borderWidth: 2,
     borderColor: '#0F172A',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
   },
   chatBadgeText: {
     color: '#FFFFFF',
@@ -3014,8 +2763,6 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     textAlign: 'center',
   },
-
-  // SLIDING BOTTOM SHEET
   bottomSheetWrapper: {
     position: 'absolute',
     bottom: 0,
@@ -3051,8 +2798,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 4,
   },
-
-  // IDLE (LIVRE)
   idleContainer: {
     alignItems: 'center',
     paddingVertical: 16,
@@ -3083,8 +2828,6 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     fontSize: 15,
   },
-
-  // CORRIDA ATIVA
   activeRideContainer: {
     paddingTop: 4,
   },
@@ -3132,6 +2875,21 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#F8FAFC',
   },
+  distanceBadge: {
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#3B82F6',
+    alignSelf: 'flex-start',
+    marginTop: 6,
+  },
+  distanceBadgeText: {
+    color: '#60A5FA',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   waitTimerBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3143,8 +2901,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-
-  // CARD DO PASSAGEIRO
   passengerProfileCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3196,44 +2952,99 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-
-  // ENDEREÇOS E ROTA
   routeAddressesContainer: {
-    backgroundColor: '#0F172A',
-    borderRadius: 16,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#334155',
-    gap: 10,
+    gap: 8,
     marginBottom: 12,
   },
   addressItem: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
+    alignItems: 'flex-start',
+    gap: 8,
   },
   addressTextWrapper: {
     flex: 1,
   },
   addressLabel: {
+    fontSize: 11,
     color: '#10B981',
-    fontSize: 10,
-    fontWeight: '800',
-    textTransform: 'uppercase',
+    fontWeight: '700',
   },
   addressValue: {
-    color: '#F8FAFC',
     fontSize: 13,
+    color: '#CBD5E1',
     fontWeight: '600',
   },
-
-  // DETALHES DE ENTREGA
-  deliveryDetailsCard: {
-    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-    borderRadius: 14,
-    padding: 12,
+  referenceBadgeYellow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(234, 179, 8, 0.15)',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#EAB308',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginTop: 4,
+  },
+  referenceBadgeYellowText: {
+    color: '#EAB308',
+    fontSize: 12,
+    fontWeight: '700',
+    flex: 1,
+  },
+  intermediateStopBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: 'rgba(59, 130, 246, 0.08)',
+    padding: 8,
+    borderRadius: 8,
+    marginVertical: 3,
+    gap: 8,
+  },
+  intermediateStopLabel: {
+    fontSize: 11,
+    color: '#3B82F6',
+    fontWeight: '700',
+  },
+  referenceBadgeBlue: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+    borderWidth: 1,
+    borderColor: '#3B82F6',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginTop: 4,
+  },
+  referenceBadgeBlueText: {
+    color: '#3B82F6',
+    fontSize: 12,
+    fontWeight: '700',
+    flex: 1,
+  },
+  referenceBadgeRed: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    borderWidth: 1,
+    borderColor: '#EF4444',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginTop: 4,
+  },
+  referenceBadgeRedText: {
+    color: '#EF4444',
+    fontSize: 12,
+    fontWeight: '700',
+    flex: 1,
+  },
+  deliveryDetailsCard: {
+    backgroundColor: '#0F172A',
+    padding: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#3B82F6',
     marginBottom: 12,
   },
   deliveryDetailsTitle: {
@@ -3244,43 +3055,17 @@ const styles = StyleSheet.create({
   },
   deliveryDetailsText: {
     color: '#F8FAFC',
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 12,
   },
-  deliveryNotes: { 
-    color: '#94A3B8', 
-    fontSize: 12, 
-    fontStyle: 'italic',
+  deliveryNotes: {
+    color: '#94A3B8',
+    fontSize: 11,
+    marginTop: 2,
   },
-
-  // MARCADOR 3D DO VEÍCULO
-  vehicle3DContainer: { 
-    width: 44, 
-    height: 44, 
-    alignItems: 'center', 
-    justifyContent: 'center', 
-    backgroundColor: 'transparent',
-  },
-  vehicle3DRotator: { 
-    width: 40, 
-    height: 40, 
-    alignItems: 'center', 
-    justifyContent: 'center', 
-    backgroundColor: 'transparent',
-  },
-  vehicle3DImage: { 
-    width: 38, 
-    height: 38, 
-    resizeMode: 'contain', 
-    backgroundColor: 'transparent',
-  },
-
-  // BOTÕES DE AÇÃO
   actionRow: {
     flexDirection: 'row',
-    alignItems: 'center',
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 10,
   },
   actionButtonSecondary: {
     flex: 1,
@@ -3295,9 +3080,24 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   actionButtonSecondaryText: {
-    color: '#F8FAFC',
-    fontSize: 12,
+    color: '#EAB308',
+    fontSize: 13,
     fontWeight: '700',
+  },
+  noShowBtnDanger: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#DC2626',
+    paddingVertical: 10,
+    borderRadius: 12,
+    gap: 4,
+  },
+  noShowBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
   },
   cancelButtonDanger: {
     flex: 1,
@@ -3313,63 +3113,165 @@ const styles = StyleSheet.create({
   },
   cancelButtonText: {
     color: '#EF4444',
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
   },
-  noShowBtnDanger: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#DC2626',
-    paddingVertical: 10,
-    borderRadius: 12,
-    gap: 6,
-  },
-  noShowBtnText: {
-    color: '#FFF',
-    fontSize: 12,
-    fontWeight: '800',
-  },
   actionBtnPrimary: {
-    width: '100%',
     paddingVertical: 14,
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    elevation: 4,
   },
   actionBtnText: {
     color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '900',
-    letterSpacing: 0.5,
   },
-
-  // MODAL FILTROS
+  receiptOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  receiptContainer: {
+    backgroundColor: '#1E293B',
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  receiptHeaderIcon: {
+    marginBottom: 12,
+  },
+  receiptTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  receiptSubtitle: {
+    color: '#94A3B8',
+    fontSize: 12,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  paidOnlineBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 102, 0, 0.1)',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FF6600',
+    marginBottom: 16,
+  },
+  paidOnlineTitle: {
+    color: '#FF6600',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  paidOnlineSub: {
+    color: '#CBD5E1',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  collectCashBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#10B981',
+    marginBottom: 16,
+  },
+  collectCashTitle: {
+    color: '#10B981',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  collectCashSub: {
+    color: '#CBD5E1',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  receiptValueContainer: {
+    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 16,
+    width: '100%',
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  receiptValueLabel: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  receiptValueText: {
+    color: '#10B981',
+    fontSize: 26,
+    fontWeight: '900',
+    marginVertical: 4,
+  },
+  receiptTrxId: {
+    color: '#64748B',
+    fontSize: 10,
+  },
+  receiptActionButtons: {
+    width: '100%',
+    gap: 10,
+  },
+  ratePassengerBtn: {
+    flexDirection: 'row',
+    backgroundColor: '#EAB308',
+    paddingVertical: 12,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ratePassengerBtnText: {
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  closeReceiptBtn: {
+    backgroundColor: '#334155',
+    paddingVertical: 12,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeReceiptBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   filterModalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'flex-end',
   },
   filterModalCard: {
     backgroundColor: '#1E293B',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     padding: 20,
-    borderTopWidth: 1,
-    borderColor: '#334155',
   },
   filterModalTitle: {
+    color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '800',
-    color: '#FFF',
     marginBottom: 4,
   },
   filterModalSub: {
-    fontSize: 13,
     color: '#94A3B8',
-    marginBottom: 20,
+    fontSize: 12,
+    marginBottom: 16,
   },
   filterRow: {
     flexDirection: 'row',
@@ -3377,7 +3279,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#0F172A',
+    borderBottomColor: '#334155',
   },
   filterLabelContainer: {
     flexDirection: 'row',
@@ -3385,7 +3287,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   filterLabelText: {
-    color: '#F8FAFC',
+    color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
   },
@@ -3398,11 +3300,9 @@ const styles = StyleSheet.create({
   },
   closeFilterText: {
     color: '#0F172A',
-    fontWeight: '800',
+    fontWeight: '900',
     fontSize: 14,
   },
-
-  // MODAL NOVA SOLICITAÇÃO (POPUP)
   newRequestOverlay: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.85)',
@@ -3413,35 +3313,47 @@ const styles = StyleSheet.create({
     backgroundColor: '#1E293B',
     borderRadius: 24,
     padding: 20,
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: '#EAB308',
-    elevation: 10,
+    elevation: 20,
+  },
+  queuedBadge: {
+    backgroundColor: '#3B82F6',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   newRequestHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 12,
   },
   newRequestTitle: {
-    color: '#F8FAFC',
-    fontSize: 18,
-    fontWeight: '900',
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
   },
   newRequestPriceBadge: {
-    backgroundColor: '#EAB308',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
+    backgroundColor: 'rgba(234, 179, 8, 0.15)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#EAB308',
   },
   newRequestPriceText: {
-    color: '#0F172A',
+    color: '#EAB308',
     fontWeight: '900',
-    fontSize: 15,
+    fontSize: 14,
   },
   progressBarContainer: {
     height: 6,
-    backgroundColor: '#0F172A',
+    backgroundColor: '#334155',
     borderRadius: 3,
     overflow: 'hidden',
     marginBottom: 6,
@@ -3454,8 +3366,7 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     fontSize: 11,
     textAlign: 'right',
-    marginBottom: 14,
-    fontWeight: '700',
+    marginBottom: 12,
   },
   modalPassengerRow: {
     flexDirection: 'row',
@@ -3463,51 +3374,48 @@ const styles = StyleSheet.create({
     backgroundColor: '#0F172A',
     padding: 10,
     borderRadius: 14,
-    marginBottom: 14,
+    marginBottom: 12,
   },
   passengerPhotoContainerSm: {
     width: 36,
     height: 36,
     borderRadius: 18,
     backgroundColor: '#1E293B',
-    alignItems: 'center',
     justifyContent: 'center',
+    alignItems: 'center',
   },
   modalPassengerName: {
-    color: '#FFF',
-    fontSize: 14,
-    fontWeight: '800',
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
   modalPassengerRating: {
     color: '#EAB308',
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 11,
     marginLeft: 4,
+    fontWeight: '600',
   },
   routeTimelineContainer: {
-    backgroundColor: '#0F172A',
-    borderRadius: 14,
-    padding: 12,
-    gap: 10,
+    gap: 8,
     marginBottom: 16,
   },
   timelineRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 10,
+    gap: 8,
   },
   timelineTextContainer: {
     flex: 1,
   },
   timelineLabel: {
-    color: '#10B981',
     fontSize: 10,
+    color: '#10B981',
     fontWeight: '800',
   },
   timelineAddress: {
-    color: '#CBD5E1',
     fontSize: 12,
-    marginTop: 1,
+    color: '#CBD5E1',
+    fontWeight: '600',
   },
   newRequestActions: {
     flexDirection: 'row',
@@ -3515,160 +3423,28 @@ const styles = StyleSheet.create({
   },
   rejectBtn: {
     flex: 1,
-    paddingVertical: 14,
+    backgroundColor: '#334155',
+    paddingVertical: 12,
     borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#475569',
     alignItems: 'center',
   },
   rejectText: {
     color: '#94A3B8',
     fontWeight: '800',
+    fontSize: 13,
   },
   acceptBtn: {
     flex: 2,
     backgroundColor: '#EAB308',
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderRadius: 14,
     alignItems: 'center',
   },
   acceptText: {
     color: '#0F172A',
     fontWeight: '900',
-    fontSize: 15,
-  },
-
-  // 🧾 ESTILOS DO MODAL DE RECIBO
-  receiptOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  receiptContainer: {
-    width: '100%',
-    backgroundColor: '#0F172A',
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: '#334155',
-    padding: 20,
-    alignItems: 'center',
-  },
-  receiptHeaderIcon: {
-    marginBottom: 10,
-  },
-  receiptTitle: {
-    color: '#F8FAFC',
-    fontSize: 22,
-    fontWeight: '800',
-    textAlign: 'center',
-  },
-  receiptSubtitle: {
-    color: '#94A3B8',
-    fontSize: 13,
-    textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 18,
-  },
-  paidOnlineBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 102, 0, 0.12)',
-    borderWidth: 1,
-    borderColor: '#FF6600',
-    padding: 14,
-    borderRadius: 16,
-    width: '100%',
-    marginBottom: 18,
-  },
-  paidOnlineTitle: {
-    color: '#FF6600',
-    fontWeight: '900',
-    fontSize: 13,
-  },
-  paidOnlineSub: {
-    color: '#F8FAFC',
-    fontSize: 11,
-    marginTop: 2,
-  },
-  collectCashBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
-    borderWidth: 1,
-    borderColor: '#10B981',
-    padding: 14,
-    borderRadius: 16,
-    width: '100%',
-    marginBottom: 18,
-  },
-  collectCashTitle: {
-    color: '#10B981',
-    fontWeight: '900',
-    fontSize: 13,
-  },
-  collectCashSub: {
-    color: '#F8FAFC',
-    fontSize: 11,
-    marginTop: 2,
-  },
-  receiptValueContainer: {
-    width: '100%',
-    alignItems: 'center',
-    backgroundColor: '#1E293B',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderRadius: 16,
-    marginBottom: 20,
-  },
-  receiptValueLabel: {
-    color: '#94A3B8',
-    fontSize: 12,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-  },
-  receiptValueText: {
-    color: '#EAB308',
-    fontSize: 28,
-    fontWeight: '900',
-    marginVertical: 4,
-  },
-  receiptTrxId: {
-    color: '#64748B',
-    fontSize: 11,
-  },
-  receiptActionButtons: {
-    width: '100%',
-    gap: 10,
-  },
-  ratePassengerBtn: {
-    backgroundColor: '#EAB308',
-    height: 48,
-    borderRadius: 14,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  ratePassengerBtnText: {
-    color: '#0F172A',
-    fontWeight: '800',
-    fontSize: 15,
-  },
-  closeReceiptBtn: {
-    backgroundColor: '#1E293B',
-    borderWidth: 1,
-    borderColor: '#334155',
-    height: 48,
-    borderRadius: 14,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 16,
-    width: '100%',
-  },
-  closeReceiptBtnText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 14,
   },
 });
+
+export default Home;

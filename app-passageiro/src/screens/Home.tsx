@@ -838,41 +838,50 @@ const handleFullCancelAndReset = useCallback(() => {
   }, [isChatVisible]);
 
   const handleIncomingChatMessage = useCallback((data: any) => {
-    if (!isMountedRef.current || !data) return;
+  if (!isMountedRef.current || !data) return;
 
-    const text = String(data.text || data.message || '').trim();
-    const audioUrl = data.audioUrl || data.audio || null;
-    const audioDuration = Number(data.audioDuration || data.duration || 0);
+  const text = String(data.text || data.message || '').trim();
+  const audioUrl = data.audioUrl || data.audio || null;
+  const audioDuration = Number(data.audioDuration || data.duration || 0);
 
-    if (!text && !audioUrl) return;
+  if (!text && !audioUrl) return;
 
-    const rawSender = String(data.sender || data.senderType || '').toLowerCase();
-    const isFromDriver = rawSender.includes('driver') || rawSender !== 'passenger';
-    const normalizedSender: 'passenger' | 'driver' = isFromDriver ? 'driver' : 'passenger';
-    const messageId = String(data.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`);
+  const rawSender = String(data.sender || data.senderType || '').toLowerCase();
+  const isFromDriver = rawSender.includes('driver') || rawSender !== 'passenger';
+  const normalizedSender: 'passenger' | 'driver' = isFromDriver ? 'driver' : 'passenger';
+  const messageId = String(data.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`);
 
-    setMessages(prev => {
-      const isDuplicate = prev.some(
-        m => m.id === messageId || 
-        (text && m.text === text && m.sender === normalizedSender) ||
-        (audioUrl && m.audioUrl === audioUrl)
-      );
-      if (isDuplicate) return prev;
+  // 🔴 SE A MENSAGEM FOR DO MOTORISTA E O CHAT ESTIVER FECHADO:
+  if (isFromDriver && !isChatVisibleRef.current) {
+    setUnreadCount(prev => prev + 1);
+    triggerHapticFeedback('NEW_OFFER');
+  }
 
-      return [
-        ...prev, 
-        { 
-          id: messageId, 
-          sender: normalizedSender, 
-          text, 
-          audioUrl, 
-          audioDuration, 
-          senderPhoto: data.senderPhoto || data.driverPhoto 
-        }
-      ];
-    });
-  }, []);
+  setMessages(prev => {
+    const isDuplicate = prev.some(
+      m => m.id === messageId || 
+      (text && m.text === text && m.sender === normalizedSender) ||
+      (audioUrl && m.audioUrl === audioUrl)
+    );
+    if (isDuplicate) return prev;
 
+    return [
+      ...prev, 
+      { 
+        id: messageId, 
+        sender: normalizedSender, 
+        text, 
+        audioUrl, 
+        audioDuration, 
+        senderPhoto: data.senderPhoto || data.driverPhoto 
+      }
+    ];
+  });
+}, []);
+const handleOpenChat = () => {
+  setUnreadCount(0); // Limpa o contador de mensagens não lidas
+  setIsChatVisible(true);
+};
   const fitMapBounds = useCallback((coordsArray: Array<{ latitude: number; longitude: number }>) => {
     if (!cameraRef.current || !coordsArray || coordsArray.length < 2) return;
     
@@ -2736,56 +2745,6 @@ const handleFullCancelAndReset = useCallback(() => {
                   />
                 </View>
 
-                {/* BOTÕES DE AÇÃO RÁPIDA */}
-                <View style={styles.actionRowGrid}>
-                  <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleSosPress} activeOpacity={0.8}>
-                    <Ionicons name="shield-checkmark" size={18} color="#EF4444" />
-                    <Text style={[styles.actionBtnText, { color: '#EF4444' }]}>SOS</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleCallDriver} activeOpacity={0.8}>
-                    <Ionicons name="call" size={18} color="#EAB308" />
-                    <Text style={[styles.actionBtnText, { color: '#EAB308' }]}>Ligar</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleShareTrip} activeOpacity={0.8}>
-                    <Ionicons name="share-social" size={18} color="#3B82F6" />
-                    <Text style={[styles.actionBtnText, { color: '#3B82F6' }]}>Partilhar</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity 
-                    style={styles.actionBtnPrimary} 
-                    onPress={() => {
-                      setUnreadCount(0);
-                      setIsChatVisible(true);
-                    }} 
-                    activeOpacity={0.85}
-                  >
-                    <Ionicons name="chatbubble-ellipses" size={18} color="#0F172A" />
-                    <Text style={styles.actionBtnPrimaryText}>Chat</Text>
-
-                    {unreadCount > 0 && (
-                      <View style={styles.chatBadgeContainer}>
-                        <Text style={styles.chatBadgeText}>
-                          {unreadCount > 9 ? '9+' : unreadCount}
-                        </Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                </View>
-
-                <TouchableOpacity 
-                       style={styles.cancelRideLink} 
-                        onPress={() => setShowCancelModal(true)}
-                        >
-                      <Text style={styles.cancelRideLinkText}>Cancelar Viagem</Text>
-                       </TouchableOpacity>
-              </View>
-            )}
-          </ScrollView>
-        </Animated.View>
-      </KeyboardAvoidingView>
-
       {/* 🏎️ CARTÃO DE RESUMO PARA VOZ */}
       {rideStatus !== 'idle' && (
         <View style={styles.driverInfoCard} accessibilityRole="summary">
@@ -3605,7 +3564,55 @@ const handleFullCancelAndReset = useCallback(() => {
           </TouchableWithoutFeedback>
         </KeyboardAvoidingView>
       </Modal>
+{/* BOTÕES DE AÇÃO RÁPIDA */}
+                <View style={styles.actionRowGrid}>
+                  <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleSosPress} activeOpacity={0.8}>
+                    <Ionicons name="shield-checkmark" size={18} color="#EF4444" />
+                    <Text style={[styles.actionBtnText, { color: '#EF4444' }]}>SOS</Text>
+                  </TouchableOpacity>
 
+                  <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleCallDriver} activeOpacity={0.8}>
+                    <Ionicons name="call" size={18} color="#EAB308" />
+                    <Text style={[styles.actionBtnText, { color: '#EAB308' }]}>Ligar</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleShareTrip} activeOpacity={0.8}>
+                    <Ionicons name="share-social" size={18} color="#3B82F6" />
+                    <Text style={[styles.actionBtnText, { color: '#3B82F6' }]}>Partilhar</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity 
+                    style={styles.actionBtnPrimary} 
+                    onPress={() => {
+                      setUnreadCount(0);
+                      setIsChatVisible(true);
+                    }} 
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="chatbubble-ellipses" size={18} color="#0F172A" />
+                    <Text style={styles.actionBtnPrimaryText}>Chat</Text>
+
+                    {unreadCount > 0 && (
+                      <View style={styles.chatBadgeContainer}>
+                        <Text style={styles.chatBadgeText}>
+                          {unreadCount > 9 ? '9+' : unreadCount}
+                        </Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity 
+                       style={styles.cancelRideLink} 
+                        onPress={() => setShowCancelModal(true)}
+                        >
+                      <Text style={styles.cancelRideLinkText}>Cancelar Viagem</Text>
+                       </TouchableOpacity>
+              </View>
+            )}
+          </ScrollView>
+        </Animated.View>
+      </KeyboardAvoidingView>
       {/* 💬 CHATMODAL DO PASSAGEIRO */}
 <ChatModal 
   visible={isChatVisible} 

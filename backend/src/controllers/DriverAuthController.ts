@@ -509,10 +509,6 @@ export class DriverAuthController {
       return res.status(500).json({ success: false, error: 'Erro interno ao buscar perfil.' });
     }
   }
-
-  // ==========================================
-  // 💰 EXTRATO E FINANÇAS
-  // ==========================================
   // ==========================================
   // 💰 EXTRATO E FINANÇAS
   // ==========================================

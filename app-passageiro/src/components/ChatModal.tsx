@@ -57,6 +57,30 @@ const formatTime = (isoString?: string) => {
   }
 };
 
+const getPlayableAudioUri = async (msgId: string, audioUrl: string): Promise<string> => {
+  if (audioUrl.startsWith('http://') || audioUrl.startsWith('https://') || audioUrl.startsWith('file://')) {
+    return audioUrl;
+  }
+  if (audioUrl.startsWith('data:') || audioUrl.length > 500) {
+    try {
+      const base64Data = audioUrl.includes('base64,') ? audioUrl.split('base64,')[1] : audioUrl;
+      const fileUri = `${FileSystem.cacheDirectory}audio_${msgId.replace(/[^a-zA-Z0-9]/g, '')}.m4a`;
+      const fileInfo = await FileSystem.getInfoAsync(fileUri);
+      if (!fileInfo.exists) {
+        await FileSystem.writeAsStringAsync(fileUri, base64Data, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+      }
+      return fileUri;
+    } catch (e) {
+      console.warn('⚠️ Erro ao converter áudio base64 em arquivo local:', e);
+    }
+  }
+  const cleanBase = API_URL.replace(/\/$/, '');
+  const cleanPath = audioUrl.startsWith('/') ? audioUrl : `/${audioUrl}`;
+  return `${cleanBase}${cleanPath}`;
+};
+
 export function ChatModal({ 
   visible, 
   onClose, 
@@ -73,7 +97,6 @@ export function ChatModal({
   const [inputText, setInputText] = useState('');
   const [hasRenderError, setHasRenderError] = useState(false);
 
-  // Inicialização defensiva do gravador de áudio
   let audioRecorder: any = null;
   try {
     audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -91,82 +114,58 @@ export function ChatModal({
 
   const storageKey = `@bai245:chat_${rideId}`;
 
-  // Helper para emissão segura via Socket (Impede crash se desconectado)
   const safeEmit = (event: string, payload: any) => {
     try {
       if (socket && socket.connected) {
         socket.emit(event, payload);
-        console.log(`📡 [CHAT_PASSENGER_SOCKET] Evento "${event}" emitido com sucesso.`);
-      } else {
-        console.warn(`⚠️ [CHAT_PASSENGER_SOCKET] Socket desconectado. Evento "${event}" não enviado.`);
       }
-    } catch (err) {
-      console.error(`❌ [CHAT_PASSENGER_SOCKET] Erro ao emitir evento "${event}":`, err);
-    }
+    } catch (err) {}
   };
 
-  // 1. Limpa mensagens se alterar o ID da corrida
   useEffect(() => {
-    if (!rideId) {
-      setMessages([]);
-    }
+    if (!rideId) setMessages([]);
     setHasRenderError(false);
   }, [rideId]);
 
-  // 2. Persiste mensagens localmente
   useEffect(() => {
     if (messages.length > 0 && rideId) {
       AsyncStorage.setItem(storageKey, JSON.stringify(messages)).catch(() => {});
     }
   }, [messages, rideId, storageKey]);
 
-  // 3. Limpeza de timers e áudios ao desmontar
   useEffect(() => {
     return () => {
       if (activePlayerRef.current) {
         try { activePlayerRef.current.pause(); } catch (e) {}
         activePlayerRef.current = null;
       }
-      if (recordTimerRef.current) {
-        clearInterval(recordTimerRef.current);
-      }
+      if (recordTimerRef.current) clearInterval(recordTimerRef.current);
     };
   }, []);
 
-  // 4. Carrega mensagens do Cache Local e Sincroniza via API
   useEffect(() => {
     if (visible && rideId) {
-      // Restaura do cache AsyncStorage primeiro
       AsyncStorage.getItem(storageKey).then((cached) => {
         if (cached) {
           try {
             const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setMessages(parsed);
-            }
+            if (Array.isArray(parsed) && parsed.length > 0) setMessages(parsed);
           } catch (e) {}
         }
       }).catch(() => {});
 
-      // Sincroniza com histórico da API
       if (api && typeof api.get === 'function') {
         api.get(`/rides/${rideId}/chat`)
           .then(response => {
             const data = response?.data;
-            const rawList = Array.isArray(data) 
-              ? data 
-              : Array.isArray(data?.messages) 
-                ? data.messages 
-                : Array.isArray(data?.history) 
-                  ? data.history 
-                  : [];
+            const rawList = Array.isArray(data) ? data : Array.isArray(data?.messages) ? data.messages : Array.isArray(data?.history) ? data.history : [];
 
             if (rawList.length > 0) {
               const history: ChatMessage[] = rawList.map((msg: any) => ({
                 id: String(msg.id || `hist-${Math.random().toString(36).substring(2, 7)}`),
                 sender: (msg.senderType === 'PASSENGER' || msg.sender === 'passenger' || msg.senderRole === 'passenger') ? 'passenger' : 'driver',
                 text: msg.message || msg.text || '',
-                audioUrl: msg.audioUrl || msg.audio || null,
+                audioUrl: msg.audioUrl || msg.audio || msg.fileUrl || null,
                 audioDuration: Number(msg.audioDuration || msg.duration || 0),
                 senderPhoto: formatPhotoUrl(msg.senderPhoto || msg.userPhoto),
                 createdAt: msg.createdAt || new Date().toISOString(),
@@ -174,16 +173,12 @@ export function ChatModal({
 
               setMessages((prev) => {
                 const map = new Map<string, ChatMessage>();
-                [...prev, ...history].forEach(m => {
-                  if (m && m.id) map.set(m.id, m);
-                });
+                [...prev, ...history].forEach(m => { if (m && m.id) map.set(m.id, m); });
                 return Array.from(map.values());
               });
             }
           })
-          .catch(error => {
-            console.warn("⚠️ [CHAT PASSAGEIRO] Histórico da API offline/indisponível:", error?.message);
-          });
+          .catch(() => {});
       }
     } else if (!visible) {
       if (activePlayerRef.current) {
@@ -194,7 +189,6 @@ export function ChatModal({
     }
   }, [visible, rideId, storageKey]);
 
-  // 5. Escuta de mensagens via Socket com deduplicação
   useEffect(() => {
     if (!socket || !visible) return;
 
@@ -204,7 +198,7 @@ export function ChatModal({
       try {
         const msgSender = (msg.sender === 'passenger' || msg.senderType === 'PASSENGER' || msg.senderRole === 'passenger') ? 'passenger' : 'driver';
         const msgText = msg.text || msg.message || '';
-        const msgAudio = msg.audioUrl || msg.audio || null;
+        const msgAudio = msg.audioUrl || msg.audio || msg.fileUrl || null;
 
         const formattedMsg: ChatMessage = {
           id: String(msg.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`),
@@ -218,7 +212,6 @@ export function ChatModal({
 
         setMessages((prev) => {
           if (prev.some((item) => item.id === formattedMsg.id)) return prev;
-
           if (formattedMsg.sender === currentRole) {
             const isOptimisticDuplicate = prev.some(
               (item) => item.sender === currentRole && 
@@ -226,12 +219,9 @@ export function ChatModal({
             );
             if (isOptimisticDuplicate) return prev;
           }
-
           return [...prev, formattedMsg];
         });
-      } catch (err) {
-        console.warn('⚠️ Erro ao processar mensagem recebida no socket:', err);
-      }
+      } catch (err) {}
     };
 
     try {
@@ -242,9 +232,7 @@ export function ChatModal({
       socket.on('chat:receive_message', handleReceiveMessage);
       socket.on('chat:message', handleReceiveMessage);
       socket.on('chat:new_message', handleReceiveMessage);
-    } catch (sErr) {
-      console.warn('⚠️ Erro ao registrar ouvintes de socket:', sErr);
-    }
+    } catch (sErr) {}
 
     return () => {
       try {
@@ -255,7 +243,6 @@ export function ChatModal({
     };
   }, [socket, visible, currentRole]);
 
-  // 6. Envio de Texto
   const sendMessage = () => {
     if (!inputText.trim()) return;
 
@@ -284,7 +271,6 @@ export function ChatModal({
     setInputText('');
   };
 
-  // 7. Iniciar Gravação de Áudio
   const startRecording = async () => {
     if (!audioRecorder) {
       Alert.alert(t('error_title', 'Erro'), 'Gravador de áudio indisponível neste dispositivo.');
@@ -320,12 +306,10 @@ export function ChatModal({
       }, 1000);
 
     } catch (err) {
-      console.error('Falha ao iniciar gravação no passageiro:', err);
       setIsRecording(false);
     }
   };
 
-  // 8. Parar e Enviar Gravação em Base64
   const stopAndSendRecording = async (finalDuration?: number) => {
     if (recordTimerRef.current) {
       clearInterval(recordTimerRef.current);
@@ -334,11 +318,8 @@ export function ChatModal({
 
     try {
       setIsRecording(false);
-      if (audioRecorder) {
-        await audioRecorder.stop();
-      }
+      if (audioRecorder) await audioRecorder.stop();
       const uri = audioRecorder?.uri;
-
       if (!uri) return;
 
       const durationSec = finalDuration || recordDuration || 1;
@@ -348,9 +329,7 @@ export function ChatModal({
       try {
         const base64Audio = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
         audioPayload = `data:audio/m4a;base64,${base64Audio}`;
-      } catch (b64Err) {
-        console.warn('⚠️ Não foi possível converter áudio para base64:', b64Err);
-      }
+      } catch (b64Err) {}
 
       const newMsg: ChatMessage = {
         id: uniqueId,
@@ -378,25 +357,20 @@ export function ChatModal({
 
       setRecordDuration(0);
     } catch (error) {
-      console.error('Erro ao finalizar áudio no passageiro:', error);
       setIsRecording(false);
     }
   };
 
-  // 9. Cancelar Gravação
   const cancelRecording = async () => {
     if (recordTimerRef.current) {
       clearInterval(recordTimerRef.current);
       recordTimerRef.current = null;
     }
-    try {
-      if (audioRecorder) await audioRecorder.stop();
-    } catch (e) {}
+    try { if (audioRecorder) await audioRecorder.stop(); } catch (e) {}
     setIsRecording(false);
     setRecordDuration(0);
   };
 
-  // 10. Reprodução de Áudio Blindada (Suporta HTTP, HTTPS, local e Base64)
   const togglePlayAudio = async (msgId: string, audioUrl?: string | null) => {
     if (!audioUrl) return;
 
@@ -413,19 +387,14 @@ export function ChatModal({
         activePlayerRef.current = null;
       }
 
-      const formattedUri = audioUrl.startsWith('data:') || audioUrl.startsWith('http') 
-        ? audioUrl 
-        : `${API_URL}${audioUrl.startsWith('/') ? '' : '/'}${audioUrl}`;
-
-      const player = createAudioPlayer({ uri: formattedUri });
+      const playableUri = await getPlayableAudioUri(msgId, audioUrl);
+      const player = createAudioPlayer({ uri: playableUri });
       if (!player) return;
 
       activePlayerRef.current = player;
       setPlayingAudioId(msgId);
       
-      if (typeof player.play === 'function') {
-        player.play();
-      }
+      if (typeof player.play === 'function') player.play();
 
       if (typeof player.addListener === 'function') {
         player.addListener('playbackStatusUpdate', (status: any) => {
@@ -436,7 +405,6 @@ export function ChatModal({
         });
       }
     } catch (error) {
-      console.warn("⚠️ Erro ao reproduzir áudio no passageiro:", error);
       setPlayingAudioId(null);
       activePlayerRef.current = null;
     }
@@ -444,9 +412,7 @@ export function ChatModal({
 
   const renderAvatar = (photoUrl?: string | null) => {
     const formatted = formatPhotoUrl(photoUrl);
-    if (formatted) {
-      return <Image source={{ uri: formatted }} style={styles.avatarImage} />;
-    }
+    if (formatted) return <Image source={{ uri: formatted }} style={styles.avatarImage} />;
     return (
       <View style={styles.avatarPlaceholder}>
         <Ionicons name="person" size={16} color="#64748B" />
@@ -485,7 +451,6 @@ export function ChatModal({
         </TouchableWithoutFeedback>
 
         <View style={styles.chatContainer}>
-          {/* CABEÇALHO DO CHAT */}
           <View style={styles.chatHeader}>
             <View style={styles.headerTitleRow}>
               {renderAvatar(otherUserPhoto)}
@@ -507,7 +472,6 @@ export function ChatModal({
             </TouchableOpacity>
           </View>
 
-          {/* LISTA DE MENSAGENS */}
           <FlatList
             ref={flatListRef}
             data={messages}
@@ -528,7 +492,6 @@ export function ChatModal({
                   
                   <View style={styles.messageContent}>
                     <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleOther]}>
-                      
                       {item.audioUrl ? (
                         <TouchableOpacity 
                           style={styles.audioContainer}
@@ -556,7 +519,6 @@ export function ChatModal({
                           {item.text}
                         </Text>
                       )}
-
                     </View>
                     {item.createdAt && (
                       <Text style={[styles.timestamp, isMe ? styles.timestampMe : styles.timestampOther]}>
@@ -571,7 +533,6 @@ export function ChatModal({
             }}
           />
 
-          {/* CAIXA DE ENTRADA / CONTROLE DE GRAVAÇÃO */}
           <View style={[styles.chatInputContainer, { paddingBottom: dynamicBottomPadding }]}>
             {isRecording ? (
               <View style={styles.recordingBar}>
@@ -586,10 +547,7 @@ export function ChatModal({
                   </Text>
                 </View>
 
-                <TouchableOpacity 
-                  onPress={() => stopAndSendRecording()} 
-                  style={styles.sendAudioBtn}
-                >
+                <TouchableOpacity onPress={() => stopAndSendRecording()} style={styles.sendAudioBtn}>
                   <Ionicons name="checkmark-sharp" size={20} color="#FFF" />
                 </TouchableOpacity>
               </View>
@@ -606,19 +564,11 @@ export function ChatModal({
                 />
 
                 {inputText.trim().length > 0 ? (
-                  <TouchableOpacity 
-                    style={styles.chatSendButton} 
-                    onPress={sendMessage}
-                    activeOpacity={0.8}
-                  >
+                  <TouchableOpacity style={styles.chatSendButton} onPress={sendMessage} activeOpacity={0.8}>
                     <Ionicons name="send" size={18} color="#0F172A" style={styles.sendIcon} />
                   </TouchableOpacity>
                 ) : (
-                  <TouchableOpacity 
-                    style={styles.micButton} 
-                    onPress={startRecording}
-                    activeOpacity={0.8}
-                  >
+                  <TouchableOpacity style={styles.micButton} onPress={startRecording} activeOpacity={0.8}>
                     <Ionicons name="mic" size={22} color="#0F172A" />
                   </TouchableOpacity>
                 )}
@@ -632,220 +582,43 @@ export function ChatModal({
 }
 
 const styles = StyleSheet.create({
-  chatOverlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  backdrop: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(15, 23, 42, 0.6)', 
-  },
-  chatContainer: {
-    backgroundColor: '#0F172A',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    maxHeight: '88%',
-    flex: 1,
-    paddingTop: 8,
-  },
-  chatHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingBottom: 14,
-    paddingTop: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
-  },
-  headerTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  chatTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  chatSubtitle: {
-    fontSize: 12,
-    color: '#94A3B8',
-    marginTop: 2,
-  },
-  closeButton: {
-    backgroundColor: '#1E293B',
-    padding: 6,
-    borderRadius: 20,
-  },
-  messageList: {
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-  },
-  messageRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    marginBottom: 16,
-    gap: 8,
-  },
-  rowMe: {
-    justifyContent: 'flex-end',
-  },
-  rowOther: {
-    justifyContent: 'flex-start',
-  },
-  messageContent: {
-    maxWidth: '75%',
-  },
-  bubble: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 20,
-  },
-  bubbleMe: {
-    backgroundColor: '#EAB308',
-    borderBottomRightRadius: 4,
-  },
-  bubbleOther: {
-    backgroundColor: '#1E293B',
-    borderBottomLeftRadius: 4,
-  },
-  messageText: {
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  textMe: {
-    color: '#0F172A',
-    fontWeight: '600',
-  },
-  textOther: {
-    color: '#FFFFFF',
-  },
-  timestamp: {
-    fontSize: 10,
-    color: '#64748B',
-    marginTop: 4,
-  },
-  timestampMe: {
-    textAlign: 'right',
-  },
-  timestampOther: {
-    textAlign: 'left',
-  },
-  avatarImage: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#334155',
-  },
-  avatarPlaceholder: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#334155',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  chatInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#1E293B',
-    backgroundColor: '#0F172A',
-    gap: 12,
-  },
-  chatInput: {
-    flex: 1,
-    backgroundColor: '#1E293B',
-    borderWidth: 1,
-    borderColor: '#334155',
-    borderRadius: 24,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 12,
-    minHeight: 48,
-    maxHeight: 120,
-    fontSize: 15,
-    color: '#FFFFFF',
-  },
-  chatSendButton: {
-    backgroundColor: '#EAB308',
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  micButton: {
-    backgroundColor: '#EAB308',
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sendIcon: {
-    marginLeft: 2, 
-  },
-  audioContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    minWidth: 160,
-  },
-  audioWaveformPlaceholder: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    flex: 1,
-  },
-  audioBar: {
-    width: 3,
-    borderRadius: 2,
-  },
-  audioDurationText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  recordingBar: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#450A0A',
-    borderWidth: 1,
-    borderColor: '#991B1B',
-    borderRadius: 24,
-    paddingHorizontal: 12,
-    height: 48,
-  },
-  cancelRecBtn: {
-    padding: 6,
-  },
-  recordingTimerContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  recordingDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#EF4444',
-  },
-  recordingTimerText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FCA5A5',
-  },
-  sendAudioBtn: {
-    backgroundColor: '#16A34A',
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  chatOverlay: { flex: 1, justifyContent: 'flex-end' },
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(15, 23, 42, 0.6)' },
+  chatContainer: { backgroundColor: '#0F172A', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '88%', flex: 1, paddingTop: 8 },
+  chatHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 14, paddingTop: 8, borderBottomWidth: 1, borderBottomColor: '#1E293B' },
+  headerTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  chatTitle: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
+  chatSubtitle: { fontSize: 12, color: '#94A3B8', marginTop: 2 },
+  closeButton: { backgroundColor: '#1E293B', padding: 6, borderRadius: 20 },
+  messageList: { paddingHorizontal: 20, paddingVertical: 16 },
+  messageRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 16, gap: 8 },
+  rowMe: { justifyContent: 'flex-end' },
+  rowOther: { justifyContent: 'flex-start' },
+  messageContent: { maxWidth: '75%' },
+  bubble: { paddingHorizontal: 16, paddingVertical: 12, borderRadius: 20 },
+  bubbleMe: { backgroundColor: '#EAB308', borderBottomRightRadius: 4 },
+  bubbleOther: { backgroundColor: '#1E293B', borderBottomLeftRadius: 4 },
+  messageText: { fontSize: 15, lineHeight: 22 },
+  textMe: { color: '#0F172A', fontWeight: '600' },
+  textOther: { color: '#FFFFFF' },
+  timestamp: { fontSize: 10, color: '#64748B', marginTop: 4 },
+  timestampMe: { textAlign: 'right' },
+  timestampOther: { textAlign: 'left' },
+  avatarImage: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#334155' },
+  avatarPlaceholder: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#334155', alignItems: 'center', justifyContent: 'center' },
+  chatInputContainer: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#1E293B', backgroundColor: '#0F172A', gap: 12 },
+  chatInput: { flex: 1, backgroundColor: '#1E293B', borderWidth: 1, borderColor: '#334155', borderRadius: 24, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, minHeight: 48, maxHeight: 120, fontSize: 15, color: '#FFFFFF' },
+  chatSendButton: { backgroundColor: '#EAB308', width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
+  micButton: { backgroundColor: '#EAB308', width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
+  sendIcon: { marginLeft: 2 },
+  audioContainer: { flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 160 },
+  audioWaveformPlaceholder: { flexDirection: 'row', alignItems: 'center', gap: 3, flex: 1 },
+  audioBar: { width: 3, borderRadius: 2 },
+  audioDurationText: { fontSize: 12, fontWeight: '600' },
+  recordingBar: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#450A0A', borderWidth: 1, borderColor: '#991B1B', borderRadius: 24, paddingHorizontal: 12, height: 48 },
+  cancelRecBtn: { padding: 6 },
+  recordingTimerContainer: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  recordingDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#EF4444' },
+  recordingTimerText: { fontSize: 14, fontWeight: '700', color: '#FCA5A5' },
+  sendAudioBtn: { backgroundColor: '#16A34A', width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
 });

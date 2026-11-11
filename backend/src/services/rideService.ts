@@ -1180,7 +1180,7 @@ export async function cancelRideLogic(
 }
 
 // -----------------------------------------------------------------------------
-// 7. NOTIFICAÇÕES DE CHAT E AVALIAÇÕES
+// 7. NOTIFICAÇÕES DE CHAT E AVALIAÇÕES (VERSÃO PRODUÇÃO)
 // -----------------------------------------------------------------------------
 export async function notifyNewChatMessage(data: {
   rideId: string;
@@ -1188,16 +1188,19 @@ export async function notifyNewChatMessage(data: {
   senderType: 'PASSENGER' | 'DRIVER';
   senderName: string;
   message: string;
+  audioUrl?: string | null;
+  audioDuration?: number;
 }) {
   try {
-    const { rideId, senderId, senderType, senderName, message } = data;
-    console.log(`💬 [CHAT_DEBUG] Nova mensagem na corrida ${rideId} de ${senderName} (${senderType}): "${message}"`);
+    const { rideId, senderId, senderType, senderName, message, audioUrl, audioDuration } = data;
+    
+    console.log(`💬 [CHAT_DEBUG] Nova mensagem na corrida ${rideId} de ${senderName} (${senderType})`);
 
     const ride = await prisma.ride.findUnique({
       where: { id: rideId },
       include: {
-        passenger: { select: { id: true, fullName: true, deviceToken: true, profilePicture: true } },
-        driver: { select: { id: true, fullName: true, deviceToken: true, profilePicture: true } }
+        passenger: { select: { id: true, fullName: true, deviceToken: true, pushToken: true, profilePicture: true } },
+        driver: { select: { id: true, fullName: true, deviceToken: true, pushToken: true, profilePicture: true } }
       }
     });
 
@@ -1208,22 +1211,34 @@ export async function notifyNewChatMessage(data: {
 
     const isPassenger = senderType === 'PASSENGER';
     const targetUserId = isPassenger ? ride.driverId : ride.passengerId;
-    const targetToken = isPassenger ? ride.driver?.deviceToken : ride.passenger?.deviceToken;
+
+    // 🟢 1. FALLBACK DUPLO DE TOKEN (deviceToken ou pushToken)
+    const targetToken = isPassenger 
+      ? (ride.driver?.deviceToken || (ride.driver as any)?.pushToken)
+      : (ride.passenger?.deviceToken || (ride.passenger as any)?.pushToken);
+
+    // 🟢 2. TRATAMENTO SEGURO DE CONTEÚDO (Evita estourar limite do Push com Base64)
+    const isAudioMsg = Boolean(audioUrl || message?.startsWith('data:audio') || message?.length > 300);
+    const pushBodyText = isAudioMsg ? '🎙️ Mensagem de áudio' : message;
 
     const chatPayload = {
-      id: `msg-${Date.now()}`,
+      id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       rideId,
       senderId,
       sender: isPassenger ? 'passenger' : 'driver',
       senderType,
       senderName,
-      message,
-      text: message,
+      message: isAudioMsg ? '' : message,
+      text: isAudioMsg ? '' : message,
+      audioUrl: audioUrl || (message?.startsWith('data:audio') ? message : null),
+      audioDuration: audioDuration || 0,
       createdAt: new Date().toISOString()
     };
 
+    // 🟢 3. SALAS DE TRANSMISSÃO SOCKET
     const targetRooms = [
       rideId,
+      `ride_${rideId}`,
       targetUserId,
       `passenger_${ride.passengerId}`,
       `passenger:${ride.passengerId}`,
@@ -1236,12 +1251,18 @@ export async function notifyNewChatMessage(data: {
       safeSocketEmit(room, 'chat:new_message', chatPayload);
     });
 
+    // 🟢 4. ENVIO SEGURO DA NOTIFICAÇÃO PUSH
     if (targetToken) {
       sendPushNotification(
         targetToken,
         `💬 ${senderName}`,
-        message,
-        { type: 'CHAT_MESSAGE', rideId, sender: isPassenger ? 'passenger' : 'driver' },
+        pushBodyText,
+        { 
+          type: 'CHAT_MESSAGE', 
+          rideId, 
+          sender: isPassenger ? 'passenger' : 'driver',
+          channelId: PUSH_CHANNELS.CHAT
+        },
         PUSH_CHANNELS.CHAT
       ).catch(err => console.warn('⚠️ [PUSH CHAT ERR]:', err?.message));
     }
@@ -1249,7 +1270,6 @@ export async function notifyNewChatMessage(data: {
     console.error('💥 [CHAT_NOTIFY_ERROR]:', err);
   }
 }
-
 export async function submitRatingLogic(data: {
   rideId: string;
   reviewerId: string;
