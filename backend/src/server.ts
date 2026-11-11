@@ -1124,14 +1124,14 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
         return;
       }
 
-      // Filtra apenas motoristas aprovados, online e com saldo positivo
+      // 🟢 MODIFICADO PARA TESTES: Filtra motoristas aprovados, online e com saldo >= 0 XOF
       const candidateDrivers = await prisma.driver.findMany({
         where: { 
           id: { in: nearbyDriverIds }, 
           vehicleType: normalizedVehicleType as any,
           isOnline: true, 
           status: 'APPROVED',
-          walletBalance: { gt: 0 }
+          walletBalance: { gte: 0 } // 👈 Alterado de { gt: 0 } para { gte: 0 } (permite saldo 0)
         },
         select: { 
           id: true, 

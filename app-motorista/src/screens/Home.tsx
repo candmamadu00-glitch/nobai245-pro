@@ -1464,6 +1464,8 @@ export function Home() {
       return Alert.alert('Conta em Análise 📄', 'Aguarde a aprovação dos seus documentos para poder rodar.');
     }
 
+    // 🔴 DESATIVADO PARA TESTES: Trava de saldo na carteira
+    /*
     const walletBalance = Number((driver as any)?.walletBalance || 0);
     if (walletBalance <= 0) {
       console.warn(`🛑 [ONLINE_DEBUG] Tentativa de ficar online com saldo ${walletBalance} XOF recusada.`);
@@ -1479,6 +1481,7 @@ export function Home() {
         ]
       );
     }
+    */
 
     const foreground = await Location.requestForegroundPermissionsAsync();
     if (foreground.status !== 'granted') {

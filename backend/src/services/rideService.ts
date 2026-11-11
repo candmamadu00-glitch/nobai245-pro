@@ -105,7 +105,7 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
         continue;
       }
 
-      if (Number(driver.walletBalance || 0) <= MIN_DRIVER_BALANCE_FOR_CASH) {
+      if (Number(driver.walletBalance || 0) < MIN_DRIVER_BALANCE_FOR_CASH) {
         console.log(`⚠️ [RIDE_DISPATCH_SKIP] Motorista ${driver.fullName} (${driver.id}) sem saldo suficiente: ${driver.walletBalance} XOF`);
         continue;
       }
@@ -538,10 +538,10 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
 
   // 🟢 VERIFICAÇÃO DE SALDO POSITIVO NA CARTEIRA DIGITAL
   const currentBalance = Number(driver.walletBalance || 0);
-  if (currentBalance <= MIN_DRIVER_BALANCE_FOR_CASH) {
-    console.warn(`⚠️ [ACCEPT_RIDE_WARN] Motorista ${driverId} com saldo insuficiente na carteira: ${currentBalance} XOF`);
-    throw new Error('INSUFFICIENT_DRIVER_BALANCE: Seu saldo na carteira digital está zerado ou negativo. Recarregue para aceitar corridas em dinheiro.');
-  }
+if (currentBalance < MIN_DRIVER_BALANCE_FOR_CASH) {
+  console.warn(`⚠️ [ACCEPT_RIDE_WARN] Motorista ${driverId} com saldo insuficiente na carteira: ${currentBalance} XOF`);
+  throw new Error('INSUFFICIENT_DRIVER_BALANCE: Seu saldo na carteira digital está negativo. Recarregue para aceitar corridas em dinheiro.');
+}
 
   const targetStatus: RideStatus = RideStatus.ACCEPTED;
 
@@ -949,12 +949,11 @@ export async function finalizeRideAndCharge(
 
     // 3. Processamento do Pagamento em Dinheiro (CASH) - Desconto da comissão na carteira
     const currentDriverBalance = Number(ride.driver?.walletBalance || 0);
-    finalDriverBalance = currentDriverBalance - platformFee;
+finalDriverBalance = currentDriverBalance - platformFee;
 
-    const shouldStayOnline = finalDriverBalance > 0;
-    if (!shouldStayOnline) {
-      wasForcedOfflineDueToBalance = true;
-    }
+// 🟢 MODIFICADO PARA TESTES: Não força o motorista a ficar offline após a corrida
+const shouldStayOnline = true; 
+wasForcedOfflineDueToBalance = false;
 
     await tx.driver.update({ 
       where: { id: ride.driverId! }, 
