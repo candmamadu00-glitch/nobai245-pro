@@ -9,7 +9,6 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { createClient } from 'redis';
 import { prisma } from './config/prisma';
-import { getRouteDistanceAndDuration, isWithinGuineaBissau } from './services/rideService';
 import { passengerRoutes } from './routes/passengerRoutes'; 
 import { driverRoutes } from './routes/driverRoutes'; 
 import { adminRoutes } from './routes/adminRoutes';
@@ -18,16 +17,19 @@ import rideRoutes from './routes/rideRoutes';
 import { createAdapter } from '@socket.io/redis-adapter';
 import { setupTicketSocketHandlers } from './sockets/ticketSocket';
 import { sendPushNotification, PUSH_CHANNELS } from './services/pushNotifications';
-import { 
-  calculateDistance, 
-  calculateRidePrice, 
-  acceptRideLogic, 
-  driverArrivedLogic, 
-  startRideLogic, 
-  finalizeRideAndCharge, 
-  cancelRideLogic, 
-} from './services/rideRulesService';
-import { createRideAndInitiateEscrow, submitRatingLogic } from './services/rideService';
+import {
+  getRouteDistanceAndDuration,
+  isWithinGuineaBissau,
+  calculateDistance,
+  calculateRidePrice,
+  acceptRideLogic,
+  driverArrivedLogic,
+  startRideLogic,
+  finalizeRideAndCharge,
+  cancelRideLogic,
+  createRideAndInitiateEscrow,
+  submitRatingLogic,
+} from './services/rideService';
 import { startCronJobs } from './jobs/reconciliationJob';
 import locationRoutes from './routes/location.routes';
 
@@ -1026,11 +1028,19 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
         passengerRating: Number(pendingRide.passenger?.ratingAverage || 5.0),
         pickupLat: Number(pendingRide.originLat),
         pickupLng: Number(pendingRide.originLng),
+        originLat: Number(pendingRide.originLat),
+        originLng: Number(pendingRide.originLng),
         originAddress: pendingRide.originAddress,
         destinationLat: Number(pendingRide.destinationLat),
         destinationLng: Number(pendingRide.destinationLng),
         destinationAddress: pendingRide.destinationAddress,
-        fareXOF: Number(pendingRide.priceXof),
+        referencePoint: pendingRide.referencePoint || '',
+        pickupReferencePoint: pendingRide.referencePoint || '',
+        fareXOF: Math.round(Number(pendingRide.priceXof || 0)),
+        priceXof: Math.round(Number(pendingRide.priceXof || 0)),
+        estimatedPrice: Math.round(Number(pendingRide.priceXof || 0)),
+        distanceKm: Number(Number(pendingRide.distanceKm || 0).toFixed(2)),
+        durationMin: Number(pendingRide.durationMin || 0),
         vehicleType: pendingRide.requestedVehicleType,
         serviceType: pendingRide.serviceType,
         paymentMethod: 'CASH'
@@ -1069,7 +1079,8 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
     }
 
     const estimatedPrice = rideData?.estimatedPrice ?? rideData?.priceXof;
-
+    const incomingDistanceKm = rideData?.distanceKm ?? rideData?.estimatedDistanceKm;
+    const incomingDurationMin = rideData?.durationMin ?? rideData?.estimatedDurationMin;
     let rawStops = Array.isArray(rideData?.stops) ? rideData.stops : [];
     if (rawStops.length === 0 && rideData?.extraStopLat && rideData?.extraStopLng) {
       rawStops = [{
@@ -1091,10 +1102,15 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
         destinationLng: dLng,
         originAddress: rideData.originAddress,
         destinationAddress: rideData.destinationAddress,
+        referencePoint: rideData.referencePoint || rideData.pickupReferencePoint || undefined,
+        pickupReferencePoint: rideData.pickupReferencePoint || undefined,
+        dropoffReferencePoint: rideData.dropoffReferencePoint || undefined,
         requestedVehicleType: normalizedVehicleType,
         serviceType: rideData.serviceType || 'RIDE',
         paymentMethod: 'CASH',
         estimatedPrice: estimatedPrice ? Number(estimatedPrice) : undefined,
+        distanceKm: incomingDistanceKm ? Number(incomingDistanceKm) : undefined,
+        durationMin: incomingDurationMin ? Number(incomingDurationMin) : undefined,
         stops: rawStops
       });
 
@@ -1167,27 +1183,36 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
 
       console.log(`📸 [FOTO_DEBUG] Foto do Passageiro montada para despacho da oferta: "${passengerInfo?.profilePicture || 'SEM_FOTO'}"`);
 
+      const syncedPrice = Math.round(Number(ride.priceXof || 0));
+      const syncedDistance = Number(Number(ride.distanceKm || 0).toFixed(2));
+      const syncedDuration = Number(ride.durationMin || 0);
+
       const requestPayload = {
-        rideId, 
+        rideId,
         passengerId: ride.passengerId,
         passengerName: passengerInfo?.fullName || 'Passageiro',
         passengerPhone: passengerInfo?.phone || null,
         passengerPhoto: passengerInfo?.profilePicture || null,
         passengerRating: Number(passengerInfo?.ratingAverage || 5.0),
-        pickupLat: pLat, 
-        pickupLng: pLng, 
+        pickupLat: pLat,
+        pickupLng: pLng,
         originLat: pLat,
         originLng: pLng,
-        originAddress: rideData.originAddress, 
+        originAddress: rideData.originAddress,
         destinationLat: dLat,
-        destinationLng: dLng, 
+        destinationLng: dLng,
         destinationAddress: rideData.destinationAddress,
         stops: ride.stops || rawStops,
-        referencePoint: rideData.referencePoint || null,
-        fareXOF: Number(ride.priceXof), 
-        priceXof: Number(ride.priceXof),
+        referencePoint: ride.referencePoint || null,
+        pickupReferencePoint: rideData?.pickupReferencePoint || ride.referencePoint || '',
+        dropoffReferencePoint: rideData?.dropoffReferencePoint || '',
+        fareXOF: syncedPrice,
+        priceXof: syncedPrice,
+        estimatedPrice: syncedPrice,
+        distanceKm: syncedDistance,
+        durationMin: syncedDuration,
         vehicleType: normalizedVehicleType,
-        serviceType: ride.serviceType, 
+        serviceType: ride.serviceType,
         paymentMethod: 'CASH'
       };
 
@@ -1312,7 +1337,9 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
       const driverUser = updatedRide.driver || await prisma.driver.findUnique({ where: { id: driverId } });
 
       console.log(`📸 [FOTO_DEBUG] AcceptRide - Foto do Motorista: "${driverUser?.profilePicture || 'SEM_FOTO'}" | Passageiro: "${passengerUser?.profilePicture || 'SEM_FOTO'}"`);
-
+       const syncedPrice = Math.round(Number(updatedRide.priceXof || ride.priceXof || 0));
+      const syncedDistance = Number(Number(updatedRide.distanceKm || ride.distanceKm || 0).toFixed(2));
+      const syncedDuration = Number(updatedRide.durationMin || ride.durationMin || 0);
       const acceptPayload = {
         rideId: ride.id,
         driverId: driverId,
@@ -1336,7 +1363,10 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
         pickupLng: Number(updatedRide.originLng || ride.originLng),
         destinationLat: Number(updatedRide.destinationLat || ride.destinationLat),
         destinationLng: Number(updatedRide.destinationLng || ride.destinationLng),
-        priceXof: Number(updatedRide.priceXof || ride.priceXof),
+        priceXof: syncedPrice,
+        fareXOF: syncedPrice,
+        distanceKm: syncedDistance,
+        durationMin: syncedDuration,
         paymentMethod: 'CASH',
         isQueuedRide
       };
@@ -1625,7 +1655,16 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
       socket.join(`driver_${driverId}`);
       socket.leave(rideId);
 
-      const finishedPayload = { rideId, status: 'FINISHED', fareXOF: result?.fareXOF, priceXof: result?.fareXOF, distanceKm: result?.distanceKm };
+      const finishedPayload = {
+        rideId,
+        status: 'FINISHED',
+        fareXOF: result?.fareXOF,
+        priceXof: result?.fareXOF,
+        totalAmount: result?.fareXOF,
+        distanceKm: result?.distanceKm,
+        driverEarnings: result?.driverEarnings,
+        platformFee: result?.platformFee,
+      };
 
       const rideInfo = await prisma.ride.findUnique({
         where: { id: rideId },

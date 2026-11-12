@@ -167,6 +167,8 @@ export interface IncomingRideData {
   extraStopLng?: number;
   extraStopAddress?: string;
   estimatedPrice?: number;
+  distanceKm?: number;
+  durationMin?: number;
   transactionId?: string;
   stops?: any[]; 
 }
@@ -481,10 +483,17 @@ export function Home() {
     try {
       if (!api || typeof api.get !== 'function') return;
       const response = await api.get('/drivers/active-ride').catch(() => null);
-      
-      if (isMountedRef.current) {
-        const activeRide = response?.data?.ride;
 
+      // 🛡️ PROTEÇÃO CRÍTICA: Se a rede falhou ou o token ainda não carregou (response === null),
+      // NÃO apague o estado local que foi restaurado do AsyncStorage!
+      if (!response || !response.data) {
+        return;
+      }
+
+      if (isMountedRef.current) {
+        const activeRide = response.data.ride;
+
+        // Só reseta se o servidor respondeu HTTP 200 confirmando que NÃO há corrida ativa
         if (!activeRide || activeRide.status === 'CANCELLED' || activeRide.status === 'COMPLETED') {
           if (rideStateRef.current !== 'idle' || activeRideIdRef.current !== null) {
             await resetDriverState();
@@ -492,7 +501,7 @@ export function Home() {
           return;
         }
 
-        const mappedState: RideState = 
+        const mappedState: RideState =
           activeRide.status === 'ACCEPTED' ? 'accepted' :
           activeRide.status === 'ARRIVED' ? 'arrived' :
           activeRide.status === 'IN_PROGRESS' ? 'in_progress' : 'idle';
@@ -515,35 +524,48 @@ export function Home() {
             }));
           }
 
+          const cached = incomingRideRef.current;
           const formattedActiveData: IncomingRideData = {
+            ...cached,
             rideId: activeRide.id,
-            pickupReferencePoint: (activeRide as any)?.pickupReferencePoint || (activeRide as any)?.referencePoint || '',
-            extraStopReferencePoint: (activeRide as any)?.extraStopReferencePoint || '',
-            dropoffReferencePoint: (activeRide as any)?.dropoffReferencePoint || '',
-            referencePoint: (activeRide as any)?.referencePoint || '',
-            passengerId: activeRide.passengerId,
-            passengerName: activeRide.passenger?.fullName || 'Passageiro',
-            passengerPhone: activeRide.passenger?.phone,
-            passengerPhoto: activeRide.passenger?.profilePicture,
-            passengerRating: activeRide.passenger?.ratingAverage || 5.0,
-            pickupLat: Number(activeRide.originLat),
-            pickupLng: Number(activeRide.originLng),
-            originAddress: activeRide.originAddress,
-            destinationLat: Number(activeRide.destinationLat),
-            destinationLng: Number(activeRide.destinationLng),
-            destinationAddress: activeRide.destinationAddress,
-            priceXof: Number(activeRide.priceXof),
-            paymentMethod: activeRide.paymentMethod,
-            stops: stopsArray,
+            pickupReferencePoint: activeRide.pickupReferencePoint || activeRide.referencePoint || cached?.pickupReferencePoint || '',
+            extraStopReferencePoint: activeRide.extraStopReferencePoint || cached?.extraStopReferencePoint || '',
+            dropoffReferencePoint: activeRide.dropoffReferencePoint || cached?.dropoffReferencePoint || '',
+            referencePoint: activeRide.referencePoint || cached?.referencePoint || '',
+            passengerId: activeRide.passengerId || cached?.passengerId || '',
+            passengerName: activeRide.passenger?.fullName || activeRide.passengerName || cached?.passengerName || 'Passageiro',
+            passengerPhone: activeRide.passenger?.phone || activeRide.passengerPhone || cached?.passengerPhone,
+            passengerPhoto: activeRide.passenger?.profilePicture || activeRide.passengerPhoto || cached?.passengerPhoto,
+            passengerRating: Number(activeRide.passenger?.ratingAverage || activeRide.passengerRating || cached?.passengerRating || 5.0),
+            pickupLat: Number(activeRide.originLat ?? activeRide.pickupLat ?? cached?.pickupLat ?? 0),
+            pickupLng: Number(activeRide.originLng ?? activeRide.pickupLng ?? cached?.pickupLng ?? 0),
+            originAddress: activeRide.originAddress || cached?.originAddress,
+            destinationLat: Number(activeRide.destinationLat ?? cached?.destinationLat ?? 0),
+            destinationLng: Number(activeRide.destinationLng ?? cached?.destinationLng ?? 0),
+            destinationAddress: activeRide.destinationAddress || cached?.destinationAddress,
+            priceXof: Number(activeRide.priceXof ?? activeRide.fareXOF ?? cached?.priceXof ?? 0),
+            distanceKm: Number(activeRide.distanceKm ?? cached?.distanceKm ?? 0),
+            durationMin: Number(activeRide.durationMin ?? cached?.durationMin ?? 0),
+            paymentMethod: activeRide.paymentMethod || cached?.paymentMethod || 'CASH',
+            serviceType: activeRide.serviceType || cached?.serviceType || 'RIDE',
+            vehicleType: activeRide.vehicleType || cached?.vehicleType,
+            startOtp: activeRide.startOtp || activeRide.otpPin || cached?.startOtp,
+            guestName: activeRide.guestName || cached?.guestName,
+            guestPhone: activeRide.guestPhone || cached?.guestPhone,
+            deliveryNotes: activeRide.deliveryNotes || cached?.deliveryNotes,
+            recipientName: activeRide.recipientName || cached?.recipientName,
+            stops: stopsArray.length > 0 ? stopsArray : (cached?.stops || []),
           };
 
           activeRideIdRef.current = activeRide.id;
           rideStateRef.current = mappedState;
           incomingRideRef.current = formattedActiveData;
+          isOnlineRef.current = true;
 
           setActiveRideId(activeRide.id);
           setRideState(mappedState);
           setIncomingRide(formattedActiveData);
+          setIsOnline(true);
 
           await persistActiveRideState(formattedActiveData, mappedState, activeRide.id);
 
@@ -565,23 +587,36 @@ export function Home() {
 
         if (storedRideId && storedRideData && storedRideState && isMountedRef.current) {
           const parsedData = JSON.parse(storedRideData);
-          
+          const restoredState = storedRideState as RideState;
+
           activeRideIdRef.current = storedRideId;
-          rideStateRef.current = storedRideState as RideState;
+          rideStateRef.current = restoredState;
           incomingRideRef.current = parsedData;
 
           setActiveRideId(storedRideId);
           setIncomingRide(parsedData);
-          setRideState(storedRideState as RideState);
+          setRideState(restoredState);
+
+          if (['accepted', 'arrived', 'in_progress'].includes(restoredState)) {
+            isOnlineRef.current = true;
+            setIsOnline(true);
+            await connectDriverSocket();
+          }
         }
       } catch (err) {}
-      
+
       await syncActiveRideWithServer();
     }
 
     restoreLocalState();
   }, [syncActiveRideWithServer]);
 
+  // 🛡️ PERSISTÊNCIA AUTOMÁTICA INDEPENDENTE DO GPS
+  useEffect(() => {
+    if (['accepted', 'arrived', 'in_progress'].includes(rideState) && activeRideId && incomingRide) {
+      persistActiveRideState(incomingRide, rideState, activeRideId);
+    }
+  }, [rideState, activeRideId, incomingRide]);
   const handleRideCancelled = useCallback(async (data: { cancelledBy?: string; rideId?: string; reason?: string }) => {
     if (!isMountedRef.current) return;
     setIsLoading(false);
@@ -718,24 +753,33 @@ export function Home() {
   }, [rideState, incomingRide?.originAddress, incomingRide?.destinationAddress, isVoiceAssistEnabled]);
 
   useEffect(() => {
-    async function setupBissauOfflineMap() {
-      try {
-        const packs = await Mapbox.offlineManager.getPacks();
-        const exists = packs.some(p => p.name === 'bissau_city_map');
-        if (!exists) {
-          await Mapbox.offlineManager.createPack({
+  async function setupBissauOfflineMap() {
+    try {
+      const packs = await Mapbox.offlineManager.getPacks();
+      const exists = packs.some(p => p.name === 'bissau_city_map');
+      if (!exists) {
+        await Mapbox.offlineManager.createPack(
+          {
             name: 'bissau_city_map',
             styleURL: 'mapbox://styles/mapbox/streets-v12',
             minZoom: 11,
             maxZoom: 16,
             bounds: [[-15.65, 11.80], [-15.50, 11.92]],
-          });
-        }
-      } catch (error) {}
-    }
-    setupBissauOfflineMap();
-  }, []);
-
+          },
+          (pack, status) => {
+            if (status?.state === 'complete') {
+              console.log('✅ [OFFLINE_MAP] Mapa de Bissau salvo offline.');
+            }
+          },
+          (pack, error) => {
+            console.warn('⚠️ [OFFLINE_MAP] Erro ao baixar mapa offline:', error);
+          }
+        );
+      }
+    } catch (error) {}
+  }
+  setupBissauOfflineMap();
+}, []);
   useEffect(() => {
     if (!socket) return;
 
@@ -882,7 +926,8 @@ export function Home() {
         setFinishedRideSummary((prev: any) => ({
           rideId: data.rideId || prev?.rideId,
           passengerName: prev?.passengerName || 'Passageiro',
-          totalAmount: Number(data.priceXof || data.totalAmount || data.amount || prev?.totalAmount || 0),
+          totalAmount: Number(data.fareXOF ?? data.priceXof ?? data.totalAmount ?? data.amount ?? prev?.totalAmount ?? 0),
+          distanceKm: Number(data.distanceKm ?? prev?.distanceKm ?? 0),
           paymentMethod: data.paymentMethod || prev?.paymentMethod || 'CASH',
           transactionId: data.transactionId || data.paymentId || prev?.transactionId || `TRX-${Date.now().toString().slice(-6)}`,
         }));
@@ -1040,7 +1085,9 @@ export function Home() {
 
     if (serviceFiltersRef.current && serviceFiltersRef.current[normalizedService] === false) return;
 
-    const rawPrice = (data as any).fareXOF ?? data.priceXof ?? 0;
+    const rawPrice = (data as any).fareXOF ?? data.priceXof ?? data.estimatedPrice ?? 0;
+    const rawDistance = Number((data as any).distanceKm ?? (data as any).distance ?? 0);
+    const rawDuration = Number((data as any).durationMin ?? 0);
     let rawStops = data.stops;
     if (typeof rawStops === 'string') {
       try { rawStops = JSON.parse(rawStops); } catch { rawStops = []; }
@@ -1069,6 +1116,8 @@ export function Home() {
       serviceType: normalizedService,
       paymentMethod: data.paymentMethod || 'CASH',
       priceXof: typeof rawPrice === 'string' ? parseFloat(rawPrice) : Number(rawPrice),
+      distanceKm: rawDistance > 0 ? rawDistance : undefined,
+      durationMin: rawDuration > 0 ? rawDuration : undefined,
       pickupLat: Number(data.pickupLat ?? (data as any).originLat),
       pickupLng: Number(data.pickupLng ?? (data as any).originLng),
       destinationLat: Number(data.destinationLat),
@@ -1110,7 +1159,9 @@ export function Home() {
             pickupLng: Number(data.pickupLng || prev?.pickupLng || 0),
             destinationLat: Number(data.destinationLat || prev?.destinationLat || 0),
             destinationLng: Number(data.destinationLng || prev?.destinationLng || 0),
-            priceXof: Number(data.priceXof || prev?.priceXof || 0),
+            priceXof: Number(data.priceXof ?? data.fareXOF ?? data.estimatedPrice ?? prev?.priceXof ?? 0),
+            distanceKm: Number(data.distanceKm ?? data.distance ?? prev?.distanceKm ?? 0),
+            durationMin: Number(data.durationMin ?? prev?.durationMin ?? 0),
           };
           persistActiveRideState(updated as any, 'accepted', data.rideId);
           return updated as any;
@@ -1138,9 +1189,20 @@ export function Home() {
   const handleRideFinished = async (data: any) => {
     if (!isMountedRef.current) return;
     setIsLoading(false);
-    setCompletedInfo({ fareXOF: data.fareXOF, distanceKm: data.distanceKm, transactionId: data.transactionId });
 
-    if (data.hasQueuedRide && data.nextRideId) {
+    const finalFare = Number(data?.fareXOF ?? data?.priceXof ?? data?.totalAmount ?? incomingRideRef.current?.priceXof ?? 0);
+    const finalDist = Number(data?.distanceKm ?? incomingRideRef.current?.distanceKm ?? 0);
+
+    setCompletedInfo({ fareXOF: finalFare, distanceKm: finalDist, transactionId: data?.transactionId });
+    setFinishedRideSummary((prev: any) => ({
+      ...prev,
+      rideId: data?.rideId || prev?.rideId,
+      totalAmount: finalFare > 0 ? finalFare : (prev?.totalAmount || 0),
+      distanceKm: finalDist > 0 ? finalDist : (prev?.distanceKm || 0),
+      transactionId: data?.transactionId || prev?.transactionId,
+    }));
+
+    if (data?.hasQueuedRide && data?.nextRideId) {
       setActiveRideId(data.nextRideId);
       setRideState('accepted');
       setShowReceiptModal(false);
@@ -1157,7 +1219,6 @@ export function Home() {
       fetchTodayEarnings();
     }
   };
-
   const handleQueuedNowActive = async (data: { rideId: string; status: string }) => {
     if (!isMountedRef.current) return;
     setActiveRideId(data.rideId);
@@ -1171,20 +1232,31 @@ export function Home() {
       if (driver?.id) {
         await processOfflineQueue(socket);
         socket.emit('driver:request_state');
-        
+
+        if (activeRideIdRef.current) {
+          socket.emit('ride:join', { rideId: activeRideIdRef.current });
+        }
+
         if (isOnlineRef.current && location?.coords) {
-          socket.emit('driver:online', { 
-            driverId: driver.id, 
-            lat: location.coords.latitude, 
-            lng: location.coords.longitude 
+          socket.emit('driver:online', {
+            driverId: driver.id,
+            lat: location.coords.latitude,
+            lng: location.coords.longitude
           });
         }
+      }
+    };
+
+    const handleStateRecovered = (data: any) => {
+      if (data?.hasActiveRide && data?.ride) {
+        syncActiveRideWithServer();
       }
     };
 
     if (socket && !socket.connected) socket.connect();
 
     socket.on('connect', handleConnect);
+    socket.on('driver:state_recovered', handleStateRecovered);
     socket.on('ride:new_request', handleNewRideRequest);
     socket.on('ride:accepted', handleRideAccepted);
     socket.on('driver:accept_ride_success', handleRideAccepted);
@@ -1196,6 +1268,7 @@ export function Home() {
     return () => {
       Vibration.cancel();
       socket.off('connect', handleConnect);
+      socket.off('driver:state_recovered', handleStateRecovered);
       socket.off('ride:new_request', handleNewRideRequest);
       socket.off('ride:accepted', handleRideAccepted);
       socket.off('driver:accept_ride_success', handleRideAccepted);
@@ -1579,6 +1652,7 @@ export function Home() {
       rideId: activeRideId,
       passengerName: displayPassengerName,
       totalAmount: finalPrice,
+      distanceKm: Number(incomingRide?.distanceKm ?? 0),
       paymentMethod: paymentMethod,
       transactionId: transactionId,
     });
@@ -1983,13 +2057,14 @@ export function Home() {
                     <View style={styles.distanceBadge}>
                       <Text style={styles.distanceBadgeText}>
                         📏 Distância: {(
-                          (incomingRide as any)?.distance || 
-                          calculateDirectDistance(
-                            incomingRide.pickupLat, 
-                            incomingRide.pickupLng, 
-                            incomingRide.destinationLat, 
-                            incomingRide.destinationLng ?? 0
-                          )
+                          Number(incomingRide.distanceKm) > 0
+                            ? Number(incomingRide.distanceKm)
+                            : calculateDirectDistance(
+                                incomingRide.pickupLat, 
+                                incomingRide.pickupLng, 
+                                incomingRide.destinationLat, 
+                                incomingRide.destinationLng ?? 0
+                              )
                         ).toFixed(1)} km
                       </Text>
                     </View>
@@ -2246,6 +2321,11 @@ export function Home() {
                   ? `${Number(finishedRideSummary.totalAmount).toLocaleString('pt-GW')} XOF` 
                   : '0 XOF'}
               </Text>
+              {Number(finishedRideSummary?.distanceKm) > 0 && (
+                <Text style={{ color: '#94A3B8', fontSize: 13, fontWeight: '600', marginTop: 4 }}>
+                  📍 Distância percorrida: {Number(finishedRideSummary.distanceKm).toFixed(1)} km
+                </Text>
+              )}
               <Text style={styles.receiptTrxId}>ID da Transação: {finishedRideSummary?.transactionId || 'N/A'}</Text>
             </View>
 
@@ -2385,6 +2465,14 @@ export function Home() {
                   <Text style={styles.modalPassengerRating}>{activeOffer?.passengerRating?.toFixed(1) || '5.0'}</Text>
                 </View>
               </View>
+              {Number(activeOffer?.distanceKm) > 0 && (
+                <View style={styles.distanceBadge}>
+                  <Text style={styles.distanceBadgeText}>
+                    📏 {Number(activeOffer?.distanceKm).toFixed(1)} km
+                    {Number(activeOffer?.durationMin) > 0 ? ` • ~${activeOffer?.durationMin} min` : ''}
+                  </Text>
+                </View>
+              )}
             </View>
 
             <View style={styles.routeTimelineContainer}>

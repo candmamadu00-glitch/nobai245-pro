@@ -416,7 +416,8 @@ export function Home() {
   const route = useRoute<any>();
   const radarAnim = useRef(new Animated.Value(0)).current;
   const appStateRef = useRef(AppState.currentState);
-
+  const roadDistanceRef = useRef<number | null>(null);
+  const roadDurationRef = useRef<number | null>(null);
   const [bookingStep, setBookingStep] = useState<BookingStep>('ADDRESS');
   const [rideStatus, setRideStatus] = useState<RideStatus>('idle');
   const [activeRideId, setActiveRideId] = useState<string | null>(null);
@@ -510,7 +511,10 @@ export function Home() {
       if (val !== null) setIsBorderGlowEnabled(val === 'true');
     }).catch(() => {});
   }, []);
-
+useEffect(() => {
+    roadDistanceRef.current = null;
+    roadDurationRef.current = null;
+  }, [pickupCoords, dropoffCoords, extraStopCoords]);
   const toggleBorderGlow = async () => {
     const next = !isBorderGlowEnabled;
     setIsBorderGlowEnabled(next);
@@ -630,6 +634,7 @@ const handleFullCancelAndReset = useCallback(() => {
       dropoffReferencePoint?: string;
       startOtp?: string;
       estimatedPrice?: number | null;
+      estimatedDistance?: number | null;
     }
   ) => {
     try {
@@ -649,6 +654,8 @@ const handleFullCancelAndReset = useCallback(() => {
           dropoffReferencePoint: extraData?.dropoffReferencePoint ?? dropoffReferencePoint,
           startOtp: extraData?.startOtp ?? startOtp,
           estimatedPrice: extraData?.estimatedPrice ?? estimatedPrice,
+          estimatedDistance: extraData?.estimatedDistance ?? estimatedDistance,
+          
         };
         await AsyncStorage.setItem(STORAGE_RIDE_KEY, JSON.stringify(payload));
       } else {
@@ -672,9 +679,14 @@ const handleFullCancelAndReset = useCallback(() => {
         setIsCalculatingPrice(false);
         return;
       }
-      const distanceKm = getHaversineDistance(origin, destination) + (extra ? getHaversineDistance(origin, extra) : 0);
+
+      const fallbackHaversine = extra
+        ? getHaversineDistance(origin, extra) + getHaversineDistance(extra, destination)
+        : getHaversineDistance(origin, destination);
+
+      const distanceKm = roadDistanceRef.current !== null ? roadDistanceRef.current : fallbackHaversine;
       const price = calculateVehiclePrice(vehicleType, distanceKm);
-      setEstimatedDistance(distanceKm);
+      setEstimatedDistance(Number(distanceKm.toFixed(2)));
       setEstimatedPrice(price);
       setIsCalculatingPrice(false);
     },
@@ -946,11 +958,13 @@ const handleOpenChat = () => {
           geometry: routeObj.geometry,
         });
 
-        const distanceKm = routeObj.distance / 1000;
+        const distanceKm = Number((routeObj.distance / 1000).toFixed(2));
         const durationMin = Math.ceil(routeObj.duration / 60);
 
         setDriverEta(durationMin);
-        if (rideStatus === 'idle' || rideStatus === 'searching') {
+        if (rideStatus === 'idle') {
+          roadDistanceRef.current = distanceKm;
+          roadDurationRef.current = durationMin;
           setEstimatedDistance(distanceKm);
           setEstimatedPrice(calculateVehiclePrice(vehicleType, distanceKm));
         }
@@ -1053,7 +1067,7 @@ const handleOpenChat = () => {
           }
 
           if (ride.priceXof) setEstimatedPrice(Number(ride.priceXof));
-
+          if (ride.distanceKm) setEstimatedDistance(Number(ride.distanceKm));
           if (pCoords && dCoords) {
             fetchMapboxRoute(pCoords, dCoords, extraStopCoords);
             fitMapBounds([pCoords, dCoords]);
@@ -1068,7 +1082,8 @@ const handleOpenChat = () => {
             dropoffCoords: dCoords,
             dropoffAddress: ride.destinationAddress,
             startOtp: otpCode,
-            estimatedPrice: ride.priceXof ? Number(ride.priceXof) : null
+            estimatedPrice: ride.priceXof ? Number(ride.priceXof) : null,
+            estimatedDistance: ride.distanceKm ? Number(ride.distanceKm) : null,
           });
 
           if (socket && socket.connected) {
@@ -1444,6 +1459,7 @@ const handleOpenChat = () => {
             }
             if (parsed.startOtp) setStartOtp(parsed.startOtp);
             if (parsed.estimatedPrice) setEstimatedPrice(parsed.estimatedPrice);
+            if (parsed.estimatedDistance) setEstimatedDistance(parsed.estimatedDistance);
 
             if (parsed.pickupCoords && parsed.dropoffCoords) {
               fitMapBounds([parsed.pickupCoords, parsed.dropoffCoords]);
@@ -1548,12 +1564,19 @@ const handleOpenChat = () => {
       if (parsedDriver) {
         setDriverInfo(parsedDriver);
       }
-
+  const serverPrice = Number(data.priceXof ?? data.fareXOF ?? 0);
+      if (serverPrice > 0) setEstimatedPrice(Math.round(serverPrice));
+      const serverDist = Number(data.distanceKm ?? 0);
+      if (serverDist > 0) setEstimatedDistance(serverDist);
+      const serverDur = Number(data.durationMin ?? 0);
+      if (serverDur > 0) setDriverEta(serverDur);
       setAcceptedAt(new Date());
       setRideStatus(data.isQueuedRide ? 'queued' : 'accepted');
       persistRideState(data.rideId || data.id, data.isQueuedRide ? 'queued' : 'accepted', {
         driverInfo: parsedDriver,
         startOtp: otpCode,
+        estimatedPrice: serverPrice > 0 ? Math.round(serverPrice) : estimatedPrice,
+        estimatedDistance: serverDist > 0 ? serverDist : estimatedDistance,
       });
 
       speakRideStatusUpdate(data.isQueuedRide ? 'queued' : 'accepted', { driverName: parsedDriver?.name });
@@ -1596,8 +1619,13 @@ const handleOpenChat = () => {
       if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'in_progress');
     };
 
-    const handleRideFinished = () => { 
+    const handleRideFinished = (data: any) => { 
       if (!isMountedRef.current) return;
+      const finalPrice = Number(data?.fareXOF ?? data?.priceXof ?? data?.totalAmount ?? 0);
+      if (finalPrice > 0) setEstimatedPrice(Math.round(finalPrice));
+      const finalDist = Number(data?.distanceKm ?? 0);
+      if (finalDist > 0) setEstimatedDistance(finalDist);
+
       setRideStatus('completed');
       setShowRatingModal(true); 
       speakRideStatusUpdate('completed');
@@ -1823,7 +1851,9 @@ const handleOpenChat = () => {
         vehicleType.toUpperCase();
         
       const regionLabel = RENTAL_PRICES[selectedRegion]?.label || selectedRegion;
-
+      const finalPriceXof = estimatedPrice != null ? Math.round(Number(estimatedPrice)) : undefined;
+      const finalDistanceKm = estimatedDistance != null ? Number(estimatedDistance.toFixed(2)) : undefined;
+      const finalDurationMin = (roadDurationRef.current ?? driverEta) != null ? Number(roadDurationRef.current ?? driverEta) : undefined;
       const payload = {
         passengerId: user.id,
         passengerName: (user as any)?.name || user.fullName,
@@ -1841,10 +1871,12 @@ const handleOpenChat = () => {
         serviceType: mappedServiceType,
         vehicleType: mappedVehicleType,
         paymentMethod: 'CASH', // 🟢 SEMPRE DINHEIRO FÍSICO
-        estimatedPrice: estimatedPrice,
-        priceXof: estimatedPrice,
         guestName: isForAnotherPerson ? guestName : undefined,
         guestPhone: isForAnotherPerson ? guestPhone : undefined,
+        estimatedPrice: finalPriceXof,
+        priceXof: finalPriceXof,
+        distanceKm: finalDistanceKm,
+        durationMin: finalDurationMin,
         stops: (extraStopCoords?.latitude && extraStopCoords?.longitude) ? [
           {
             address: extraStopAddress || 'Parada Intermediária',
@@ -2745,6 +2777,56 @@ const handleOpenChat = () => {
                   />
                 </View>
 
+                {/* BOTÕES DE AÇÃO RÁPIDA */}
+                <View style={styles.actionRowGrid}>
+                  <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleSosPress} activeOpacity={0.8}>
+                    <Ionicons name="shield-checkmark" size={18} color="#EF4444" />
+                    <Text style={[styles.actionBtnText, { color: '#EF4444' }]}>SOS</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleCallDriver} activeOpacity={0.8}>
+                    <Ionicons name="call" size={18} color="#EAB308" />
+                    <Text style={[styles.actionBtnText, { color: '#EAB308' }]}>Ligar</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleShareTrip} activeOpacity={0.8}>
+                    <Ionicons name="share-social" size={18} color="#3B82F6" />
+                    <Text style={[styles.actionBtnText, { color: '#3B82F6' }]}>Partilhar</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity 
+                    style={styles.actionBtnPrimary} 
+                    onPress={() => {
+                      setUnreadCount(0);
+                      setIsChatVisible(true);
+                    }} 
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="chatbubble-ellipses" size={18} color="#0F172A" />
+                    <Text style={styles.actionBtnPrimaryText}>Chat</Text>
+
+                    {unreadCount > 0 && (
+                      <View style={styles.chatBadgeContainer}>
+                        <Text style={styles.chatBadgeText}>
+                          {unreadCount > 9 ? '9+' : unreadCount}
+                        </Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity 
+                       style={styles.cancelRideLink} 
+                        onPress={() => setShowCancelModal(true)}
+                        >
+                      <Text style={styles.cancelRideLinkText}>Cancelar Viagem</Text>
+                       </TouchableOpacity>
+              </View>
+            )}
+          </ScrollView>
+        </Animated.View>
+      </KeyboardAvoidingView>
+
       {/* 🏎️ CARTÃO DE RESUMO PARA VOZ */}
       {rideStatus !== 'idle' && (
         <View style={styles.driverInfoCard} accessibilityRole="summary">
@@ -2806,7 +2888,11 @@ const handleOpenChat = () => {
               </Text>
             </View>
           </View>
-
+            {estimatedDistance != null && estimatedDistance > 0 && (
+                <Text style={{ color: '#EAB308', fontSize: 11, fontWeight: '700', marginTop: 2 }}>
+                  📍 Distância da rota: {estimatedDistance.toFixed(1)} km {driverEta ? `• ~${driverEta} min` : ''}
+                </Text>
+              )}
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16 }}>
             <Text style={styles.sectionLabel}>{t('service_type', 'Tipo de Serviço')}</Text>
             <View style={styles.serviceTypesContainer}>
@@ -3564,55 +3650,7 @@ const handleOpenChat = () => {
           </TouchableWithoutFeedback>
         </KeyboardAvoidingView>
       </Modal>
-{/* BOTÕES DE AÇÃO RÁPIDA */}
-                <View style={styles.actionRowGrid}>
-                  <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleSosPress} activeOpacity={0.8}>
-                    <Ionicons name="shield-checkmark" size={18} color="#EF4444" />
-                    <Text style={[styles.actionBtnText, { color: '#EF4444' }]}>SOS</Text>
-                  </TouchableOpacity>
 
-                  <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleCallDriver} activeOpacity={0.8}>
-                    <Ionicons name="call" size={18} color="#EAB308" />
-                    <Text style={[styles.actionBtnText, { color: '#EAB308' }]}>Ligar</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity style={styles.actionBtnSecondary} onPress={handleShareTrip} activeOpacity={0.8}>
-                    <Ionicons name="share-social" size={18} color="#3B82F6" />
-                    <Text style={[styles.actionBtnText, { color: '#3B82F6' }]}>Partilhar</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity 
-                    style={styles.actionBtnPrimary} 
-                    onPress={() => {
-                      setUnreadCount(0);
-                      setIsChatVisible(true);
-                    }} 
-                    activeOpacity={0.85}
-                  >
-                    <Ionicons name="chatbubble-ellipses" size={18} color="#0F172A" />
-                    <Text style={styles.actionBtnPrimaryText}>Chat</Text>
-
-                    {unreadCount > 0 && (
-                      <View style={styles.chatBadgeContainer}>
-                        <Text style={styles.chatBadgeText}>
-                          {unreadCount > 9 ? '9+' : unreadCount}
-                        </Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                </View>
-
-                <TouchableOpacity 
-                       style={styles.cancelRideLink} 
-                        onPress={() => setShowCancelModal(true)}
-                        >
-                      <Text style={styles.cancelRideLinkText}>Cancelar Viagem</Text>
-                       </TouchableOpacity>
-              </View>
-            )}
-          </ScrollView>
-        </Animated.View>
-      </KeyboardAvoidingView>
       {/* 💬 CHATMODAL DO PASSAGEIRO */}
 <ChatModal 
   visible={isChatVisible} 
