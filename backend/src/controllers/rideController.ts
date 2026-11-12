@@ -784,4 +784,4 @@ export const rateRide = async (req: Request, res: Response): Promise<void> => {
     console.error('❌ Erro ao enviar avaliação:', error?.message || error);
     res.status(400).json({ success: false, error: error?.message || 'Falha ao registrar avaliação.' });
   }
-};
+}; 

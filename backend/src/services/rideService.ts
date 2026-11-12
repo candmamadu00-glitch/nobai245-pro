@@ -644,7 +644,7 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     dropoffReferencePoint: (result as any).dropoffReferencePoint || '',
     isQueuedRide: false
   };
-
+ 
   const passengerRooms = [
     result.id,
     result.passengerId,
