@@ -131,9 +131,9 @@ export function Wallet() {
   const dynamicTopPadding = Math.max((insets?.top || 0) + 6, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 6 : 14);
   const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 28 : 16);
 
-  // 🟢 NÚMEROS OFICIAIS FIXOS DA PLATAFORMA
-  const adminOrangeNumber = '245955219149';
-  const adminMtnNumber = '245966626730';
+  // 🟢 NÚMEROS OFICIAIS DA EMPRESA (DINÂMICOS DO PAINEL ADMIN)
+  const adminOrangeNumber = financeData?.adminOrangeNumber || '245955219149';
+  const adminMtnNumber = financeData?.adminMtnNumber || '245966626730';
 
   return (
     <View style={styles.container}>
@@ -274,7 +274,7 @@ export function Wallet() {
               <View style={styles.infoBanner}>
                 <Ionicons name="checkmark-done-circle" size={22} color={theme.colors.emeraldGreen} />
                 <Text style={styles.infoBannerText}>
-                  Os seus ganhos são transferidos automaticamente para a sua conta Orange Money / MTN MoMo cadastrada.
+                  Os seus ganhos de corridas digitais entram direto na sua conta Orange Money / Telecel (antigo MTN) ao final de cada viagem, sem precisar pedir saque.
                 </Text>
               </View>
             </>
@@ -336,7 +336,7 @@ export function Wallet() {
               <View style={[styles.numberCard, { borderColor: '#EAB308' }]}>
                 <View style={{ flex: 1 }}>
                   <View style={[styles.providerBadge, { backgroundColor: '#EAB308' }]}>
-                    <Text style={[styles.providerBadgeText, { color: '#0F172A' }]}>MTN MoMo</Text>
+                    <Text style={[styles.providerBadgeText, { color: '#0F172A' }]}>Telecel (MTN)</Text>
                   </View>
                   <Text style={styles.numberText}>{adminMtnNumber}</Text>
                 </View>

@@ -445,7 +445,7 @@ export function Profile() {
                   activeOpacity={0.7}
                 >
                   <Ionicons name="wallet-outline" size={22} color="#94A3B8" style={{ marginBottom: 4 }} />
-                  <Text style={styles.providerSquareText}>MTN MoMo</Text>
+                  <Text style={styles.providerSquareText}>Telecel (MTN)</Text>
                   <View style={styles.badgeBlocked}>
                     <Text style={styles.badgeBlockedText}>Em Breve</Text>
                   </View>

@@ -67,7 +67,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       (response) => {
         try {
           const data = response?.notification?.request?.content?.data;
-          if (data?.rideId) {
+          if (data?.type === 'CHAT_MESSAGE') {
+            navigate('Home');
+          } else if (data?.rideId) {
             navigate('RideDetails', { rideId: data.rideId });
           }
         } catch (err) {

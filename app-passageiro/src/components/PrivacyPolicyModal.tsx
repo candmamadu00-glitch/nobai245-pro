@@ -88,7 +88,7 @@ export function PrivacyPolicyModal({ visible, onClose }: PrivacyPolicyModalProps
           {/* Seção 3 */}
           <Text style={styles.sectionTitle}>{t('privacy_sec3_title', '3. Transações Financeiras e Mobile Money')}</Text>
           <Text style={styles.paragraph}>
-            {t('privacy_sec3_desc', 'Os pagamentos e recargas na carteira digital integrados ao Orange Money e MTN MoMo utilizam protocolos seguros de criptografia. Armazenamos apenas a referência da transação e o número de telefone de cobrança autorizada. O Nobai245 NUNCA solicita ou armazena PINs ou senhas secretas das suas contas bancárias ou carteiras móveis.')}
+            {t('privacy_sec3_desc', 'Os pagamentos e recargas na carteira digital integrados ao Orange Money e Telecel (antigo MTN MoMo) utilizam protocolos seguros de criptografia. Armazenamos apenas a referência da transação e o número de telefone de cobrança autorizada. O Nobai245 NUNCA solicita ou armazena PINs ou senhas secretas das suas contas bancárias ou carteiras móveis.')}
           </Text>
 
           {/* Seção 4 */}

@@ -10,10 +10,10 @@ import {
 } from '@prisma/client';
 import { prisma } from '../config/prisma';
 
-// Configurações de ambiente MTN
+// Configurações de ambiente TELECEL / MTN MoMo
 const MTN_BASE_URL = process.env.MTN_MOMO_BASE_URL || 'https://sandbox.momodeveloper.mtn.com';
-const MTN_SUBSCRIPTION_KEY = process.env.MTN_MOMO_SUBSCRIPTION_KEY || process.env.MTN_SUBSCRIPTION_KEY || '';
-const MTN_TARGET_ENV = process.env.MTN_MOMO_TARGET_ENV || 'sandbox';
+const MTN_SUBSCRIPTION_KEY = process.env.MTN_MOMO_SUBSCRIPTION_KEY || process.env.MTN_MOMO_PRIMARY_KEY || process.env.MTN_SUBSCRIPTION_KEY || '';
+const MTN_TARGET_ENV = process.env.MTN_MOMO_TARGET_ENV || process.env.MTN_MOMO_ENVIRONMENT || 'sandbox';
 
 // Configurações de ambiente ORANGE
 const ORANGE_BASE_URL = process.env.ORANGE_MONEY_API_URL || process.env.ORANGE_BASE_URL || 'https://api.orange.com';
@@ -141,8 +141,12 @@ export async function getMtnToken(type: 'COLLECTION' | 'DISBURSEMENT'): Promise<
 
   tokenPromises[cacheKey] = (async () => {
     try {
-      const apiUser = type === 'COLLECTION' ? process.env.MTN_API_USER : process.env.MTN_DISB_API_USER;
-      const apiKey = type === 'COLLECTION' ? process.env.MTN_API_KEY : process.env.MTN_DISB_API_KEY;
+      const apiUser = type === 'COLLECTION'
+        ? (process.env.MTN_API_USER || process.env.MTN_MOMO_USER_ID)
+        : (process.env.MTN_DISB_API_USER || process.env.MTN_API_USER || process.env.MTN_MOMO_USER_ID);
+      const apiKey = type === 'COLLECTION'
+        ? (process.env.MTN_API_KEY || process.env.MTN_MOMO_API_SECRET)
+        : (process.env.MTN_DISB_API_KEY || process.env.MTN_API_KEY || process.env.MTN_MOMO_API_SECRET);
       const subKey = type === 'COLLECTION' ? MTN_SUBSCRIPTION_KEY : (process.env.MTN_DISB_SUBSCRIPTION_KEY || MTN_SUBSCRIPTION_KEY);
       const urlPath = type === 'COLLECTION' ? 'collection' : 'disbursement';
 
@@ -218,7 +222,7 @@ export async function chargePassengerMobileMoney(
   const rawTransactionId = params.transactionId || `TX-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
   const mtnReferenceId = toDeterministicUuid(rawTransactionId);
 
-  const enumProvider = targetProviderStr.includes('MTN') 
+  const enumProvider = (targetProviderStr.includes('MTN') || targetProviderStr.includes('TELECEL') || targetProviderStr.includes('MOMO'))
     ? MobileMoneyProvider.MTN_MOMO 
     : MobileMoneyProvider.ORANGE_MONEY;
 
@@ -374,7 +378,7 @@ export async function verifyTransactionStatus(transactionId: string): Promise<{
       return { status: 'PENDING' };
     }
 
-    if (provider.includes('MTN')) {
+    if (provider.includes('MTN') || provider.includes('TELECEL') || provider.includes('MOMO')) {
       const token = await getMtnToken('COLLECTION');
       const mtnLookupId = toDeterministicUuid(transaction.reference || transactionId);
 
@@ -458,7 +462,7 @@ export async function executeRideDisbursement(params: DisbursementParams): Promi
       return { success: true, providerRef: response.data?.txnid || ref };
     }
 
-    if (providerStr.includes('MTN')) {
+    if (providerStr.includes('MTN') || providerStr.includes('TELECEL') || providerStr.includes('MOMO')) {
       const token = await getMtnToken('DISBURSEMENT');
       const mtnRefUuid = toDeterministicUuid(ref);
 

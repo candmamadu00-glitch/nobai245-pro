@@ -34,8 +34,10 @@
         "VIBRATE",
         "SYSTEM_ALERT_WINDOW",
         "FOREGROUND_SERVICE",
-        "FOREGROUND_SERVICE_LOCATION"
-      ]
+        "FOREGROUND_SERVICE_LOCATION",
+        "POST_NOTIFICATIONS"
+      ],
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "favicon": "./assets/favicon.png"

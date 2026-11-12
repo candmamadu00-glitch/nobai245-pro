@@ -190,7 +190,7 @@ export function Drivers() {
       return 'Números da Orange Money devem começar com 95.';
     }
     if (provider.includes('MTN') && !['96', '97'].includes(prefix)) {
-      return 'Números da MTN MoMo devem começar com 96 ou 97.';
+      return 'Números da Telecel (antigo MTN) devem começar com 96 ou 97.';
     }
     return null;
   };
@@ -511,7 +511,7 @@ export function Drivers() {
                         style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
                       >
                         <option value="ORANGE">Orange Money</option>
-                        <option value="MTN">MTN MoMo</option>
+                        <option value="MTN">Telecel (antigo MTN)</option>
                       </select>
                     </div>
                     <div>

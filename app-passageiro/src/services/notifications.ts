@@ -65,7 +65,11 @@ export async function registerAndSendPushToken(accessToken?: string): Promise<st
     const pushToken = tokenData?.data;
 
     if (pushToken) {
-      await api.put('/passengers/device-token', { deviceToken: pushToken }).catch(() => {});
+      await api.put(
+        '/passengers/device-token',
+        { deviceToken: pushToken },
+        accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : undefined
+      ).catch((err) => console.warn('⚠️ [PUSH] Falha ao salvar deviceToken HTTP:', err?.message));
       if (socket && socket.connected) {
         socket.emit('passenger:update_device_token', { deviceToken: pushToken });
       }

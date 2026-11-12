@@ -32,7 +32,7 @@ import { PrivacyPolicyModal } from '../components/PrivacyPolicyModal';
 
 type RootStackParamList = any;
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL || (__DEV__ ? 'http://192.168.18.29:3333' : '');
+const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com').replace(/\/api\/?$/, '').replace(/\/$/, '');
 
 export interface LanguageOption {
   code: string;
@@ -161,21 +161,22 @@ export function Profile() {
   function handleOpenEdit() {
     console.log('⚙️ [PAYMENT_DEBUG] Abrindo formulário de configuração de recebimentos.');
     setIsEditingPayment(true);
-    setMmProvider('ORANGE');
-    setMmNumber(financeData?.orangeNumber || financeData?.mobileMoneyAccount || '');
+    if (financeData?.mtnNumber && !financeData?.orangeNumber) {
+      setMmProvider('MTN');
+      setMmNumber(financeData.mtnNumber);
+    } else {
+      setMmProvider('ORANGE');
+      setMmNumber(financeData?.orangeNumber || financeData?.mobileMoneyAccount || '');
+    }
   }
 
   function handleProviderChange(provider: 'ORANGE' | 'MTN') {
+    setMmProvider(provider);
     if (provider === 'MTN') {
-      console.warn('⚠️ [PAYMENT_DEBUG] Tentativa de seleção MTN MoMo (Serviço desativado).');
-      Alert.alert(
-        'Aviso Nobai245 📲',
-        'O serviço de recebimento automático via MTN Mobile Money está temporariamente em fase de atualização técnica. Por favor, utilize a Orange Money para o recebimento dos seus ganhos no momento.'
-      );
-      return;
+      setMmNumber(financeData?.mtnNumber || '');
+    } else {
+      setMmNumber(financeData?.orangeNumber || financeData?.mobileMoneyAccount || '');
     }
-    setMmProvider('ORANGE');
-    setMmNumber(financeData?.orangeNumber || financeData?.mobileMoneyAccount || '');
   }
 
   async function handlePickAndUploadImage() {
@@ -236,39 +237,36 @@ export function Profile() {
   }
 
   async function handleSavePaymentInfo() {
-    if (mmProvider === 'MTN') {
-      return Alert.alert(
-        'Indisponível ⚠️',
-        'A operadora MTN MoMo está temporariamente desativada. Por favor, cadastre uma conta Orange Money.'
-      );
-    }
-
     const cleanNumber = mmNumber.trim();
+    const providerLabel = mmProvider === 'MTN' ? 'Telecel (antigo MTN)' : 'Orange Money';
 
     if (!cleanNumber) {
-      return Alert.alert('Aviso', 'Digite o número da sua conta Orange Money.');
+      return Alert.alert('Aviso', `Digite o número da sua conta ${providerLabel}.`);
     }
     if (cleanNumber.length !== 9) {
       return Alert.alert('Número Inválido', 'O número local deve conter exatamente 9 dígitos numéricos.');
     }
 
     const prefix = cleanNumber.substring(0, 2);
-    const orangePrefixes = ['95']; 
-
-    if (!orangePrefixes.includes(prefix)) {
+    if (mmProvider === 'ORANGE' && prefix !== '95') {
       return Alert.alert('Operadora Incompatível', 'Os números da Orange Money começam com 95.');
+    }
+    if (mmProvider === 'MTN' && !['96', '97'].includes(prefix)) {
+      return Alert.alert('Operadora Incompatível', 'Os números da Telecel (antigo MTN) começam com 96 ou 97.');
     }
 
     setLoading(true);
-    console.log(`💵 [PAYMENT_DEBUG] Salvando número Orange Money: +245${cleanNumber}`);
+    console.log(`💵 [PAYMENT_DEBUG] Salvando número ${providerLabel}: +245${cleanNumber}`);
     try {
       await api.put('/drivers/payment-info', {
         mobileMoneyNumber: cleanNumber,
-        mobileMoneyProvider: 'ORANGE'
+        mobileMoneyProvider: mmProvider,
+        paymentAccountNumber: cleanNumber,
+        paymentProvider: mmProvider === 'MTN' ? 'MTN_MOMO' : 'ORANGE_MONEY',
       });
       
       console.log('✅ [PAYMENT_DEBUG] Dados de recebimento salvos!');
-      Alert.alert('Sucesso', 'Sua conta Orange Money para recebimentos foi atualizada!');
+      Alert.alert('Sucesso', `Sua conta ${providerLabel} para recebimentos diretos foi atualizada!`);
       setIsEditingPayment(false);
       await refreshDriverProfile();
       await loadFinanceData(); 
@@ -557,22 +555,24 @@ export function Profile() {
                 </TouchableOpacity>
 
                 <TouchableOpacity 
-                  style={[styles.providerBtn, { opacity: 0.5, backgroundColor: '#E2E8F0' }]} 
+                  style={[styles.providerBtn, mmProvider === 'MTN' && { backgroundColor: '#EAB308', borderColor: '#CA8A04' }]} 
                   onPress={() => handleProviderChange('MTN')}
-                  activeOpacity={0.7}
+                  activeOpacity={0.8}
                 >
-                  <Text style={[styles.providerText, { color: '#64748B' }]}>MTN MoMo (Em Breve)</Text>
+                  <Text style={[styles.providerText, mmProvider === 'MTN' && { color: '#0F172A', fontWeight: '800' }]}>Telecel (MTN)</Text>
                 </TouchableOpacity>
               </View>
 
-              <Text style={styles.inputLabel}>2. Número da Conta Orange Money:</Text>
+              <Text style={styles.inputLabel}>
+                2. Número da Conta {mmProvider === 'MTN' ? 'Telecel (antigo MTN)' : 'Orange Money'}:
+              </Text>
               <View style={styles.phoneInputContainer}>
                 <View style={styles.countryBadge}>
                   <Text style={styles.countryBadgeText}>🇬🇼 +245</Text>
                 </View>
                 <TextInput 
                   style={styles.phoneInput} 
-                  placeholder="955 001 122" 
+                  placeholder={mmProvider === 'MTN' ? '966 001 122' : '955 001 122'} 
                   placeholderTextColor="#9CA3AF"
                   keyboardType="number-pad" 
                   value={mmNumber} 
@@ -587,9 +587,9 @@ export function Profile() {
                 </TouchableOpacity>
 
                 <TouchableOpacity 
-                  style={[styles.saveBtn, (!mmNumber || mmProvider === 'MTN') && { opacity: 0.7 }]} 
+                  style={[styles.saveBtn, !mmNumber && { opacity: 0.7 }]} 
                   onPress={handleSavePaymentInfo} 
-                  disabled={loading || !mmNumber || mmProvider === 'MTN'}
+                  disabled={loading || !mmNumber}
                   activeOpacity={0.85}
                 > 
                   {loading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.saveBtnText}>Salvar Conta</Text>}

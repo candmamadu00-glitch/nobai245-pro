@@ -289,7 +289,7 @@ export function Earnings({ navigation }: any) {
                     paymentProvider === 'MTN' && styles.providerOptionTextActive,
                   ]}
                 >
-                  MTN MoMo
+                  Telecel (antigo MTN)
                 </Text>
               </TouchableOpacity>
             </View>

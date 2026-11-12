@@ -49,11 +49,11 @@ const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://api.nobai245.com').
 
 const BISSAU_CENTER = { latitude: 11.8636, longitude: -15.5977 };
 
-export type RideStatus = 'idle' | 'searching' | 'queued' | 'accepted' | 'arrived' | 'in_progress' | 'completed';
+export type RideStatus = 'idle' | 'awaiting_payment' | 'searching' | 'queued' | 'accepted' | 'arrived' | 'in_progress' | 'completed';
 export type BookingStep = 'ADDRESS' | 'SERVICE_AND_PRICE' | 'PAYMENT' | 'SEARCHING';
 export type VehicleType = 'moto' | 'taxi' | 'moto-carro' | 'particular';
 export type ServiceType = 'viagem' | 'entrega' | 'aluguel';
-export type PaymentMethod = 'CASH'; // 🟢 FIXADO EXCLUSIVAMENTE PARA DINHEIRO EM ESPÉCIE
+export type PaymentMethod = 'CASH' | 'ORANGE_MONEY' | 'MTN_MOMO';
 export type RegionType = 'BISSAU' | 'PRABIS' | 'QUINHAMEL' | 'SURU' | 'BAFATA' | 'GABU';
 
 export interface RideStop {
@@ -452,8 +452,10 @@ export function Home() {
   const [serviceType, setServiceType] = useState<ServiceType>('viagem');
   const [selectedRegion] = useState<RegionType>('BISSAU');
   
-  // 🟢 FORÇADO EXCLUSIVAMENTE PARA DINHEIRO (CASH)
-  const [paymentMethod] = useState<PaymentMethod>('CASH');
+  // 🟢 MÉTODOS DE PAGAMENTO SUPORTADOS (DINHEIRO, ORANGE MONEY, TELECEL/MTN)
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
+  const [payerPhone, setPayerPhone] = useState<string>('');
+  const [pendingPaymentInfo, setPendingPaymentInfo] = useState<any>(null);
   
   const [estimatedPrice, setEstimatedPrice] = useState<number | null>(null);
   const [estimatedDistance, setEstimatedDistance] = useState<number | null>(null);
@@ -1412,6 +1414,23 @@ const handleOpenChat = () => {
   }, [getCurrentLocationWithFallback, syncPassengerActiveRide]);
 
   useEffect(() => {
+    const handleChatNotifResponse = (response: Notifications.NotificationResponse | null) => {
+      const data = response?.notification?.request?.content?.data as any;
+      if (data?.type === 'CHAT_MESSAGE') {
+        setIsChatVisible(true);
+        setUnreadCount(0);
+      }
+    };
+
+    Notifications.getLastNotificationResponseAsync()
+      .then(handleChatNotifResponse)
+      .catch(() => {});
+
+    const sub = Notifications.addNotificationResponseReceivedListener(handleChatNotifResponse);
+    return () => sub.remove();
+  }, []);
+
+  useEffect(() => {
     const currentLat = pickupCoords?.latitude || passengerLocation?.coords?.latitude;
     const currentLng = pickupCoords?.longitude || passengerLocation?.coords?.longitude;
 
@@ -1650,7 +1669,8 @@ const handleOpenChat = () => {
         },
         trigger: null,
       }).catch(() => {});
-      
+
+      Alert.alert(title, body, [{ text: 'OK' }]);
       resetRideState();
     };
 
@@ -1661,14 +1681,83 @@ const handleOpenChat = () => {
       Notifications.scheduleNotificationAsync({
         content: {
           title: t('search_ended_title', 'Busca Encerrada'),
-          body: t('no_drivers_found_msg', 'Não encontramos motoristas disponíveis na sua região. Tente novamente.'),
+          body: t('no_drivers_found_msg', 'Nenhum motorista disponível próximo de si no momento. Caso tenha pago digitalmente, o estorno é automático.'),
           data: { channelId: 'ride-updates' },
           sound: 'default',
         },
         trigger: null,
       }).catch(() => {});
 
+      Alert.alert(
+        t('no_response_title', 'Sem motoristas'),
+        'Nenhum motorista disponível próximo de si no momento. Caso tenha pago digitalmente, o estorno é automático.'
+      );
+
       resetRideState();
+    };
+
+    const handleAwaitingPayment = (data: any) => {
+      if (!isMountedRef.current) return;
+      const rId = data?.rideId || data?.ride?.id;
+      if (rId) {
+        setActiveRideId(rId);
+        activeRideIdRef.current = rId;
+      }
+      setPendingPaymentInfo(data?.payment || null);
+      setRideStatus('awaiting_payment');
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      searchTimeoutRef.current = setTimeout(() => {
+        if (isMountedRef.current) {
+          Alert.alert(
+            'Tempo de Pagamento Expirado',
+            'O PIN de 4 dígitos não foi confirmado a tempo. Nenhuma cobrança foi concluída.'
+          );
+          resetRideState();
+        }
+      }, 180000);
+    };
+
+    const handlePaymentFailed = (data: any) => {
+      if (!isMountedRef.current) return;
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      Alert.alert(
+        'Pagamento Não Concluído',
+        data?.message || 'O pagamento digital foi recusado ou expirado. Nenhuma corrida foi iniciada.'
+      );
+      resetRideState();
+    };
+
+    const handlePaymentRefundSuccess = (data: any) => {
+      if (!isMountedRef.current) return;
+      Alert.alert(
+        'Estorno Concluído ✅',
+        data?.message || 'O valor da sua corrida foi devolvido automaticamente para sua conta Mobile Money.'
+      );
+    };
+
+    const handlePaymentConfirmed = (data: any) => {
+      if (!isMountedRef.current) return;
+      const rId = data?.rideId || activeRideIdRef.current;
+      if (rId) {
+        setActiveRideId(rId);
+        activeRideIdRef.current = rId;
+        persistRideState(rId, 'searching');
+      }
+      setPendingPaymentInfo(null);
+      setRideStatus('searching');
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      searchTimeoutRef.current = setTimeout(() => {
+        if (isMountedRef.current) {
+          Alert.alert(
+            t('no_response_title', 'Sem resposta'),
+            t('no_driver_accepted_msg', 'Nenhum motorista aceitou no momento. Seu pagamento será estornado automaticamente.')
+          );
+          if (activeRideIdRef.current && user?.id) {
+            cancelRideByPassenger(activeRideIdRef.current, user.id, 'Sem motoristas disponíveis');
+          }
+          resetRideState();
+        }
+      }, 60000);
     };
 
     const handlePriceCalculated = (data: any) => {
@@ -1696,6 +1785,27 @@ const handleOpenChat = () => {
     socket.on('disconnect', handleDisconnect);
     socket.on('passenger:state_recovered', handleStateRecovered);
     socket.on('driver:position', handleDriverPosition);
+    const handleSocketRideError = (err: any) => {
+      if (!isMountedRef.current) return;
+      const msg = err?.message || err?.error || 'Não foi possível concluir a solicitação.';
+      setRideStatus((prev) => {
+        if (prev === 'awaiting_payment' || prev === 'searching') {
+          if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+          Alert.alert('Aviso Nobai245', msg);
+          return 'idle';
+        }
+        return prev;
+      });
+    };
+
+    socket.on('error', handleSocketRideError);
+    socket.on('ride:no_drivers_found', handleNoDriversFound);
+    socket.on('ride:awaiting_payment', handleAwaitingPayment);
+    socket.on('payment:confirmed', handlePaymentConfirmed);
+    socket.on('ride:searching', handlePaymentConfirmed);
+    socket.on('payment:failed', handlePaymentFailed);
+    socket.on('ride:payment_failed', handlePaymentFailed);
+    socket.on('payment:refund_success', handlePaymentRefundSuccess);
     socket.on('ride:accepted', handleRideAccepted);
     socket.on('ride:arrived', handleDriverArrived);
     socket.on('ride:driver_arrived', handleDriverArrived);
@@ -1709,7 +1819,6 @@ const handleOpenChat = () => {
     socket.on('chat:message', handleIncomingChatMessage);
     socket.on('chat:new_message', handleIncomingChatMessage);
     
-    socket.on('ride:no_drivers_found', handleNoDriversFound);
     socket.on('ride:price_calculated', handlePriceCalculated);
     socket.on('ride:inaccessible_location', handleInaccessibleLocationAlert);
 
@@ -1718,6 +1827,13 @@ const handleOpenChat = () => {
       socket.off('disconnect', handleDisconnect);
       socket.off('passenger:state_recovered', handleStateRecovered);
       socket.off('driver:position', handleDriverPosition);
+      socket.off('error', handleSocketRideError);
+      socket.off('ride:awaiting_payment', handleAwaitingPayment);
+      socket.off('payment:confirmed', handlePaymentConfirmed);
+      socket.off('ride:searching', handlePaymentConfirmed);
+      socket.off('payment:failed', handlePaymentFailed);
+      socket.off('ride:payment_failed', handlePaymentFailed);
+      socket.off('payment:refund_success', handlePaymentRefundSuccess);
       socket.off('ride:accepted', handleRideAccepted);
       socket.off('ride:arrived', handleDriverArrived);
       socket.off('ride:driver_arrived', handleDriverArrived);
@@ -1841,7 +1957,27 @@ const handleOpenChat = () => {
     try {
       if (!socket.connected) connectPassengerSocket();
 
-      setRideStatus('searching');
+      const isDigital = paymentMethod === 'ORANGE_MONEY' || paymentMethod === 'MTN_MOMO';
+      const fallbackPhone = String((user as any)?.paymentAccountNumber || (user as any)?.phone || '').replace(/\D/g, '');
+      const cleanPayerPhone = (payerPhone.trim() || fallbackPhone).replace(/\D/g, '');
+
+      if (isDigital) {
+        const local9 = cleanPayerPhone.startsWith('245') ? cleanPayerPhone.slice(3) : cleanPayerPhone;
+        if (local9.length !== 9) {
+          Alert.alert('Número Inválido', 'Informe um número Mobile Money válido de 9 dígitos da Guiné-Bissau.');
+          return;
+        }
+        if (paymentMethod === 'ORANGE_MONEY' && !local9.startsWith('95')) {
+          Alert.alert('Operadora Incompatível', 'Números Orange Money começam com 95.');
+          return;
+        }
+        if (paymentMethod === 'MTN_MOMO' && !local9.startsWith('96') && !local9.startsWith('97')) {
+          Alert.alert('Operadora Incompatível', 'Números Telecel (antigo MTN) começam com 96 ou 97.');
+          return;
+        }
+      }
+
+      setRideStatus(isDigital ? 'awaiting_payment' : 'searching');
       
       const mappedServiceType = serviceType === 'viagem' ? 'RIDE' : serviceType === 'entrega' ? 'DELIVERY' : 'RENTAL';
       const mappedVehicleType = 
@@ -1870,7 +2006,10 @@ const handleOpenChat = () => {
         referencePoint: pickupReferencePoint.trim(),
         serviceType: mappedServiceType,
         vehicleType: mappedVehicleType,
-        paymentMethod: 'CASH', // 🟢 SEMPRE DINHEIRO FÍSICO
+        paymentMethod,
+        payerPhone: (paymentMethod === 'ORANGE_MONEY' || paymentMethod === 'MTN_MOMO')
+          ? (payerPhone.trim() || (user as any)?.paymentAccountNumber || (user as any)?.phone || '')
+          : undefined,
         guestName: isForAnotherPerson ? guestName : undefined,
         guestPhone: isForAnotherPerson ? guestPhone : undefined,
         estimatedPrice: finalPriceXof,
@@ -2564,65 +2703,181 @@ const handleOpenChat = () => {
               </View>
             )}
 
-            {/* 💳 FORMA DE PAGAMENTO E BOTÃO CANCELAR/VOLTAR */}
+            {/* 💳 FORMA DE PAGAMENTO (DINHEIRO, ORANGE MONEY, TELECEL/MTN) */}
             {rideStatus === 'idle' && bookingStep === 'PAYMENT' && (
               <View style={{ width: '100%' }}>
-                <Text style={styles.sectionLabel}>{t('payment_method', 'Forma de Pagamento')}</Text>
+                <Text style={styles.sectionLabel}>{t('payment_method', 'Escolha como deseja pagar')}</Text>
                 
-                <View style={styles.paymentOptionsContainer}>
+                <View style={[styles.paymentOptionsContainer, { flexDirection: 'column', gap: 10 }]}>
+                  {/* OPÇÃO 1: DINHEIRO */}
                   <TouchableOpacity 
                     style={[
-                      styles.paymentBtn, 
-                      styles.paymentBtnActive, 
-                      { 
-                        backgroundColor: 'rgba(30, 41, 59, 0.8)', 
-                        borderColor: '#10B981', 
-                        borderWidth: 1,
-                        paddingVertical: 14 
+                      styles.paymentBtn,
+                      {
+                        width: '100%',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        backgroundColor: paymentMethod === 'CASH' ? 'rgba(16, 185, 129, 0.16)' : 'rgba(30, 41, 59, 0.8)',
+                        borderColor: paymentMethod === 'CASH' ? '#10B981' : 'rgba(255,255,255,0.12)',
+                        borderWidth: 1.5,
+                        paddingVertical: 12,
+                        paddingHorizontal: 12,
+                        borderRadius: 14,
                       }
                     ]}
-                    activeOpacity={0.9}
+                    onPress={() => setPaymentMethod('CASH')}
+                    activeOpacity={0.85}
                   >
-                    <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(16, 185, 129, 0.15)', justifyContent: 'center', alignItems: 'center' }}>
+                    <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(16, 185, 129, 0.18)', justifyContent: 'center', alignItems: 'center' }}>
                       <Ionicons name="cash-outline" size={18} color="#10B981" />
                     </View>
-
                     <View style={{ flex: 1, marginLeft: 10 }}>
-                      <Text style={[styles.paymentBtnText, { color: '#F8FAFC', fontWeight: '800', fontSize: 14 }]}>
-                        {t('cash_payment', 'Dinheiro em Espécie')}
-                      </Text>
-                      <Text style={{ color: '#94A3B8', fontSize: 11, marginTop: 2 }}>
-                        {t('cash_desc', 'Pague diretamente ao motorista no final da viagem')}
-                      </Text>
+                      <Text style={{ color: '#F8FAFC', fontWeight: '800', fontSize: 14 }}>Dinheiro em Espécie</Text>
+                      <Text style={{ color: '#94A3B8', fontSize: 11, marginTop: 1 }}>Pague ao motorista ao chegar ao destino</Text>
                     </View>
+                    <Ionicons name={paymentMethod === 'CASH' ? 'checkmark-circle' : 'ellipse-outline'} size={22} color={paymentMethod === 'CASH' ? '#10B981' : '#64748B'} />
+                  </TouchableOpacity>
 
-                    <Ionicons 
-                      name="checkmark-circle" 
-                      size={22} 
-                      color="#10B981" 
-                    />
+                  {/* OPÇÃO 2: ORANGE MONEY */}
+                  <TouchableOpacity 
+                    style={[
+                      styles.paymentBtn,
+                      {
+                        width: '100%',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        backgroundColor: paymentMethod === 'ORANGE_MONEY' ? 'rgba(255, 121, 0, 0.18)' : 'rgba(30, 41, 59, 0.8)',
+                        borderColor: paymentMethod === 'ORANGE_MONEY' ? '#FF7900' : 'rgba(255,255,255,0.12)',
+                        borderWidth: 1.5,
+                        paddingVertical: 12,
+                        paddingHorizontal: 12,
+                        borderRadius: 14,
+                      }
+                    ]}
+                    onPress={() => {
+                      setPaymentMethod('ORANGE_MONEY');
+                      if (!payerPhone) {
+                        const raw = String((user as any)?.paymentAccountNumber || (user as any)?.phone || '').replace(/\D/g, '');
+                        setPayerPhone(raw.startsWith('245') ? raw.slice(3) : raw);
+                      }
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255, 121, 0, 0.2)', justifyContent: 'center', alignItems: 'center' }}>
+                      <Ionicons name="phone-portrait-outline" size={18} color="#FF7900" />
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={{ color: '#F8FAFC', fontWeight: '800', fontSize: 14 }}>Orange Money</Text>
+                      <Text style={{ color: '#94A3B8', fontSize: 11, marginTop: 1 }}>Confirme com seu PIN de 4 dígitos no celular</Text>
+                    </View>
+                    <Ionicons name={paymentMethod === 'ORANGE_MONEY' ? 'checkmark-circle' : 'ellipse-outline'} size={22} color={paymentMethod === 'ORANGE_MONEY' ? '#FF7900' : '#64748B'} />
+                  </TouchableOpacity>
+
+                  {/* OPÇÃO 3: TELECEL (ANTIGO MTN) */}
+                  <TouchableOpacity 
+                    style={[
+                      styles.paymentBtn,
+                      {
+                        width: '100%',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        backgroundColor: paymentMethod === 'MTN_MOMO' ? 'rgba(234, 179, 8, 0.18)' : 'rgba(30, 41, 59, 0.8)',
+                        borderColor: paymentMethod === 'MTN_MOMO' ? '#EAB308' : 'rgba(255,255,255,0.12)',
+                        borderWidth: 1.5,
+                        paddingVertical: 12,
+                        paddingHorizontal: 12,
+                        borderRadius: 14,
+                      }
+                    ]}
+                    onPress={() => {
+                      setPaymentMethod('MTN_MOMO');
+                      if (!payerPhone) {
+                        const raw = String((user as any)?.paymentAccountNumber || (user as any)?.phone || '').replace(/\D/g, '');
+                        setPayerPhone(raw.startsWith('245') ? raw.slice(3) : raw);
+                      }
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(234, 179, 8, 0.2)', justifyContent: 'center', alignItems: 'center' }}>
+                      <Ionicons name="wallet-outline" size={18} color="#EAB308" />
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={{ color: '#F8FAFC', fontWeight: '800', fontSize: 14 }}>Telecel (antigo MTN)</Text>
+                      <Text style={{ color: '#94A3B8', fontSize: 11, marginTop: 1 }}>Confirme com seu PIN de 4 dígitos no celular</Text>
+                    </View>
+                    <Ionicons name={paymentMethod === 'MTN_MOMO' ? 'checkmark-circle' : 'ellipse-outline'} size={22} color={paymentMethod === 'MTN_MOMO' ? '#EAB308' : '#64748B'} />
                   </TouchableOpacity>
                 </View>
+
+                {/* CAMPO DE TELEFONE PARA COBRANÇA MOBILE MONEY */}
+                {(paymentMethod === 'ORANGE_MONEY' || paymentMethod === 'MTN_MOMO') && (
+                  <View style={{ marginTop: 10, backgroundColor: 'rgba(15, 23, 42, 0.75)', padding: 10, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
+                    <Text style={styles.inputLabel}>
+                      Número {paymentMethod === 'ORANGE_MONEY' ? 'Orange Money (95...)' : 'Telecel / MTN (96 ou 97...)'}:
+                    </Text>
+                    <View style={styles.phoneInputContainer}>
+                      <Text style={{ color: '#EAB308', fontWeight: '800', paddingLeft: 12 }}>🇬🇼 +245</Text>
+                      <TextInput
+                        style={styles.phoneInput}
+                        value={payerPhone}
+                        onChangeText={(txt) => setPayerPhone(txt.replace(/\D/g, '').slice(0, 9))}
+                        keyboardType="number-pad"
+                        maxLength={9}
+                        placeholder={paymentMethod === 'ORANGE_MONEY' ? '955000000' : '966000000'}
+                        placeholderTextColor="#64748B"
+                      />
+                    </View>
+                  </View>
+                )}
 
                 {/* 🔴 BOTÕES DE AÇÃO COM BOTÃO DE CANCELAR */}
                 <View style={styles.actionRow}>
                   <TouchableOpacity 
-               style={styles.cancelButtonOutline} 
+                    style={styles.cancelButtonOutline} 
                     onPress={handleFullCancelAndReset}
-                activeOpacity={0.8}
-              >
-              <Text style={styles.cancelButtonOutlineText}>Cancelar</Text>
-              </TouchableOpacity>
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.cancelButtonOutlineText}>Cancelar</Text>
+                  </TouchableOpacity>
 
-                  <View style={{ flex: 1.5 }}>
+                  <View style={{ flex: 1.6 }}>
                     <GlowingButton
-                      title={t('request_now_btn', 'Pedir Agora')}
+                      title={
+                        paymentMethod === 'CASH'
+                          ? t('request_now_btn', 'Pedir Agora')
+                          : `Pagar ${estimatedPrice ? `${Math.round(estimatedPrice)} XOF` : ''} e Pedir`
+                      }
                       onPress={handleInitialRequestRide}
                       isGlowEnabled={isBorderGlowEnabled}
                       style={{ height: 48 }}
                     />
                   </View>
                 </View>
+              </View>
+            )}
+
+            {/* 🔐 AGUARDANDO CONFIRMAÇÃO DO PIN DE 4 DÍGITOS NO CELULAR */}
+            {rideStatus === 'awaiting_payment' && (
+              <View style={styles.statusBox}>
+                <ActivityIndicator size="large" color="#FF7900" style={{ marginBottom: 12 }} />
+                <Text style={styles.statusTitle}>Confirme o Pagamento no Celular</Text>
+                <Text style={[styles.statusSub, { textAlign: 'center', marginTop: 6, lineHeight: 20 }]}>
+                  Enviamos uma solicitação {paymentMethod === 'ORANGE_MONEY' ? 'Orange Money' : 'Telecel (antigo MTN)'} de{' '}
+                  <Text style={{ color: '#EAB308', fontWeight: '800' }}>{estimatedPrice ? `${Math.round(estimatedPrice)} XOF` : ''}</Text>.
+                  {'\n'}Digite os <Text style={{ color: '#10B981', fontWeight: '800' }}>4 dígitos do seu PIN</Text> na janela do seu telefone para iniciar a busca do motorista.
+                </Text>
+                <TouchableOpacity
+                  style={[styles.cancelButtonOutline, { marginTop: 16 }]}
+                  onPress={() => {
+                    if (activeRideIdRef.current && user?.id) {
+                      cancelRideByPassenger(activeRideIdRef.current, user.id, 'Cancelado antes de confirmar o PIN');
+                    }
+                    resetRideState();
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.cancelButtonOutlineText}>Cancelar Pagamento</Text>
+                </TouchableOpacity>
               </View>
             )}
 
@@ -2748,9 +3003,9 @@ const handleOpenChat = () => {
                   </View>
 
                   <View style={styles.paymentMethodChip}>
-                    <Ionicons name="cash" size={14} color="#EAB308" />
+                    <Ionicons name={paymentMethod === 'CASH' ? 'cash' : 'phone-portrait'} size={14} color="#EAB308" />
                     <Text style={styles.paymentMethodChipText}>
-                      Pagamento: Dinheiro em Espécie
+                      Pagamento: {paymentMethod === 'ORANGE_MONEY' ? 'Orange Money (Pago)' : paymentMethod === 'MTN_MOMO' ? 'Telecel / MTN (Pago)' : 'Dinheiro em Espécie'}
                     </Text>
                   </View>
                 </View>

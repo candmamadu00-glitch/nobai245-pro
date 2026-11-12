@@ -10,7 +10,8 @@ import { Socket } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
 import { AudioModule, RecordingPresets, useAudioRecorder, createAudioPlayer } from 'expo-audio';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as FileSystem from 'expo-file-system'; 
+import * as FileSystemLegacy from 'expo-file-system/legacy';
+const FileSystem: any = FileSystemLegacy; 
 import { api } from '../services/api';
 
 export interface ChatMessage {
@@ -65,10 +66,11 @@ const getPlayableAudioUri = async (msgId: string, audioUrl: string): Promise<str
     try {
       const base64Data = audioUrl.includes('base64,') ? audioUrl.split('base64,')[1] : audioUrl;
       const fileUri = `${FileSystem.cacheDirectory}audio_${msgId.replace(/[^a-zA-Z0-9]/g, '')}.m4a`;
+      const encodingOpt = FileSystem?.EncodingType?.Base64 || 'base64';
       const fileInfo = await FileSystem.getInfoAsync(fileUri);
       if (!fileInfo.exists) {
         await FileSystem.writeAsStringAsync(fileUri, base64Data, {
-          encoding: FileSystem.EncodingType.Base64,
+          encoding: encodingOpt,
         });
       }
       return fileUri;
@@ -172,8 +174,14 @@ export function ChatModal({
               }));
 
               setMessages((prev) => {
+                const hasLocalAudio = prev.some((m) => !!m.audioUrl);
                 const map = new Map<string, ChatMessage>();
-                [...prev, ...history].forEach(m => { if (m && m.id) map.set(m.id, m); });
+                prev.forEach((m) => { if (m && m.id) map.set(m.id, m); });
+                history.forEach((m) => {
+                  if (!m || !m.id) return;
+                  if (hasLocalAudio && !m.audioUrl && m.text === '🎤 Mensagem de áudio') return;
+                  map.set(m.id, m);
+                });
                 return Array.from(map.values());
               });
             }
@@ -191,6 +199,10 @@ export function ChatModal({
 
   useEffect(() => {
     if (!socket || !visible) return;
+    if (rideId) {
+      safeEmit('join_room', rideId);
+      safeEmit('join_room', `ride_${rideId}`);
+    }
 
     const handleReceiveMessage = (msg: any) => {
       if (!msg) return;
@@ -325,11 +337,20 @@ export function ChatModal({
       const durationSec = finalDuration || recordDuration || 1;
       const uniqueId = `audio-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
-      let audioPayload = uri;
+      let audioPayload = '';
       try {
-        const base64Audio = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-        audioPayload = `data:audio/m4a;base64,${base64Audio}`;
-      } catch (b64Err) {}
+        const encodingOpt = FileSystem?.EncodingType?.Base64 || 'base64';
+        const base64Audio = await FileSystem.readAsStringAsync(uri, { encoding: encodingOpt });
+        if (base64Audio) {
+          audioPayload = `data:audio/m4a;base64,${base64Audio}`;
+        }
+      } catch (b64Err) {
+        console.warn('⚠️ Falha ao converter áudio para Base64:', b64Err);
+      }
+      if (!audioPayload) {
+        Alert.alert(t('error_title', 'Erro'), 'Não foi possível processar o áudio gravado. Tente novamente.');
+        return;
+      }
 
       const newMsg: ChatMessage = {
         id: uniqueId,
@@ -387,6 +408,14 @@ export function ChatModal({
         activePlayerRef.current = null;
       }
 
+      try {
+        if (typeof (AudioModule as any)?.setAudioModeAsync === 'function') {
+          await (AudioModule as any).setAudioModeAsync({
+            playsInSilentMode: true,
+            allowsRecording: false,
+          });
+        }
+      } catch (modeErr) {}
       const playableUri = await getPlayableAudioUri(msgId, audioUrl);
       const player = createAudioPlayer({ uri: playableUri });
       if (!player) return;
@@ -583,7 +612,7 @@ export function ChatModal({
 
 const styles = StyleSheet.create({
   chatOverlay: { flex: 1, justifyContent: 'flex-end' },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(15, 23, 42, 0.4)' },
+  backdrop: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(15, 23, 42, 0.4)' },
   chatContainer: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '88%', flex: 1, paddingTop: 8, elevation: 10 },
   chatHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 14, paddingTop: 8, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
   headerTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },

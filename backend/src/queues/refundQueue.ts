@@ -47,7 +47,7 @@ const processRefundJob = async (job: Job) => {
     // Sucesso na devolução
     await prisma.transaction.update({
       where: { id: transactionId },
-      data: { status: 'COMPLETED', externalRef: result.providerRef, description: 'Estorno efetuado com sucesso', completedAt: new Date() }
+      data: { status: 'COMPLETED', externalRef: result.providerRef, description: 'Estorno efetuado com sucesso' }
     });
 
     return { success: true, passengerId, amountXOF };

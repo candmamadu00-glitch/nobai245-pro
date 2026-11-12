@@ -486,7 +486,7 @@ if (uploadedFile) {
   // 9. RECARGA OU DEBÓSITO DE CARTEIRA VIA MOBILE MONEY
   async initiatePayment(req: Request, res: Response): Promise<Response> {
     try {
-      const passengerId = (req as any).user?.id || (req as any).userId || (req as any).passenger?.id || req.body.passengerId;
+      const passengerId = (req as any).user?.id || (req as any).userId || (req as any).passenger?.id;
       
       if (!passengerId) {
         return res.status(401).json({ success: false, error: 'Não autorizado. ID do passageiro ausente.' });

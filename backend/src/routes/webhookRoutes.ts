@@ -58,9 +58,10 @@ async function emitSuccessSockets(rideId?: string | null, passengerId?: string |
     });
 
     if (updateResult.count > 0) {
-      if (io) {
-        io.to(rideId).emit('payment:confirmed', {
-          rideId,
+      const confirmedRide = await prisma.ride.findUnique({ where: { id: rideId } });
+      if (io && confirmedRide) {
+        io.to(rideId).to(confirmedRide.passengerId).to(`passenger_${confirmedRide.passengerId}`).emit('payment:confirmed', {
+          rideId, status: 'SEARCHING', paymentMethod: confirmedRide.paymentMethod,
           message: 'Pagamento confirmado! Buscando motoristas próximos...'
         });
       }
@@ -335,5 +336,7 @@ router.post('/mtn', ipWhitelistMiddleware, async (req: Request, res: Response): 
   }
 });
 
+router.get('/orange/return', (_q, r) => r.status(200).send('<html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0f172a;color:#fff"><h2 style="color:#10b981">✅ Pagamento Processado!</h2><p>Volte ao aplicativo Nô Bai 245.</p></body></html>'));
+router.get('/orange/cancel', (_q, r) => r.status(200).send('<html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0f172a;color:#fff"><h2 style="color:#ef4444">❌ Pagamento Cancelado</h2><p>Volte ao aplicativo Nô Bai 245.</p></body></html>'));
 export { router as webhookRoutes };
 export default router;

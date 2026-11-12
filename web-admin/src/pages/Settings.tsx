@@ -184,7 +184,7 @@ export function Settings() {
                 </span>
               )}
               <p className="account-desc">
-                Conta oficial que receberá as taxas e repasses automatizados via Orange Money.
+                Conta oficial que receberá as comissões automatizadas via Orange Money.
               </p>
             </div>
           </div>
@@ -193,7 +193,7 @@ export function Settings() {
           <div className="account-box mtn-theme">
             <div className="account-badge">
               <Smartphone size={16} />
-              <span>MTN Mobile Money</span>
+              <span>Telecel (antigo MTN MoMo)</span>
             </div>
             <div className="account-body">
               {isEditingSystem ? (
@@ -210,7 +210,7 @@ export function Settings() {
                 </span>
               )}
               <p className="account-desc">
-                Conta oficial que receberá as taxas e repasses automatizados via MTN MoMo.
+                Conta oficial que receberá as comissões automatizadas via Telecel (antigo MTN MoMo).
               </p>
             </div>
           </div>

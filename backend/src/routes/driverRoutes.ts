@@ -13,6 +13,7 @@ import {
   requestProfileUpdateSchema,
 } from '../schemas/authSchemas';
 import { 
+  getDriverActiveRide,
   acceptRide, 
   driverArrived, 
   startRide, 
@@ -83,6 +84,7 @@ driverRoutes.put('/device-token', validate(updateDeviceTokenSchema), (req, res) 
 driverRoutes.post('/wallet/claim', (req, res) => claimRechargeByTxId(req, res));
 
 // 🚗 Fluxo de Corridas
+driverRoutes.get('/active-ride', (req, res) => getDriverActiveRide(req, res));
 driverRoutes.post('/rides/accept', (req, res) => acceptRide(req, res));
 driverRoutes.post('/rides/:rideId/arrived', (req, res) => driverArrived(req, res));
 driverRoutes.post('/rides/:rideId/start', (req, res) => startRide(req, res));

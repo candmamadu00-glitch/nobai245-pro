@@ -75,9 +75,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) =>
       };
 
       if (socket.connected) {
-        socket.timeout(3000).emit('driver:location_update', payload, (err: any) => {
-          if (err) sendFallbackHttp();
-        });
+        socket.emit('driver:location_update', payload);
       } else {
         sendFallbackHttp();
       }

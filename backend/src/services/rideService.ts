@@ -11,6 +11,30 @@ import axios from 'axios';
 import { prisma } from '../config/prisma';
 import { sendPushNotification, PUSH_CHANNELS } from './pushNotifications';
 import { getIo } from '../server';
+import { chargePassengerMobileMoney } from './mobileMoneyService';
+import { enqueuePayoutJob, enqueueRefundJob } from '../jobs/payoutQueue';
+
+export function normalizePaymentMethod(method?: string | null): PaymentMethod {
+  const upper = String(method || 'CASH').trim().toUpperCase();
+  if (upper.includes('ORANGE')) return PaymentMethod.ORANGE_MONEY;
+  if (upper.includes('MTN') || upper.includes('TELECEL') || upper.includes('MOMO')) return PaymentMethod.MTN_MOMO;
+  return PaymentMethod.CASH;
+}
+
+export function formatPaymentMethodLabel(method?: PaymentMethod | string | null): string {
+  const normalized = normalizePaymentMethod(method as string);
+  if (normalized === PaymentMethod.ORANGE_MONEY) return 'Orange Money';
+  if (normalized === PaymentMethod.MTN_MOMO) return 'Telecel / MTN MoMo';
+  return 'Dinheiro';
+}
+
+function detectProviderFromPhone(phone?: string | null): PaymentMethod | null {
+  const digits = String(phone || '').replace(/\D/g, '');
+  const local9 = digits.startsWith('245') ? digits.slice(3) : digits;
+  if (local9.startsWith('95')) return PaymentMethod.ORANGE_MONEY;
+  if (local9.startsWith('96') || local9.startsWith('97')) return PaymentMethod.MTN_MOMO;
+  return null;
+}
 
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
 const CANCELLATION_PENALTY_XOF = 500;
@@ -174,7 +198,7 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
         sendPushNotification(
           driver.deviceToken,
           '🚗 Nova Corrida Solicitada!',
-          `Valor: ${syncedPrice} XOF (${syncedDistance} km) • Pagamento em Dinheiro. Toque para aceitar.`,
+          `Valor: ${syncedPrice} XOF (${syncedDistance} km) • ${ride.paymentMethod === 'CASH' ? 'Pagamento em Dinheiro' : 'Pago via ' + formatPaymentMethodLabel(ride.paymentMethod)}. Toque para aceitar.`,
           { type: 'NEW_RIDE_REQUEST', rideId: ride.id, isQueuedOffer: false },
           PUSH_CHANNELS.NEW_RIDE_ALARM
         ).catch(() => null);
@@ -313,6 +337,7 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
   dropoffReferencePoint?: string;
   stops?: Array<{ address: string; lat: number; lng: number; status?: string; referencePoint?: string }>;
   paymentMethod?: PaymentMethod | string;
+  payerPhone?: string;
   idempotencyKey?: string;
   estimatedPrice?: number;
   distanceKm?: number;
@@ -340,7 +365,7 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
 
   const passenger = await prisma.passenger.findUnique({ 
     where: { id: passengerId },
-    select: { id: true, status: true, currentRideId: true, phone: true }
+    select: { id: true, status: true, currentRideId: true, phone: true, paymentAccountNumber: true }
   });
 
   if (!passenger || passenger.status !== 'ACTIVE') {
@@ -376,8 +401,12 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     }
   }
 
-  // 🟢 FORÇA O MÉTODO EM DINHEIRO (CASH ONLY)
-  const chosenMethod = PaymentMethod.CASH;
+  const chosenMethod = normalizePaymentMethod(data.paymentMethod);
+  const isMobileMoney = chosenMethod === PaymentMethod.ORANGE_MONEY || chosenMethod === PaymentMethod.MTN_MOMO;
+  const targetPayerPhone = String(data.payerPhone || passenger.paymentAccountNumber || passenger.phone || '').trim();
+  if (isMobileMoney && !targetPayerPhone) {
+    throw new Error('MISSING_PAYER_PHONE: Informe o número de telefone Mobile Money para concluir o pagamento.');
+  }
 
   const routeWaypoints = stops.map(s => ({ lat: s.lat, lng: s.lng }));
   const fallbackRoute = await getRouteDistanceAndDuration(
@@ -399,11 +428,11 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     ? Math.round(Number(estimatedPrice)) 
     : calculatedPrice;
   
-  const initialStatus = RideStatus.SEARCHING;
+  const initialStatus = isMobileMoney ? RideStatus.AWAITING_PAYMENT : RideStatus.SEARCHING;
   const initialTxStatus = TransactionStatus.PENDING;
   
   const startOtp = Math.floor(1000 + Math.random() * 9000).toString();
-  const finishOtp = Math.floor(1000 + Math.random() * 9000).toString();
+  const finishOtp: string | null = null;
 
   const formattedStops = stops.map((s, idx) => ({
     ...s,
@@ -442,18 +471,22 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
       data: { currentRideId: newRide.id }
     });
 
-    await tx.transaction.create({
-      data: {
-        passengerId, 
-        rideId: newRide.id, 
-        type: TransactionType.RIDE_PAYMENT,
-        status: initialTxStatus, 
-        amount: priceXof,
-        reference: `PAY-${newRide.id.slice(0, 8)}-${Date.now()}`, 
-        paymentMethod: chosenMethod,
-        idempotencyKey: data.idempotencyKey
-      }
-    });
+    const payRef = `PAY-${newRide.id.slice(0, 8)}-${Date.now()}`;
+    (newRide as any)._payRef = payRef;
+    if (!isMobileMoney) {
+      await tx.transaction.create({
+        data: {
+          passengerId, 
+          rideId: newRide.id, 
+          type: TransactionType.RIDE_PAYMENT,
+          status: initialTxStatus, 
+          amount: priceXof,
+          reference: payRef, 
+          paymentMethod: chosenMethod,
+          idempotencyKey: data.idempotencyKey
+        }
+      });
+    }
 
     await tx.rideEventLog.create({
       data: {
@@ -468,6 +501,44 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
 
     return { ride: newRide };
   });
+
+  if (isMobileMoney) {
+    const paymentReference = (ride as any)._payRef || `PAY-${ride.id.slice(0, 8)}-${Date.now()}`;
+    const chargeResult = await chargePassengerMobileMoney({
+      passengerId,
+      rideId: ride.id,
+      transactionId: paymentReference,
+      phone: targetPayerPhone,
+      amount: priceXof,
+      provider: chosenMethod,
+    });
+
+    if (!chargeResult.success) {
+      await prisma.$transaction(async (tx) => {
+        await tx.ride.update({
+          where: { id: ride.id },
+          data: { status: RideStatus.CANCELLED, cancellationReason: `PAYMENT_INIT_FAILED: ${chargeResult.details || chargeResult.error || 'Falha na operadora'}` },
+        });
+        await tx.passenger.update({ where: { id: passengerId }, data: { currentRideId: null } });
+      }).catch(() => null);
+      throw new Error(`PAYMENT_INIT_FAILED: ${chargeResult.details || 'Não foi possível iniciar o pagamento Mobile Money.'}`);
+    }
+
+    return {
+      success: true,
+      pendingVerification: true,
+      ride,
+      payment: {
+        provider: chosenMethod,
+        providerLabel: formatPaymentMethodLabel(chosenMethod),
+        reference: paymentReference,
+        providerRef: chargeResult.providerRef || paymentReference,
+        paymentUrl: chargeResult.paymentUrl || null,
+        phone: targetPayerPhone,
+        amountXOF: priceXof,
+      },
+    };
+  }
 
   console.log(`✅ [CREATE_RIDE_SUCCESS] Corrida ${ride.id} criada! Distância: ${distanceKm} km | Valor: ${ride.priceXof} XOF`);
   return { success: true, pendingVerification: false, ride };
@@ -555,7 +626,7 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
   }
 
   const currentBalance = Number(driver.walletBalance || 0);
-  if (currentBalance < MIN_DRIVER_BALANCE_FOR_CASH) {
+  if (ride.paymentMethod === PaymentMethod.CASH && currentBalance < MIN_DRIVER_BALANCE_FOR_CASH) {
     console.warn(`⚠️ [ACCEPT_RIDE_WARN] Motorista ${driverId} com saldo insuficiente na carteira: ${currentBalance} XOF`);
     throw new Error('INSUFFICIENT_DRIVER_BALANCE: Seu saldo na carteira digital está negativo. Recarregue para aceitar corridas em dinheiro.');
   }
@@ -892,11 +963,11 @@ export async function finalizeRideAndCharge(
   }
 
   const rideFinishOtp = (ride as any).finishOtp;
-  if (ride.serviceType === ServiceType.DELIVERY || rideFinishOtp) {
-    const cleanInput = String(finishOtpInput || '').trim().padStart(4, '0');
-    const cleanDbOtp = String(rideFinishOtp || '').trim().padStart(4, '0');
+  if (rideFinishOtp && finishOtpInput && String(finishOtpInput).trim().length > 0) {
+    const cleanInput = String(finishOtpInput).trim().padStart(4, '0');
+    const cleanDbOtp = String(rideFinishOtp).trim().padStart(4, '0');
 
-    if (cleanDbOtp && cleanDbOtp !== cleanInput) {
+    if (cleanDbOtp !== cleanInput) {
       console.error(`❌ [FINALIZE_ERROR] PIN de confirmação incorreto! Esperado: "${cleanDbOtp}", Informado: "${cleanInput}"`);
       throw new Error('INVALID_OTP: O código PIN de confirmação informado está incorreto.');
     }
@@ -917,7 +988,32 @@ export async function finalizeRideAndCharge(
   const platformFee = Math.round(calculatedFare * commissionRate);
   const driverEarnings = calculatedFare - platformFee;
 
+  const isDigitalRide = ride.paymentMethod === PaymentMethod.ORANGE_MONEY || ride.paymentMethod === PaymentMethod.MTN_MOMO;
+  let driverPayoutPhone = '';
+  let driverPayoutProvider: PaymentMethod = ride.paymentMethod === PaymentMethod.MTN_MOMO ? PaymentMethod.MTN_MOMO : PaymentMethod.ORANGE_MONEY;
+
+  if (isDigitalRide && ride.driver) {
+    if (ride.paymentMethod === PaymentMethod.ORANGE_MONEY && ride.driver.orangeNumber) {
+      driverPayoutPhone = ride.driver.orangeNumber;
+      driverPayoutProvider = PaymentMethod.ORANGE_MONEY;
+    } else if (ride.paymentMethod === PaymentMethod.MTN_MOMO && ride.driver.mtnNumber) {
+      driverPayoutPhone = ride.driver.mtnNumber;
+      driverPayoutProvider = PaymentMethod.MTN_MOMO;
+    } else if (ride.driver.orangeNumber) {
+      driverPayoutPhone = ride.driver.orangeNumber;
+      driverPayoutProvider = PaymentMethod.ORANGE_MONEY;
+    } else if (ride.driver.mtnNumber) {
+      driverPayoutPhone = ride.driver.mtnNumber;
+      driverPayoutProvider = PaymentMethod.MTN_MOMO;
+    } else {
+      const fb = ride.driver.paymentAccountNumber || ride.driver.phone || '';
+      driverPayoutPhone = fb;
+      driverPayoutProvider = detectProviderFromPhone(fb) || driverPayoutProvider;
+    }
+  }
+
   let commissionTransactionId = '';
+  let payoutTransactionId = '';
   let queuedRideToPromote: any = null;
   let finalDriverBalance = Number(ride.driver.walletBalance || 0);
   let wasForcedOfflineDueToBalance = false;
@@ -977,7 +1073,7 @@ export async function finalizeRideAndCharge(
     }
 
     const currentDriverBalance = Number(ride.driver?.walletBalance || 0);
-    finalDriverBalance = currentDriverBalance - platformFee;
+    finalDriverBalance = isDigitalRide ? currentDriverBalance : (currentDriverBalance - platformFee);
 
     const shouldStayOnline = true; 
     wasForcedOfflineDueToBalance = false;
@@ -1003,15 +1099,33 @@ export async function finalizeRideAndCharge(
         driverId: ride.driverId,
         type: TransactionType.COMMISSION_FEE,
         status: TransactionStatus.COMPLETED,
-        paymentMethod: PaymentMethod.CASH,
+        paymentMethod: ride.paymentMethod,
         amount: platformFee,
         balanceBefore: currentDriverBalance,
         balanceAfter: finalDriverBalance,
-        reference: `COMM-CASH-${ride.id.slice(0, 8)}-${Date.now()}`,
-        description: `Comissão da taxa de plataforma (${Math.round(commissionRate * 100)}%) sobre corrida em dinheiro de ${calculatedFare} XOF`
+        reference: `COMM-${ride.paymentMethod}-${ride.id.slice(0, 8)}-${Date.now()}`,
+        description: `Taxa da plataforma (${Math.round(commissionRate * 100)}%) sobre corrida (${formatPaymentMethodLabel(ride.paymentMethod)}) de ${calculatedFare} XOF`
       }
     });
     commissionTransactionId = commTx.id;
+
+    if (isDigitalRide && driverEarnings > 0) {
+      const hasValidPhone = Boolean(driverPayoutPhone && driverPayoutPhone.replace(/\D/g, '').length >= 9);
+      const payoutTx = await tx.transaction.create({
+        data: {
+          rideId: ride.id,
+          driverId: ride.driverId,
+          type: TransactionType.DRIVER_PAYOUT,
+          status: hasValidPhone ? TransactionStatus.PENDING : TransactionStatus.FAILED_MANUAL_REVIEW,
+          paymentMethod: driverPayoutProvider,
+          amount: driverEarnings,
+          reference: `PAYOUT-${ride.id.slice(0, 8)}-${Date.now()}`,
+          description: hasValidPhone ? `Split automático (${formatPaymentMethodLabel(driverPayoutProvider)}) para ${driverPayoutPhone}` : 'Motorista sem número Mobile Money cadastrado',
+          failureReason: hasValidPhone ? null : 'MISSING_DRIVER_MOBILE_MONEY_PHONE',
+        }
+      });
+      if (hasValidPhone) payoutTransactionId = payoutTx.id;
+    }
 
     await tx.companyWallet.upsert({
       where: { id: 'bai245-main-wallet' },
@@ -1028,7 +1142,19 @@ export async function finalizeRideAndCharge(
     });
   }); 
 
-  console.log(`🏁 [RIDE_LOG_COMPLETED] Corrida ID: ${rideId} finalizada! Total: ${calculatedFare} XOF | Distância: ${distanceKm} km | Líquido Motorista: ${driverEarnings} XOF`);
+  if (isDigitalRide && payoutTransactionId && driverPayoutPhone) {
+    enqueuePayoutJob({
+      transactionId: payoutTransactionId,
+      rideId: ride.id,
+      driverId: ride.driverId!,
+      amountXOF: driverEarnings,
+      phone: driverPayoutPhone,
+      provider: driverPayoutProvider,
+    }).catch((err) => console.error('❌ [SPLIT_PAYOUT_ERR]:', err));
+  } else if (isDigitalRide && !payoutTransactionId) {
+    safeSocketEmit('admin_dashboard', 'admin:payout_alert', { rideId: ride.id, driverId: ride.driverId, amount: driverEarnings, provider: driverPayoutProvider, reason: 'Motorista sem número Mobile Money cadastrado.' });
+  }
+  console.log(`🏁 [RIDE_LOG_COMPLETED] Corrida ID: ${rideId} (${ride.paymentMethod}) finalizada! Total: ${calculatedFare} XOF | Líquido: ${driverEarnings} XOF`);
 
   const completedPayload = {
     rideId: ride.id,
@@ -1070,11 +1196,14 @@ export async function finalizeRideAndCharge(
   });
 
   if (ride.passenger?.deviceToken) {
+    const finishBody = isDigitalRide
+      ? `Você chegou ao seu destino. Pagamento de ${calculatedFare} XOF via ${formatPaymentMethodLabel(ride.paymentMethod)} confirmado! Avalie seu motorista!`
+      : `Você chegou ao seu destino. Pague ${calculatedFare} XOF em dinheiro ao motorista. Avalie seu motorista!`;
     sendPushNotification(
       ride.passenger.deviceToken,
       '🏁 Viagem Concluída!',
-      `Você chegou ao seu destino. Pague ${calculatedFare} XOF em dinheiro ao motorista. Avalie seu motorista!`,
-      { type: 'RIDE_COMPLETED', rideId: ride.id, priceXof: calculatedFare, fareXOF: calculatedFare, status: 'COMPLETED' },
+      finishBody,
+      { type: 'RIDE_COMPLETED', rideId: ride.id, priceXof: calculatedFare, fareXOF: calculatedFare, paymentMethod: ride.paymentMethod, status: 'COMPLETED' },
       PUSH_CHANNELS.RIDE_UPDATE
     ).catch(err => console.error('❌ Erro no Push de finalização:', err));
   }
@@ -1085,7 +1214,7 @@ export async function finalizeRideAndCharge(
     driverEarnings, 
     platformFee, 
     distanceKm, 
-    paymentMethod: 'CASH', 
+    paymentMethod: ride.paymentMethod, 
     hasQueuedRide: !!queuedRideToPromote, 
     nextRideId: queuedRideToPromote?.id || null 
   };
@@ -1105,9 +1234,8 @@ export async function cancelRideLogic(
   const ride = await prisma.ride.findUnique({ where: { id: rideId }, include: { passenger: true, driver: true } });
   if (!ride) throw new Error('NOT_FOUND: Corrida não encontrada.');
 
-  if (ride.status === RideStatus.IN_PROGRESS && !isReportedProblem) {
-    console.warn(`⚠️ [CANCEL_WARN] Tentativa de cancelar corrida em andamento sem reportar problema (ID: ${rideId})`);
-    throw new Error('RIDE_IN_PROGRESS: A viagem já está em andamento. Cancele apenas via suporte ou emergência.');
+  if (ride.status === RideStatus.IN_PROGRESS) {
+    console.warn(`⚠️ [CANCEL_INFO] Corrida em andamento (ID: ${rideId}) cancelada por ${userType}.`);
   }
 
   const originalPayment = await prisma.transaction.findFirst({
@@ -1160,15 +1288,41 @@ export async function cancelRideLogic(
       });
     }
 
+    let refundTxId: string | null = null;
+    let refundAmount = 0;
+    let refundProvider: PaymentMethod = PaymentMethod.ORANGE_MONEY;
+
     if (originalPayment) {
-      await tx.transaction.update({
-        where: { id: originalPayment.id },
-        data: { status: TransactionStatus.CANCELLED }
-      });
+      const isPaidDigital = (originalPayment.paymentMethod === PaymentMethod.ORANGE_MONEY || originalPayment.paymentMethod === PaymentMethod.MTN_MOMO) &&
+        (originalPayment.status === TransactionStatus.HELD_IN_ESCROW || originalPayment.status === TransactionStatus.COMPLETED);
+
+      if (isPaidDigital) {
+        await tx.transaction.update({ where: { id: originalPayment.id }, data: { status: TransactionStatus.REVERSED } });
+        refundAmount = Math.round(Number(originalPayment.amount));
+        refundProvider = originalPayment.paymentMethod || PaymentMethod.ORANGE_MONEY;
+        const rTx = await tx.transaction.create({
+          data: {
+            rideId: ride.id, passengerId: ride.passengerId, type: TransactionType.REFUND, status: TransactionStatus.PENDING,
+            paymentMethod: refundProvider, amount: refundAmount, reference: `REFUND-${ride.id.slice(0, 8)}-${Date.now()}`,
+            description: `Estorno automático (${formatPaymentMethodLabel(refundProvider)})`
+          }
+        });
+        refundTxId = rTx.id;
+      } else {
+        await tx.transaction.update({ where: { id: originalPayment.id }, data: { status: TransactionStatus.CANCELLED } });
+      }
     }
 
-    return { appliedPenalty: false, penaltyAmount: 0 };
+    return { appliedPenalty: false, penaltyAmount: 0, refundTxId, refundAmount, refundProvider };
   });
+
+  if (dbResult.refundTxId && dbResult.refundAmount > 0) {
+    const pPhone = ride.passenger?.paymentAccountNumber || ride.passenger?.phone || '';
+    if (pPhone) {
+      enqueueRefundJob({ transactionId: dbResult.refundTxId, rideId: ride.id, passengerId: ride.passengerId, phone: pPhone, amountXOF: dbResult.refundAmount, provider: dbResult.refundProvider })
+        .catch((err) => console.error('❌ [REFUND_ENQUEUE_ERR]:', err));
+    }
+  }
 
   console.log(`⚠️ [RIDE_LOG_CANCEL] Corrida ID: ${rideId} cancelada por ${userType}. Motivo: ${cleanReason}`);
 

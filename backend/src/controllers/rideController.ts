@@ -49,7 +49,7 @@ const sanitizeRide = <T extends Record<string, any>>(ride: T): T => {
   return sanitized;
 };
 
-const ALLOWED_PAYMENT_METHODS = ['CASH', 'ORANGE_MONEY', 'MTN_MOMO', 'WALLET'];
+const ALLOWED_PAYMENT_METHODS = ['CASH', 'ORANGE_MONEY', 'MTN_MOMO', 'TELECEL', 'TELECEL_MOMO', 'WALLET'];
 const ALLOWED_VEHICLES = ['PARTICULAR', 'TAXI', 'MOTO', 'MOTO_CARRO', 'TOCA_TOCA'];
 
 // -----------------------------------------------------------------------------
@@ -143,7 +143,7 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
 
     const { 
       pickupLat, pickupLng, dropoffLat, dropoffLng, 
-      vehicleType, serviceType = 'RIDE', paymentMethod = 'CASH',
+      vehicleType, serviceType = 'RIDE', paymentMethod = 'CASH', payerPhone,
       originAddress, destinationAddress, rentalRegion = 'BISSAU',
       idempotencyKey, stops = []
     } = req.body;
@@ -227,6 +227,7 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
       requestedVehicleType: finalVehicleType as any, 
       serviceType, 
       paymentMethod,
+      payerPhone: payerPhone ? sanitizeText(payerPhone, 30) : undefined,
       originAddress: cleanOriginAddress, 
       destinationAddress: cleanDestinationAddress,
       stops: sanitizedStops,
@@ -302,7 +303,7 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
               sendPushNotification(
                 driver.deviceToken!,
                 "🔔 Nova Corrida Próxima!",
-                `Valor total: ${result.ride.priceXof} XOF (Pagamento em Dinheiro). Toque para aceitar.`,
+                `Valor total: ${result.ride.priceXof} XOF (${result.ride.paymentMethod === 'CASH' ? 'Dinheiro' : result.ride.paymentMethod === 'ORANGE_MONEY' ? 'Orange Money' : 'Telecel / MTN'}). Toque para aceitar.`,
                 { ...payload, type: 'NEW_RIDE_REQUEST', rideId: result.ride.id },
                 PUSH_CHANNELS.NEW_RIDE_ALARM
               )
@@ -314,7 +315,7 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
       }
     }
 
-    res.status(201).json({ success: true, ride: sanitizeRide(result.ride) });
+    res.status(201).json({ success: true, paymentRequired: Boolean(result.pendingVerification), payment: (result as any).payment || null, ride: sanitizeRide(result.ride) });
   } catch (error: any) {
     console.error(`❌ [SOLICITAR_CORRIDA] Erro: ${error?.message || error}`);
     res.status(400).json({ success: false, error: error?.message || 'Falha ao processar solicitação de corrida.' });
@@ -521,11 +522,15 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
       }
 
       if (currentRide.passenger?.deviceToken) {
+        const isDigital = result.paymentMethod === 'ORANGE_MONEY' || result.paymentMethod === 'MTN_MOMO';
+        const paymentText = isDigital
+          ? `Pagamento de ${result.fareXOF} XOF via ${result.paymentMethod === 'ORANGE_MONEY' ? 'Orange Money' : 'Telecel / MTN'} já liquidado!`
+          : `Pague ${result.fareXOF} XOF em dinheiro ao motorista.`;
         sendPushNotification(
           currentRide.passenger.deviceToken,
           "🏁 Corrida Concluída!",
-          `Sua viagem foi finalizada. Pague ${result.fareXOF} XOF em dinheiro ao motorista. Obrigado por viajar com o Nô Bai 245!`,
-          { type: 'RIDE_COMPLETED', rideId: currentRide.id, fareXOF: result.fareXOF },
+          `Sua viagem foi finalizada. ${paymentText} Obrigado por viajar com o Nô Bai 245!`,
+          { type: 'RIDE_COMPLETED', rideId: currentRide.id, fareXOF: result.fareXOF, paymentMethod: result.paymentMethod },
           PUSH_CHANNELS.RIDE_UPDATE
         ).catch(pErr => console.warn('⚠️ [PUSH] Erro de notificação do passageiro:', pErr?.message || pErr));
       }
@@ -584,20 +589,43 @@ export const cancelRide = async (req: Request, res: Response): Promise<void> => 
     const cleanReason = sanitizeText(reason || `Cancelado pelo ${userRole === 'DRIVER' ? 'motorista' : 'passageiro'}`, 200);
     
     const cancelResult = await cancelRideLogic(currentRide.id, userId, userRole as any, cleanReason);
-    
-    const refundResult = await refundPassengerOnCancellation(currentRide.id, cleanReason).catch((refundErr: any) => {
-      console.error(`❌ [ESTORNO AUTOMÁTICO] Erro ao processar cancelamento:`, refundErr?.message || refundErr);
-      return null;
-    });
+    const refundResult = { success: Boolean((cancelResult as any)?.refundTxId) };
 
     try {
       const io = getIo();
+      await safeRedis.del(`active_ride:${currentRide.id}`);
+      if (currentRide.driverId) {
+        await safeRedis.del(`driver_active_ride:${currentRide.driverId}`);
+      }
+      const cancelPayload = {
+        rideId: currentRide.id,
+        status: 'CANCELLED',
+        cancelledBy: userRole,
+        reason: cleanReason
+      };
       if (io) {
-        io.to(currentRide.id).emit('ride:cancelled', { rideId: currentRide.id, reason: cleanReason });
+        io.to(currentRide.id).emit('ride:cancelled', cancelPayload);
         if (currentRide.driverId) {
-          io.to(`driver_${currentRide.driverId}`).emit('ride:cancelled', { rideId: currentRide.id, reason: cleanReason });
+          io.to(`driver_${currentRide.driverId}`).emit('ride:cancelled', cancelPayload);
         }
-        io.to(`passenger_${currentRide.passengerId}`).emit('ride:cancelled', { rideId: currentRide.id, reason: cleanReason });
+        io.to(`passenger_${currentRide.passengerId}`).emit('ride:cancelled', cancelPayload);
+        if (currentRide.status === 'SEARCHING') {
+          io.to('available_drivers').emit('ride:cancelled_by_passenger', { rideId: currentRide.id });
+        }
+      }
+      const fullRide = await prisma.ride.findUnique({
+        where: { id: currentRide.id },
+        include: { passenger: true, driver: true }
+      });
+      const pushToken = userRole === 'DRIVER' ? fullRide?.passenger?.deviceToken : fullRide?.driver?.deviceToken;
+      if (pushToken) {
+        sendPushNotification(
+          pushToken,
+          '⚠️ Corrida Cancelada',
+          userRole === 'DRIVER' ? 'O motorista cancelou a viagem.' : 'O passageiro cancelou a viagem.',
+          { rideId: currentRide.id, type: 'RIDE_CANCELLED' },
+          PUSH_CHANNELS.RIDE_UPDATE
+        ).catch(() => {});
       }
     } catch (wsErr: any) {
       console.warn(`⚠️ [SOCKET] Falha ao notificar cancelamento: ${wsErr?.message || wsErr}`);
@@ -785,3 +813,62 @@ export const rateRide = async (req: Request, res: Response): Promise<void> => {
     res.status(400).json({ success: false, error: error?.message || 'Falha ao registrar avaliação.' });
   }
 }; 
+
+// -----------------------------------------------------------------------------
+// 🔄 OBTER CORRIDA ATIVA DO MOTORISTA (SINCRONIZAÇÃO APÓS MINIMIZAR/REABRIR APP)
+// -----------------------------------------------------------------------------
+export const getDriverActiveRide = async (req: any, res: any) => {
+  try {
+    const driverId = req.user?.id;
+    if (!driverId) {
+      return res.status(401).json({ error: 'Motorista não autenticado.' });
+    }
+
+    const activeRide = await prisma.ride.findFirst({
+      where: {
+        driverId,
+        status: { in: ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] },
+      },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        passenger: {
+          select: {
+            id: true,
+            fullName: true,
+            phone: true,
+            profilePicture: true,
+            ratingAverage: true,
+          },
+        },
+      },
+    });
+
+    return res.json({ ride: activeRide || null });
+  } catch (error: any) {
+    console.error('❌ [GET_DRIVER_ACTIVE_RIDE_ERROR]:', error?.message);
+    return res.status(500).json({ error: 'Erro ao buscar corrida ativa do motorista.' });
+  }
+};
+
+export const getRidePaymentStatus = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { rideId } = req.params;
+    const ride = await prisma.ride.findUnique({
+      where: { id: String(rideId) },
+      select: { id: true, status: true, paymentMethod: true, priceXof: true },
+    });
+    if (!ride) { res.status(404).json({ success: false, error: 'Corrida não encontrada.' }); return; }
+    const intent = await prisma.paymentIntent.findFirst({
+      where: { rideId: ride.id },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, status: true, provider: true, reference: true, failureReason: true },
+    });
+    res.json({
+      success: true, rideId: ride.id, rideStatus: ride.status, paymentMethod: ride.paymentMethod,
+      amountXOF: Number(ride.priceXof), paymentStatus: intent?.status || (ride.paymentMethod === 'CASH' ? 'NOT_APPLICABLE' : 'PENDING'),
+      provider: intent?.provider || ride.paymentMethod, reference: intent?.reference || null, failureReason: intent?.failureReason || null,
+    });
+  } catch {
+    res.status(500).json({ success: false, error: 'Erro ao verificar status do pagamento.' });
+  }
+};

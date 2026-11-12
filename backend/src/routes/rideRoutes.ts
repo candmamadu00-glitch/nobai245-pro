@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { authenticate, authorizeRole } from '../middlewares/authMiddleware';
 import { upload } from '../config/multer';
 import { 
-  requestRide, 
+  requestRide,
+  getRidePaymentStatus, 
   estimateRidePrice, 
   acceptRide,
   driverArrived,
@@ -20,6 +21,7 @@ const rideRoutes = Router();
 // ROTAS DE PASSAGEIRO
 // -----------------------------------------------------------------------------
 rideRoutes.post('/request', authenticate, authorizeRole(['PASSENGER']), requestRide);
+rideRoutes.get('/:rideId/payment-status', authenticate, getRidePaymentStatus);
 rideRoutes.post('/estimate', authenticate, estimateRidePrice);
 
 // -----------------------------------------------------------------------------

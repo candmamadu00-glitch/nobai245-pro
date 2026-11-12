@@ -86,7 +86,7 @@ export function PrivacyPolicyModal({ visible, onClose }: PrivacyPolicyModalProps
           {/* Seção 3 */}
           <Text style={styles.sectionTitle}>{t('driver_sec3_title', '3. Carteira Digital e Repasses Mobile Money')}</Text>
           <Text style={styles.paragraph}>
-            {t('driver_sec3_desc', 'Os dados da sua conta Orange Money e MTN MoMo são armazenados de forma estritamente criptografada para processar o crédito automático das suas corridas e a cobrança da taxa da plataforma. O Nobai245 jamais solicitará suas senhas de acesso bancário ou PINs de carteira.')}
+            {t('driver_sec3_desc', 'Os dados da sua conta Orange Money e Telecel (antigo MTN MoMo) são armazenados de forma estritamente criptografada para processar o crédito automático das suas corridas e a cobrança da taxa da plataforma. O Nobai245 jamais solicitará suas senhas de acesso bancário ou PINs de carteira.')}
           </Text>
 
           {/* Seção 4 */}

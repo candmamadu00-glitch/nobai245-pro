@@ -137,12 +137,34 @@ app.use('/uploads', (req, res, next) => {
 }, express.static(path.join(process.cwd(), 'uploads')));
 
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, 
-  max: 300, 
+  windowMs: 15 * 60 * 1000,
+  max: 600,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.path.startsWith('/webhooks') || req.path.startsWith('/payments'),
   message: { error: 'Muitas requisições vindas deste IP. Tente novamente em instantes.' }
 });
+
+// 🛡️ PROTEÇÃO CONTRA FORÇA BRUTA E ROBÔS DE SMS/OTP (15 tentativas / 15 min por IP)
+const authBruteForceLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Muitas tentativas de autenticação ou código. Aguarde 15 minutos e tente novamente.' }
+});
+
+app.use('/api/admin/login', authBruteForceLimiter);
+app.use('/api/admin/register', authBruteForceLimiter);
+app.use('/api/drivers/login', authBruteForceLimiter);
+app.use('/api/drivers/register', authBruteForceLimiter);
+app.use('/api/drivers/forgot-password', authBruteForceLimiter);
+app.use('/api/drivers/reset-password', authBruteForceLimiter);
+app.use('/api/passengers/login', authBruteForceLimiter);
+app.use('/api/passengers/register', authBruteForceLimiter);
+app.use('/api/passengers/request-otp', authBruteForceLimiter);
+app.use('/api/passengers/forgot-password', authBruteForceLimiter);
+app.use('/api/passengers/verify-otp', authBruteForceLimiter);
 
 app.use('/api/', apiLimiter);
 
@@ -586,6 +608,7 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
 // 5. SERVIDOR WEBSOCKET (SOCKET.IO)
 // -----------------------------------------------------------------------------
 const io = new (Server as any)(server, {
+  maxHttpBufferSize: 15 * 1024 * 1024,
   cors: { origin: allowedOrigins, methods: ['GET', 'POST'] },
   transports: ['polling', 'websocket'],
   pingTimeout: 30000,
@@ -617,7 +640,7 @@ io.use((socket: any, next: any) => {
   if (!token) return next(new Error('Acesso negado. Token não fornecido.'));
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { id: string; role?: string; userType?: string };
+    const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] }) as { id: string; role?: string; userType?: string };
     socket.data.user = decoded;
     socket.data.lastEvents = new Map<string, number[]>();
     next();
@@ -706,11 +729,49 @@ io.on('connection', (socket: any) => {
     }
   }
 
-  socket.on('join_room', (roomName: string) => {
-    if (roomName && typeof roomName === 'string') {
-      socket.join(roomName);
-      console.log(`📡 [SOCKET ROOM] Cliente ${socket.id} (User: ${userId}) entrou na sala: ${roomName}`);
+  // [AUTO_JOIN_ACTIVE_RIDE] Reingresso automático em corrida ativa ao reconectar
+  if (userId) {
+    (async () => {
+      try {
+        const activeRide = await prisma.ride.findFirst({
+          where: {
+            status: { in: ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] },
+            ...(userRole === 'DRIVER' ? { driverId: userId } : { passengerId: userId })
+          },
+          select: { id: true }
+        });
+        if (activeRide?.id) {
+          socket.join(activeRide.id);
+          socket.join(`ride_${activeRide.id}`);
+          console.log(`🔄 [AUTO_JOIN] User ${userId} (${userRole}) reingressou na sala da corrida ${activeRide.id}`);
+        }
+      } catch (e) {}
+    })();
+  }
+
+  socket.on('join_room', async (roomName: string) => {
+    if (!roomName || typeof roomName !== 'string' || !userId) return;
+    const cleanRoom = roomName.trim();
+    const isAdminUser = ['SUPER_ADMIN', 'OPERATOR', 'FINANCE'].includes(String(userRole));
+
+    // Bloqueia entrada em salas administrativas ou de outros usuários
+    if (cleanRoom === 'admin_dashboard' && !isAdminUser) return;
+    if (cleanRoom.startsWith('driver_') || cleanRoom.startsWith('driver:') || cleanRoom.startsWith('passenger_') || cleanRoom.startsWith('passenger:') || cleanRoom.startsWith('user_')) {
+      if (!cleanRoom.endsWith(userId) && !isAdminUser) return;
     }
+
+    // Se for UUID de corrida ou ride_<uuid>, valida se o usuário pertence à corrida
+    const extractedId = cleanRoom.startsWith('ride_') ? cleanRoom.slice(5) : cleanRoom;
+    if (isUuid(extractedId) && extractedId !== userId && !isAdminUser) {
+      const rideParticipant = await prisma.ride.findFirst({
+        where: { id: extractedId, OR: [{ passengerId: userId }, { driverId: userId }] },
+        select: { id: true }
+      }).catch(() => null);
+      if (!rideParticipant) return;
+    }
+
+    socket.join(cleanRoom);
+    console.log(`📡 [SOCKET ROOM] Cliente ${socket.id} (User: ${userId}) entrou na sala: ${cleanRoom}`);
   });
 
   // 📌 ATUALIZAÇÃO DO DEVICE TOKEN DO PASSAGEIRO
@@ -1043,7 +1104,7 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
         durationMin: Number(pendingRide.durationMin || 0),
         vehicleType: pendingRide.requestedVehicleType,
         serviceType: pendingRide.serviceType,
-        paymentMethod: 'CASH'
+        paymentMethod: pendingRide.paymentMethod || 'CASH'
       });
     }
   });
@@ -1095,7 +1156,7 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
     if (normalizedVehicleType === 'MOTO_CAR') normalizedVehicleType = 'MOTO_CARRO';
 
     try {
-      const { ride } = await createRideAndInitiateEscrow(passengerId, {
+      const creationResult = await createRideAndInitiateEscrow(passengerId, {
         originLat: pLat,
         originLng: pLng,
         destinationLat: dLat,
@@ -1107,22 +1168,29 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
         dropoffReferencePoint: rideData.dropoffReferencePoint || undefined,
         requestedVehicleType: normalizedVehicleType,
         serviceType: rideData.serviceType || 'RIDE',
-        paymentMethod: 'CASH',
+        paymentMethod: rideData.paymentMethod || 'CASH',
+        payerPhone: rideData.payerPhone || undefined,
         estimatedPrice: estimatedPrice ? Number(estimatedPrice) : undefined,
         distanceKm: incomingDistanceKm ? Number(incomingDistanceKm) : undefined,
         durationMin: incomingDurationMin ? Number(incomingDurationMin) : undefined,
         stops: rawStops
       });
 
+      const ride = creationResult.ride;
       const rideId = ride.id;
       socket.join(rideId);
 
-      console.log(`✅ [RIDE_REQUEST_SUCCESS] Corrida criada ID: ${rideId} | Passageiro: ${passengerId} | Valor: ${ride.priceXof} XOF`);
+      console.log(`✅ [RIDE_REQUEST_SUCCESS] Corrida criada ID: ${rideId} | Status: ${ride.status} | Método: ${ride.paymentMethod} | Valor: ${ride.priceXof} XOF`);
 
       await safeRedis.set(`active_ride:${rideId}`, JSON.stringify({
         rideId, passengerId, pickupLat: pLat, pickupLng: pLng,
-        fareXOF: Number(ride.priceXof), status: 'SEARCHING',
+        fareXOF: Number(ride.priceXof), status: ride.status,
       }));
+
+      if (ride.status === 'AWAITING_PAYMENT') {
+        socket.emit('ride:awaiting_payment', { rideId, ride, payment: (creationResult as any).payment || null });
+        return;
+      }
 
       const nearbyDriverIds = await safeRedis.geoSearch(
         'drivers:locations', 
@@ -1213,7 +1281,7 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
         durationMin: syncedDuration,
         vehicleType: normalizedVehicleType,
         serviceType: ride.serviceType,
-        paymentMethod: 'CASH'
+        paymentMethod: ride.paymentMethod || 'CASH'
       };
 
       for (const d of matchingDrivers) {
@@ -1367,7 +1435,7 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
         fareXOF: syncedPrice,
         distanceKm: syncedDistance,
         durationMin: syncedDuration,
-        paymentMethod: 'CASH',
+        paymentMethod: updatedRide.paymentMethod || ride.paymentMethod || 'CASH',
         isQueuedRide
       };
 
@@ -1438,6 +1506,7 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
       latitude: Number(latitude), 
       member: driverId 
     });
+    await safeRedis.set(`driver:last_seen:${driverId}`, String(Date.now()), { EX: 300 });
 
     if (rideId && isUuid(rideId)) {
       io.to(rideId).emit('driver:position', { 
@@ -1630,7 +1699,7 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
       await safeRedis.del(`active_ride:${rideId}`);
 
       if (result?.hasQueuedRide && result?.nextRideId) {
-        await safeRedis.set(`driver_active_ride:${driverId}`, result.nextRideId);
+        await safeRedis.set(`driver_active_ride:${driverId}`, result.nextRideId, { EX: 14400 });
         console.log(`🔄 [FINALIZE_DEBUG] Motorista ${driverId} promovido para corrida em fila ID: ${result.nextRideId}`);
       } else {
         await safeRedis.del(`driver_active_ride:${driverId}`);
@@ -1713,6 +1782,8 @@ handleSocketEvent(socket, 'chat:send_message', async (data) => {
     });
 
     if (!ride) return;
+    socket.join(rideId);
+    socket.join(`ride_${rideId}`);
 
     const messageText = text || (audioUrl ? '🎤 Mensagem de áudio' : '');
     const senderTypeEnum = senderRole === 'driver' ? 'DRIVER' : 'PASSENGER';
@@ -1926,3 +1997,57 @@ if (process.env.NODE_ENV !== 'test') {
     console.log('======================================================\n');
   });
 }
+
+// =============================================================================
+// 🛡️ WATCHDOG DE PRODUÇÃO (LIMPEZA DE FANTASMAS E RECONCILIAÇÃO A CADA 60s)
+// =============================================================================
+setInterval(async () => {
+  try {
+    const now = Date.now();
+    // 1. Marcar como offline motoristas sem sinal de GPS há mais de 3 minutos
+    const threeMinAgo = new Date(now - 180000);
+    const staleDrivers = await prisma.driver.findMany({
+      where: {
+        isOnline: true,
+        currentRideId: null,
+        OR: [
+          { lastLocationUpdate: { lt: threeMinAgo } },
+          { lastLocationUpdate: null }
+        ]
+      },
+      select: { id: true }
+    });
+    for (const d of staleDrivers) {
+      const lastSeen = await safeRedis.get(`driver:last_seen:${d.id}`).catch(() => null);
+      if (!lastSeen || now - Number(lastSeen) > 180000) {
+        await (safeRedis as any).zRem?.('drivers:locations', d.id).catch?.(() => {});
+        await prisma.driver.updateMany({
+          where: { id: d.id, isOnline: true, currentRideId: null },
+          data: { isOnline: false }
+        }).catch(() => {});
+      }
+    }
+
+    // 2. Expirar corridas em SEARCHING há mais de 5 minutos sem motorista e liberar passageiro
+    const fiveMinAgo = new Date(now - 5 * 60 * 1000);
+    const staleSearching = await prisma.ride.findMany({
+      where: { status: 'SEARCHING', createdAt: { lt: fiveMinAgo } },
+      select: { id: true, passengerId: true }
+    });
+    for (const r of staleSearching) {
+      await prisma.ride.updateMany({
+        where: { id: r.id, status: 'SEARCHING' },
+        data: { status: 'CANCELLED', cancellationReason: 'TIMEOUT_NO_DRIVERS' }
+      });
+      await prisma.passenger.updateMany({
+        where: { id: r.passengerId, currentRideId: r.id },
+        data: { currentRideId: null }
+      });
+      await safeRedis.del(`active_ride:${r.id}`).catch(() => {});
+      io.to(r.id).emit('ride:no_drivers_found', { rideId: r.id });
+      io.to(`passenger_${r.passengerId}`).emit('ride:no_drivers_found', { rideId: r.id });
+    }
+  } catch (err) {
+    console.error('⚠️ [WATCHDOG_ERR]:', err);
+  }
+}, 60000);

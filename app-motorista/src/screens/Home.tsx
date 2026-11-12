@@ -125,9 +125,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) =>
       };
 
       if (socket && socket.connected) {
-        socket.timeout(3000).emit('driver:location_update', payload, (err: any) => {
-          if (err) sendFallbackHttp(payload, token);
-        });
+        socket.emit('driver:location_update', payload);
       } else {
         sendFallbackHttp(payload, token);
       }
@@ -609,6 +607,32 @@ export function Home() {
     }
 
     restoreLocalState();
+  }, [syncActiveRideWithServer]);
+
+  // 🛡️ RECONEXÃO E SINCRONIZAÇÃO AO VOLTAR DO SEGUNDO PLANO (APPSTATE)
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', async (nextAppState) => {
+      if (nextAppState === 'active' && isMountedRef.current) {
+        try {
+          if (isOnlineRef.current || activeRideIdRef.current) {
+            const activeSock = await connectDriverSocket();
+            const currentRideId = activeRideIdRef.current;
+            if (activeSock && activeSock.connected && currentRideId) {
+              activeSock.emit('ride:join', { rideId: currentRideId });
+              activeSock.emit('join_room', currentRideId);
+              activeSock.emit('join_room', `ride_${currentRideId}`);
+            }
+          }
+          if (activeRideIdRef.current) {
+            await syncActiveRideWithServer();
+          }
+        } catch (err) {}
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
   }, [syncActiveRideWithServer]);
 
   // 🛡️ PERSISTÊNCIA AUTOMÁTICA INDEPENDENTE DO GPS
@@ -1264,6 +1288,7 @@ export function Home() {
     socket.on('ride:finished', handleRideFinished);
     socket.on('ride:queued_now_active', handleQueuedNowActive);
     socket.on('ride:cancelled', handleRideCancelled);
+    socket.on('ride:cancelled_by_passenger', handleRideCancelled);
 
     return () => {
       Vibration.cancel();
@@ -1276,6 +1301,7 @@ export function Home() {
       socket.off('ride:finished', handleRideFinished);
       socket.off('ride:queued_now_active', handleQueuedNowActive);
       socket.off('ride:cancelled', handleRideCancelled);
+      socket.off('ride:cancelled_by_passenger', handleRideCancelled);
     };
   }, [driver?.id, resetDriverState, snapToState, syncActiveRideWithServer, handleRideCancelled]);
 
@@ -2297,7 +2323,7 @@ export function Home() {
                 <Ionicons name="shield-checkmark-sharp" size={22} color="#FF6600" />
                 <View style={{ flex: 1, marginLeft: 10 }}>
                   <Text style={styles.paidOnlineTitle}>
-                    PAGO VIA {finishedRideSummary?.paymentMethod === 'ORANGE_MONEY' ? 'ORANGE MONEY' : 'MTN MOMO'}
+                    PAGO VIA {finishedRideSummary?.paymentMethod === 'ORANGE_MONEY' ? 'ORANGE MONEY' : 'TELECEL (MTN)'}
                   </Text>
                   <Text style={styles.paidOnlineSub}>
                     O valor foi debitado digitalmente. <Text style={{ fontWeight: 'bold', color: '#EF4444' }}>NÃO cobre dinheiro em espécie!</Text>

@@ -656,22 +656,22 @@ export class DriverAuthController {
       const prefix = cleanDigits.substring(0, 2);
       const provStr = String(mobileMoneyProvider || paymentProvider || provider || '').toUpperCase();
       
-      const isOrange = provStr.includes('ORANGE') || prefix === '95';
-      const isMtn = provStr.includes('MTN') || ['96', '97'].includes(prefix);
+      const isOrange = provStr.includes('ORANGE') || (!provStr && prefix === '95');
+      const isMtn = provStr.includes('MTN') || provStr.includes('TELECEL') || provStr.includes('MOMO') || (!provStr && ['96', '97'].includes(prefix));
 
       if (isOrange && prefix !== '95') {
         return res.status(400).json({ success: false, error: 'O número do Orange Money deve começar com 95.' });
       }
 
       if (isMtn && !['96', '97'].includes(prefix)) {
-        return res.status(400).json({ success: false, error: 'O número do MTN Mobile Money deve começar com 96 ou 97.' });
+        return res.status(400).json({ success: false, error: 'O número da Telecel (antigo MTN) deve começar com 96 ou 97.' });
       }
 
       const formattedNumber = `+245${cleanDigits}`;
 
       const updateData = isOrange 
-        ? { orangeNumber: formattedNumber, mtnNumber: null, paymentAccountNumber: formattedNumber }
-        : { mtnNumber: formattedNumber, orangeNumber: null, paymentAccountNumber: formattedNumber };
+        ? { orangeNumber: formattedNumber, paymentAccountNumber: formattedNumber }
+        : { mtnNumber: formattedNumber, paymentAccountNumber: formattedNumber };
 
       const updatedDriver = await prisma.driver.update({
         where: { id: driverId },

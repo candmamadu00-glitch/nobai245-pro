@@ -5,3 +5,7 @@ dist/
 build/
 .env
 *.log
+.env.*
+backups/
+backups_ajustes/
+*.sql

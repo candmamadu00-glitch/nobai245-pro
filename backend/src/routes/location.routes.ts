@@ -1,10 +1,11 @@
 import { Router, Request, Response } from 'express';
+import { authenticate, authorizeRole } from '../middlewares/authMiddleware';
 import { prisma } from '../config/prisma';
 
 const router = Router();
 
 // 🟢 1. CADASTRAR PONTO DE REFERÊNCIA
-router.post('/landmarks', async (req: Request, res: Response) => {
+router.post('/landmarks', authenticate, async (req: Request, res: Response) => {
   try {
     const { neighborhoodName, name, popularName, referenceNotes, latitude, longitude, createdById } = req.body;
 
@@ -126,7 +127,7 @@ router.get('/landmarks/search', async (req: Request, res: Response) => {
 });
 
 // 🟢 4. ATUALIZAR PONTO DE REFERÊNCIA
-router.put('/landmarks/:id', async (req: Request, res: Response) => {
+router.put('/landmarks/:id', authenticate, authorizeRole(['SUPER_ADMIN', 'OPERATOR', 'ADMIN']), async (req: Request, res: Response) => {
   try {
     const id = String(req.params.id);
     const { neighborhoodName, name, popularName, referenceNotes, latitude, longitude } = req.body;
@@ -170,7 +171,7 @@ router.put('/landmarks/:id', async (req: Request, res: Response) => {
 });
 
 // 🟢 5. REMOVER PONTO DE REFERÊNCIA
-router.delete('/landmarks/:id', async (req: Request, res: Response) => {
+router.delete('/landmarks/:id', authenticate, authorizeRole(['SUPER_ADMIN', 'OPERATOR', 'ADMIN']), async (req: Request, res: Response) => {
   try {
     const id = String(req.params.id);
     await prisma.customPlace.delete({ where: { id } });
