@@ -68,24 +68,6 @@ socket.on('connect', async () => {
   try {
     const driver = await storage.getDriver();
     const isManuallyOnline = await AsyncStorage.getItem('@nobai245:isOnline');
-
-    if (driver?.id) {
-      socket.emit('driver:request_state');
-      if (isManuallyOnline === 'true') {
-        socket.emit('driver:online', { driverId: driver.id });
-      }
-    }
-  } catch (err) {
-    console.warn('[SOCKET MOTORISTA] Erro ao sincronizar estado inicial:', err);
-  }
-});
-socket.on('connect', async () => {
-  console.log('🟢 [SOCKET MOTORISTA] Conectado ao servidor');
-  await processOfflineQueue();
-
-  try {
-    const driver = await storage.getDriver();
-    const isManuallyOnline = await AsyncStorage.getItem('@nobai245:isOnline');
     
     // ✅ CORREÇÃO: Buscar ID da corrida em andamento salva no dispositivo
     const activeRideId = await AsyncStorage.getItem('@nobai245:activeRideId'); 

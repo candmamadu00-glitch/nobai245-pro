@@ -325,7 +325,7 @@ router.post('/mtn', ipWhitelistMiddleware, async (req: Request, res: Response): 
       await emitSuccessSockets(resAny.rideId, resAny.passengerId);
     } else {
       if (io && resAny.rideId) io.to(resAny.rideId).emit('payment:failed', { message: 'Pagamento falhou ou foi cancelado.' });
-      if (io && resAny.passengerId) io.to(resAny.passengerId).to(`passenger_${resAny.passengerId}`).emit('wallet:payment_failed', { message: 'Transação recusada pelo MTN MoMo.' });
+      if (io && resAny.passengerId) io.to(resAny.passengerId).to(`passenger_${resAny.passengerId}`).emit('wallet:payment_failed', { message: 'Transação recusada pela Telecel / MTN MoMo.' });
     }
 
     return res.status(200).send('OK');

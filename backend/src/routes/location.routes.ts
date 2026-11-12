@@ -81,45 +81,76 @@ router.get('/landmarks', async (_req: Request, res: Response) => {
   }
 });
 
-// 🟢 3. BUSCA HÍBRIDA (PASSAGEIRO / APP) - CORRIGIDA COM FALLBACKS DE CAMPOS
+let landmarksCache: { expiresAt: number; items: any[] } = { expiresAt: 0, items: [] };
+
+const normalizeSearchText = (value: string): string =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+
+// 🟢 3. BUSCA HÍBRIDA INTELIGENTE (BISSAU LANDMARKS + TOLERÂNCIA A ACENTOS)
 router.get('/landmarks/search', async (req: Request, res: Response) => {
   try {
-    const query = String(req.query.q || '').trim().toLowerCase();
+    const rawQuery = String(req.query.q || '').trim();
+    const normQuery = normalizeSearchText(rawQuery);
 
-    if (!query || query.length < 2) {
+    if (!normQuery || normQuery.length < 2) {
       return res.json([]);
     }
 
-    const places = await prisma.customPlace.findMany({
-      where: {
-        isActive: true,
-        OR: [
-          { name: { contains: query, mode: 'insensitive' } },
-          { popularName: { contains: query, mode: 'insensitive' } },
-          { neighborhood: { name: { contains: query, mode: 'insensitive' } } },
-          { searchKeywords: { has: query } }
-        ]
-      },
-      include: { neighborhood: true },
-      take: 15
-    });
+    const now = Date.now();
+    if (now > landmarksCache.expiresAt || landmarksCache.items.length === 0) {
+      const allPlaces = await prisma.customPlace.findMany({
+        where: { isActive: true },
+        include: { neighborhood: true },
+        take: 500
+      });
+      landmarksCache = {
+        expiresAt: now + 60_000,
+        items: allPlaces.map((p: any) => {
+          const neighborhoodName = p.neighborhood?.name || '';
+          const keywords = Array.isArray(p.searchKeywords) ? p.searchKeywords.join(' ') : '';
+          return {
+            formatted: {
+              id: p.id,
+              name: p.name,
+              popularName: p.popularName,
+              neighborhood: neighborhoodName,
+              referenceNotes: p.referenceNotes,
+              title: p.name,
+              subtitle: `${neighborhoodName}${p.referenceNotes ? ` • ${p.referenceNotes}` : ''}`,
+              displayText: p.popularName
+                ? `${p.name} (${p.popularName}) - ${neighborhoodName}`
+                : `${p.name}${neighborhoodName ? ` - ${neighborhoodName}` : ''}`,
+              latitude: p.latitude,
+              longitude: p.longitude
+            },
+            normName: normalizeSearchText(p.name),
+            normPopular: normalizeSearchText(p.popularName || ''),
+            normNeighborhood: normalizeSearchText(neighborhoodName),
+            normFull: normalizeSearchText(`${p.name} ${p.popularName || ''} ${neighborhoodName} ${p.referenceNotes || ''} ${keywords}`)
+          };
+        })
+      };
+    }
 
-    const formattedResults = places.map((p: any) => ({
-      id: p.id,
-      name: p.name,
-      popularName: p.popularName,
-      neighborhood: p.neighborhood?.name || '',
-      referenceNotes: p.referenceNotes,
-      title: p.name,
-      subtitle: `${p.neighborhood?.name || ''}${p.referenceNotes ? ` • ${p.referenceNotes}` : ''}`,
-      displayText: p.popularName 
-        ? `${p.name} (${p.popularName}) - ${p.neighborhood?.name || ''}` 
-        : `${p.name}${p.neighborhood?.name ? ` - ${p.neighborhood.name}` : ''}`,
-      latitude: p.latitude,
-      longitude: p.longitude
-    }));
+    const tokens = normQuery.split(/\s+/).filter(Boolean);
+    const matched = landmarksCache.items
+      .filter((item) => tokens.every((tk) => item.normFull.includes(tk)))
+      .sort((a, b) => {
+        const aStarts = a.normName.startsWith(normQuery) || a.normPopular.startsWith(normQuery) ? 0 : 1;
+        const bStarts = b.normName.startsWith(normQuery) || b.normPopular.startsWith(normQuery) ? 0 : 1;
+        if (aStarts !== bStarts) return aStarts - bStarts;
+        const aExact = a.normName.includes(normQuery) || a.normNeighborhood.includes(normQuery) ? 0 : 1;
+        const bExact = b.normName.includes(normQuery) || b.normNeighborhood.includes(normQuery) ? 0 : 1;
+        return aExact - bExact;
+      })
+      .slice(0, 15)
+      .map((item) => item.formatted);
 
-    return res.json(formattedResults);
+    return res.json(matched);
   } catch (error) {
     console.error('❌ Erro na busca de locais:', error);
     return res.status(500).json({ error: 'Erro na consulta de locais.' });

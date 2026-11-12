@@ -89,7 +89,7 @@ export const RideProvider = ({ children, passengerId }: { children: ReactNode; p
     if (!passengerId) return;
 
     if (socket.connected) {
-      socket.emit('join_room', `passenger:${passengerId}`);
+      socket.emit('join_room', `passenger_${passengerId}`);
     }
 
     // 1. MOTORISTA ACEITOU A CORRIDA

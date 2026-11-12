@@ -53,19 +53,6 @@ socket.on('connect', async () => {
   await processPassengerQueue();
   try {
     const storedUser = await AsyncStorage.getItem('@bai245:user');
-    if (storedUser) {
-      const user = JSON.parse(storedUser);
-      if (user?.id) socket.emit('passenger:request_state');
-    }
-  } catch (err) {
-    Sentry.captureException(err);
-  }
-});
-socket.on('connect', async () => {
-  console.log('🟢 [SOCKET PASSAGEIRO] Conectado com sucesso:', socket.id);
-  await processPassengerQueue();
-  try {
-    const storedUser = await AsyncStorage.getItem('@bai245:user');
     
     // ✅ CORREÇÃO: Buscar ID da corrida em andamento
     const activeRideId = await AsyncStorage.getItem('@bai245:activeRideId');

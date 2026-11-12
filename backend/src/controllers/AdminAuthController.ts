@@ -401,11 +401,11 @@ export class AdminAuthController {
       if (providerUpper.includes('ORANGE')) {
         if (prefix !== '95') return res.status(400).json({ error: 'Números da Orange Money devem começar com 95.' });
         updateData.orangeNumber = formattedPhone;
-      } else if (providerUpper.includes('MTN')) {
-        if (!['96', '97'].includes(prefix)) return res.status(400).json({ error: 'Números da MTN Mobile Money devem começar com 96 ou 97.' });
+      } else if (providerUpper.includes('MTN') || providerUpper.includes('TELECEL') || providerUpper.includes('MOMO')) {
+        if (!['96', '97'].includes(prefix)) return res.status(400).json({ error: 'Números da Telecel (antigo MTN) devem começar com 96 ou 97.' });
         updateData.mtnNumber = formattedPhone;
       } else {
-        return res.status(400).json({ error: 'Operadora inválida. Utilize Orange ou MTN.' });
+        return res.status(400).json({ error: 'Operadora inválida. Utilize Orange ou Telecel/MTN.' });
       }
 
       const updatedDriver = await prisma.driver.update({

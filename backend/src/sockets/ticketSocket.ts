@@ -37,7 +37,7 @@ export function setupTicketSocketHandlers(io: Server, socket: Socket) {
 
   // Atualização de localização do motorista
   socket.on('driver:update_location', async (data: { driverId: string; rideId?: string; latitude: number; longitude: number; heading?: number; speed?: number }) => {
-    io.emit('admin:map_update', data);
+    io.to('admin_dashboard').emit('admin:map_update', data);
 
     if (data.rideId) {
       try {
@@ -60,7 +60,7 @@ export function setupTicketSocketHandlers(io: Server, socket: Socket) {
   socket.on('driver:alert_inaccessible_location', (data: { rideId: string, passengerId: string }) => {
     if (!data.passengerId) return;
 
-    io.to(`passenger_${data.passengerId}`).emit('ride:inaccessible_location_alert', {
+    io.to(`passenger_${data.passengerId}`).emit('ride:inaccessible_location', {
       title: 'Atenção ao Local de Embarque',
       message: 'Seu motorista está próximo, mas relatou dificuldade de acesso à sua rua. Por favor, aproxime-se da via principal mais próxima para facilitar o encontro.',
       rideId: data.rideId,

@@ -1138,16 +1138,30 @@ const handleOpenChat = () => {
       }
 
       if (dbResults.length > 0) {
-        setSearchResults(dbResults);
-        setIsSearchingMapbox(false);
-        return;
+        AsyncStorage.getItem('@nobai245:cached_landmarks')
+          .then((raw) => {
+            const existing: MapboxGeocodingFeature[] = raw ? JSON.parse(raw) : [];
+            const map = new Map<string, MapboxGeocodingFeature>();
+            [...existing, ...dbResults].forEach((item) => map.set(item.id, item));
+            return AsyncStorage.setItem('@nobai245:cached_landmarks', JSON.stringify(Array.from(map.values()).slice(0, 200)));
+          })
+          .catch(() => {});
+      } else if (!response) {
+        const cachedRaw = await AsyncStorage.getItem('@nobai245:cached_landmarks').catch(() => null);
+        if (cachedRaw) {
+          const cachedList: MapboxGeocodingFeature[] = JSON.parse(cachedRaw);
+          const normText = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+          dbResults = cachedList.filter((item) =>
+            item.description.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().includes(normText)
+          );
+        }
       }
 
       const mapboxRes = await fetch(
         `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(text)}.json?country=gw&proximity=${BISSAU_CENTER.longitude},${BISSAU_CENTER.latitude}&language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`
-      );
+      ).catch(() => null);
 
-      if (mapboxRes.ok) {
+      if (mapboxRes && mapboxRes.ok) {
         const mapboxData = await mapboxRes.json();
         const formattedMapbox: MapboxGeocodingFeature[] = (mapboxData.features || []).map((item: any) => ({
           id: item.id,
@@ -1157,9 +1171,9 @@ const handleOpenChat = () => {
           isLocalBairro: false,
         }));
 
-        setSearchResults(formattedMapbox);
+        setSearchResults([...dbResults, ...formattedMapbox]);
       } else {
-        setSearchResults([]);
+        setSearchResults(dbResults);
       }
     } catch (error) {
       console.error('❌ [SEARCH_DEBUG] Erro ao pesquisar local:', error);
