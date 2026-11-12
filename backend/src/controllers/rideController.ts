@@ -10,7 +10,7 @@ import {
   finalizeRideAndCharge,
   cancelRideLogic,
   calculateDistance
-} from '../services/rideRulesService';
+} from '../services/rideService';
 import { sendPushNotification, PUSH_CHANNELS } from '../services/pushNotifications';
 import { getRouteDistanceAndDuration, submitRatingLogic } from '../services/rideService';
 import { refundPassengerOnCancellation } from '../services/mobileMoneyService';
@@ -116,7 +116,7 @@ export const estimateRidePrice = async (req: Request, res: Response): Promise<vo
         const totalPrice = await calculateRidePrice(distanceKm, durationMin, tariff.vehicleType as any, serviceType as any);
         return { 
           vehicleType: tariff.vehicleType, 
-          priceXOF: Math.max(0, Math.round(totalPrice))
+          priceXOF: Math.max(0, Math.round(Number((totalPrice as any)?.totalPrice ?? totalPrice)))
         };
       })
     );

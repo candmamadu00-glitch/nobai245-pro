@@ -1343,8 +1343,8 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
       const acceptPayload = {
         rideId: ride.id,
         driverId: driverId,
-        driverLat: Number(driverLat || driverUser?.lastLat || 0),
-        driverLng: Number(driverLng || driverUser?.lastLng || 0),
+        driverLat: Number(driverLat || (driverUser as any)?.lastLat || 0),
+        driverLng: Number(driverLng || (driverUser as any)?.lastLng || 0),
         driverName: driverUser?.fullName || 'Motorista',
         driverPhoto: driverUser?.profilePicture || null,
         carModel: driverUser?.vehicleBrand || 'Veículo Padrão',
@@ -1581,9 +1581,7 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
 
       io.to('admin_dashboard').emit('admin:ride_update', { rideId, status: 'IN_PROGRESS', driverId });
 
-      if (updatedRide?.passenger?.deviceToken) {
-        sendPushNotification(
-          updatedRide.passenger.deviceToken,
+      const startedPassenger = updatedRide?.passengerId ? await prisma.passenger.findUnique({ where: { id: updatedRide.passengerId }, select: { deviceToken: true } }) : null; if (startedPassenger?.deviceToken) { sendPushNotification(startedPassenger.deviceToken,
           '🚕 Viagem Iniciada!',
           'Tenha uma excelente viagem com o Nô Bai 245!',
           { type: 'RIDE_STARTED', rideId },
