@@ -615,12 +615,12 @@ export function Home() {
       if (nextAppState === 'active' && isMountedRef.current) {
         try {
           if (isOnlineRef.current || activeRideIdRef.current) {
-            const activeSock = await connectDriverSocket();
+            await connectDriverSocket();
             const currentRideId = activeRideIdRef.current;
-            if (activeSock && activeSock.connected && currentRideId) {
-              activeSock.emit('ride:join', { rideId: currentRideId });
-              activeSock.emit('join_room', currentRideId);
-              activeSock.emit('join_room', `ride_${currentRideId}`);
+            if (socket && socket.connected && currentRideId) {
+              socket.emit('ride:join', { rideId: currentRideId });
+              socket.emit('join_room', currentRideId);
+              socket.emit('join_room', `ride_${currentRideId}`);
             }
           }
           if (activeRideIdRef.current) {
