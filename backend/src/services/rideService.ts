@@ -1264,7 +1264,7 @@ export async function cancelRideLogic(
         status: RideStatus.CANCELLED,
         triggeredBy: userType as UserType,
         userId,
-        reason: cleanReason
+        metadata: { reason: cleanReason }
       }
     });
 
