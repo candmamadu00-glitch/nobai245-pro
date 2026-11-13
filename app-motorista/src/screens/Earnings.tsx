@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   View,
   Text,
@@ -56,6 +57,7 @@ function formatDate(dateString: string): string {
 }
 
 export function Earnings({ navigation }: any) {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [finance, setFinance] = useState<FinanceData | null>(null);
@@ -134,7 +136,7 @@ export function Earnings({ navigation }: any) {
         <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={24} color="#1F2937" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Ganhos e Carteira</Text>
+        <Text style={styles.headerTitle}>{t('earnings_title', 'Ganhos e Carteira')}</Text>
         <View style={{ width: 24 }} />
       </View>
 

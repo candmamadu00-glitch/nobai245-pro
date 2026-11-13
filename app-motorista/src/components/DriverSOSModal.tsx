@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   View,
   Text,
@@ -23,6 +24,7 @@ interface DriverSOSModalProps {
 }
 
 export function DriverSOSModal({ visible, onClose, currentRideId }: DriverSOSModalProps) {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const { isRecording, startRecording, stopRecording } = useAudioRecorder();
 

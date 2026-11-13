@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NavigationApp, openExternalNavigation } from '../utils/navigationHelper';
@@ -17,6 +18,7 @@ interface TurnByTurnSheetProps {
 }
 
 export function TurnByTurnSheet({ visible, onClose, destination, isIntermediateStop, onConfirmStop }: TurnByTurnSheetProps) {
+  const { t } = useTranslation();
   if (!destination) return null;
 
   const handleNavigate = async (app: NavigationApp) => {

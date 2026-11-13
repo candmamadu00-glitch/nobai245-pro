@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { 
   View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, 
   ActivityIndicator, KeyboardAvoidingView, ScrollView, Platform, StatusBar, Image 
@@ -11,6 +12,13 @@ import { theme } from '../theme/theme';
 import { PrivacyPolicyModal } from '../components/PrivacyPolicyModal';
 
 export function Login() {
+  const { t, i18n } = useTranslation();
+  const cycleLoginLanguage = () => {
+    const order = ['pt', 'cri', 'fr', 'en', 'es', 'ru'];
+    const current = i18n.language === 'gnb' ? 'cri' : (i18n.language || 'pt');
+    const next = order[(order.indexOf(current) + 1) % order.length];
+    changeLanguage(next);
+  };
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -56,6 +64,28 @@ export function Login() {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={theme.colors.primaryDark} translucent />
+      <TouchableOpacity
+        onPress={cycleLoginLanguage}
+        activeOpacity={0.85}
+        style={{
+          position: 'absolute',
+          top: 46,
+          right: 18,
+          zIndex: 50,
+          backgroundColor: 'rgba(15, 23, 42, 0.85)',
+          borderWidth: 1,
+          borderColor: 'rgba(255, 204, 0, 0.55)',
+          paddingHorizontal: 12,
+          paddingVertical: 7,
+          borderRadius: 20,
+          flexDirection: 'row',
+          alignItems: 'center',
+        }}
+      >
+        <Text style={{ color: '#FFFFFF', fontWeight: '800', fontSize: 12 }}>
+          🌐 {(i18n.language === 'gnb' ? 'CRI' : (i18n.language || 'pt')).toUpperCase()}
+        </Text>
+      </TouchableOpacity>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           
@@ -67,14 +97,14 @@ export function Login() {
               />
             </View>
             <Text style={styles.appTitle}>NÔ BAI <Text style={styles.highlightText}>245</Text></Text>
-            <Text style={styles.appSubtitle}>Portal Oficial do Motorista</Text>
+            <Text style={styles.appSubtitle}>{t('driver_partner', 'Portal Oficial do Motorista')}</Text>
           </View>
 
           <View style={styles.formCard}>
             <Text style={styles.cardHeaderTitle}>Acessar Conta</Text>
             <Text style={styles.cardHeaderSub}>Informe seus dados para entrar no sistema</Text>
 
-            <Text style={styles.label}>Número de Telefone</Text>
+            <Text style={styles.label}>{t('phone_number_label', 'Número de Telefone')}</Text>
             <View style={styles.inputContainer}>
               <View style={styles.prefixBadge}>
                 <Text style={styles.prefixText}>🇬🇼 +245</Text>
@@ -90,7 +120,7 @@ export function Login() {
               />
             </View>
 
-            <Text style={styles.label}>Senha Segura</Text>
+            <Text style={styles.label}>{t('password_label', 'Senha Segura')}</Text>
             <View style={styles.inputContainer}>
               <Feather name="lock" size={18} color={theme.colors.textSecondary} style={styles.inputIcon} />
               <TextInput
@@ -110,7 +140,7 @@ export function Login() {
               style={styles.forgotPassword}
               onPress={() => navigation.navigate('ForgotPassword')}
             >
-              <Text style={styles.forgotPasswordText}>Esqueceu a senha?</Text>
+              <Text style={styles.forgotPasswordText}>{t('forgot_password', 'Esqueceu a senha?')}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity 
@@ -138,7 +168,7 @@ export function Login() {
             >
               <Text style={styles.privacyPolicyText}>
                 Ao entrar, você concorda com nossas{' '}
-                <Text style={styles.privacyPolicyTextBold}>Políticas de Privacidade</Text>
+                <Text style={styles.privacyPolicyTextBold}>{t('privacy_policy', 'Políticas de Privacidade')}</Text>
               </Text>
             </TouchableOpacity>
           </View>

@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { StyleSheet, Text, View, TouchableOpacity, Image, ActivityIndicator, Alert } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
@@ -10,6 +11,7 @@ interface KycCameraProps {
   onCancel: () => void;
 }
 export function KycCameraScreen({ documentType, onSuccess, onCancel }: KycCameraProps) {
+  const { t } = useTranslation();
   const [permission, requestPermission] = useCameraPermissions();
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -22,9 +24,9 @@ export function KycCameraScreen({ documentType, onSuccess, onCancel }: KycCamera
   if (!permission.granted) {
     return (
       <View style={styles.permissionContainer}>
-        <Text style={styles.permissionText}>Precisamos de acesso à câmera para validar seus documentos no cadastro.</Text>
+        <Text style={styles.permissionText}>{t('camera_permission_kyc', 'Precisamos de acesso à câmera para validar seus documentos no cadastro.')}</Text>
         <TouchableOpacity style={styles.actionButton} onPress={requestPermission}>
-          <Text style={styles.actionButtonText}>Conceder Permissão</Text>
+          <Text style={styles.actionButtonText}>{t('grant_permission', 'Conceder Permissão')}</Text>
         </TouchableOpacity>
       </View>
     );
@@ -89,15 +91,15 @@ export function KycCameraScreen({ documentType, onSuccess, onCancel }: KycCamera
           {uploading ? (
             <View style={styles.loadingOverlay}>
               <ActivityIndicator size="large" color="#059669" />
-              <Text style={styles.uploadingText}>Verificando e enviando documento...</Text>
+              <Text style={styles.uploadingText}>{t('verifying_document', 'Verificando e enviando documento...')}</Text>
             </View>
           ) : (
             <View style={styles.previewActions}>
               <TouchableOpacity style={styles.secondaryButton} onPress={handleRetake}>
-                <Text style={styles.secondaryButtonText}>Tirar Novamente</Text>
+                <Text style={styles.secondaryButtonText}>{t('retake_photo', 'Tirar Novamente')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.actionButton} onPress={handleConfirmPhoto}>
-                <Text style={styles.actionButtonText}>Usar Esta Foto</Text>
+                <Text style={styles.actionButtonText}>{t('use_this_photo', 'Usar Esta Foto')}</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -122,7 +124,7 @@ export function KycCameraScreen({ documentType, onSuccess, onCancel }: KycCamera
               </Text>
               <View style={styles.controlsRow}>
                 <TouchableOpacity style={styles.cancelTextButton} onPress={onCancel}>
-                  <Text style={styles.cancelText}>Cancelar</Text>
+                  <Text style={styles.cancelText}>{t('cancel', 'Cancelar')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.shutterButton} onPress={handleTakePicture}>
                   <View style={styles.shutterInner} />

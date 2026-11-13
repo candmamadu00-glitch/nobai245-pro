@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { 
   View, Text, StyleSheet, Modal, TouchableOpacity, Image 
 } from 'react-native';
@@ -46,6 +47,7 @@ export function IncomingRideModal({
   onAccept,
   onReject
 }: IncomingRideModalProps) {
+  const { t } = useTranslation();
   const ringtonePlayerRef = useRef<any>(null);
 
   // Reproduz o áudio da chamada enquanto a corrida estiver em oferta no modal
@@ -174,7 +176,7 @@ export function IncomingRideModal({
               activeOpacity={0.85}
             >
               <Ionicons name="checkmark-sharp" size={24} color="#FFF" />
-              <Text style={styles.acceptText}>Aceitar Corrida</Text>
+              <Text style={styles.acceptText}>{t('accept_ride', 'Aceitar Corrida')}</Text>
             </TouchableOpacity>
           </View>
 

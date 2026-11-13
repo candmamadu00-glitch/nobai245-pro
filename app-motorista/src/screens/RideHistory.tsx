@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { 
   View, Text, StyleSheet, FlatList, TouchableOpacity, 
   ActivityIndicator, StatusBar, RefreshControl, Image 
@@ -30,6 +31,7 @@ function formatMoney(amount: number): string {
 }
 
 export function RideHistory() {
+  const { t } = useTranslation();
   const navigation = useNavigation();
   const [rides, setRides] = useState<Ride[]>([]);
   const [loading, setLoading] = useState(true);

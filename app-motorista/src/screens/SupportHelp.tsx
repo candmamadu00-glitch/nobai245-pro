@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   View,
   Text,
@@ -56,6 +57,7 @@ const CATEGORIES: { label: string; value: TicketCategory }[] = [
 ];
 
 export function SupportHelp({ navigation, route }: any) {
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const initialRideId = route?.params?.rideId || null;
 

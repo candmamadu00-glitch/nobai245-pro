@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   View,
   Text,
@@ -19,6 +20,7 @@ import { Feather, Ionicons } from '@expo/vector-icons';
 import { theme } from '../theme/theme';
 
 export function ForgotPassword() {
+  const { t } = useTranslation();
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
 

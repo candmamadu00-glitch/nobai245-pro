@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { 
   View, Text, StyleSheet, TouchableOpacity, 
   ScrollView, Platform, StatusBar, Alert, Image 
@@ -80,6 +81,7 @@ function getVehicle3DIconAsset(vehicleType?: string, vehicleColor?: string) {
 }
 
 export function VehicleSettings() {
+  const { t } = useTranslation();
   const navigation = useNavigation<any>();
   const { driver } = useAuth();
   const insets = useSafeAreaInsets();

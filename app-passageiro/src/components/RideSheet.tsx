@@ -1,4 +1,5 @@
 import React, { useRef, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { StyleSheet, View } from 'react-native';
 import BottomSheet from '@gorhom/bottom-sheet';
 
@@ -7,6 +8,7 @@ interface RideSheetProps {
 }
 
 export function RideSheet({ children }: RideSheetProps) {
+  const { t } = useTranslation();
   const bottomSheetRef = useRef<BottomSheet>(null);
   const snapPoints = useMemo(() => ['15%', '50%', '90%'], []);
 

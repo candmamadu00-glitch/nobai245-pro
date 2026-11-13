@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { 
   View, Text, TouchableOpacity, StyleSheet, Alert, Modal, 
   KeyboardAvoidingView, Platform, StatusBar, Image, Vibration, Switch,
@@ -257,6 +258,7 @@ function lerp(start: number, end: number, amt: number): number {
 }
 
 export function Home() {
+  const { t, i18n } = useTranslation();
   useKeepAwake();
 
   const { driver } = useAuth();
@@ -1919,7 +1921,7 @@ export function Home() {
           >
             <View style={[styles.statusDot, isOnline ? styles.dotGreen : styles.dotRed]} />
             <Text style={[styles.statusPillText, { color: isOnline ? '#0F172A' : '#FFFFFF' }]}>
-              {isOnline ? 'Online' : 'Offline'}
+              {isOnline ? t('online', 'Online') : t('offline', 'Offline')}
             </Text>
           </TouchableOpacity>
 
@@ -2029,13 +2031,13 @@ export function Home() {
           <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ flexGrow: 1, paddingBottom: 10 }}>
             {rideState === 'idle' && (
               <View style={styles.idleContainer}>
-                <Text style={styles.idleTitle}>{isOnline ? 'Buscando solicitações...' : 'Pronto para dirigir?'}</Text>
+                <Text style={styles.idleTitle}>{isOnline ? t('searching_requests', 'Buscando solicitações...') : t('ready_to_drive', 'Pronto para dirigir?')}</Text>
                 <Text style={styles.idleSub}>
-                  {isOnline ? 'Mantenha o aplicativo aberto para receber chamados na sua região.' : 'Fique online para começar a receber corridas.'}
+                  {isOnline ? t('searching_requests_sub', 'Mantenha o aplicativo aberto para receber chamados na sua região.') : t('ready_to_drive_sub', 'Fique online para começar a receber corridas.')}
                 </Text>
                 {!isOnline && (
                   <TouchableOpacity style={styles.goOnlineBtn} onPress={startTracking} activeOpacity={0.85}>
-                    <Text style={styles.goOnlineText}>Ficar Online</Text>
+                    <Text style={styles.goOnlineText}>{t('go_online', 'Ficar Online')}</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -2316,7 +2318,7 @@ export function Home() {
             </View>
 
             <Text style={styles.receiptTitle}>Serviço Concluído!</Text>
-            <Text style={styles.receiptSubtitle}>Corrida finalizada com sucesso. Confira os detalhes abaixo:</Text>
+            <Text style={styles.receiptSubtitle}>{t('ride_completed_sub', 'Corrida finalizada com sucesso. Confira os detalhes abaixo:')}</Text>
 
             {finishedRideSummary?.paymentMethod === 'ORANGE_MONEY' || finishedRideSummary?.paymentMethod === 'MTN_MOMO' ? (
               <View style={styles.paidOnlineBox}>
@@ -2463,7 +2465,7 @@ export function Home() {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Ionicons name={activeOffer?.serviceType === 'DELIVERY' ? 'cube' : 'car-sport'} size={18} color="#EAB308" />
                 <Text style={styles.newRequestTitle}>
-                  {isRideActive ? 'Nova Oferta em Fila!' : 'Nova Corrida!'}
+                  {isRideActive ? t('queued_ride_request', 'Nova Oferta em Fila!') : t('new_ride_request', 'Nova Corrida!')}
                 </Text>
               </View>
               <View style={styles.newRequestPriceBadge}>
@@ -2594,7 +2596,7 @@ export function Home() {
                 disabled={isLoading}
                 activeOpacity={0.8}
               >
-                <Text style={styles.rejectText}>Recusar</Text>
+                <Text style={styles.rejectText}>{t('decline_ride', 'Recusar')}</Text>
               </TouchableOpacity>
               
               <TouchableOpacity 

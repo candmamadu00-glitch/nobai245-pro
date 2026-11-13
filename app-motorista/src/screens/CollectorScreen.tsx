@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   Alert, ActivityIndicator, ScrollView, KeyboardAvoidingView, Platform
@@ -8,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api'; // Sua instância configurada do Axios
 
 export default function CollectorScreen() {
+  const { t } = useTranslation();
   const [neighborhoodName, setNeighborhoodName] = useState('');
   const [placeName, setPlaceName] = useState('');
   const [popularName, setPopularName] = useState('');
@@ -76,7 +78,7 @@ export default function CollectorScreen() {
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.container}>
       <ScrollView contentContainerStyle={styles.scroll}>
-        <Text style={styles.headerTitle}>Cadastro de Pontos em Campo 🇬🇼</Text>
+        <Text style={styles.headerTitle}>{t('field_mapping_title', 'Cadastro de Pontos em Campo 🇬🇼')}</Text>
         <Text style={styles.headerSubtitle}>Mapeamento oficial Nobai245</Text>
 
         {/* CARD DO GPS */}
@@ -98,12 +100,12 @@ export default function CollectorScreen() {
           </View>
           <TouchableOpacity style={styles.recapBtn} onPress={captureCurrentLocation}>
             <Ionicons name="refresh" size={16} color="#FFFFFF" />
-            <Text style={styles.recapBtnText}>Recapturar Posição</Text>
+            <Text style={styles.recapBtnText}>{t('recapture_position', 'Recapturar Posição')}</Text>
           </TouchableOpacity>
         </View>
 
         {/* FORMULÁRIO */}
-        <Text style={styles.fieldLabel}>Bairro *</Text>
+        <Text style={styles.fieldLabel}>{t('neighborhood_label', 'Bairro *')}</Text>
         <TextInput
           style={styles.input}
           placeholder="Ex: Cuntum Madina, Belém, Bandim"
@@ -112,7 +114,7 @@ export default function CollectorScreen() {
           onChangeText={setNeighborhoodName}
         />
 
-        <Text style={styles.fieldLabel}>Nome da Rua ou Ponto *</Text>
+        <Text style={styles.fieldLabel}>{t('street_name_label', 'Nome da Rua ou Ponto *')}</Text>
         <TextInput
           style={styles.input}
           placeholder="Ex: Paragem di Cuntum, Bar Cabacera"
@@ -121,7 +123,7 @@ export default function CollectorScreen() {
           onChangeText={setPlaceName}
         />
 
-        <Text style={styles.fieldLabel}>Nome Popular / Crioulo (Opcional)</Text>
+        <Text style={styles.fieldLabel}>{t('popular_name_label', 'Nome Popular / Crioulo (Opcional)')}</Text>
         <TextInput
           style={styles.input}
           placeholder="Ex: Cabacera"
@@ -130,7 +132,7 @@ export default function CollectorScreen() {
           onChangeText={setPopularName}
         />
 
-        <Text style={styles.fieldLabel}>Ponto de Referência Próximo (Opcional)</Text>
+        <Text style={styles.fieldLabel}>{t('nearby_reference_label', 'Ponto de Referência Próximo (Opcional)')}</Text>
         <TextInput
           style={[styles.input, { height: 70 }]}
           placeholder="Ex: Na esquina perto da bomba de água"

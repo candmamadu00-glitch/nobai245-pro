@@ -31,7 +31,13 @@ export function Login() {
 
   const navigation = useNavigation<any>();
   const { signIn } = useAuth();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const cycleLoginLanguage = () => {
+    const order = ['pt', 'cri', 'fr', 'en', 'es', 'ru'];
+    const current = i18n.language === 'gnb' ? 'cri' : (i18n.language || 'pt');
+    const next = order[(order.indexOf(current) + 1) % order.length];
+    changeLanguage(next);
+  };
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -136,6 +142,28 @@ export function Login() {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0F172A" translucent />
+      <TouchableOpacity
+        onPress={cycleLoginLanguage}
+        activeOpacity={0.85}
+        style={{
+          position: 'absolute',
+          top: 46,
+          right: 18,
+          zIndex: 50,
+          backgroundColor: 'rgba(15, 23, 42, 0.85)',
+          borderWidth: 1,
+          borderColor: 'rgba(234, 179, 8, 0.5)',
+          paddingHorizontal: 12,
+          paddingVertical: 7,
+          borderRadius: 20,
+          flexDirection: 'row',
+          alignItems: 'center',
+        }}
+      >
+        <Text style={{ color: '#F8FAFC', fontWeight: '800', fontSize: 12 }}>
+          🌐 {(i18n.language === 'gnb' ? 'CRI' : (i18n.language || 'pt')).toUpperCase()}
+        </Text>
+      </TouchableOpacity>
       
       <View style={styles.backgroundBlob1} />
       <View style={styles.backgroundBlob2} />

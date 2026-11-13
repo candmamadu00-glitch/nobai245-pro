@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { 
   Modal, View, Text, TouchableOpacity, TextInput, StyleSheet, Alert, 
   KeyboardAvoidingView, Platform, Keyboard, TouchableWithoutFeedback 
@@ -34,6 +35,7 @@ export function CancelModal({
   onConfirm, 
   onClose 
 }: CancelModalProps) {
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const [selectedReason, setSelectedReason] = useState('');
   const [customReason, setCustomReason] = useState('');

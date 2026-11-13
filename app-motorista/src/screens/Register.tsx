@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { 
   View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, 
   ActivityIndicator, ScrollView, KeyboardAvoidingView, Platform, Image, StatusBar 
@@ -11,6 +12,7 @@ import { PrivacyPolicyModal } from '../components/PrivacyPolicyModal';
 import { theme } from '../theme/theme';
 
 export function Register() {
+  const { t } = useTranslation();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [sendingOtp, setSendingOtp] = useState(false);

@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   TextInput, ActivityIndicator, Alert, RefreshControl,
-  Platform, StatusBar, Linking, KeyboardAvoidingView
+  Platform, StatusBar, Linking, KeyboardAvoidingView, Clipboard
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -13,6 +14,7 @@ import { api } from '../services/api';
 import { socket, connectPassengerSocket } from '../services/passengerSocket';
 
 type ProviderType = 'ORANGE_MONEY' | 'MTN_MOMO';
+type FilterType = 'ALL' | 'RECHARGES' | 'RIDES';
 
 interface WalletTransaction {
   id: string;
@@ -20,6 +22,7 @@ interface WalletTransaction {
   status: string;
   paymentMethod?: string;
   amount: number;
+  balanceAfter?: number | null;
   reference: string;
   description?: string;
   createdAt: string;
@@ -28,6 +31,7 @@ interface WalletTransaction {
 const QUICK_AMOUNTS = [1000, 2500, 5000, 10000];
 
 export function Wallet() {
+  const { t } = useTranslation();
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const { user, updateUserContext, refreshPassengerProfile } = useAuth();
@@ -37,6 +41,12 @@ export function Wallet() {
   const [refreshing, setRefreshing] = useState(false);
   const [balance, setBalance] = useState<number>(Number(user?.walletBalance || 0));
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
+  const [txFilter, setTxFilter] = useState<FilterType>('ALL');
+
+  // Números administrativos oficiais dinâmicos
+  const [adminOrange, setAdminOrange] = useState<string>('245957330790');
+  const [adminMtn, setAdminMtn] = useState<string>('245960000000');
+  const [copiedOp, setCopiedOp] = useState<string | null>(null);
 
   // Recarga Mobile Money
   const [rechargeProvider, setRechargeProvider] = useState<ProviderType>(
@@ -72,6 +82,8 @@ export function Wallet() {
         paymentProvider: data.paymentProvider || user?.paymentProvider,
         paymentAccountNumber: data.paymentAccountNumber || user?.paymentAccountNumber,
       });
+      if (data.adminOrangeNumber) setAdminOrange(String(data.adminOrangeNumber));
+      if (data.adminMtnNumber) setAdminMtn(String(data.adminMtnNumber));
       if (Array.isArray(data.transactions)) {
         setTransactions(data.transactions);
       }
@@ -90,7 +102,7 @@ export function Wallet() {
         setRefreshing(false);
       }
     }
-  }, [user?.paymentAccountNumber, user?.paymentProvider, user?.phone, user?.walletBalance]);
+  }, [user?.paymentAccountNumber, user?.paymentProvider, user?.phone, user?.walletBalance, updateUserContext]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -105,6 +117,9 @@ export function Wallet() {
         updateUserContext({ walletBalance: updatedBal });
       }
       setPendingCheckoutUrl(null);
+      if (payload?.message) {
+        Alert.alert('Saldo Atualizado ✅', payload.message);
+      }
       loadFinance();
     };
 
@@ -126,7 +141,15 @@ export function Wallet() {
       socket.off('wallet:updated', onWalletUpdated);
       socket.off('wallet:payment_failed', onWalletFailed);
     };
-  }, [loadFinance]);
+  }, [loadFinance, updateUserContext]);
+
+  const copyOfficial = (num: string, tag: string) => {
+    Clipboard.setString(num);
+    setCopiedOp(tag);
+    setTimeout(() => {
+      if (isMountedRef.current) setCopiedOp(null);
+    }, 2500);
+  };
 
   const validateBissauOperator = (provider: ProviderType, phone9: string): string | null => {
     if (phone9.length !== 9) {
@@ -243,6 +266,13 @@ export function Wallet() {
     }
   };
 
+  const filteredTransactions = transactions.filter((tx) => {
+    const isCredit = tx.type === 'DEPOSIT' || tx.type === 'REFUND' || tx.type === 'PROMO_CREDIT';
+    if (txFilter === 'RECHARGES') return isCredit;
+    if (txFilter === 'RIDES') return !isCredit;
+    return true;
+  });
+
   const topPad = Math.max((insets?.top || 0) + 8, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 8 : 16);
 
   return (
@@ -253,7 +283,7 @@ export function Wallet() {
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconBtn}>
           <Ionicons name="arrow-back" size={22} color="#F8FAFC" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Carteira & Pagamentos</Text>
+        <Text style={styles.headerTitle}>{t('wallet_title', 'Carteira & Pagamentos')}</Text>
         <TouchableOpacity
           onPress={() => {
             setRefreshing(true);
@@ -294,7 +324,7 @@ export function Wallet() {
             <Ionicons name="shield-checkmark" size={20} color="#10B981" />
           </View>
 
-          <Text style={styles.balanceCaption}>Saldo Disponível</Text>
+          <Text style={styles.balanceCaption}>{t('available_balance', 'Saldo Disponível')}</Text>
           <Text style={styles.balanceAmount}>
             {formatMoney(balance)} <Text style={styles.balanceCurrency}>XOF</Text>
           </Text>
@@ -320,9 +350,9 @@ export function Wallet() {
         )}
 
         {/* SEÇÃO 1: RECARREGAR CARTEIRA */}
-        <Text style={styles.sectionTitle}>Recarregar Carteira Digital</Text>
+        <Text style={styles.sectionTitle}>{t('recharge_wallet', 'Recarregar Carteira Digital')}</Text>
         <View style={styles.card}>
-          <Text style={styles.label}>Escolha a Operadora</Text>
+          <Text style={styles.label}>{t('choose_operator', 'Escolha a Operadora')}</Text>
           <View style={styles.providerRow}>
             <TouchableOpacity
               style={[
@@ -347,7 +377,7 @@ export function Wallet() {
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.label}>Valor da Recarga (XOF)</Text>
+          <Text style={styles.label}>{t('amount_xof', 'Valor da Recarga (XOF)')}</Text>
           <View style={styles.quickAmountsRow}>
             {QUICK_AMOUNTS.map((amt) => (
               <TouchableOpacity
@@ -408,8 +438,34 @@ export function Wallet() {
           </TouchableOpacity>
         </View>
 
+        {/* CONTAS OFICIAIS NÔ BAI 245 */}
+        <Text style={styles.sectionTitle}>Contas Oficiais Nô Bai 245</Text>
+        <View style={styles.card}>
+          <Text style={styles.helperText}>
+            Recebedor oficial da plataforma para recargas Mobile Money na Guiné-Bissau:
+          </Text>
+          <View style={styles.officialRow}>
+            <View>
+              <Text style={styles.officialLabel}>Orange Money Oficial</Text>
+              <Text style={styles.officialNumber}>+{adminOrange}</Text>
+            </View>
+            <TouchableOpacity style={styles.copyOfficialBtn} onPress={() => copyOfficial(adminOrange, 'OR')}>
+              <Text style={styles.copyOfficialText}>{copiedOp === 'OR' ? 'Copiado ✓' : 'Copiar'}</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={[styles.officialRow, { borderBottomWidth: 0, paddingBottom: 0, marginBottom: 0 }]}>
+            <View>
+              <Text style={styles.officialLabel}>Telecel / MTN MoMo Oficial</Text>
+              <Text style={styles.officialNumber}>+{adminMtn}</Text>
+            </View>
+            <TouchableOpacity style={styles.copyOfficialBtn} onPress={() => copyOfficial(adminMtn, 'MTN')}>
+              <Text style={styles.copyOfficialText}>{copiedOp === 'MTN' ? 'Copiado ✓' : 'Copiar'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         {/* SEÇÃO 2: CONTA MOBILE MONEY PADRÃO */}
-        <Text style={styles.sectionTitle}>Conta Mobile Money Padrão</Text>
+        <Text style={styles.sectionTitle}>{t('setup_payment', 'Conta Mobile Money Padrão')}</Text>
         <View style={styles.card}>
           <Text style={styles.helperText}>
             Este número será preenchido automaticamente quando você escolher pagamento digital nas suas viagens.
@@ -458,23 +514,37 @@ export function Wallet() {
             {savingDefault ? (
               <ActivityIndicator color="#F8FAFC" />
             ) : (
-              <Text style={styles.secondaryBtnText}>Salvar Conta Padrão</Text>
+              <Text style={styles.secondaryBtnText}>{t('save_payment', 'Salvar Conta Padrão')}</Text>
             )}
           </TouchableOpacity>
         </View>
 
-        {/* SEÇÃO 3: EXTRATO FINANCEIRO */}
-        <Text style={styles.sectionTitle}>Histórico de Pagamentos</Text>
+        {/* SEÇÃO 3: EXTRATO FINANCEIRO COM ABAS */}
+        <Text style={styles.sectionTitle}>Histórico Financeiro</Text>
+        <View style={styles.filterRow}>
+          {(['ALL', 'RECHARGES', 'RIDES'] as FilterType[]).map((f) => (
+            <TouchableOpacity
+              key={f}
+              style={[styles.filterChip, txFilter === f && styles.filterChipActive]}
+              onPress={() => setTxFilter(f)}
+            >
+              <Text style={[styles.filterChipText, txFilter === f && styles.filterChipTextActive]}>
+                {f === 'ALL' ? 'Todos' : f === 'RECHARGES' ? 'Recargas' : 'Corridas'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
         {loading ? (
           <ActivityIndicator size="large" color="#EAB308" style={{ marginTop: 20 }} />
-        ) : transactions.length === 0 ? (
+        ) : filteredTransactions.length === 0 ? (
           <View style={styles.emptyCard}>
             <Ionicons name="receipt-outline" size={32} color="#64748B" />
-            <Text style={styles.emptyTitle}>Nenhuma movimentação ainda</Text>
+            <Text style={styles.emptyTitle}>Nenhuma movimentação neste filtro</Text>
             <Text style={styles.emptySub}>Suas recargas e pagamentos de corridas aparecerão aqui.</Text>
           </View>
         ) : (
-          transactions.map((tx) => {
+          filteredTransactions.map((tx) => {
             const st = getStatusBadge(tx.status);
             const isCredit = tx.type === 'DEPOSIT' || tx.type === 'REFUND' || tx.type === 'PROMO_CREDIT';
             return (
@@ -521,40 +591,23 @@ export function Wallet() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0F172A' },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingBottom: 14,
-    backgroundColor: '#0F172A',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.08)',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 20, paddingBottom: 14, backgroundColor: '#0F172A',
+    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)',
   },
   iconBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: 'rgba(255,255,255,0.08)', justifyContent: 'center', alignItems: 'center',
   },
   headerTitle: { color: '#F8FAFC', fontSize: 17, fontWeight: '800' },
   walletCard: {
-    borderRadius: 20,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(234, 179, 8, 0.35)',
-    marginBottom: 18,
+    borderRadius: 20, padding: 20, borderWidth: 1,
+    borderColor: 'rgba(234, 179, 8, 0.35)', marginBottom: 18,
   },
   walletTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   walletBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(234, 179, 8, 0.14)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 20,
-    gap: 5,
+    flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(234, 179, 8, 0.14)',
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, gap: 5,
   },
   walletBadgeText: { color: '#EAB308', fontSize: 11, fontWeight: '800', letterSpacing: 0.8 },
   balanceCaption: { color: '#94A3B8', fontSize: 12, fontWeight: '600', marginTop: 14 },
@@ -562,14 +615,8 @@ const styles = StyleSheet.create({
   balanceCurrency: { color: '#EAB308', fontSize: 16, fontWeight: '800' },
   walletHint: { color: '#94A3B8', fontSize: 12, marginTop: 10, lineHeight: 17 },
   pendingBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 121, 0, 0.14)',
-    borderWidth: 1,
-    borderColor: '#FF7900',
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 16,
+    flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255, 121, 0, 0.14)',
+    borderWidth: 1, borderColor: '#FF7900', borderRadius: 14, padding: 12, marginBottom: 16,
   },
   pendingTitle: { color: '#F8FAFC', fontWeight: '800', fontSize: 13 },
   pendingSub: { color: '#CBD5E1', fontSize: 11, marginTop: 2 },
@@ -577,94 +624,69 @@ const styles = StyleSheet.create({
   pendingBtnText: { color: '#FFF', fontWeight: '800', fontSize: 12 },
   sectionTitle: { color: '#F8FAFC', fontSize: 15, fontWeight: '800', marginBottom: 10, marginTop: 6 },
   card: {
-    backgroundColor: '#1E293B',
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    marginBottom: 18,
+    backgroundColor: '#1E293B', borderRadius: 18, padding: 16,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', marginBottom: 18,
   },
   label: { color: '#CBD5E1', fontSize: 12, fontWeight: '700', marginBottom: 8, marginTop: 6 },
   helperText: { color: '#94A3B8', fontSize: 12, lineHeight: 17, marginBottom: 10 },
   providerRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
   providerBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 12,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.12)',
-    backgroundColor: '#0F172A',
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    paddingVertical: 12, borderRadius: 12, borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.12)', backgroundColor: '#0F172A',
   },
   providerText: { color: '#F8FAFC', fontWeight: '800', fontSize: 13 },
   quickAmountsRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
   amountChip: {
-    flex: 1,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: '#0F172A',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    alignItems: 'center',
+    flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#0F172A',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center',
   },
   amountChipActive: { borderColor: '#EAB308', backgroundColor: 'rgba(234, 179, 8, 0.16)' },
   amountChipText: { color: '#CBD5E1', fontSize: 12, fontWeight: '700' },
   amountChipTextActive: { color: '#EAB308', fontWeight: '900' },
   inputBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#0F172A',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-    paddingHorizontal: 12,
-    height: 48,
-    marginBottom: 10,
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F172A',
+    borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+    paddingHorizontal: 12, height: 48, marginBottom: 10,
   },
   prefixText: { color: '#EAB308', fontWeight: '800', fontSize: 14, marginRight: 8 },
   input: { flex: 1, color: '#F8FAFC', fontSize: 15, fontWeight: '700' },
   primaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#EAB308',
-    height: 48,
-    borderRadius: 12,
-    marginTop: 6,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: '#EAB308', height: 48, borderRadius: 12, marginTop: 6,
   },
   primaryBtnText: { color: '#0F172A', fontWeight: '900', fontSize: 15 },
   secondaryBtn: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#334155',
-    height: 44,
-    borderRadius: 12,
-    marginTop: 4,
+    alignItems: 'center', justifyContent: 'center', backgroundColor: '#334155',
+    height: 44, borderRadius: 12, marginTop: 4,
   },
   secondaryBtnText: { color: '#F8FAFC', fontWeight: '800', fontSize: 14 },
+  officialRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingBottom: 10, marginBottom: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  officialLabel: { color: '#94A3B8', fontSize: 11, fontWeight: '600' },
+  officialNumber: { color: '#F8FAFC', fontSize: 14, fontWeight: '800', marginTop: 2 },
+  copyOfficialBtn: { backgroundColor: '#334155', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  copyOfficialText: { color: '#EAB308', fontSize: 12, fontWeight: '800' },
+  filterRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  filterChip: {
+    flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#1E293B',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', alignItems: 'center',
+  },
+  filterChipActive: { backgroundColor: '#EAB308', borderColor: '#EAB308' },
+  filterChipText: { color: '#CBD5E1', fontSize: 12, fontWeight: '700' },
+  filterChipTextActive: { color: '#0F172A', fontWeight: '900' },
   emptyCard: {
-    backgroundColor: '#1E293B',
-    borderRadius: 16,
-    padding: 24,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: '#1E293B', borderRadius: 16, padding: 24, alignItems: 'center',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
   },
   emptyTitle: { color: '#F8FAFC', fontWeight: '800', fontSize: 14, marginTop: 10 },
   emptySub: { color: '#94A3B8', fontSize: 12, textAlign: 'center', marginTop: 4 },
   txItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1E293B',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#1E293B',
+    borderRadius: 14, padding: 14, marginBottom: 10,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
   },
   txIcon: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
   txTitle: { color: '#F8FAFC', fontWeight: '700', fontSize: 13 },
