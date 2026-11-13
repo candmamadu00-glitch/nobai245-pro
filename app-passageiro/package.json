@@ -42,7 +42,7 @@
     "react-native-screens": "~4.26.0",
     "socket.io-client": "^4.8.3",
     "expo-file-system": "~57.0.7",
-    "expo-updates": "~57.0.14"
+    "expo-updates": "~57.0.26"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",
