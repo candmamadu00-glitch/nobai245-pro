@@ -20,7 +20,8 @@ import { registerAndSendPushToken, setupNotificationListeners } from './src/serv
 import { Home } from './src/screens/Home'; 
 import { Login } from './src/screens/Login';
 import { Register } from './src/screens/Register';
-import { Profile } from './src/screens/Profile'; 
+import { Profile } from './src/screens/Profile';
+import { Wallet } from './src/screens/Wallet'; 
 import { RideHistory } from './src/screens/RideHistory'; 
 import { RideDetails } from './src/screens/RideDetails';
 import { Rewards } from './src/screens/Rewards';
@@ -151,7 +152,8 @@ function Rotas() {
       {user ? (
         <Stack.Group>
           <Stack.Screen name="Home" component={Home} />
-          <Stack.Screen name="Profile" component={Profile} /> 
+          <Stack.Screen name="Profile" component={Profile} />
+          <Stack.Screen name="Wallet" component={Wallet} /> 
           <Stack.Screen name="RideHistory" component={RideHistory} /> 
           <Stack.Screen name="RideDetails" component={RideDetails} />
           <Stack.Screen name="Rewards" component={Rewards} />

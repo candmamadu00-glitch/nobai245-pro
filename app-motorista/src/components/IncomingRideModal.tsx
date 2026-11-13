@@ -153,7 +153,7 @@ export function IncomingRideModal({
           <View style={styles.paymentTag}>
             <Ionicons name="wallet-outline" size={14} color="#6B7280" />
             <Text style={styles.paymentText}>
-              Pagamento: {ride.paymentMethod === 'CASH' ? 'Dinheiro' : 'Mobile Money'}
+              Pagamento: {ride.paymentMethod === 'ORANGE_MONEY' ? 'Orange Money (Pago)' : ride.paymentMethod === 'MTN_MOMO' ? 'Telecel / MTN (Pago)' : 'Dinheiro em Espécie'}
             </Text>
           </View>
 

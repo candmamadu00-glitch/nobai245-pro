@@ -308,6 +308,7 @@ export function Profile() {
             </View>
 
             {/* WALLET CARD ESTILO LUXURY CARD */}
+            <TouchableOpacity activeOpacity={0.9} onPress={() => navigation.navigate('Wallet')}>
             <LinearGradient
               colors={['#0F172A', '#1E293B']}
               start={{ x: 0, y: 0 }}
@@ -330,7 +331,12 @@ export function Profile() {
                   {Number(user?.walletBalance || 0).toLocaleString('pt-PT', { minimumFractionDigits: 2 })} <Text style={styles.walletCurrency}>XOF</Text>
                 </Text>
               </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.1)' }}>
+                <Text style={{ color: '#EAB308', fontWeight: '800', fontSize: 13 }}>Recarregar ou Gerenciar Pagamentos</Text>
+                <Ionicons name="chevron-forward" size={18} color="#EAB308" />
+              </View>
             </LinearGradient>
+            </TouchableOpacity>
 
             {/* SELEÇÃO DE IDIOMA */}
             <TouchableOpacity style={styles.menuRowCard} activeOpacity={0.8} onPress={() => setIsLangModalOpen(true)}>

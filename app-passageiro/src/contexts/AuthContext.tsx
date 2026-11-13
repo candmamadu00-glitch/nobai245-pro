@@ -1,7 +1,7 @@
 import React, { createContext, useState, useContext, useEffect, ReactNode, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api, setUnauthorizedHandler, SecureStorage } from '../services/api';
-import { connectPassengerSocket, disconnectSocket } from '../services/passengerSocket';
+import { socket, connectPassengerSocket, disconnectSocket } from '../services/passengerSocket';
 import { registerAndSendPushToken, setupNotificationListeners } from '../services/notifications';
 import { navigate } from '../utils/navigationHelper';
 
@@ -78,7 +78,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     );
 
+    const handleWalletUpdated = (data: any) => {
+      if (data?.walletBalance !== undefined) {
+        updateUserContext({ walletBalance: Number(data.walletBalance) });
+      }
+    };
+    socket.on('wallet:updated', handleWalletUpdated);
+
     return () => {
+      socket.off('wallet:updated', handleWalletUpdated);
       if (cleanupListenersRef.current) {
         cleanupListenersRef.current();
       }

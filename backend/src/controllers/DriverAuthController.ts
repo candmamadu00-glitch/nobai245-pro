@@ -539,7 +539,7 @@ export class DriverAuthController {
         take: 30,
         select: {
           id: true, createdAt: true, originAddress: true, destinationAddress: true,
-          priceXof: true, status: true, driverEarnings: true, platformFee: true,
+          paymentMethod: true, priceXof: true, status: true, driverEarnings: true, platformFee: true,
           passenger: { select: { fullName: true, profilePicture: true } },
           ratings: { where: { reviewerType: 'PASSENGER' }, select: { stars: true } }
         }

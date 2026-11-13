@@ -1718,6 +1718,9 @@ const handleOpenChat = () => {
         activeRideIdRef.current = rId;
       }
       setPendingPaymentInfo(data?.payment || null);
+      if (data?.payment?.paymentUrl) {
+        Linking.openURL(String(data.payment.paymentUrl)).catch(() => {});
+      }
       setRideStatus('awaiting_payment');
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
       searchTimeoutRef.current = setTimeout(() => {
@@ -2880,8 +2883,18 @@ const handleOpenChat = () => {
                   <Text style={{ color: '#EAB308', fontWeight: '800' }}>{estimatedPrice ? `${Math.round(estimatedPrice)} XOF` : ''}</Text>.
                   {'\n'}Digite os <Text style={{ color: '#10B981', fontWeight: '800' }}>4 dígitos do seu PIN</Text> na janela do seu telefone para iniciar a busca do motorista.
                 </Text>
+                {pendingPaymentInfo?.paymentUrl && (
+                  <TouchableOpacity
+                    style={{ backgroundColor: '#FF7900', paddingHorizontal: 18, paddingVertical: 11, borderRadius: 12, marginTop: 14, flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                    onPress={() => Linking.openURL(String(pendingPaymentInfo.paymentUrl)).catch(() => {})}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="open-outline" size={18} color="#FFF" />
+                    <Text style={{ color: '#FFF', fontWeight: '800', fontSize: 14 }}>Abrir Página de Pagamento</Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
-                  style={[styles.cancelButtonOutline, { marginTop: 16 }]}
+                  style={[styles.cancelButtonOutline, { marginTop: 12 }]}
                   onPress={() => {
                     if (activeRideIdRef.current && user?.id) {
                       cancelRideByPassenger(activeRideIdRef.current, user.id, 'Cancelado antes de confirmar o PIN');
@@ -3419,6 +3432,18 @@ const handleOpenChat = () => {
               >
                 <Ionicons name="person-outline" size={20} color="#F8FAFC" />
                 <Text style={styles.menuItemText}>{t('my_profile', 'Meu Perfil')}</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={styles.menuItem} 
+                onPress={() => { 
+                  setIsMenuVisible(false); 
+                  navigation.navigate('Wallet'); 
+                }} 
+                activeOpacity={0.7}
+              >
+                <Ionicons name="wallet-outline" size={20} color="#EAB308" />
+                <Text style={styles.menuItemText}>Carteira & Pagamentos</Text>
               </TouchableOpacity>
 
               <TouchableOpacity 

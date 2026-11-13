@@ -270,6 +270,76 @@ export function Wallet() {
                 </TouchableOpacity>
               </View>
 
+              {/* CONTAS DE RECEBIMENTO DIRETO */}
+              <View style={styles.card}>
+                <View style={styles.cardHeader}>
+                  <Ionicons name="phone-portrait-outline" size={20} color={theme.colors.primaryDark} />
+                  <Text style={styles.cardTitle}>Contas de Recebimento Direto</Text>
+                </View>
+                <Text style={styles.cardSub}>Para onde os pagamentos digitais das suas corridas são enviados</Text>
+
+                <View style={{ gap: 8 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#FFF7ED', padding: 10, borderRadius: 10 }}>
+                    <Text style={{ fontWeight: '800', color: '#C2410C', fontSize: 13 }}>Orange Money</Text>
+                    <Text style={{ fontWeight: '800', color: theme.colors.textPrimary, fontSize: 13 }}>
+                      {financeData?.orangeNumber || (financeData?.mobileMoneyAccount?.startsWith('95') ? financeData.mobileMoneyAccount : 'Não cadastrado')}
+                    </Text>
+                  </View>
+
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#FEFCE8', padding: 10, borderRadius: 10 }}>
+                    <Text style={{ fontWeight: '800', color: '#A16207', fontSize: 13 }}>Telecel (antigo MTN)</Text>
+                    <Text style={{ fontWeight: '800', color: theme.colors.textPrimary, fontSize: 13 }}>
+                      {financeData?.mtnNumber || (financeData?.mobileMoneyAccount && !financeData.mobileMoneyAccount.startsWith('95') ? financeData.mobileMoneyAccount : 'Não cadastrado')}
+                    </Text>
+                  </View>
+                </View>
+
+                <TouchableOpacity
+                  style={{ marginTop: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 10, backgroundColor: '#F1F5F9' }}
+                  onPress={() => navigation.navigate('Profile')}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="create-outline" size={16} color={theme.colors.primaryDark} />
+                  <Text style={{ fontWeight: '800', color: theme.colors.primaryDark, fontSize: 13 }}>Configurar Contas no Perfil</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* EXTRATO RECENTE DE CORRIDAS */}
+              {Array.isArray(financeData?.history) && financeData.history.length > 0 && (
+                <View style={styles.card}>
+                  <View style={[styles.cardHeader, { marginBottom: 10 }]}>
+                    <Ionicons name="list-outline" size={20} color={theme.colors.primaryDark} />
+                    <Text style={styles.cardTitle}>Últimas Corridas Liquidadas</Text>
+                  </View>
+                  {financeData.history.slice(0, 8).map((item: any) => {
+                    const isDigital = item.paymentMethod === 'ORANGE_MONEY' || item.paymentMethod === 'MTN_MOMO';
+                    const methodLabel = item.paymentMethod === 'ORANGE_MONEY'
+                      ? 'Orange Money'
+                      : item.paymentMethod === 'MTN_MOMO'
+                      ? 'Telecel / MTN'
+                      : 'Dinheiro';
+                    return (
+                      <View
+                        key={item.id}
+                        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}
+                      >
+                        <View style={{ flex: 1, paddingRight: 10 }}>
+                          <Text style={{ fontWeight: '700', fontSize: 13, color: theme.colors.textPrimary }} numberOfLines={1}>
+                            {item.destinationAddress || 'Corrida Nô Bai 245'}
+                          </Text>
+                          <Text style={{ fontSize: 11, color: isDigital ? '#EA580C' : '#059669', fontWeight: '700', marginTop: 2 }}>
+                            {methodLabel} • {item.status === 'COMPLETED' ? 'Concluída' : 'Cancelada'}
+                          </Text>
+                        </View>
+                        <Text style={{ fontWeight: '900', fontSize: 14, color: item.status === 'COMPLETED' ? theme.colors.emeraldGreen : '#94A3B8' }}>
+                          +{formatMoney(item.driverEarnings || item.priceXof || 0)} XOF
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+
               {/* BANNER MOBILE MONEY */}
               <View style={styles.infoBanner}>
                 <Ionicons name="checkmark-done-circle" size={22} color={theme.colors.emeraldGreen} />
