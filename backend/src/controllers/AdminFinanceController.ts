@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import crypto from 'crypto';
 import { prisma } from '../config/prisma';
 import { getIo } from '../server';
+import { sendPushNotification, PUSH_CHANNELS } from '../services/pushNotifications';
 import { TransactionType, TransactionStatus } from '@prisma/client';
 
 export class AdminFinanceController {

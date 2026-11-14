@@ -91,7 +91,7 @@ export function Wallet() {
         if (!isMountedRef.current) return;
         setPendingCheckoutUrl(null);
         fetchWalletData();
-        if (data?.message) {
+        if (data?.message && data?.source !== 'ADMIN_RECHARGE') {
           Alert.alert('Carteira Atualizada ✅', data.message);
         }
       };

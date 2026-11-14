@@ -1,8 +1,8 @@
-import React, { createContext, useState, useContext, useEffect, useCallback, useMemo, ReactNode } from 'react';
-import { Platform } from 'react-native';
+import React, { createContext, useState, useContext, useEffect, useCallback, useMemo, useRef, ReactNode } from 'react';
+import { Platform, Alert, Vibration } from 'react-native';
 import * as Device from 'expo-device';
 import { api, setUnauthorizedHandler } from '../services/api';
-import { connectDriverSocket, disconnectDriverSocket } from '../services/socket';
+import { socket, connectDriverSocket, disconnectDriverSocket } from '../services/socket';
 import { registerAndSendPushToken } from '../services/notifications';
 import { storage } from '../services/storage';
 
@@ -66,6 +66,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loadStorageData();
   }, []);
 
+  const lastWalletEventRef = useRef<string>('');
+
   const refreshDriverProfile = useCallback(async () => {
     try {
       const response = await api.get('/drivers/profile', {
@@ -84,6 +86,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
   }, [deviceId]);
+
+  useEffect(() => {
+    if (!socket || !driver?.id) return;
+
+    const handleRealtimeWalletUpdate = (data: any) => {
+      if (data?.driverId && String(data.driverId) !== String(driver.id)) return;
+
+      const sig = `${data?.walletBalance ?? ''}-${data?.amount ?? ''}-${data?.source ?? ''}`;
+      if (lastWalletEventRef.current === sig) return;
+      lastWalletEventRef.current = sig;
+      setTimeout(() => {
+        if (lastWalletEventRef.current === sig) lastWalletEventRef.current = '';
+      }, 3500);
+
+      if (typeof data?.walletBalance === 'number') {
+        setDriver((prev) => {
+          if (!prev) return prev;
+          const updated = { ...prev, walletBalance: Number(data.walletBalance) };
+          storage.setDriver(updated).catch(() => {});
+          return updated;
+        });
+      }
+
+      refreshDriverProfile().catch(() => {});
+
+      if (data?.source === 'ADMIN_RECHARGE' || data?.message) {
+        try { Vibration.vibrate([0, 250, 120, 250]); } catch {}
+        Alert.alert(
+          '💰 Recarga Administrativa',
+          data?.message || 'O saldo da sua carteira foi atualizado pela administração.'
+        );
+      }
+    };
+
+    socket.on('wallet:updated', handleRealtimeWalletUpdate);
+    return () => {
+      socket.off('wallet:updated', handleRealtimeWalletUpdate);
+    };
+  }, [driver?.id, refreshDriverProfile]);
 
   async function signIn(driverData: Driver, accessToken: string, refreshToken: string) {
     setDriver(driverData);
