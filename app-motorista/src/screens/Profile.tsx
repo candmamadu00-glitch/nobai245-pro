@@ -954,15 +954,28 @@ export function Profile() {
       <Modal
         visible={isLanguageModalVisible}
         transparent
-        animationType="slide"
+        statusBarTranslucent
+        animationType="fade"
         onRequestClose={() => setIsLanguageModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.backdrop} />
-          <View style={styles.languageModalContainer}>
+          <TouchableOpacity
+            style={styles.backdrop}
+            activeOpacity={1}
+            onPress={() => setIsLanguageModalVisible(false)}
+          />
+          <View
+            style={[
+              styles.languageModalContainer,
+              { zIndex: 20, elevation: 20, paddingBottom: Math.max((insets?.bottom || 0) + 16, 24) },
+            ]}
+          >
             <View style={styles.modalHeaderRow}>
               <Text style={styles.modalTitle}>{t('select_language', 'Idioma do Aplicativo')}</Text>
-              <TouchableOpacity onPress={() => setIsLanguageModalVisible(false)}>
+              <TouchableOpacity
+                onPress={() => setIsLanguageModalVisible(false)}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              >
                 <Ionicons name="close" size={24} color="#64748B" />
               </TouchableOpacity>
             </View>
@@ -971,23 +984,23 @@ export function Profile() {
                 key={lang.code}
                 style={[
                   styles.languageOption,
-                  i18n.language === lang.code && styles.languageOptionActive,
+                  normalizedLang === lang.code && styles.languageOptionActive,
                 ]}
                 onPress={() => {
-                  changeLanguage(lang.code);
                   setIsLanguageModalVisible(false);
+                  changeLanguage(lang.code).catch(() => {});
                 }}
               >
                 <Text style={styles.languageFlag}>{lang.flag}</Text>
                 <Text
                   style={[
                     styles.languageName,
-                    i18n.language === lang.code && styles.languageNameActive,
+                    normalizedLang === lang.code && styles.languageNameActive,
                   ]}
                 >
                   {lang.name}
                 </Text>
-                {i18n.language === lang.code && (
+                {normalizedLang === lang.code && (
                   <Ionicons name="checkmark-circle" size={20} color="#059669" />
                 )}
               </TouchableOpacity>

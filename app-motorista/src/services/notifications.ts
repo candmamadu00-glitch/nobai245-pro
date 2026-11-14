@@ -20,6 +20,7 @@ Notifications.setNotificationHandler({
   }),
 });
 
+let lastSentPushKey = '';
 export async function registerAndSendPushToken(deviceId?: string, accessToken?: string): Promise<string | null> {
   if (isExpoGo || !Device.isDevice) return null;
 
@@ -74,6 +75,9 @@ export async function registerAndSendPushToken(deviceId?: string, accessToken?: 
     const pushToken = pushTokenData?.data;
 
     if (pushToken) {
+      const currentKey = ${pushToken}:;
+      if (lastSentPushKey === currentKey) return pushToken;
+      lastSentPushKey = currentKey;
       await api.put('/drivers/device-token', {
         deviceToken: pushToken,
         deviceId,

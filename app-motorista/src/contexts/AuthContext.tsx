@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect, ReactNode } from 'react';
+import React, { createContext, useState, useContext, useEffect, useCallback, useMemo, ReactNode } from 'react';
 import { Platform } from 'react-native';
 import * as Device from 'expo-device';
 import { api, setUnauthorizedHandler } from '../services/api';
@@ -65,7 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loadStorageData();
   }, []);
 
-  async function refreshDriverProfile() {
+  const refreshDriverProfile = useCallback(async () => {
     try {
       const response = await api.get('/drivers/profile', {
         headers: { 'x-device-id': deviceId },
@@ -82,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await signOut();
       }
     }
-  }
+  }, [deviceId]);
 
   async function signIn(driverData: Driver, accessToken: string, refreshToken: string) {
     setDriver(driverData);
