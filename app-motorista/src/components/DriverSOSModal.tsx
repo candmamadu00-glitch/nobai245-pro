@@ -14,7 +14,9 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
+import * as Haptics from 'expo-haptics';
 import { api } from '../services/api';
+import { socket } from '../services/socket';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 
 interface DriverSOSModalProps {
@@ -48,11 +50,33 @@ export function DriverSOSModal({ visible, onClose, currentRideId }: DriverSOSMod
         return;
       }
 
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-      });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+      let location: Location.LocationObject | null = null;
+      try {
+        location = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+      } catch {
+        location = await Location.getLastKnownPositionAsync();
+      }
 
-      // Disparo imediato do alerta com coordenadas GPS
+      if (!location?.coords) {
+        throw new Error('Coordenadas GPS indisponíveis no momento.');
+      }
+
+      // Disparo redundante em tempo real via Socket + HTTP
+      try {
+        if (socket) {
+          if (!socket.connected && typeof socket.connect === 'function') socket.connect();
+          socket.emit('sos:triggered', {
+            rideId: currentRideId ? String(currentRideId) : undefined,
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      } catch {}
+
       await api.post('/drivers/sos', {
         rideId: currentRideId ? String(currentRideId) : null,
         latitude: location.coords.latitude,

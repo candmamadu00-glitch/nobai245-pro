@@ -1,6 +1,6 @@
 import { Linking, Platform, Alert } from 'react-native';
 
-export type NavigationApp = 'google-maps' | 'waze' | 'apple-maps';
+export type NavigationApp = 'mapbox' | 'waze' | 'apple-maps';
 
 interface NavigationTarget {
   latitude: number;
@@ -9,59 +9,42 @@ interface NavigationTarget {
 }
 
 /**
- * Abre o aplicativo de navegação selecionado com as coordenadas informadas.
+ * Abre a navegação externa nativa (geo/Mapbox/Apple Maps) sem dependências do Google Maps.
  */
 export async function openExternalNavigation(
   target: NavigationTarget,
-  app: NavigationApp = 'google-maps'
+  app: NavigationApp = 'mapbox'
 ): Promise<void> {
   const { latitude, longitude, label } = target;
-  const encodedLabel = encodeURIComponent(label || 'Destino Nobai245');
+  const encodedLabel = encodeURIComponent(label || 'Destino Nô Bai 245');
 
   let url = '';
-
   switch (app) {
-    case 'google-maps':
-      if (Platform.OS === 'android') {
-        url = `geo:${latitude},${longitude}?q=${latitude},${longitude}(${encodedLabel})`;
-      } else {
-        url = `comgooglemaps://?daddr=${latitude},${longitude}&directionsmode=driving`;
-      }
-      break;
-
     case 'waze':
       url = `waze://?ll=${latitude},${longitude}&navigate=yes`;
       break;
-
     case 'apple-maps':
       url = `maps://?daddr=${latitude},${longitude}&q=${encodedLabel}`;
       break;
-
+    case 'mapbox':
     default:
-      url = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
+      url = Platform.OS === 'ios'
+        ? `maps://?daddr=${latitude},${longitude}&q=${encodedLabel}`
+        : `geo:${latitude},${longitude}?q=${latitude},${longitude}(${encodedLabel})`;
+      break;
   }
 
   try {
     const supported = await Linking.canOpenURL(url);
-
     if (supported) {
       await Linking.openURL(url);
     } else {
-      // Fallback para Google Maps via Web
-      const webUrl = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
-      const webSupported = await Linking.canOpenURL(webUrl);
-
-      if (webSupported) {
-        await Linking.openURL(webUrl);
-      } else {
-        Alert.alert(
-          'Aplicativo não encontrado',
-          'Não foi possível abrir o aplicativo de navegação selecionado.'
-        );
-      }
+      Alert.alert(
+        'Navegação Integrada',
+        'Utilize o mapa Mapbox integrado na tela principal para seguir a rota passo a passo.'
+      );
     }
   } catch (error) {
     console.error('Erro ao abrir navegação externa:', error);
-    Alert.alert('Erro', 'Não foi possível iniciar a navegação.');
   }
 }

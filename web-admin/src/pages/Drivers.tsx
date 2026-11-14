@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { 
   Eye, ShieldAlert, CheckCircle, Check, Search, Download, 
-  FileDown, X, Loader2, RefreshCw, Users, UserCheck, Clock, UserX, Car, AlertTriangle, Edit2, Save, CreditCard, Trash2
+  FileDown, X, Loader2, RefreshCw, Users, UserCheck, Clock, UserX, Car, AlertTriangle, Edit2, Save, CreditCard, Trash2, Wallet, PlusCircle, Sliders
 } from 'lucide-react';
 import { api, API_URL } from '../services/api';
 import { jsPDF } from 'jspdf';
@@ -29,6 +29,17 @@ interface Driver {
   mobileMoneyProvider?: string;
   mobileMoneyNumber?: string;
   financeStatus?: 'OK' | 'PENDING_VERIFICATION';
+}
+
+interface WalletTransaction {
+  id: string;
+  type: string;
+  amount: number;
+  status: string;
+  paymentMethod?: string;
+  reference?: string;
+  description?: string;
+  createdAt: string;
 }
 
 interface ApiError {
@@ -62,6 +73,21 @@ export function Drivers() {
   const [isEditingPayment, setIsEditingPayment] = useState(false);
   const [editProvider, setEditProvider] = useState('ORANGE');
   const [editNumber, setEditNumber] = useState('');
+
+  // Estados para gestão da carteira do motorista
+  const [walletDriver, setWalletDriver] = useState<Driver | null>(null);
+  const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
+  const [walletLoading, setWalletLoading] = useState(false);
+  const [walletSubmitting, setWalletSubmitting] = useState(false);
+  const [walletMode, setWalletMode] = useState<'ADD' | 'SET'>('ADD');
+  const [walletAmount, setWalletAmount] = useState('');
+  const [walletReason, setWalletReason] = useState('');
+  const [walletTransactions, setWalletTransactions] = useState<WalletTransaction[]>([]);
+
+  const formatXof = (value?: number) => {
+    const num = Math.round(Number(value || 0));
+    return `${num.toLocaleString('pt-BR')} XOF`;
+  };
 
   // 🛡️ TRATAMENTO BLINDADO DE IMAGENS
   const formatImageUrl = (path?: string) => {
@@ -100,13 +126,14 @@ export function Drivers() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isModalOpen) {
-        handleCloseModal();
+      if (e.key === 'Escape') {
+        if (isWalletModalOpen) handleCloseWalletModal();
+        else if (isModalOpen) handleCloseModal();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isModalOpen]);
+  }, [isModalOpen, isWalletModalOpen]);
 
   const metrics = useMemo(() => {
     return {
@@ -167,6 +194,55 @@ export function Drivers() {
     }
   };
 
+  const getDocComplianceBadge = (driver: any) => {
+    const now = Date.now();
+    const dates = [driver.licenseExpiresAt, driver.insuranceExpiresAt]
+      .filter(Boolean)
+      .map((d: string) => new Date(d).getTime());
+
+    if (dates.length === 0) {
+      return (
+        <span style={{ fontSize: '0.72rem', color: '#64748B', backgroundColor: '#F1F5F9', padding: '2px 7px', borderRadius: '6px' }}>
+          Validade não informada
+        </span>
+      );
+    }
+
+    const minExp = Math.min(...dates);
+    const daysLeft = Math.ceil((minExp - now) / (1000 * 60 * 60 * 24));
+
+    if (daysLeft < 0) {
+      return (
+        <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#B91C1C', backgroundColor: '#FEE2E2', padding: '2px 7px', borderRadius: '6px' }}>
+          ⚠️ Doc. Vencido ({Math.abs(daysLeft)}d)
+        </span>
+      );
+    }
+    if (daysLeft <= 30) {
+      return (
+        <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#B45309', backgroundColor: '#FEF3C7', padding: '2px 7px', borderRadius: '6px' }}>
+          ⏳ Vence em {daysLeft}d
+        </span>
+      );
+    }
+    return (
+      <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#047857', backgroundColor: '#ECFDF5', padding: '2px 7px', borderRadius: '6px' }}>
+        ✅ Docs em Dia
+      </span>
+    );
+  };
+
+  const handleUnlockDriverApp = async (driverId: string, fullName: string) => {
+    if (!window.confirm(`Destravar o aplicativo de ${fullName}?\nIsso limpa qualquer corrida presa na tela do motorista.`)) return;
+    try {
+      const res = await api.patch(`/admin/users-unlock/driver/${driverId}`);
+      alert(res.data?.message || 'Aplicativo destravado!');
+      fetchDrivers();
+    } catch (err: any) {
+      alert(err?.response?.data?.error || 'Erro ao destravar motorista.');
+    }
+  };
+
   const handleOpenDetails = (driver: Driver) => {
     setSelectedDriver(driver);
     setEditProvider(driver.mobileMoneyProvider || 'ORANGE');
@@ -179,6 +255,97 @@ export function Drivers() {
     setIsModalOpen(false);
     setSelectedDriver(null);
     setIsEditingPayment(false);
+  };
+
+  // ==========================================
+  // 👛 FUNÇÕES DA CARTEIRA DO MOTORISTA
+  // ==========================================
+  const loadDriverWalletDetails = async (driverId: string) => {
+    try {
+      setWalletLoading(true);
+      const res = await api.get(`/admin/drivers/${driverId}/wallet`);
+      if (res.data?.driver) {
+        const freshBalance = Number(res.data.driver.walletBalance || 0);
+        setWalletDriver(prev => prev ? { ...prev, walletBalance: freshBalance } : prev);
+        setDrivers(prev => prev.map(d => d.id === driverId ? { ...d, walletBalance: freshBalance } : d));
+        setSelectedDriver(prev => prev && prev.id === driverId ? { ...prev, walletBalance: freshBalance } : prev);
+      }
+      setWalletTransactions(res.data?.transactions || []);
+    } catch (err) {
+      console.error('[WALLET] Erro ao carregar carteira do motorista:', err);
+    } finally {
+      setWalletLoading(false);
+    }
+  };
+
+  const handleOpenWalletModal = async (driver: Driver) => {
+    setWalletDriver(driver);
+    setWalletMode('ADD');
+    setWalletAmount('');
+    setWalletReason('');
+    setWalletTransactions([]);
+    setIsWalletModalOpen(true);
+    await loadDriverWalletDetails(driver.id);
+  };
+
+  const handleCloseWalletModal = () => {
+    setIsWalletModalOpen(false);
+    setWalletDriver(null);
+    setWalletAmount('');
+    setWalletReason('');
+    setWalletTransactions([]);
+  };
+
+  const walletPreviewBalance = useMemo(() => {
+    if (!walletDriver) return 0;
+    const current = Math.round(Number(walletDriver.walletBalance || 0));
+    const parsed = Math.round(Number(walletAmount));
+    if (walletAmount.trim() === '' || isNaN(parsed)) return current;
+    return walletMode === 'ADD' ? current + parsed : parsed;
+  }, [walletDriver, walletAmount, walletMode]);
+
+  const handleSubmitWalletAdjustment = async () => {
+    if (!walletDriver) return;
+
+    const numericAmount = Math.round(Number(walletAmount));
+    if (walletAmount.trim() === '' || isNaN(numericAmount)) {
+      return alert('Informe um valor numérico válido em XOF.');
+    }
+
+    if (walletMode === 'ADD' && numericAmount <= 0) {
+      return alert('Para adicionar saldo, informe um valor maior que 0 XOF.');
+    }
+
+    const actionDesc = walletMode === 'ADD'
+      ? `ADICIONAR ${formatXof(numericAmount)} à carteira de ${walletDriver.fullName} (Novo saldo: ${formatXof(walletPreviewBalance)})`
+      : `DEFINIR o saldo exato de ${walletDriver.fullName} para ${formatXof(numericAmount)} (Saldo anterior: ${formatXof(walletDriver.walletBalance)})`;
+
+    if (!window.confirm(`Confirmar alteração financeira?\n\n${actionDesc}`)) return;
+
+    try {
+      setWalletSubmitting(true);
+      const response = await api.patch(`/admin/drivers/${walletDriver.id}/wallet`, {
+        mode: walletMode,
+        amount: numericAmount,
+        reason: walletReason.trim() || undefined
+      });
+
+      const updatedBalance = Number(response.data?.newBalance ?? walletPreviewBalance);
+      setWalletDriver(prev => prev ? { ...prev, walletBalance: updatedBalance } : prev);
+      setDrivers(prev => prev.map(d => d.id === walletDriver.id ? { ...d, walletBalance: updatedBalance } : d));
+      setSelectedDriver(prev => prev && prev.id === walletDriver.id ? { ...prev, walletBalance: updatedBalance } : prev);
+      setWalletAmount('');
+      setWalletReason('');
+
+      await loadDriverWalletDetails(walletDriver.id);
+      alert(`Saldo atualizado com sucesso! Novo saldo: ${formatXof(updatedBalance)}`);
+    } catch (err: unknown) {
+      const apiError = err as ApiError;
+      const msg = apiError.response?.data?.error || apiError.response?.data?.message || 'Erro ao atualizar carteira do motorista.';
+      alert(msg);
+    } finally {
+      setWalletSubmitting(false);
+    }
   };
 
   const validatePaymentNumber = (number: string, provider: string) => {
@@ -252,12 +419,13 @@ export function Drivers() {
       doc.setFontSize(16);
       doc.text('Relatório Executivo de Motoristas - BAI 245', 14, 15);
 
-      const tableColumn = ["Nome", "Telefone", "Veículo", "Placa", "Status"];
+      const tableColumn = ["Nome", "Telefone", "Veículo", "Placa", "Carteira", "Status"];
       const tableRows = filteredDrivers.map(driver => [
         driver.fullName,
         driver.phone,
         driver.vehicleType,
         driver.vehiclePlate,
+        formatXof(driver.walletBalance),
         STATUS_MAP[driver.status]?.label || driver.status
       ]);
 
@@ -287,8 +455,10 @@ export function Drivers() {
       doc.text(`Nome Completo: ${driver.fullName}`, 14, 35);
       doc.text(`Telefone: ${driver.phone}`, 14, 45);
       doc.text(`Tipo de Veículo: ${driver.vehicleType}`, 14, 55);
-      doc.text(`Placa do Veículo: ${driver.vehiclePlate}`, 14, 65);
-      doc.text(`Status Atual: ${STATUS_MAP[driver.status]?.label || driver.status}`, 14, 75);
+      doc.text(`Placa do Veículo: ${driver.vehiclePlate}</div>
+                          <div style={{ marginTop: '4px' }}>{getDocComplianceBadge(driver)}`, 14, 65);
+      doc.text(`Saldo da Carteira: ${formatXof(driver.walletBalance)}`, 14, 75);
+      doc.text(`Status Atual: ${STATUS_MAP[driver.status]?.label || driver.status}`, 14, 85);
       doc.save(`motorista_${driver.fullName.replace(/\s+/g, '_')}.pdf`);
     } catch (error) {
       console.error('[PDF] Erro ao gerar Ficha:', error);
@@ -301,7 +471,7 @@ export function Drivers() {
       <div className="drivers-header">
         <div>
           <h1 className="drivers-title">Gestão da Frota</h1>
-          <p className="drivers-subtitle">Aprovação, monitoramento em tempo real e controle de acesso dos motoristas</p>
+          <p className="drivers-subtitle">Aprovação, carteira digital, monitoramento em tempo real e controle de acesso dos motoristas</p>
         </div>
         <div className="drivers-header-actions">
           <button className="btn-modern secondary" onClick={fetchDrivers} disabled={loading}>
@@ -361,18 +531,20 @@ export function Drivers() {
                   <th>Motorista</th>
                   <th>Contato</th>
                   <th>Veículo / Identificação</th>
+                  <th>Carteira (XOF)</th>
                   <th>Status</th>
                   <th style={{ textAlign: 'right' }}>Ações</th>
                 </tr>
               </thead>
               <tbody>
                 {displayedDrivers.length === 0 ? (
-                  <tr><td colSpan={5} className="empty-state">Nenhum motorista encontrado.</td></tr>
+                  <tr><td colSpan={6} className="empty-state">Nenhum motorista encontrado.</td></tr>
                 ) : (
                   displayedDrivers.map((driver) => {
                     const profileImgSrc = formatImageUrl(driver.profilePicture);
                     const isProcessing = actionLoading === driver.id;
                     const statusInfo = STATUS_MAP[driver.status];
+                    const balance = Number(driver.walletBalance || 0);
 
                     return (
                       <tr key={driver.id}>
@@ -401,11 +573,44 @@ export function Drivers() {
                           <div className="vehicle-info">
                             <span className="vehicle-type"><Car size={14} /> {driver.vehicleType}</span>
                             <span className="vehicle-plate">{driver.vehiclePlate}</span>
+                          <div style={{ marginTop: '4px' }}>{getDocComplianceBadge(driver)}</div>
                           </div>
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenWalletModal(driver)}
+                            title="Clique para gerenciar o saldo da carteira"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              padding: '5px 10px',
+                              borderRadius: '8px',
+                              border: balance < 0 ? '1px solid #fecaca' : balance === 0 ? '1px solid #fde68a' : '1px solid #bbf7d0',
+                              backgroundColor: balance < 0 ? '#fef2f2' : balance === 0 ? '#fffbeb' : '#f0fdf4',
+                              color: balance < 0 ? '#dc2626' : balance === 0 ? '#b45309' : '#15803d',
+                              fontWeight: 700,
+                              fontSize: '13px',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            <Wallet size={14} />
+                            <span>{formatXof(balance)}</span>
+                          </button>
                         </td>
                         <td><span className={`status-pill ${statusInfo?.className || ''}`}>{statusInfo?.label || driver.status}</span></td>
                         <td>
                           <div className="actions-cell">
+                            <button
+                              className="icon-action-btn"
+                              title="Gerenciar Carteira"
+                              disabled={isProcessing}
+                              onClick={() => handleOpenWalletModal(driver)}
+                              style={{ backgroundColor: '#ecfdf5', color: '#047857', borderColor: '#a7f3d0' }}
+                            >
+                              <Wallet size={16} /><span>Carteira</span>
+                            </button>
                             <button className="icon-action-btn view" title="Ver Detalhes" disabled={isProcessing} onClick={() => handleOpenDetails(driver)}>
                               <Eye size={16} /><span>Detalhes</span>
                             </button>
@@ -450,13 +655,284 @@ export function Drivers() {
         </div>
       </div>
 
+      {/* ========================================== */}
+      {/* 👛 MODAL DE GESTÃO DA CARTEIRA DO MOTORISTA */}
+      {/* ========================================== */}
+      {isWalletModalOpen && walletDriver && (
+        <div className="modal-overlay-backdrop" onClick={handleCloseWalletModal}>
+          <div className="modern-modal" style={{ maxWidth: '640px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-bar">
+              <div>
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Wallet size={20} color="#16a34a" /> Carteira Digital — {walletDriver.fullName}
+                </h2>
+                <p>Telefone: {walletDriver.phone} • Veículo: {walletDriver.vehiclePlate}</p>
+              </div>
+              <button className="close-btn" onClick={handleCloseWalletModal}><X size={20} /></button>
+            </div>
+
+            <div className="modal-content-body">
+              {/* Card de Saldo Atual */}
+              <div style={{
+                padding: '16px 20px',
+                borderRadius: '12px',
+                background: Number(walletDriver.walletBalance || 0) <= 0
+                  ? 'linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)'
+                  : 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
+                color: Number(walletDriver.walletBalance || 0) <= 0 ? '#991b1b' : '#ffffff',
+                border: Number(walletDriver.walletBalance || 0) <= 0 ? '1px solid #fca5a5' : 'none',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '12px'
+              }}>
+                <div>
+                  <span style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.85 }}>
+                    Saldo Atual na Carteira
+                  </span>
+                  <div style={{ fontSize: '28px', fontWeight: 800, marginTop: '4px' }}>
+                    {formatXof(walletDriver.walletBalance)}
+                  </div>
+                </div>
+                {Number(walletDriver.walletBalance || 0) <= 0 && (
+                  <div style={{
+                    backgroundColor: '#dc2626',
+                    color: '#fff',
+                    padding: '6px 12px',
+                    borderRadius: '8px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    maxWidth: '250px'
+                  }}>
+                    Bloqueado para ficar Online (saldo precisa ser maior que 0 XOF)
+                  </div>
+                )}
+              </div>
+
+              {/* Formulário de Atualização */}
+              <div style={{ marginTop: '18px', padding: '16px', backgroundColor: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '14px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setWalletMode('ADD')}
+                    style={{
+                      padding: '10px 12px',
+                      borderRadius: '8px',
+                      border: walletMode === 'ADD' ? '2px solid #16a34a' : '1px solid #cbd5e1',
+                      backgroundColor: walletMode === 'ADD' ? '#f0fdf4' : '#ffffff',
+                      color: walletMode === 'ADD' ? '#15803d' : '#475569',
+                      fontWeight: 700,
+                      fontSize: '13px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    <PlusCircle size={16} /> Adicionar Valor (Recarga)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWalletMode('SET')}
+                    style={{
+                      padding: '10px 12px',
+                      borderRadius: '8px',
+                      border: walletMode === 'SET' ? '2px solid #0f172a' : '1px solid #cbd5e1',
+                      backgroundColor: walletMode === 'SET' ? '#f1f5f9' : '#ffffff',
+                      color: walletMode === 'SET' ? '#0f172a' : '#475569',
+                      fontWeight: 700,
+                      fontSize: '13px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    <Sliders size={16} /> Definir Saldo Exato
+                  </button>
+                </div>
+
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '6px' }}>
+                  {walletMode === 'ADD' ? 'Valor a Adicionar (XOF)' : 'Novo Saldo Exato (XOF)'}
+                </label>
+                <input
+                  type="number"
+                  value={walletAmount}
+                  onChange={(e) => setWalletAmount(e.target.value)}
+                  placeholder={walletMode === 'ADD' ? 'Ex: 2000' : 'Ex: 5000'}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1',
+                    fontSize: '16px',
+                    fontWeight: 700,
+                    boxSizing: 'border-box'
+                  }}
+                />
+
+                {/* Atalhos rápidos */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+                  {[500, 1000, 2000, 5000, 10000].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => {
+                        if (walletMode === 'ADD') {
+                          const cur = Math.round(Number(walletAmount || 0));
+                          setWalletAmount(String(cur + preset));
+                        } else {
+                          setWalletAmount(String(preset));
+                        }
+                      }}
+                      style={{
+                        padding: '4px 10px',
+                        borderRadius: '6px',
+                        border: '1px solid #cbd5e1',
+                        backgroundColor: '#ffffff',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        color: '#334155',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {walletMode === 'ADD' ? `+${preset.toLocaleString('pt-BR')}` : `${preset.toLocaleString('pt-BR')} XOF`}
+                    </button>
+                  ))}
+                </div>
+
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginTop: '12px', marginBottom: '6px' }}>
+                  Motivo / Comprovante (opcional)
+                </label>
+                <input
+                  type="text"
+                  value={walletReason}
+                  onChange={(e) => setWalletReason(e.target.value)}
+                  placeholder="Ex: Recarga Orange Money não creditada automaticamente"
+                  style={{
+                    width: '100%',
+                    padding: '9px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1',
+                    fontSize: '14px',
+                    boxSizing: 'border-box'
+                  }}
+                />
+
+                {/* Pré-visualização do Resultado */}
+                <div style={{
+                  marginTop: '12px',
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  backgroundColor: '#ffffff',
+                  border: '1px dashed #94a3b8',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  fontSize: '13px'
+                }}>
+                  <span style={{ color: '#64748b' }}>Saldo após confirmação:</span>
+                  <strong style={{
+                    fontSize: '15px',
+                    color: walletPreviewBalance > 0 ? '#15803d' : '#dc2626'
+                  }}>
+                    {formatXof(walletPreviewBalance)}
+                  </strong>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleSubmitWalletAdjustment}
+                  disabled={walletSubmitting || walletAmount.trim() === ''}
+                  style={{
+                    marginTop: '14px',
+                    width: '100%',
+                    padding: '12px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    backgroundColor: walletSubmitting || walletAmount.trim() === '' ? '#94a3b8' : '#16a34a',
+                    color: '#ffffff',
+                    fontWeight: 700,
+                    fontSize: '14px',
+                    cursor: walletSubmitting || walletAmount.trim() === '' ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px'
+                  }}
+                >
+                  {walletSubmitting ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+                  <span>{walletSubmitting ? 'Atualizando Carteira...' : 'Confirmar Atualização de Saldo'}</span>
+                </button>
+              </div>
+
+              {/* Extrato Recente da Carteira */}
+              <div style={{ marginTop: '18px' }}>
+                <h3 style={{ fontSize: '14px', fontWeight: 700, color: '#1e293b', marginBottom: '8px' }}>
+                  Últimas Movimentações da Carteira
+                </h3>
+                {walletLoading ? (
+                  <div style={{ padding: '16px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>
+                    Carregando histórico financeiro...
+                  </div>
+                ) : walletTransactions.length === 0 ? (
+                  <div style={{ padding: '14px', textAlign: 'center', color: '#94a3b8', fontSize: '13px', backgroundColor: '#f8fafc', borderRadius: '8px' }}>
+                    Nenhuma movimentação registrada ainda.
+                  </div>
+                ) : (
+                  <div style={{ maxHeight: '190px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+                    {walletTransactions.map((tx) => (
+                      <div key={tx.id} style={{
+                        padding: '10px 12px',
+                        borderBottom: '1px solid #f1f5f9',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: '10px',
+                        fontSize: '12px'
+                      }}>
+                        <div>
+                          <strong style={{ color: '#0f172a', display: 'block' }}>
+                            {tx.description || tx.type}
+                          </strong>
+                          <span style={{ color: '#64748b' }}>
+                            {new Date(tx.createdAt).toLocaleString('pt-BR')} {tx.reference ? `• ${tx.reference}` : ''}
+                          </span>
+                        </div>
+                        <span style={{
+                          fontWeight: 700,
+                          whiteSpace: 'nowrap',
+                          color: ['COMMISSION_FEE', 'WITHDRAWAL', 'PAYOUT'].includes(tx.type) ? '#dc2626' : '#15803d'
+                        }}>
+                          {['COMMISSION_FEE', 'WITHDRAWAL', 'PAYOUT'].includes(tx.type) ? '-' : '+'}{formatXof(tx.amount)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="modal-footer-bar">
+              <button className="btn-modern secondary" onClick={handleCloseWalletModal}>Fechar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================== */}
+      {/* 📋 MODAL DE DETALHES DO MOTORISTA */}
+      {/* ========================================== */}
       {isModalOpen && selectedDriver && (
         <div className="modal-overlay-backdrop" onClick={handleCloseModal}>
           <div className="modern-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header-bar">
               <div>
                 <h2>Documentação de {selectedDriver.fullName}</h2>
-                <p>Verificação de habilitação e dados do veículo</p>
+                <p>Verificação de habilitação, carteira e dados do veículo</p>
               </div>
               <button className="close-btn" onClick={handleCloseModal}><X size={20} /></button>
             </div>
@@ -475,6 +951,30 @@ export function Drivers() {
                 <div>
                   <span className="summary-label">Telefone de Contato</span>
                   <strong className="summary-value">{selectedDriver.phone}</strong>
+                </div>
+                <div>
+                  <span className="summary-label">Carteira Digital</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+                    <strong className="summary-value" style={{ color: Number(selectedDriver.walletBalance || 0) <= 0 ? '#dc2626' : '#15803d' }}>
+                      {formatXof(selectedDriver.walletBalance)}
+                    </strong>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenWalletModal(selectedDriver)}
+                      style={{
+                        padding: '3px 8px',
+                        borderRadius: '6px',
+                        border: '1px solid #16a34a',
+                        backgroundColor: '#f0fdf4',
+                        color: '#15803d',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Ajustar
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <span className="summary-label">Status da Conta</span>

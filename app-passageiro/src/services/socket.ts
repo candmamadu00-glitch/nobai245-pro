@@ -107,6 +107,14 @@ export const requestRide = (payload: {
   paymentMethod: string;
   serviceType?: string;
   referencePoint?: string;
+  estimatedPrice?: number;
+  priceXof?: number;
+  distanceKm?: number;
+  durationMin?: number;
+  couponCode?: string;
+  useCorporateAccount?: boolean;
+  stops?: any[];
+  [key: string]: any;
 }) => {
   emitCriticoPassenger('passenger:request_ride', payload);
 };

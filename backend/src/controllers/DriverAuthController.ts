@@ -3,6 +3,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { prisma } from '../config/prisma';
+import { chargeMobileMoney } from '../services/mobileMoneyService';
 import { getIo } from '../server';
 import { formatPhoneNumber, isValidBissauPhone } from '../services/mobileMoneyService';
 import { sendSmsOtp } from '../services/smsService';
@@ -521,6 +522,7 @@ export class DriverAuthController {
         where: { id: driverId },
         select: { 
           fullName: true,
+          phone: true,
           walletBalance: true,
           orangeNumber: true,
           mtnNumber: true,
@@ -530,46 +532,181 @@ export class DriverAuthController {
 
       if (!driver) return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
 
-      // 🔍 Busca os números oficiais da empresa na tabela SystemConfig
-      const sysConfig = await prisma.systemConfig.findFirst().catch(() => null);
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      const startOfWeek = new Date(startOfToday.getTime() - 6 * 24 * 60 * 60 * 1000);
 
-      const rides = await prisma.ride.findMany({
-        where: { driverId, status: { in: ['COMPLETED', 'CANCELLED'] } },
-        orderBy: { createdAt: 'desc' },
-        take: 30,
-        select: {
-          id: true, createdAt: true, originAddress: true, destinationAddress: true,
-          paymentMethod: true, priceXof: true, status: true, driverEarnings: true, platformFee: true,
-          passenger: { select: { fullName: true, profilePicture: true } },
-          ratings: { where: { reviewerType: 'PASSENGER' }, select: { stars: true } }
+      const [sysConfig, recentRides, completedRidesAll, transactions] = await Promise.all([
+        prisma.systemConfig.findFirst().catch(() => null),
+        prisma.ride.findMany({
+          where: { driverId, status: { in: ['COMPLETED', 'CANCELLED'] } },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+          select: {
+            id: true, createdAt: true, finishedAt: true, originAddress: true, destinationAddress: true,
+            paymentMethod: true, priceXof: true, status: true, driverEarnings: true, platformFee: true,
+            passenger: { select: { fullName: true, profilePicture: true } },
+            ratings: { where: { reviewerType: 'PASSENGER' }, select: { stars: true } }
+          }
+        }),
+        prisma.ride.findMany({
+          where: { driverId, status: 'COMPLETED' },
+          select: {
+            createdAt: true,
+            finishedAt: true,
+            priceXof: true,
+            driverEarnings: true,
+            platformFee: true
+          }
+        }),
+        prisma.transaction.findMany({
+          where: { driverId },
+          orderBy: { createdAt: 'desc' },
+          take: 60
+        })
+      ]);
+
+      let todayEarned = 0, todayGross = 0, todayCommission = 0, todayRides = 0;
+      let weeklyEarned = 0, weeklyGross = 0, weeklyCommission = 0, weeklyRides = 0;
+      let totalEarned = 0, totalGross = 0, totalCommission = 0;
+
+      for (const r of completedRidesAll) {
+        const gross = Number(r.priceXof || 0);
+        const net = r.driverEarnings !== null && r.driverEarnings !== undefined
+          ? Number(r.driverEarnings)
+          : Math.round(gross * 0.85);
+        const fee = r.platformFee !== null && r.platformFee !== undefined
+          ? Number(r.platformFee)
+          : Math.max(0, gross - net);
+
+        totalGross += gross;
+        totalEarned += net;
+        totalCommission += fee;
+
+        const refDate = r.finishedAt ? new Date(r.finishedAt) : new Date(r.createdAt);
+        if (refDate >= startOfToday) {
+          todayGross += gross;
+          todayEarned += net;
+          todayCommission += fee;
+          todayRides += 1;
         }
-      });
-
-      const totalEarned = rides.reduce((acc, ride) => {
-        if (ride.status !== 'COMPLETED') return acc;
-        return acc + Number(ride.driverEarnings || (Number(ride.priceXof || 0) * 0.85));
-      }, 0);
+        if (refDate >= startOfWeek) {
+          weeklyGross += gross;
+          weeklyEarned += net;
+          weeklyCommission += fee;
+          weeklyRides += 1;
+        }
+      }
 
       return res.status(200).json({
         success: true,
         walletBalance: Number(driver.walletBalance || 0),
+        todayEarned: Math.round(todayEarned),
+        todayGross: Math.round(todayGross),
+        todayCommission: Math.round(todayCommission),
+        todayRides,
+        weeklyEarned: Math.round(weeklyEarned),
+        weeklyGross: Math.round(weeklyGross),
+        weeklyCommission: Math.round(weeklyCommission),
+        weeklyRides,
         totalEarned: Math.round(totalEarned),
-        mobileMoneyAccount: driver.paymentAccountNumber,
+        totalGross: Math.round(totalGross),
+        totalCommission: Math.round(totalCommission),
+        totalRides: completedRidesAll.length,
+        mobileMoneyAccount: driver.paymentAccountNumber || driver.phone,
         orangeNumber: driver.orangeNumber,
         mtnNumber: driver.mtnNumber,
-        adminOrangeNumber: sysConfig?.adminOrangeNumber || '955000000',
-        adminMtnNumber: sysConfig?.adminMtnNumber || '966000000',
-        totalRides: rides.filter(r => r.status === 'COMPLETED').length,
-        history: rides.map(r => ({
+        adminOrangeNumber: sysConfig?.adminOrangeNumber || '245957330790',
+        adminMtnNumber: sysConfig?.adminMtnNumber || '245960000000',
+        adminMerchantCode: (sysConfig as any)?.adminMerchantCode || '72447321',
+        companyName: (sysConfig as any)?.companyName || 'NÔ BAI 245',
+        history: recentRides.map(r => ({
           ...r,
           priceXof: Number(r.priceXof || 0),
           driverEarnings: Number(r.driverEarnings || 0),
           platformFee: Number(r.platformFee || 0)
         })),
+        transactions: transactions.map(t => ({
+          ...t,
+          amount: Number(t.amount || 0),
+          balanceBefore: t.balanceBefore !== null ? Number(t.balanceBefore) : null,
+          balanceAfter: t.balanceAfter !== null ? Number(t.balanceAfter) : null,
+        }))
       });
     } catch (error: any) {
       console.error('❌ [FINANCEIRO MOTORISTA]:', error?.message || error);
       return res.status(500).json({ success: false, error: 'Erro interno ao buscar extrato.' });
+    }
+  }
+
+  // ==========================================
+  // 💳 RECARGA AUTOMÁTICA DE CARTEIRA DO MOTORISTA (CONTA ADMIN)
+  // ==========================================
+  async rechargeWallet(req: Request, res: Response): Promise<Response> {
+    try {
+      const driverId = (req as any).user?.id;
+      if (!driverId) {
+        return res.status(401).json({ success: false, error: 'Não autorizado.' });
+      }
+
+      const rawAmount = req.body.amount ?? req.body.value;
+      const rawPhone = req.body.phone ?? req.body.paymentAccountNumber;
+      const rawProvider = req.body.provider ?? req.body.paymentMethod ?? 'ORANGE_MONEY';
+
+      const cleanAmount = Math.round(Number(rawAmount));
+      if (isNaN(cleanAmount) || cleanAmount < 100) {
+        return res.status(400).json({ success: false, error: 'O valor mínimo de recarga é 100 XOF.' });
+      }
+
+      const driver = await prisma.driver.findUnique({
+        where: { id: String(driverId) },
+        select: { phone: true, orangeNumber: true, mtnNumber: true, paymentAccountNumber: true }
+      });
+
+      if (!driver) {
+        return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
+      }
+
+      const isMtn = String(rawProvider).toUpperCase().includes('MTN') || String(rawProvider).toUpperCase().includes('TELECEL');
+      const fallbackPhone = isMtn
+        ? (driver.mtnNumber || driver.paymentAccountNumber || driver.phone)
+        : (driver.orangeNumber || driver.paymentAccountNumber || driver.phone);
+
+      const targetPhone = formatPhoneNumber(String(rawPhone || fallbackPhone));
+      if (!isValidBissauPhone(targetPhone)) {
+        return res.status(400).json({ success: false, error: 'Número Mobile Money inválido para Guiné-Bissau (+245).' });
+      }
+
+      const chargeResult = await chargeMobileMoney({
+        driverId: String(driverId),
+        userType: 'DRIVER',
+        phone: targetPhone,
+        amount: cleanAmount,
+        provider: isMtn ? 'MTN_MOMO' : 'ORANGE_MONEY',
+        isWalletRecharge: true
+      });
+
+      if (!chargeResult.success) {
+        return res.status(400).json({
+          success: false,
+          error: chargeResult.error || 'PROVIDER_REJECTED',
+          message: chargeResult.details || 'Não foi possível iniciar a cobrança na operadora.'
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: !isMtn
+          ? 'Autorize o pagamento na janela da Orange Money ou digite seu PIN no telemóvel.'
+          : 'Solicitação enviada para seu número Telecel/MTN. Digite seu PIN para confirmar.',
+        paymentUrl: chargeResult.paymentUrl || null,
+        providerRef: chargeResult.providerRef,
+        reference: chargeResult.reference,
+        status: chargeResult.status
+      });
+    } catch (error: any) {
+      console.error('❌ [RECARGA MOTORISTA]:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro interno ao iniciar recarga.' });
     }
   }
 

@@ -48,7 +48,13 @@ function secureCompare(a: string, b: string): boolean {
   }
 }
 
-async function emitSuccessSockets(rideId?: string | null, passengerId?: string | null) {
+async function emitSuccessSockets(
+  rideId?: string | null,
+  passengerId?: string | null,
+  driverId?: string | null,
+  newBalance?: number,
+  amount?: number
+) {
   const io = getIo();
 
   if (rideId) {
@@ -70,13 +76,35 @@ async function emitSuccessSockets(rideId?: string | null, passengerId?: string |
         console.warn('⚠️ [WEBHOOK] Falha ao despachar notificação para motoristas:', err?.message || err);
       });
     }
+    return;
+  }
+
+  if (driverId) {
+    const driver = await prisma.driver.findUnique({ where: { id: driverId }, select: { walletBalance: true } });
+    const finalBal = newBalance !== undefined ? newBalance : Number(driver?.walletBalance || 0);
+    if (io) {
+      io.to(driverId)
+        .to(`driver_${driverId}`)
+        .to(`driver:${driverId}`)
+        .to(`user_${driverId}`)
+        .emit('wallet:updated', {
+          message: amount ? `Recarga de ${amount} XOF confirmada com sucesso!` : 'Recarga confirmada com sucesso!',
+          walletBalance: finalBal,
+          balance: finalBal
+        });
+    }
   } else if (passengerId) {
-    const passenger = await prisma.passenger.findUnique({ where: { id: passengerId } });
-    if (passenger && io) {
-      io.to(passengerId).to(`passenger_${passengerId}`).emit('wallet:updated', {
-        message: 'Recarga realizada com sucesso!',
-        walletBalance: Number(passenger.walletBalance)
-      });
+    const passenger = await prisma.passenger.findUnique({ where: { id: passengerId }, select: { walletBalance: true } });
+    const finalBal = newBalance !== undefined ? newBalance : Number(passenger?.walletBalance || 0);
+    if (io) {
+      io.to(passengerId)
+        .to(`passenger_${passengerId}`)
+        .to(`user_${passengerId}`)
+        .emit('wallet:updated', {
+          message: amount ? `Recarga de ${amount} XOF realizada com sucesso!` : 'Recarga realizada com sucesso!',
+          walletBalance: finalBal,
+          balance: finalBal
+        });
     }
   }
 }
@@ -183,7 +211,22 @@ router.all('/sms-gateway', async (req: Request, res: Response): Promise<any> => 
 
       await tx.driver.update({
         where: { id: driver.id },
-        data: { walletBalance: newBalance }
+        data: { walletBalance: newBalance, version: { increment: 1 } }
+      });
+
+      await tx.companyWallet.upsert({
+        where: { id: 'bai245-main-wallet' },
+        update: {
+          balance: { increment: amountXOF },
+          totalCollected: { increment: amountXOF },
+          version: { increment: 1 }
+        },
+        create: {
+          id: 'bai245-main-wallet',
+          balance: amountXOF,
+          totalCollected: amountXOF,
+          version: 1
+        }
       });
 
       await tx.transaction.create({
@@ -269,10 +312,11 @@ router.post('/orange', ipWhitelistMiddleware, async (req: Request, res: Response
     const io = getIo();
 
     if (resAny.success) {
-      await emitSuccessSockets(resAny.rideId, resAny.passengerId);
+      await emitSuccessSockets(resAny.rideId, resAny.passengerId, resAny.driverId, resAny.newBalance, resAny.amount);
     } else {
       if (io && resAny.rideId) io.to(resAny.rideId).emit('payment:failed', { message: 'Pagamento falhou ou foi cancelado.' });
       if (io && resAny.passengerId) io.to(resAny.passengerId).to(`passenger_${resAny.passengerId}`).emit('wallet:payment_failed', { message: 'Transação recusada pela Orange Money.' });
+      if (io && resAny.driverId) io.to(resAny.driverId).to(`driver_${resAny.driverId}`).to(`driver:${resAny.driverId}`).emit('wallet:payment_failed', { message: 'Transação recusada pela Orange Money.' });
     }
 
     return res.status(200).send('OK');
@@ -322,10 +366,11 @@ router.post('/mtn', ipWhitelistMiddleware, async (req: Request, res: Response): 
     const io = getIo();
 
     if (resAny.success) {
-      await emitSuccessSockets(resAny.rideId, resAny.passengerId);
+      await emitSuccessSockets(resAny.rideId, resAny.passengerId, resAny.driverId, resAny.newBalance, resAny.amount);
     } else {
       if (io && resAny.rideId) io.to(resAny.rideId).emit('payment:failed', { message: 'Pagamento falhou ou foi cancelado.' });
       if (io && resAny.passengerId) io.to(resAny.passengerId).to(`passenger_${resAny.passengerId}`).emit('wallet:payment_failed', { message: 'Transação recusada pela Telecel / MTN MoMo.' });
+      if (io && resAny.driverId) io.to(resAny.driverId).to(`driver_${resAny.driverId}`).to(`driver:${resAny.driverId}`).emit('wallet:payment_failed', { message: 'Transação recusada pela Telecel / MTN MoMo.' });
     }
 
     return res.status(200).send('OK');

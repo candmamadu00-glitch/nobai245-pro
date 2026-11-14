@@ -36,7 +36,7 @@ function detectProviderFromPhone(phone?: string | null): PaymentMethod | null {
   return null;
 }
 
-const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
+const MAPBOX_ACCESS_TOKEN = process.env.MAPBOX_ACCESS_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_TOKEN || 'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZTRyc3NmMDBzMTJ5cTA1anJvYjFsOSJ9.pUAoGXwZS8FtYNr85VD1TA';
 const CANCELLATION_PENALTY_XOF = 500;
 const MIN_DRIVER_BALANCE_FOR_CASH = 0; // 🟢 Exige saldo maior ou igual a 0 XOF para rodar em dinheiro
 const MIN_DRIVER_BALANCE_FOR_ONLINE = 0;
@@ -115,9 +115,15 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
         lastLng: true,
         walletBalance: true,
         isAvailable: true,
-        currentRideId: true
+        currentRideId: true,
+        licenseExpiresAt: true,
+        insuranceExpiresAt: true
       },
     });
+
+    const sysCfg = await prisma.systemConfig.findFirst().catch(() => null);
+    const dynamicMinCashBalance = Number((sysCfg as any)?.minDriverBalanceXof ?? MIN_DRIVER_BALANCE_FOR_CASH);
+    const blockExpiredDocs = Boolean((sysCfg as any)?.autoBlockExpiredDocs ?? false);
 
     const qualifiedDrivers = [];
 
@@ -126,9 +132,19 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
         continue;
       }
 
-      if (Number(driver.walletBalance || 0) < MIN_DRIVER_BALANCE_FOR_CASH) {
-        console.log(`⚠️ [RIDE_DISPATCH_SKIP] Motorista ${driver.fullName} (${driver.id}) sem saldo suficiente: ${driver.walletBalance} XOF`);
+      if (Number(driver.walletBalance || 0) < dynamicMinCashBalance) {
+        console.log(`⚠️ [RIDE_DISPATCH_SKIP] Motorista ${driver.fullName} (${driver.id}) abaixo do teto de saldo (${dynamicMinCashBalance} XOF): ${driver.walletBalance} XOF`);
         continue;
+      }
+
+      if (blockExpiredDocs) {
+        const nowMs = Date.now();
+        const licExp = driver.licenseExpiresAt ? new Date(driver.licenseExpiresAt).getTime() : null;
+        const insExp = driver.insuranceExpiresAt ? new Date(driver.insuranceExpiresAt).getTime() : null;
+        if ((licExp && licExp < nowMs) || (insExp && insExp < nowMs)) {
+          console.log(`⚠️ [RIDE_DISPATCH_SKIP] Motorista ${driver.fullName} (${driver.id}) bloqueado por documento vencido.`);
+          continue;
+        }
       }
 
       const refLat = driver.lastLat !== null && driver.lastLat !== undefined ? Number(driver.lastLat) : null;
@@ -250,35 +266,25 @@ export async function getRouteDistanceAndDuration(
     throw new Error('INVALID_COORDINATES: Coordenadas de origem ou destino inválidas.');
   }
 
-  if (!GOOGLE_MAPS_API_KEY) {
+  const points = [{ lat: lat1, lng: lon1 }, ...waypoints, { lat: lat2, lng: lon2 }];
+
+  if (!MAPBOX_ACCESS_TOKEN) {
     let totalDist = 0;
-    const points = [{lat: lat1, lng: lon1}, ...waypoints, {lat: lat2, lng: lon2}];
     for (let i = 0; i < points.length - 1; i++) {
-      totalDist += calculateDistance(points[i].lat, points[i].lng, points[i+1].lat, points[i+1].lng);
+      totalDist += calculateDistance(points[i].lat, points[i].lng, points[i + 1].lat, points[i + 1].lng);
     }
     return { distanceKm: Number(totalDist.toFixed(2)), durationMin: Math.max(1, Math.ceil((totalDist / 30) * 60)) };
   }
 
   try {
-    let waypointsStr = '';
-    if (waypoints.length > 0) {
-      waypointsStr = '&waypoints=' + waypoints.map(w => `${w.lat},${w.lng}`).join('|');
-    }
-    
-    const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${lat1},${lon1}&destination=${lat2},${lon2}${waypointsStr}&key=${GOOGLE_MAPS_API_KEY}`;
-    const response = await axios.get(url, { timeout: 4000 });
-    
-    if (response.data?.status === 'OK' && Array.isArray(response.data.routes) && response.data.routes.length > 0) {
+    const coordsStr = points.map(p => `${p.lng},${p.lat}`).join(';');
+    const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${coordsStr}?geometries=geojson&overview=simplified&access_token=${MAPBOX_ACCESS_TOKEN}`;
+    const response = await axios.get(url, { timeout: 5000 });
+
+    if (response.data?.code === 'Ok' && Array.isArray(response.data.routes) && response.data.routes.length > 0) {
       const route = response.data.routes[0];
-      let totalDistanceMeters = 0;
-      let totalDurationSeconds = 0;
-      
-      if (Array.isArray(route.legs)) {
-        route.legs.forEach((leg: any) => {
-          totalDistanceMeters += Number(leg?.distance?.value || 0);
-          totalDurationSeconds += Number(leg?.duration?.value || 0);
-        });
-      }
+      const totalDistanceMeters = Number(route.distance || 0);
+      const totalDurationSeconds = Number(route.duration || 0);
 
       if (totalDistanceMeters > 0) {
         return {
@@ -288,19 +294,36 @@ export async function getRouteDistanceAndDuration(
       }
     }
   } catch (error) {
-    console.warn('⚠️ [MAPS] API externa indisponível. Utilizando Haversine de contingência.');
+    console.warn('⚠️ [MAPBOX] API externa indisponível. Utilizando Haversine de contingência.');
   }
-  
-  return calculateHaversineFallback(lat1, lon1, lat2, lon2);
+
+  let fallbackTotalDist = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    fallbackTotalDist += calculateDistance(points[i].lat, points[i].lng, points[i + 1].lat, points[i + 1].lng);
+  }
+  return {
+    distanceKm: Math.max(0.1, Number(fallbackTotalDist.toFixed(2))),
+    durationMin: Math.max(1, Math.ceil((fallbackTotalDist / 30) * 60))
+  };
 }
 
-export async function calculateRidePrice(distanceKm: number, durationMin: number, vehicleType: VehicleType | string, serviceType: ServiceType | string) {
+export async function calculateRidePrice(
+  distanceKm: number,
+  durationMin: number,
+  vehicleType: VehicleType | string,
+  serviceType: ServiceType | string,
+  coords?: { originLat?: number; originLng?: number; destinationLat?: number; destinationLng?: number }
+) {
   const vType = (vehicleType || 'PARTICULAR') as VehicleType;
   const sType = (serviceType || 'RIDE') as ServiceType;
 
-  const dbTariff = await prisma.tariffConfig.findUnique({
-    where: { vehicleType_serviceType: { vehicleType: vType, serviceType: sType } }
-  }).catch(() => null);
+  const [dbTariff, sysSettings, activeZones] = await Promise.all([
+    prisma.tariffConfig.findUnique({
+      where: { vehicleType_serviceType: { vehicleType: vType, serviceType: sType } }
+    }).catch(() => null),
+    prisma.systemConfig.findFirst().catch(() => null),
+    prisma.tariffZone.findMany({ where: { isActive: true } }).catch(() => [])
+  ]);
 
   const fallback = FALLBACK_TARIFFS[vType] || FALLBACK_TARIFFS.PARTICULAR;
 
@@ -308,12 +331,52 @@ export async function calculateRidePrice(distanceKm: number, durationMin: number
   const perKm = dbTariff ? Number(dbTariff.perKmFare) : fallback.perKm;
   const perMin = dbTariff ? Number(dbTariff.perMinuteFare) : fallback.perMin;
   const commissionRate = dbTariff ? Number(dbTariff.commissionRate) : fallback.commissionRate;
-  const surgeMultiplier = dbTariff ? Number((dbTariff as any)?.surgeMultiplier || 1.00) : 1.00;
+  const tariffSurge = dbTariff ? Number((dbTariff as any)?.surgeMultiplier || 1.00) : 1.00;
+  const globalSurge = (sysSettings as any)?.globalSurgeActive
+    ? Math.max(1.0, Number((sysSettings as any)?.globalSurgeMultiplier || 1.00))
+    : 1.00;
 
-  let totalPrice = (baseFare + (distanceKm * perKm) + (durationMin * perMin)) * surgeMultiplier;
-  if (sType === ServiceType.DELIVERY) totalPrice *= 1.20;
+  let effectiveSurge = Math.max(tariffSurge, globalSurge);
+  let appliedRuleLabel: string | null = globalSurge > 1.0 ? `Pico (${globalSurge.toFixed(1)}x)` : null;
+  let fixedZonePrice: number | null = null;
 
-  return { totalPrice: Math.round(totalPrice), commissionRate };
+  if (coords && coords.originLat !== undefined && coords.originLng !== undefined && activeZones.length > 0) {
+    for (const z of activeZones) {
+      if (z.centerLat !== null && z.centerLng !== null) {
+        const zLat = Number(z.centerLat);
+        const zLng = Number(z.centerLng);
+        const radius = Number(z.radiusKm || 2.0);
+        const distOrigin = calculateDistance(coords.originLat, coords.originLng, zLat, zLng);
+        const distDest = (coords.destinationLat !== undefined && coords.destinationLng !== undefined)
+          ? calculateDistance(coords.destinationLat, coords.destinationLng, zLat, zLng)
+          : 999;
+
+        if (distOrigin <= radius || distDest <= radius) {
+          if (z.zoneType === 'FIXED_ROUTE' && z.fixedPriceXof && Number(z.fixedPriceXof) > 0 && vType === 'PARTICULAR') {
+            fixedZonePrice = Math.round(Number(z.fixedPriceXof));
+            appliedRuleLabel = `Tarifa Fixa: ${z.name}`;
+            break;
+          } else if (Number(z.multiplier) > effectiveSurge) {
+            effectiveSurge = Number(z.multiplier);
+            appliedRuleLabel = `Zona ${z.name} (${effectiveSurge.toFixed(1)}x)`;
+          }
+        }
+      }
+    }
+  }
+
+  let totalPrice = fixedZonePrice !== null
+    ? fixedZonePrice
+    : (baseFare + (distanceKm * perKm) + (durationMin * perMin)) * effectiveSurge;
+
+  if (sType === ServiceType.DELIVERY && fixedZonePrice === null) totalPrice *= 1.20;
+
+  return {
+    totalPrice: Math.round(totalPrice),
+    commissionRate,
+    surgeMultiplier: effectiveSurge,
+    appliedRuleLabel
+  };
 }
 
 export function isWithinGuineaBissau(lat: number, lng: number): boolean {
@@ -344,6 +407,8 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
   estimatedDistanceKm?: number;
   durationMin?: number;
   estimatedDurationMin?: number;
+  couponCode?: string;
+  useCorporateAccount?: boolean;
 }) {
   console.log(`📡 [CREATE_RIDE] Iniciando criação de corrida para Passageiro ID: ${passengerId}`);
   const { 
@@ -371,6 +436,22 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
   if (!passenger || passenger.status !== 'ACTIVE') {
     console.error(`❌ [CREATE_RIDE_ERROR] Passageiro inativo ou inexistente: ID ${passengerId}`);
     throw new Error('UNAUTHORIZED: Conta de passageiro inexistente, inativa ou suspensa.');
+  }
+
+  // 🛡️ Verificação Antifraude (Lista Negra / Blacklist)
+  const cleanPPhone = (passenger.phone || '').replace(/\D/g, '');
+  const blacklisted = await prisma.blacklistEntry.findFirst({
+    where: {
+      isActive: true,
+      OR: [
+        { identifierValue: passengerId },
+        ...(cleanPPhone ? [{ identifierValue: { contains: cleanPPhone.slice(-9) } }] : []),
+      ],
+    },
+  }).catch(() => null);
+
+  if (blacklisted) {
+    throw new Error(`FORBIDDEN: Conta bloqueada pela segurança (${blacklisted.reason}).`);
   }
 
   if (passenger.currentRideId) {
@@ -421,14 +502,78 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
   const durationMin = incomingDur > 0 ? Math.max(1, Math.round(incomingDur)) : fallbackRoute.durationMin;
   
   const { totalPrice: calculatedPrice } = await calculateRidePrice(
-    distanceKm, durationMin, requestedVehicleType as VehicleType, serviceType as ServiceType
+    distanceKm,
+    durationMin,
+    requestedVehicleType as VehicleType,
+    serviceType as ServiceType,
+    { originLat, originLng, destinationLat, destinationLng }
   );
   
-  const priceXof = (estimatedPrice && Number(estimatedPrice) > 0) 
+  const rawBasePriceXof = (estimatedPrice && Number(estimatedPrice) > 0) 
     ? Math.round(Number(estimatedPrice)) 
     : calculatedPrice;
+
+  // 🎟️ Validação e Aplicação de Cupom Promocional (quando enviado pelo App)
+  let appliedPromoId: string | null = null;
+  let discountAmountXof = 0;
+  if (data.couponCode && String(data.couponCode).trim().length > 0) {
+    const cleanCode = String(data.couponCode).trim().toUpperCase();
+    const promo = await prisma.promoCode.findUnique({ where: { code: cleanCode } }).catch(() => null);
+    const now = new Date();
+    const isPromoValid = promo && promo.isActive &&
+      (!promo.expiresAt || now <= new Date(promo.expiresAt)) &&
+      (promo.maxUsageTotal === null || promo.currentUsage < promo.maxUsageTotal) &&
+      (!promo.minRideAmount || rawBasePriceXof >= Number(promo.minRideAmount));
+
+    if (isPromoValid && promo) {
+      const isPercent = promo.discountPercentage !== null && Number(promo.discountPercentage) > 0;
+      if (isPercent) {
+        discountAmountXof = Math.round((rawBasePriceXof * Number(promo.discountPercentage)) / 100);
+        if (promo.maxDiscountAmount && discountAmountXof > Number(promo.maxDiscountAmount)) {
+          discountAmountXof = Math.round(Number(promo.maxDiscountAmount));
+        }
+      } else if (promo.discountFixed !== null && Number(promo.discountFixed) > 0) {
+        discountAmountXof = Math.round(Number(promo.discountFixed));
+      }
+      discountAmountXof = Math.min(rawBasePriceXof, Math.max(0, discountAmountXof));
+      appliedPromoId = promo.id;
+    }
+  }
+
+  let priceXof = Math.max(0, rawBasePriceXof - discountAmountXof);
+
+  // 🏢 Verificação de Faturamento Corporativo B2B (quando solicitado pelo colaborador)
+  let corporateAccountToCharge: { id: string; name: string } | null = null;
+  if (data.useCorporateAccount && passenger.phone) {
+    const digits = passenger.phone.replace(/\D/g, '');
+    const last9 = digits.slice(-9);
+    const emp = await (prisma as any).corporateEmployee.findFirst({
+      where: {
+        isActive: true,
+        phone: { contains: last9 || digits },
+        corporate: { isActive: true }
+      },
+      include: { corporate: true }
+    }).catch(() => null);
+
+    if (!emp || !emp.corporate) {
+      throw new Error('CORPORATE_NOT_FOUND: Seu telefone não possui vínculo corporativo ativo.');
+    }
+
+    const creditLimit = Number(emp.corporate.creditLimitXof || 0);
+    const currentBalance = Number(emp.corporate.currentBalanceXof || 0);
+    const availableCredit = Math.max(0, creditLimit - currentBalance);
+
+    if (availableCredit < priceXof) {
+      throw new Error('CORPORATE_INSUFFICIENT_CREDIT: Saldo corporativo da empresa insuficiente para esta viagem.');
+    }
+
+    corporateAccountToCharge = { id: emp.corporate.id, name: emp.corporate.name };
+  }
   
-  const initialStatus = isMobileMoney ? RideStatus.AWAITING_PAYMENT : RideStatus.SEARCHING;
+  const effectiveMethod = corporateAccountToCharge ? PaymentMethod.CASH : chosenMethod;
+  const effectiveIsMobileMoney = !corporateAccountToCharge && isMobileMoney;
+  const initialStatus = effectiveIsMobileMoney ? RideStatus.AWAITING_PAYMENT : RideStatus.SEARCHING;
   const initialTxStatus = TransactionStatus.PENDING;
   
   const startOtp = Math.floor(1000 + Math.random() * 9000).toString();
@@ -447,24 +592,42 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
         passengerId, 
         serviceType: (serviceType || 'RIDE') as ServiceType,
         requestedVehicleType: (requestedVehicleType || 'PARTICULAR') as VehicleType,
-        paymentMethod: chosenMethod, 
+        paymentMethod: effectiveMethod, 
         originAddress: originAddress || '',
         originLat, 
         originLng, 
         destinationAddress: destinationAddress || '',
         destinationLat, 
         destinationLng, 
-        referencePoint: referencePoint || pickupReferencePoint || null,
+        referencePoint: corporateAccountToCharge
+          ? `[B2B: ${corporateAccountToCharge.name}] ${referencePoint || pickupReferencePoint || ''}`.trim()
+          : (referencePoint || pickupReferencePoint || null),
         stops: formattedStops.length > 0 ? formattedStops : undefined,
         distanceKm,
         durationMin,
-        estimatedPriceXof: priceXof,
-        priceXof, 
+        estimatedPriceXof: rawBasePriceXof,
+        priceXof,
+        promoCodeId: appliedPromoId,
+        discountAmount: discountAmountXof,
         status: initialStatus, 
         startOtp,
         finishOtp
       }
     });
+
+    if (appliedPromoId) {
+      await tx.promoCode.update({
+        where: { id: appliedPromoId },
+        data: { currentUsage: { increment: 1 } }
+      }).catch(() => null);
+    }
+
+    if (corporateAccountToCharge && priceXof > 0) {
+      await (tx as any).corporateAccount.update({
+        where: { id: corporateAccountToCharge.id },
+        data: { currentBalanceXof: { increment: priceXof } }
+      });
+    }
 
     await tx.passenger.update({
       where: { id: passengerId },

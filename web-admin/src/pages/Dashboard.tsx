@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 import { 
   TrendingUp, Activity, Users, Car, AlertTriangle, 
@@ -11,11 +12,16 @@ interface DashboardMetrics {
   corridasHoje: number;
   corridasCompletas: number;
   corridasCanceladas: number;
+  corridasEmAndamento?: number;
   motoristasOnline: number;
   passageirosAtivos: number;
+  motoristasPendentes?: number;
+  ticketsAbertos?: number;
+  alertasSosAtivos?: number;
 }
 
 export function Dashboard() {
+  const navigate = useNavigate();
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -157,14 +163,69 @@ export function Dashboard() {
             </div>
           </div>
           <div className="alert-list">
-            <div className="alert-item">
+            <div
+              className="alert-item"
+              onClick={() => navigate('/rides')}
+              style={{ cursor: 'pointer' }}
+            >
+              <span>Corridas Ativas Agora</span>
+              <span
+                className="alert-badge"
+                style={{
+                  backgroundColor: (metrics?.corridasEmAndamento || 0) > 0 ? '#DBEAFE' : '#F1F5F9',
+                  color: (metrics?.corridasEmAndamento || 0) > 0 ? '#1D4ED8' : '#64748B',
+                  fontWeight: 700
+                }}
+              >
+                {metrics?.corridasEmAndamento || 0}
+              </span>
+            </div>
+            <div
+              className="alert-item"
+              onClick={() => navigate('/driver-requests')}
+              style={{ cursor: 'pointer' }}
+            >
               <span>Aprovar Motoristas</span>
-              <span className="alert-badge bg-gray">0</span>
+              <span
+                className="alert-badge"
+                style={{
+                  backgroundColor: (metrics?.motoristasPendentes || 0) > 0 ? '#FEF3C7' : '#F1F5F9',
+                  color: (metrics?.motoristasPendentes || 0) > 0 ? '#B45309' : '#64748B',
+                  fontWeight: 700
+                }}
+              >
+                {metrics?.motoristasPendentes || 0}
+              </span>
             </div>
-            <div className="alert-item">
+            <div
+              className="alert-item"
+              onClick={() => navigate('/tickets')}
+              style={{ cursor: 'pointer' }}
+            >
               <span>Tickets de Suporte</span>
-              <span className="alert-badge bg-gray">0</span>
+              <span
+                className="alert-badge"
+                style={{
+                  backgroundColor: (metrics?.ticketsAbertos || 0) > 0 ? '#FEE2E2' : '#F1F5F9',
+                  color: (metrics?.ticketsAbertos || 0) > 0 ? '#B91C1C' : '#64748B',
+                  fontWeight: 700
+                }}
+              >
+                {metrics?.ticketsAbertos || 0}
+              </span>
             </div>
+            {(metrics?.alertasSosAtivos || 0) > 0 && (
+              <div
+                className="alert-item"
+                onClick={() => navigate('/sos')}
+                style={{ cursor: 'pointer', backgroundColor: '#FEF2F2', borderRadius: '8px', padding: '6px 10px' }}
+              >
+                <span style={{ color: '#DC2626', fontWeight: 700 }}>Alertas SOS Ativos</span>
+                <span className="alert-badge" style={{ backgroundColor: '#DC2626', color: '#FFFFFF', fontWeight: 700 }}>
+                  {metrics?.alertasSosAtivos}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       </div>

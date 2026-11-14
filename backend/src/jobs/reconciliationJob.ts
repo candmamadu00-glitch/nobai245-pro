@@ -43,7 +43,7 @@ export const startCronJobs = (): void => {
           status: { in: [TransactionStatus.PENDING, TransactionStatus.PENDING_VERIFICATION] },
           createdAt: { lte: minAge, gte: maxAge },
         },
-        include: { passenger: true },
+        include: { passenger: true, driver: true },
         take: RECONCILE_BATCH_SIZE,
         orderBy: { updatedAt: 'asc' },
       });
@@ -60,12 +60,61 @@ export const startCronJobs = (): void => {
           const realStatus = await verifyTransactionStatus(tx.id);
 
           if (realStatus.status === 'SUCCESS') {
-            const { updatedRide, needsRefund } = await prisma.$transaction(async (txDB) => {
+            const { updatedRide, needsRefund, walletCredited } = await prisma.$transaction(async (txDB) => {
               // 🛡️ Regra de Ouro: Pagamento de corrida vai para HELD_IN_ESCROW.
               const finalStatus =
                 tx.type === TransactionType.RIDE_PAYMENT
                   ? TransactionStatus.HELD_IN_ESCROW
                   : TransactionStatus.COMPLETED;
+
+              let balanceBefore: number | undefined = undefined;
+              let balanceAfter: number | undefined = undefined;
+              let creditedInfo: { userType: 'DRIVER' | 'PASSENGER'; userId: string; newBalance: number; amount: number } | null = null;
+
+              // Se for recarga de carteira ainda não creditada, credita usuário e CompanyWallet
+              if (!tx.rideId && tx.balanceAfter === null && (tx.driverId || tx.passengerId)) {
+                const amt = Number(tx.amount || 0);
+                if (tx.driverId) {
+                  const drv = await txDB.driver.findUnique({ where: { id: tx.driverId }, select: { walletBalance: true } });
+                  if (drv) {
+                    balanceBefore = Number(drv.walletBalance || 0);
+                    balanceAfter = balanceBefore + amt;
+                    await txDB.driver.update({
+                      where: { id: tx.driverId },
+                      data: { walletBalance: balanceAfter, version: { increment: 1 } }
+                    });
+                    creditedInfo = { userType: 'DRIVER', userId: tx.driverId, newBalance: balanceAfter, amount: amt };
+                  }
+                } else if (tx.passengerId) {
+                  const pas = await txDB.passenger.findUnique({ where: { id: tx.passengerId }, select: { walletBalance: true } });
+                  if (pas) {
+                    balanceBefore = Number(pas.walletBalance || 0);
+                    balanceAfter = balanceBefore + amt;
+                    await txDB.passenger.update({
+                      where: { id: tx.passengerId },
+                      data: { walletBalance: balanceAfter, version: { increment: 1 } }
+                    });
+                    creditedInfo = { userType: 'PASSENGER', userId: tx.passengerId, newBalance: balanceAfter, amount: amt };
+                  }
+                }
+
+                if (creditedInfo) {
+                  await txDB.companyWallet.upsert({
+                    where: { id: 'bai245-main-wallet' },
+                    update: {
+                      balance: { increment: amt },
+                      totalCollected: { increment: amt },
+                      version: { increment: 1 }
+                    },
+                    create: {
+                      id: 'bai245-main-wallet',
+                      balance: amt,
+                      totalCollected: amt,
+                      version: 1
+                    }
+                  });
+                }
+              }
 
               await txDB.transaction.update({
                 where: { id: tx.id },
@@ -73,10 +122,16 @@ export const startCronJobs = (): void => {
                   status: finalStatus,
                   externalRef: realStatus.ref,
                   failureReason: null,
+                  ...(balanceBefore !== undefined ? { balanceBefore, balanceAfter } : {})
                 },
               });
 
-              if (!tx.rideId) return { updatedRide: null, needsRefund: false };
+              await txDB.paymentIntent.updateMany({
+                where: { OR: [{ transactionId: tx.id }, { reference: tx.reference }] },
+                data: { status: 'SUCCESS' }
+              }).catch(() => null);
+
+              if (!tx.rideId) return { updatedRide: null, needsRefund: false, walletCredited: creditedInfo };
 
               const rideUpdate = await txDB.ride.updateMany({
                 where: { id: tx.rideId, status: 'AWAITING_PAYMENT' },
@@ -121,12 +176,28 @@ export const startCronJobs = (): void => {
                     },
                   });
                 }
-                return { updatedRide: null, needsRefund: true };
+                return { updatedRide: null, needsRefund: true, walletCredited: null };
               }
 
               const ride = await txDB.ride.findUnique({ where: { id: tx.rideId } });
-              return { updatedRide: ride, needsRefund: false };
+              return { updatedRide: ride, needsRefund: false, walletCredited: null };
             });
+
+            if (walletCredited) {
+              const io = getIo();
+              if (io) {
+                const rooms = walletCredited.userType === 'DRIVER'
+                  ? [walletCredited.userId, `driver_${walletCredited.userId}`, `driver:${walletCredited.userId}`]
+                  : [walletCredited.userId, `passenger_${walletCredited.userId}`];
+                let emitter: any = io;
+                for (const r of rooms) emitter = emitter.to(r);
+                emitter.emit('wallet:updated', {
+                  message: `Recarga de ${walletCredited.amount} XOF confirmada!`,
+                  walletBalance: walletCredited.newBalance,
+                  balance: walletCredited.newBalance
+                });
+              }
+            }
 
             if (needsRefund) {
               console.warn(

@@ -18,7 +18,11 @@ import {
   Map as MapIcon,
   User,
   Car,
-  PlayCircle
+  PlayCircle,
+  Ban,
+  UserPlus,
+  PlusCircle,
+  PhoneCall
 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
 import L from 'leaflet';
@@ -135,6 +139,134 @@ export function Rides() {
   const [selectedRideId, setSelectedRideId] = useState<string | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [routeModalRide, setRouteModalRide] = useState<Ride | null>(null);
+
+  const [cancellingRideId, setCancellingRideId] = useState<string | null>(null);
+
+  // 🚨 CONTINGÊNCIA OPERACIONAL (FORÇAR CONCLUSÃO, ATRIBUIR MOTORISTA, CALL-CENTER)
+  const [finishingRideId, setFinishingRideId] = useState<string | null>(null);
+  const [assignModalRide, setAssignModalRide] = useState<Ride | null>(null);
+  const [availableDrivers, setAvailableDrivers] = useState<any[]>([]);
+  const [selectedDriverId, setSelectedDriverId] = useState<string>('');
+  const [assigningDriver, setAssigningDriver] = useState(false);
+
+  const [isDispatchModalOpen, setIsDispatchModalOpen] = useState(false);
+  const [dispatching, setDispatching] = useState(false);
+  const [dispatchForm, setDispatchForm] = useState({
+    passengerPhone: '',
+    passengerName: '',
+    originAddress: '',
+    destinationAddress: '',
+    vehicleType: 'TAXI',
+    priceXof: '1000',
+    driverId: ''
+  });
+
+  const loadApprovedDrivers = async () => {
+    try {
+      const res = await api.get('/admin/drivers', { params: { limit: 100 } });
+      const list = Array.isArray(res.data?.data) ? res.data.data : (Array.isArray(res.data) ? res.data : []);
+      setAvailableDrivers(list.filter((d: any) => d.status === 'APPROVED'));
+    } catch (err) {
+      console.error('Erro ao carregar motoristas:', err);
+    }
+  };
+
+  const handleForceFinishRide = async (ride: Ride) => {
+    if (!window.confirm(
+      `Confirmar CONCLUSÃO FORÇADA da corrida de ${ride.passengerName} (${ride.amount} XOF)?\nIsso encerrará a viagem, calculará a comissão e liberará os aplicativos.`
+    )) return;
+
+    try {
+      setFinishingRideId(ride.id);
+      const res = await api.patch(`/admin/rides/${ride.id}/force-finish`, {
+        reason: 'Concluída manualmente pela central de operações'
+      });
+      alert(res.data?.message || 'Corrida concluída com sucesso!');
+      fetchRides();
+    } catch (err: any) {
+      alert(err?.response?.data?.error || 'Erro ao forçar conclusão da corrida.');
+    } finally {
+      setFinishingRideId(null);
+    }
+  };
+
+  const handleOpenAssignModal = async (ride: Ride) => {
+    setAssignModalRide(ride);
+    setSelectedDriverId('');
+    await loadApprovedDrivers();
+  };
+
+  const handleConfirmAssignDriver = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!assignModalRide || !selectedDriverId) return;
+    try {
+      setAssigningDriver(true);
+      const res = await api.patch(`/admin/rides/${assignModalRide.id}/assign-driver`, {
+        driverId: selectedDriverId
+      });
+      alert(res.data?.message || 'Motorista atribuído com sucesso!');
+      setAssignModalRide(null);
+      fetchRides();
+    } catch (err: any) {
+      alert(err?.response?.data?.error || 'Erro ao atribuir motorista.');
+    } finally {
+      setAssigningDriver(false);
+    }
+  };
+
+  const handleOpenDispatchModal = async () => {
+    setIsDispatchModalOpen(true);
+    await loadApprovedDrivers();
+  };
+
+  const handleSubmitManualDispatch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setDispatching(true);
+      const res = await api.post('/admin/rides/manual-dispatch', {
+        ...dispatchForm,
+        priceXof: Number(dispatchForm.priceXof) || 1000,
+        driverId: dispatchForm.driverId || undefined
+      });
+      alert(res.data?.message || 'Corrida despachada com sucesso!');
+      setIsDispatchModalOpen(false);
+      setDispatchForm({
+        passengerPhone: '',
+        passengerName: '',
+        originAddress: '',
+        destinationAddress: '',
+        vehicleType: 'TAXI',
+        priceXof: '1000',
+        driverId: ''
+      });
+      fetchRides();
+    } catch (err: any) {
+      alert(err?.response?.data?.error || 'Falha ao despachar corrida.');
+    } finally {
+      setDispatching(false);
+    }
+  };
+
+
+  const handleForceCancelRide = async (ride: Ride) => {
+    const reason = window.prompt(
+      `Destravar e cancelar a corrida de ${ride.passengerName}?\nInforme o motivo (visível no log):`,
+      'Corrida destravada pela central de operações'
+    );
+    if (reason === null) return;
+
+    try {
+      setCancellingRideId(ride.id);
+      await api.patch(`/admin/rides/${ride.id}/force-cancel`, { reason });
+      alert('Corrida destravada e cancelada com sucesso!');
+      fetchRides();
+    } catch (err: any) {
+      alert(err?.response?.data?.error || 'Falha ao cancelar corrida.');
+    } finally {
+      setCancellingRideId(null);
+    }
+  };
+
 
   // 🔧 CORREÇÃO: Resgate do token e injeção correta no hook de socket
   const adminToken = localStorage.getItem('@bai245:admin_token') || '';
@@ -430,6 +562,41 @@ export function Rides() {
                               <MapIcon size={16} />
                             </button>
 
+
+
+                            {!['COMPLETED', 'FINISHED', 'CANCELLED'].includes(String(ride.status).toUpperCase()) && (
+                              <>
+                                <button
+                                  className="btn-action-icon"
+                                  title="Atribuir ou Trocar Motorista"
+                                  onClick={() => handleOpenAssignModal(ride)}
+                                  style={{ color: '#1D4ED8', borderColor: '#93C5FD', backgroundColor: '#EFF6FF' }}
+                                >
+                                  <UserPlus size={15} />
+                                </button>
+                                <button
+                                  className="btn-action-icon"
+                                  title="Forçar Conclusão (Motorista sem sinal no destino)"
+                                  disabled={finishingRideId === ride.id}
+                                  onClick={() => handleForceFinishRide(ride)}
+                                  style={{ color: '#047857', borderColor: '#6EE7B7', backgroundColor: '#ECFDF5' }}
+                                >
+                                  <CheckCircle2 size={15} />
+                                </button>
+                              </>
+                            )}
+                            {!['COMPLETED', 'FINISHED', 'CANCELLED'].includes(String(ride.status).toUpperCase()) && (
+                              <button
+                                className="btn-action-icon"
+                                title="Destravar / Forçar Cancelamento"
+                                disabled={cancellingRideId === ride.id}
+                                onClick={() => handleForceCancelRide(ride)}
+                                style={{ color: '#DC2626', borderColor: '#FCA5A5', backgroundColor: '#FEF2F2' }}
+                              >
+                                <Ban size={15} />
+                              </button>
+                            )}
+
                             <button
                               className={`btn-audit ${hasLiveActivity ? 'active-event' : ''}`}
                               onClick={() => {
@@ -572,6 +739,175 @@ export function Rides() {
         calls={liveCalls}
         sharedTrips={sharedTrips}
       />
+
+      {/* MODAL DE ATRIBUIÇÃO / TROCA DE MOTORISTA */}
+      {assignModalRide && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+          }}
+          onClick={() => setAssignModalRide(null)}
+        >
+          <div
+            style={{
+              backgroundColor: '#FFFFFF', borderRadius: '14px', padding: '22px',
+              maxWidth: '460px', width: '92%', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.2)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#0F172A' }}>Atribuir / Trocar Motorista</h3>
+              <button onClick={() => setAssignModalRide(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                <X size={20} />
+              </button>
+            </div>
+            <p style={{ fontSize: '0.85rem', color: '#475569', marginBottom: '14px' }}>
+              Passageiro: <strong>{assignModalRide.passengerName}</strong><br />
+              Trajeto: {assignModalRide.originAddress} → {assignModalRide.destinationAddress}
+            </p>
+            <form onSubmit={handleConfirmAssignDriver} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <select
+                required
+                value={selectedDriverId}
+                onChange={(e) => setSelectedDriverId(e.target.value)}
+                style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '0.9rem' }}
+              >
+                <option value="">Selecione um motorista aprovado...</option>
+                {availableDrivers.map((d: any) => (
+                  <option key={d.id} value={d.id}>
+                    {d.fullName} • {d.vehiclePlate} ({d.vehicleType}) {d.isOnline ? '🟢 Online' : '⚪ Offline'}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="submit"
+                disabled={assigningDriver}
+                style={{
+                  padding: '10px', borderRadius: '8px', border: 'none', fontWeight: 700,
+                  backgroundColor: '#1D4ED8', color: '#FFFFFF', cursor: 'pointer'
+                }}
+              >
+                {assigningDriver ? 'Atribuindo...' : 'Confirmar Despacho para Motorista'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE DESPACHO MANUAL PELA CENTRAL (CALL-CENTER) */}
+      {isDispatchModalOpen && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+          }}
+          onClick={() => setIsDispatchModalOpen(false)}
+        >
+          <div
+            style={{
+              backgroundColor: '#FFFFFF', borderRadius: '14px', padding: '22px',
+              maxWidth: '520px', width: '94%', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.2)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <PhoneCall size={20} color="#059669" />
+                <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#0F172A' }}>Nova Corrida via Central (Call-Center)</h3>
+              </div>
+              <button onClick={() => setIsDispatchModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitManualDispatch} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <input
+                  type="text"
+                  required
+                  placeholder="Telefone Passageiro (+245...)"
+                  value={dispatchForm.passengerPhone}
+                  onChange={(e) => setDispatchForm({ ...dispatchForm, passengerPhone: e.target.value })}
+                  style={{ padding: '9px 10px', borderRadius: '8px', border: '1px solid #CBD5E1' }}
+                />
+                <input
+                  type="text"
+                  placeholder="Nome do Passageiro"
+                  value={dispatchForm.passengerName}
+                  onChange={(e) => setDispatchForm({ ...dispatchForm, passengerName: e.target.value })}
+                  style={{ padding: '9px 10px', borderRadius: '8px', border: '1px solid #CBD5E1' }}
+                />
+              </div>
+
+              <input
+                type="text"
+                required
+                placeholder="Ponto de Embarque / Origem (Ex: Bandim, Bissau)"
+                value={dispatchForm.originAddress}
+                onChange={(e) => setDispatchForm({ ...dispatchForm, originAddress: e.target.value })}
+                style={{ padding: '9px 10px', borderRadius: '8px', border: '1px solid #CBD5E1' }}
+              />
+
+              <input
+                type="text"
+                required
+                placeholder="Destino Final (Ex: Aeroporto Osvaldo Vieira)"
+                value={dispatchForm.destinationAddress}
+                onChange={(e) => setDispatchForm({ ...dispatchForm, destinationAddress: e.target.value })}
+                style={{ padding: '9px 10px', borderRadius: '8px', border: '1px solid #CBD5E1' }}
+              />
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <select
+                  value={dispatchForm.vehicleType}
+                  onChange={(e) => setDispatchForm({ ...dispatchForm, vehicleType: e.target.value })}
+                  style={{ padding: '9px 10px', borderRadius: '8px', border: '1px solid #CBD5E1' }}
+                >
+                  <option value="TAXI">TAXI</option>
+                  <option value="PARTICULAR">PARTICULAR</option>
+                  <option value="MOTO">MOTO</option>
+                </select>
+
+                <input
+                  type="number"
+                  min="300"
+                  required
+                  placeholder="Valor Combinado (XOF)"
+                  value={dispatchForm.priceXof}
+                  onChange={(e) => setDispatchForm({ ...dispatchForm, priceXof: e.target.value })}
+                  style={{ padding: '9px 10px', borderRadius: '8px', border: '1px solid #CBD5E1', fontWeight: 700 }}
+                />
+              </div>
+
+              <select
+                value={dispatchForm.driverId}
+                onChange={(e) => setDispatchForm({ ...dispatchForm, driverId: e.target.value })}
+                style={{ padding: '9px 10px', borderRadius: '8px', border: '1px solid #CBD5E1' }}
+              >
+                <option value="">Atribuir motorista agora (opcional)...</option>
+                {availableDrivers.map((d: any) => (
+                  <option key={d.id} value={d.id}>
+                    {d.fullName} • {d.vehiclePlate} ({d.vehicleType}) {d.isOnline ? '🟢 Online' : '⚪ Offline'}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="submit"
+                disabled={dispatching}
+                style={{
+                  padding: '10px', borderRadius: '8px', border: 'none', fontWeight: 700,
+                  backgroundColor: '#059669', color: '#FFFFFF', cursor: 'pointer', marginTop: '4px'
+                }}
+              >
+                {dispatching ? 'Criando Corrida...' : 'Criar & Despachar Corrida'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

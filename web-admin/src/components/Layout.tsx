@@ -19,7 +19,12 @@ import {
   Menu,
   X,
   Download,
-  Shield
+  Shield,
+  Tag,
+  Megaphone,
+  BarChart3,
+  Building2,
+  Award
 } from 'lucide-react';
 import './Layout.css';
 
@@ -137,6 +142,11 @@ export function Layout() {
               <span>Bairros & Pontos</span>
             </NavLink>
 
+            <NavLink to="/analytics" className={({ isActive }) => `menu-link ${isActive ? 'active' : ''}`}>
+              <BarChart3 size={18} />
+              <span>Inteligência & BI</span>
+            </NavLink>
+
             <NavLink to="/sos" className={({ isActive }) => `menu-link ${isActive ? 'active' : ''}`}>
               <ShieldAlert size={18} />
               <span>Alertas SOS</span>
@@ -158,6 +168,10 @@ export function Layout() {
               <UserX size={18} />
               <span>Base de Passageiros</span>
             </NavLink>
+            <NavLink to="/corporate" className={({ isActive }) => `menu-link ${isActive ? 'active' : ''}`}>
+              <Building2 size={18} />
+              <span>Corporativo & Frotas</span>
+            </NavLink>
             <NavLink to="/admins" className={({ isActive }) => `menu-link ${isActive ? 'active' : ''}`}>
               <UserCog size={18} />
               <span>Gestão da Equipe</span>
@@ -177,6 +191,18 @@ export function Layout() {
             <NavLink to="/ratings" className={({ isActive }) => `menu-link ${isActive ? 'active' : ''}`}>
               <Star size={18} />
               <span>Avaliações & Feedbacks</span>
+            </NavLink>
+            <NavLink to="/promos" className={({ isActive }) => `menu-link ${isActive ? 'active' : ''}`}>
+              <Tag size={18} />
+              <span>Cupons & Campanhas</span>
+            </NavLink>
+            <NavLink to="/broadcast" className={({ isActive }) => `menu-link ${isActive ? 'active' : ''}`}>
+              <Megaphone size={18} />
+              <span>Comunicados & Push</span>
+            </NavLink>
+            <NavLink to="/governance" className={({ isActive }) => `menu-link ${isActive ? 'active' : ''}`}>
+              <Award size={18} />
+              <span>Antifraude, Zonas & DRE</span>
             </NavLink>
             <NavLink to="/settings" className={({ isActive }) => `menu-link ${isActive ? 'active' : ''}`}>
               <Settings size={18} />

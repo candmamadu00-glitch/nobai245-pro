@@ -72,7 +72,7 @@ const escapeCsvField = (field: string | number | null | undefined): string => {
 };
 
 export function Financial() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'manage_balances'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'driver_closing' | 'manage_balances'>('overview');
   const [wallet, setWallet] = useState<WalletData>({ balance: 0, totalCollected: 0, pendingWithdrawalsAmount: 0 });
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,7 +84,156 @@ export function Financial() {
   const [rechargeForm, setRechargeForm] = useState<RechargeForm>(INITIAL_RECHARGE_FORM);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+
+  const [approvingTxId, setApprovingTxId] = useState<string | null>(null);
+
+  const handleApproveAndCredit = async (tx: Transaction) => {
+    const targetName = tx.driver?.fullName || tx.passenger?.fullName || 'usuário';
+    if (!window.confirm(`Confirmar pagamento de ${formatCurrency(tx.amount)} e creditar imediatamente na carteira de ${targetName}?`)) {
+      return;
+    }
+    try {
+      setApprovingTxId(tx.id);
+      const res = await api.post(`/admin/finance/approve-transaction/${tx.id}`);
+      alert(res.data?.message || 'Transação confirmada e saldo creditado!');
+      fetchFinancialData();
+    } catch (err: any) {
+      alert(err?.response?.data?.error || 'Erro ao confirmar e creditar transação.');
+    } finally {
+      setApprovingTxId(null);
+    }
+  };
+
   const [exportDates, setExportDates] = useState({ start: '', end: '' });
+
+  // 📊 FECHAMENTO DIÁRIO POR MOTORISTA
+  const [closingDate, setClosingDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [closingLoading, setClosingLoading] = useState(false);
+  const [closingSearch, setClosingSearch] = useState('');
+  const [closingSummary, setClosingSummary] = useState({
+    activeDrivers: 0,
+    totalRides: 0,
+    totalGross: 0,
+    totalCommission: 0,
+    totalDriverNet: 0,
+    totalWalletPayable: 0
+  });
+  const [closingDrivers, setClosingDrivers] = useState<any[]>([]);
+  const [payingDriverId, setPayingDriverId] = useState<string | null>(null);
+
+  const fetchDriverClosing = useCallback(async (dateStr: string) => {
+    try {
+      setClosingLoading(true);
+      const res = await api.get('/admin/finance/driver-closing', { params: { date: dateStr } });
+      setClosingSummary(res.data?.summary || {
+        activeDrivers: 0,
+        totalRides: 0,
+        totalGross: 0,
+        totalCommission: 0,
+        totalDriverNet: 0,
+        totalWalletPayable: 0
+      });
+      setClosingDrivers(Array.isArray(res.data?.drivers) ? res.data.drivers : []);
+    } catch (err) {
+      console.error('❌ [DRIVER CLOSING] Erro ao carregar fechamento:', err);
+    } finally {
+      setClosingLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'driver_closing') {
+      fetchDriverClosing(closingDate);
+    }
+  }, [activeTab, closingDate, fetchDriverClosing]);
+
+  const handleDriverPayout = async (drv: any) => {
+    const defaultAmount = Math.max(0, Math.round(Number(drv.walletBalance || 0)));
+    if (defaultAmount <= 0) {
+      alert('Este motorista não possui saldo positivo na carteira para repasse.');
+      return;
+    }
+
+    const inputAmount = window.prompt(
+      `Registrar repasse para ${drv.fullName} (${drv.payoutAccount})\nSaldo disponível na carteira: ${formatCurrency(defaultAmount)}\n\nInforme o valor a repassar (XOF):`,
+      String(defaultAmount)
+    );
+    if (inputAmount === null) return;
+
+    const numeric = Number(inputAmount);
+    if (!numeric || numeric <= 0) {
+      alert('Valor inválido.');
+      return;
+    }
+
+    const refNote = window.prompt(
+      'Comprovante / Referência da transferência Orange Money ou MTN (opcional):',
+      ''
+    );
+    if (refNote === null) return;
+
+    try {
+      setPayingDriverId(drv.driverId);
+      const res = await api.post('/admin/finance/driver-closing/payout', {
+        driverId: drv.driverId,
+        amount: numeric,
+        date: closingDate,
+        referenceNote: refNote
+      });
+      alert(res.data?.message || 'Repasse registrado com sucesso!');
+      fetchDriverClosing(closingDate);
+      fetchFinancialData();
+    } catch (err: any) {
+      alert(err?.response?.data?.error || 'Falha ao registrar repasse ao motorista.');
+    } finally {
+      setPayingDriverId(null);
+    }
+  };
+
+  const handleExportClosingCSV = () => {
+    if (closingDrivers.length === 0) {
+      alert('Nenhum motorista com corridas concluídas nesta data.');
+      return;
+    }
+    const headers = [
+      'Data',
+      'Motorista',
+      'Telefone',
+      'Placa',
+      'Conta_Repasse',
+      'Corridas_Concluidas',
+      'Corridas_Digitais',
+      'Corridas_Dinheiro',
+      'Faturamento_Bruto_XOF',
+      'Comissao_Retida_XOF',
+      'Liquido_Motorista_Dia_XOF',
+      'Saldo_Carteira_Atual_XOF'
+    ];
+    const rows = closingDrivers.map((d) => [
+      escapeCsvField(closingDate),
+      escapeCsvField(d.fullName),
+      escapeCsvField(d.phone),
+      escapeCsvField(d.vehiclePlate),
+      escapeCsvField(d.payoutAccount),
+      escapeCsvField(d.ridesCount),
+      escapeCsvField(d.digitalRidesCount),
+      escapeCsvField(d.cashRidesCount),
+      escapeCsvField(d.grossRevenue),
+      escapeCsvField(d.commissionRetained),
+      escapeCsvField(d.netDriverEarnings),
+      escapeCsvField(d.walletBalance)
+    ].join(','));
+
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.setAttribute('download', `fechamento_motoristas_${closingDate}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
 
   const fetchFinancialData = useCallback(async () => {
     try {
@@ -250,6 +399,12 @@ export function Financial() {
           Visão Geral
         </button>
         <button 
+          className={`fin-tab-btn ${activeTab === 'driver_closing' ? 'active' : ''}`}
+          onClick={() => setActiveTab('driver_closing')}
+        >
+          Fechamento por Motorista
+        </button>
+        <button 
           className={`fin-tab-btn ${activeTab === 'manage_balances' ? 'active' : ''}`}
           onClick={() => setActiveTab('manage_balances')}
         >
@@ -373,6 +528,17 @@ export function Financial() {
                               <span className={`status-badge ${statusConfig?.badgeClass || ''}`}>
                                 {statusConfig?.icon} {statusConfig?.label || tx.status}
                               </span>
+                              {(tx.status === 'PENDING' || tx.status === 'FAILED') && (tx.driver || tx.passenger) && (
+                                <button
+                                  onClick={() => handleApproveAndCredit(tx)}
+                                  disabled={approvingTxId === tx.id}
+                                  className="btn-retry"
+                                  style={{ backgroundColor: '#ECFDF5', color: '#047857', border: '1px solid #6EE7B7', marginLeft: '6px' }}
+                                  title="Confirmar pagamento recebido e creditar carteira agora"
+                                >
+                                  <CheckCircle size={11} /> {approvingTxId === tx.id ? 'Creditando...' : 'Confirmar & Creditar'}
+                                </button>
+                              )}
                               {tx.status === 'FAILED' && (
                                 <button 
                                   onClick={() => handleRetryTransaction(tx.id)} 
@@ -386,6 +552,235 @@ export function Financial() {
                         </tr>
                       );
                     })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Conteúdo: Fechamento Diário por Motorista */}
+      {activeTab === 'driver_closing' && (
+        <div className="fin-content-space">
+          {/* Barra de Filtro por Data e Exportação */}
+          <div style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: '12px',
+            backgroundColor: '#FFFFFF',
+            padding: '14px 18px',
+            borderRadius: '12px',
+            border: '1px solid #E2E8F0'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <label style={{ fontWeight: 700, fontSize: '0.88rem', color: '#1E293B' }}>
+                Data do Fechamento:
+              </label>
+              <input
+                type="date"
+                className="fin-input"
+                style={{ width: 'auto', padding: '7px 12px' }}
+                value={closingDate}
+                onChange={(e) => setClosingDate(e.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() => fetchDriverClosing(closingDate)}
+                className="btn-retry"
+                style={{ padding: '8px 12px', fontSize: '0.82rem' }}
+              >
+                <RotateCw size={13} /> Atualizar
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <div style={{ position: 'relative' }}>
+                <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#94A3B8' }} />
+                <input
+                  type="text"
+                  placeholder="Filtrar motorista ou placa..."
+                  className="fin-input"
+                  style={{ paddingLeft: '32px', width: '230px' }}
+                  value={closingSearch}
+                  onChange={(e) => setClosingSearch(e.target.value)}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleExportClosingCSV}
+                className="btn-dark"
+                style={{ padding: '8px 14px', fontSize: '0.84rem' }}
+              >
+                <Download size={15} /> Exportar CSV do Dia
+              </button>
+            </div>
+          </div>
+
+          {/* KPIs Consolidados do Dia */}
+          <div className="fin-metrics-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))' }}>
+            <div className="fin-metric-card light">
+              <div className="metric-top-row">
+                <span className="metric-title">Corridas Concluídas ({closingDate})</span>
+                <div className="icon-box-indigo"><Car size={18} /></div>
+              </div>
+              <div className="metric-amount">
+                {closingLoading ? '...' : `${closingSummary.totalRides} corridas`}
+              </div>
+              <span style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '4px' }}>
+                {closingSummary.activeDrivers} motorista(s) ativo(s) no dia
+              </span>
+            </div>
+
+            <div className="fin-metric-card light">
+              <div className="metric-top-row">
+                <span className="metric-title">Faturamento Bruto (Dia)</span>
+                <div className="icon-box-indigo"><TrendingUp size={18} /></div>
+              </div>
+              <div className="metric-amount">
+                {closingLoading ? '...' : formatCurrency(closingSummary.totalGross)}
+              </div>
+              <span style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '4px' }}>
+                Soma total das corridas concluídas
+              </span>
+            </div>
+
+            <div className="fin-metric-card dark">
+              <span className="metric-title">Comissão Retida (Plataforma)</span>
+              <div className="metric-amount highlight">
+                {closingLoading ? '...' : formatCurrency(closingSummary.totalCommission)}
+              </div>
+              <span style={{ fontSize: '0.78rem', color: '#94A3B8', marginTop: '4px' }}>
+                Receita líquida Nô Bai 245 no dia
+              </span>
+            </div>
+
+            <div className="fin-metric-card light">
+              <div className="metric-top-row">
+                <span className="metric-title">Ganho Líquido Motoristas (Dia)</span>
+                <div className="icon-box-indigo"><Wallet size={18} /></div>
+              </div>
+              <div className="metric-amount" style={{ color: '#059669' }}>
+                {closingLoading ? '...' : formatCurrency(closingSummary.totalDriverNet)}
+              </div>
+              <span style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '4px' }}>
+                Saldo em carteiras: {formatCurrency(closingSummary.totalWalletPayable)}
+              </span>
+            </div>
+          </div>
+
+          {/* Tabela Detalhada por Motorista */}
+          <div className="fin-table-card">
+            <div className="fin-table-header">
+              <h3>Consolidado Individual por Motorista — {closingDate}</h3>
+            </div>
+            <div className="table-responsive">
+              <table className="fin-table">
+                <thead>
+                  <tr>
+                    <th>Motorista / Conta Repasse</th>
+                    <th className="text-center">Corridas</th>
+                    <th className="text-right">Bruto (Dia)</th>
+                    <th className="text-right">Comissão Retida</th>
+                    <th className="text-right">Líquido (Dia)</th>
+                    <th className="text-right">Saldo Carteira (A Repassar)</th>
+                    <th className="text-center">Ação</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {closingLoading ? (
+                    <tr>
+                      <td colSpan={7} className="empty-table-cell">
+                        <Loader2 className="spin" size={18} style={{ display: 'inline', marginRight: '6px' }} />
+                        Calculando fechamento diário...
+                      </td>
+                    </tr>
+                  ) : closingDrivers.filter((d) => {
+                    const q = closingSearch.toLowerCase().trim();
+                    if (!q) return true;
+                    return (
+                      String(d.fullName || '').toLowerCase().includes(q) ||
+                      String(d.phone || '').toLowerCase().includes(q) ||
+                      String(d.vehiclePlate || '').toLowerCase().includes(q)
+                    );
+                  }).length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="empty-table-cell">
+                        Nenhuma corrida concluída registrada para esta data.
+                      </td>
+                    </tr>
+                  ) : (
+                    closingDrivers
+                      .filter((d) => {
+                        const q = closingSearch.toLowerCase().trim();
+                        if (!q) return true;
+                        return (
+                          String(d.fullName || '').toLowerCase().includes(q) ||
+                          String(d.phone || '').toLowerCase().includes(q) ||
+                          String(d.vehiclePlate || '').toLowerCase().includes(q)
+                        );
+                      })
+                      .map((drv) => (
+                        <tr key={drv.driverId}>
+                          <td>
+                            <div className="agent-title">{drv.fullName}</div>
+                            <div className="agent-sub">
+                              {drv.vehiclePlate || 'Sem placa'} • {drv.payoutAccount}
+                            </div>
+                          </td>
+                          <td className="text-center">
+                            <span className="status-badge status-completed" style={{ fontWeight: 700 }}>
+                              {drv.ridesCount} concluída(s)
+                            </span>
+                            <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '3px' }}>
+                              {drv.digitalRidesCount} digital • {drv.cashRidesCount} dinheiro
+                            </div>
+                          </td>
+                          <td className="amount-cell text-right font-mono">
+                            {formatCurrency(drv.grossRevenue)}
+                            <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
+                              Dig: {formatCurrency(drv.digitalRevenue)}
+                            </div>
+                          </td>
+                          <td className="amount-cell text-right font-mono">
+                            <span className="text-negative">-{formatCurrency(drv.commissionRetained)}</span>
+                          </td>
+                          <td className="amount-cell text-right font-mono">
+                            <span className="text-positive" style={{ fontWeight: 700 }}>
+                              {formatCurrency(drv.netDriverEarnings)}
+                            </span>
+                          </td>
+                          <td className="amount-cell text-right font-mono">
+                            <strong style={{ color: drv.walletBalance > 0 ? '#047857' : '#64748B' }}>
+                              {formatCurrency(drv.walletBalance)}
+                            </strong>
+                          </td>
+                          <td className="text-center">
+                            {drv.walletBalance > 0 ? (
+                              <button
+                                type="button"
+                                disabled={payingDriverId === drv.driverId}
+                                onClick={() => handleDriverPayout(drv)}
+                                className="btn-retry"
+                                style={{
+                                  backgroundColor: '#ECFDF5',
+                                  color: '#047857',
+                                  border: '1px solid #6EE7B7',
+                                  padding: '6px 10px',
+                                  fontWeight: 600
+                                }}
+                                title="Registrar transferência Orange Money / MTN e abater saldo da carteira"
+                              >
+                                <Send size={11} /> {payingDriverId === drv.driverId ? 'Processando...' : 'Registrar Repasse'}
+                              </button>
+                            ) : (
+                              <span style={{ fontSize: '0.75rem', color: '#94A3B8' }}>Quitado</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))
                   )}
                 </tbody>
               </table>

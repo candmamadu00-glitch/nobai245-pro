@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, StyleSheet, Alert } from 'react-native';
 import Mapbox from '@rnmapbox/maps';
 
-const MAPBOX_ACCESS_TOKEN = 'SEU_MAPBOX_ACCESS_TOKEN';
+const MAPBOX_ACCESS_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || 'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZTRyc3NmMDBzMTJ5cTA1anJvYjFsOSJ9.pUAoGXwZS8FtYNr85VD1TA';
 Mapbox.setAccessToken(MAPBOX_ACCESS_TOKEN);
 
 export function MapScreen() {

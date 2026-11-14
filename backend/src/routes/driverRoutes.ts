@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { DriverAuthController } from '../controllers/DriverAuthController';
 import { TicketController } from '../controllers/TicketController';
+import { MobileSyncController } from '../controllers/MobileSyncController';
 import { upload } from '../config/multer';
 import { authenticate, authorizeRole } from '../middlewares/authMiddleware';
 import { validate } from '../middlewares/validateMiddleware';
@@ -28,6 +29,7 @@ import { claimRechargeByTxId } from '../controllers/WalletController';
 const driverRoutes = Router();
 const authController = new DriverAuthController();
 const ticketController = new TicketController();
+const mobileSyncController = new MobileSyncController();
 
 // 🛡️ Middleware flexível para uploads de foto de perfil
 const handleProfilePictureUpload = upload.fields([
@@ -79,8 +81,10 @@ driverRoutes.delete('/delete-account', (req, res) => authController.deleteAccoun
 
 // 💰 Financeiro & Configurações
 driverRoutes.get('/finance', (req, res) => authController.getFinance(req, res));
+driverRoutes.get('/scale-status', (req, res) => mobileSyncController.getDriverScaleStatus(req, res));
 driverRoutes.put('/payment-info', validate(updateDriverPaymentSchema), (req, res) => authController.updatePaymentInfo(req, res));
 driverRoutes.put('/device-token', validate(updateDeviceTokenSchema), (req, res) => authController.updateDeviceToken(req, res));
+driverRoutes.post('/wallet/recharge', (req, res) => authController.rechargeWallet(req, res));
 driverRoutes.post('/wallet/claim', (req, res) => claimRechargeByTxId(req, res));
 
 // 🚗 Fluxo de Corridas

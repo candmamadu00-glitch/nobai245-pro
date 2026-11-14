@@ -36,7 +36,7 @@ export function Login() {
     const order = ['pt', 'cri', 'fr', 'en', 'es', 'ru'];
     const current = i18n.language === 'gnb' ? 'cri' : (i18n.language || 'pt');
     const next = order[(order.indexOf(current) + 1) % order.length];
-    changeLanguage(next);
+    i18n.changeLanguage(next);
   };
 
   useEffect(() => {

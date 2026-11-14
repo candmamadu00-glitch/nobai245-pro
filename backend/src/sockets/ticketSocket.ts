@@ -9,33 +9,7 @@ export function setupTicketSocketHandlers(io: Server, socket: Socket) {
 
   socket.join(`ticket_${socket.id}`);
 
-  // ---------------------------------------------------------------------------
-  // 💬 OUVINTE DO CHAT DA CORRIDA (DISPARA SOCKET EM TEMPO REAL + PUSH)
-  // ---------------------------------------------------------------------------
-  socket.on('chat:send_message', async (data: {
-    rideId: string;
-    senderId: string;
-    senderType: 'PASSENGER' | 'DRIVER';
-    senderName: string;
-    message: string;
-  }) => {
-    if (!data.rideId || !data.message?.trim()) return;
-
-    try {
-      // Chama o helper centralizado que envia o evento via Socket e a Push Notification
-      await notifyNewChatMessage({
-        rideId: data.rideId,
-        senderId: data.senderId,
-        senderType: data.senderType,
-        senderName: data.senderName,
-        message: data.message.trim()
-      });
-    } catch (err) {
-      console.error('Erro ao processar mensagem do chat via socket:', err);
-    }
-  });
-
-  // Atualização de localização do motorista
+// Atualização de localização do motorista
   socket.on('driver:update_location', async (data: { driverId: string; rideId?: string; latitude: number; longitude: number; heading?: number; speed?: number }) => {
     io.to('admin_dashboard').emit('admin:map_update', data);
 

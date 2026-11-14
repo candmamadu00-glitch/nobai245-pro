@@ -906,6 +906,66 @@ export class AdminAuthController {
       return res.status(500).json({ error: 'Erro interno ao buscar motoristas online.' });
     }
   }
+
+  // ==========================================
+  // 🔑 ALTERAR FUNÇÃO (ROLE) DE MEMBRO DA EQUIPE
+  // ==========================================
+  async updateAdminRole(req: Request, res: Response): Promise<Response> {
+    try {
+      const { adminId } = req.params;
+      const { role } = req.body || {};
+
+      if (!['SUPER_ADMIN', 'OPERATOR', 'FINANCE'].includes(String(role))) {
+        return res.status(400).json({ error: 'Função inválida. Use SUPER_ADMIN, OPERATOR ou FINANCE.' });
+      }
+
+      const updated = await prisma.admin.update({
+        where: { id: String(adminId) },
+        data: { role: role as any },
+        select: { id: true, name: true, email: true, role: true, isActive: true, createdAt: true }
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: `Permissão de ${updated.name} atualizada para ${updated.role}.`,
+        admin: updated
+      });
+    } catch (error) {
+      console.error('[ERRO AO ATUALIZAR ROLE DO ADMIN]:', error);
+      return res.status(500).json({ error: 'Falha ao atualizar permissão do colaborador.' });
+    }
+  }
+
+  // ==========================================
+  // 🔒 REDEFINIR SENHA DE MEMBRO DA EQUIPE
+  // ==========================================
+  async resetAdminPassword(req: Request, res: Response): Promise<Response> {
+    try {
+      const { adminId } = req.params;
+      const { newPassword } = req.body || {};
+
+      if (!newPassword || String(newPassword).trim().length < 6) {
+        return res.status(400).json({ error: 'A nova senha deve ter pelo menos 6 caracteres.' });
+      }
+
+      const passwordHash = await bcrypt.hash(String(newPassword).trim(), 10);
+
+      const updated = await prisma.admin.update({
+        where: { id: String(adminId) },
+        data: { passwordHash },
+        select: { id: true, name: true, email: true }
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: `Senha de ${updated.name} redefinida com sucesso!`
+      });
+    } catch (error) {
+      console.error('[ERRO AO REDEFINIR SENHA DO ADMIN]:', error);
+      return res.status(500).json({ error: 'Falha ao redefinir senha do colaborador.' });
+    }
+  }
+
 }
 
 const adminAuthController = new AdminAuthController();

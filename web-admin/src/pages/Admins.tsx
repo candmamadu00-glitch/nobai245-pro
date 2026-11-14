@@ -10,7 +10,9 @@ import {
   XCircle, 
   Lock,
   Plus,
-  RefreshCw
+  RefreshCw,
+  KeyRound,
+  History
 } from 'lucide-react';
 import './Admins.css';
 
@@ -35,6 +37,48 @@ export function Admins() {
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<'SUPER_ADMIN' | 'OPERATOR' | 'FINANCE'>('OPERATOR');
   const [errorMessage, setErrorMessage] = useState('');
+
+  const [activeTab, setActiveTab] = useState<'team' | 'audit'>('team');
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+
+  const fetchAuditLogs = async () => {
+    try {
+      setAuditLoading(true);
+      const res = await api.get('/admin/audit-logs');
+      setAuditLogs(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch (err) {
+      console.error('Erro ao carregar trilha de auditoria:', err);
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'audit') fetchAuditLogs();
+  }, [activeTab]);
+
+  const handleChangeRole = async (user: AdminUser, newRole: string) => {
+    if (newRole === user.role) return;
+    if (!window.confirm(`Alterar permissão de ${user.name} para ${newRole}?`)) return;
+    try {
+      await api.patch(`/admin/users/${user.id}/role`, { role: newRole });
+      fetchAdmins();
+    } catch (err: any) {
+      alert(err?.response?.data?.error || 'Erro ao alterar função.');
+    }
+  };
+
+  const handleResetPassword = async (user: AdminUser) => {
+    const newPassword = window.prompt(`Digite a nova senha para ${user.name} (mínimo 6 caracteres):`);
+    if (!newPassword) return;
+    try {
+      const res = await api.patch(`/admin/users/${user.id}/reset-password`, { newPassword });
+      alert(res.data?.message || 'Senha redefinida com sucesso!');
+    } catch (err: any) {
+      alert(err?.response?.data?.error || 'Erro ao redefinir senha.');
+    }
+  };
 
   const fetchAdmins = async () => {
     try {
@@ -118,7 +162,76 @@ export function Admins() {
         </div>
       </div>
 
-      {loading ? (
+      {/* Abas: Equipe vs Trilha de Auditoria */}
+      <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
+        <button
+          onClick={() => setActiveTab('team')}
+          style={{
+            padding: '9px 16px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer',
+            border: activeTab === 'team' ? '2px solid #059669' : '1px solid #CBD5E1',
+            backgroundColor: activeTab === 'team' ? '#ECFDF5' : '#FFFFFF',
+            color: activeTab === 'team' ? '#047857' : '#475569'
+          }}
+        >
+          Membros da Equipe ({admins.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('audit')}
+          style={{
+            padding: '9px 16px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', gap: '6px',
+            border: activeTab === 'audit' ? '2px solid #0F172A' : '1px solid #CBD5E1',
+            backgroundColor: activeTab === 'audit' ? '#0F172A' : '#FFFFFF',
+            color: activeTab === 'audit' ? '#FFFFFF' : '#475569'
+          }}
+        >
+          <History size={16} /> Trilha de Auditoria (Quem fez o quê)
+        </button>
+      </div>
+
+      {activeTab === 'audit' ? (
+        <div className="table-card">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Data / Hora</th>
+                <th>Colaborador</th>
+                <th>Ação Executada</th>
+                <th>Módulo / Alvo</th>
+                <th>IP</th>
+              </tr>
+            </thead>
+            <tbody>
+              {auditLoading ? (
+                <tr><td colSpan={5} style={{ textAlign: 'center', padding: '24px' }}>Carregando histórico de auditoria...</td></tr>
+              ) : auditLogs.length === 0 ? (
+                <tr><td colSpan={5} style={{ textAlign: 'center', padding: '24px', color: '#64748B' }}>Nenhuma ação registrada ainda. Todas as próximas operações aparecerão aqui.</td></tr>
+              ) : (
+                auditLogs.map((log: any) => (
+                  <tr key={log.id}>
+                    <td style={{ fontSize: '0.82rem', color: '#475569' }}>
+                      {new Date(log.createdAt).toLocaleString('pt-BR')}
+                    </td>
+                    <td>
+                      <strong>{log.admin?.name || 'Admin'}</strong>
+                      <div style={{ fontSize: '0.75rem', color: '#64748B' }}>{log.admin?.role}</div>
+                    </td>
+                    <td style={{ fontFamily: 'monospace', fontSize: '0.82rem', color: '#0F172A' }}>
+                      {log.action}
+                    </td>
+                    <td>
+                      <span style={{ backgroundColor: '#F1F5F9', padding: '2px 8px', borderRadius: '6px', fontSize: '0.78rem', fontWeight: 700 }}>
+                        {log.targetType}
+                      </span>
+                    </td>
+                    <td style={{ fontSize: '0.8rem', color: '#64748B' }}>{log.ipAddress || '-'}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      ) : loading ? (
         <div className="loading-container">Carregando membros da equipe...</div>
       ) : (
         <div className="table-card">
@@ -141,7 +254,20 @@ export function Admins() {
                     <span>{user.name}</span>
                   </td>
                   <td>{user.email}</td>
-                  <td>{getRoleBadge(user.role)}</td>
+                  <td>
+                    <select
+                      value={user.role}
+                      onChange={(e) => handleChangeRole(user, e.target.value)}
+                      style={{
+                        padding: '5px 8px', borderRadius: '8px', border: '1px solid #CBD5E1',
+                        fontWeight: 700, fontSize: '0.8rem', backgroundColor: '#F8FAFC'
+                      }}
+                    >
+                      <option value="OPERATOR">Operador</option>
+                      <option value="FINANCE">Financeiro</option>
+                      <option value="SUPER_ADMIN">Super Admin</option>
+                    </select>
+                  </td>
                   <td>
                     {user.isActive ? (
                       <span className="status-tag active"><CheckCircle size={14} /> Ativo</span>
@@ -151,12 +277,26 @@ export function Admins() {
                   </td>
                   <td>{new Date(user.createdAt).toLocaleDateString('pt-BR')}</td>
                   <td>
-                    <button 
-                      className={`btn-status ${user.isActive ? 'disable' : 'enable'}`}
-                      onClick={() => handleToggleStatus(user.id, user.isActive)}
-                    >
-                      {user.isActive ? 'Desativar' : 'Ativar'}
-                    </button>
+                    <div style={{ display: 'inline-flex', gap: '6px' }}>
+                      <button
+                        type="button"
+                        onClick={() => handleResetPassword(user)}
+                        title="Redefinir Senha"
+                        style={{
+                          padding: '6px 10px', borderRadius: '8px', border: '1px solid #CBD5E1',
+                          backgroundColor: '#FFFFFF', color: '#0F172A', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer',
+                          display: 'inline-flex', alignItems: 'center', gap: '4px'
+                        }}
+                      >
+                        <KeyRound size={13} /> Senha
+                      </button>
+                      <button 
+                        className={`btn-status ${user.isActive ? 'disable' : 'enable'}`}
+                        onClick={() => handleToggleStatus(user.id, user.isActive)}
+                      >
+                        {user.isActive ? 'Desativar' : 'Ativar'}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

@@ -1,3 +1,4 @@
+import fs from 'fs';
 import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
 import http from 'http';
@@ -1171,6 +1172,8 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
         paymentMethod: rideData.paymentMethod || 'CASH',
         payerPhone: rideData.payerPhone || undefined,
         estimatedPrice: estimatedPrice ? Number(estimatedPrice) : undefined,
+        couponCode: rideData.couponCode || undefined,
+        useCorporateAccount: Boolean(rideData.useCorporateAccount),
         distanceKm: incomingDistanceKm ? Number(incomingDistanceKm) : undefined,
         durationMin: incomingDurationMin ? Number(incomingDurationMin) : undefined,
         stops: rawStops
@@ -1254,6 +1257,7 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
       const syncedPrice = Math.round(Number(ride.priceXof || 0));
       const syncedDistance = Number(Number(ride.distanceKm || 0).toFixed(2));
       const syncedDuration = Number(ride.durationMin || 0);
+      socket.emit('ride:price_calculated', { rideId, price: syncedPrice, priceXof: syncedPrice, distance: syncedDistance, distanceKm: syncedDistance, durationMin: syncedDuration });
 
       const requestPayload = {
         rideId,
@@ -1771,7 +1775,7 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
  // 🟢 NO BACKEND: backend/src/server.ts (ou socket handler)
 handleSocketEvent(socket, 'chat:send_message', async (data) => {
   try {
-    const { rideId, text, audioUrl, audioDuration, id } = data || {};
+    const { rideId, text, message, audioUrl, audio, audioDuration, duration, id } = data || {};
     const senderRole = (data?.sender || data?.senderRole || 'passenger').toLowerCase();
 
     if (!rideId || !isUuid(rideId)) return;
@@ -1785,7 +1789,36 @@ handleSocketEvent(socket, 'chat:send_message', async (data) => {
     socket.join(rideId);
     socket.join(`ride_${rideId}`);
 
-    const messageText = text || (audioUrl ? '🎤 Mensagem de áudio' : '');
+    const rawText = (typeof text === 'string' && !text.startsWith('data:audio')) ? text.trim()
+      : (typeof message === 'string' && !message.startsWith('data:audio')) ? message.trim() : '';
+    const rawAudio = audioUrl || audio
+      || (typeof text === 'string' && text.startsWith('data:audio') ? text : null)
+      || (typeof message === 'string' && message.startsWith('data:audio') ? message : null);
+    const finalDuration = Math.max(0, Number(audioDuration || duration || 0));
+
+    if (!rawText && !rawAudio) return;
+
+    let finalAudioUrl: string | null = null;
+    if (rawAudio && typeof rawAudio === 'string') {
+      if (rawAudio.startsWith('http://') || rawAudio.startsWith('https://')) {
+        finalAudioUrl = rawAudio;
+      } else {
+        try {
+          const uploadDir = path.join(process.cwd(), 'uploads', 'chat');
+          fs.mkdirSync(uploadDir, { recursive: true });
+          const cleanBase64 = rawAudio.replace(/^data:audio\/[^;]+;base64,/, '');
+          const fileName = `${rideId}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.m4a`;
+          fs.writeFileSync(path.join(uploadDir, fileName), Buffer.from(cleanBase64, 'base64'));
+          const baseUrl = (process.env.APP_URL || 'https://api.nobai245.com').replace(/\/$/, '');
+          finalAudioUrl = `${baseUrl}/uploads/chat/${fileName}`;
+        } catch (fileErr: any) {
+          console.error('❌ [CHAT_AUDIO_SAVE_ERR]:', fileErr?.message);
+          finalAudioUrl = rawAudio;
+        }
+      }
+    }
+
+    const dbMessageContent = finalAudioUrl ? `[AUDIO]${finalAudioUrl}|${finalDuration}` : rawText;
     const senderTypeEnum = senderRole === 'driver' ? 'DRIVER' : 'PASSENGER';
     const senderUserId = socket.data.user?.id || (senderRole === 'driver' ? ride.driverId : ride.passengerId);
 
@@ -1794,26 +1827,24 @@ handleSocketEvent(socket, 'chat:send_message', async (data) => {
       rideId,
       sender: senderRole,
       senderType: senderTypeEnum,
-      text: text || '',
-      message: text || '',
-      audioUrl: audioUrl || null,
-      audioDuration: audioDuration || 0,
+      text: finalAudioUrl ? '' : rawText,
+      message: finalAudioUrl ? '' : rawText,
+      audioUrl: finalAudioUrl,
+      audioDuration: finalDuration,
       createdAt: new Date().toISOString()
     };
 
-    // Persiste de forma assíncrona no banco de dados
     if (senderUserId) {
       prisma.rideChatMessage.create({
         data: {
           rideId,
           senderId: senderUserId,
           senderType: senderTypeEnum,
-          message: messageText
+          message: dbMessageContent
         }
       }).catch(err => console.error('❌ [CHAT_DB_ERROR]:', err?.message));
     }
 
-    // Dispara em tempo real para todas as salas vinculadas
     const targetRooms = [
       rideId,
       `ride_${rideId}`,
@@ -1826,31 +1857,30 @@ handleSocketEvent(socket, 'chat:send_message', async (data) => {
     targetRooms.forEach(room => {
       io.to(room).emit('chat:receive_message', messagePayload);
       io.to(room).emit('chat:message', messagePayload);
+      io.to(room).emit('chat:new_message', messagePayload);
     });
 
-    // Envia a Notificação Push para o destinatário
     const recipientToken = senderRole === 'driver' ? ride.passenger?.deviceToken : ride.driver?.deviceToken;
     const senderName = senderRole === 'driver' ? (ride.driver?.fullName || 'Motorista') : (ride.passenger?.fullName || 'Passageiro');
-    const notificationBody = audioUrl ? '🎤 Mensagem de áudio recebida' : (text || 'Nova mensagem no chat');
+    const notificationBody = finalAudioUrl ? '🎤 Mensagem de áudio recebida' : (rawText || 'Nova mensagem no chat');
 
     if (recipientToken) {
       sendPushNotification(
         recipientToken,
         `💬 ${senderName}`,
         notificationBody,
-        { 
-          rideId, 
-          type: 'CHAT_MESSAGE', 
-          channelId: 'chat-messages' 
+        {
+          rideId,
+          type: 'CHAT_MESSAGE',
+          channelId: 'chat-messages'
         },
-        PUSH_CHANNELS.CHAT // 🟢 CORRIGIDO: Canal exclusivo de Chat
-      ).catch(err => console.error('❌ Erro ao enviar Push de Chat:', err));
+        PUSH_CHANNELS.CHAT
+      ).catch(() => {});
     }
   } catch (err) {
-    console.error('❌ Erro no processamento da mensagem do chat:', err);
+    console.error('💥 [SOCKET_CHAT_ERROR]:', err);
   }
 });
-
   // =============================================================================
   // 🛑 CANCELAMENTO DE CORRIDA SINCRONIZADO
   // =============================================================================

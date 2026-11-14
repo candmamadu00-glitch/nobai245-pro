@@ -421,6 +421,7 @@ export function Home() {
   const [bookingStep, setBookingStep] = useState<BookingStep>('ADDRESS');
   const [rideStatus, setRideStatus] = useState<RideStatus>('idle');
   const [activeRideId, setActiveRideId] = useState<string | null>(null);
+  const rideStatusRef = useRef<string>('idle');
   const [startOtp, setStartOtp] = useState<string>('');
   const [acceptedAt, setAcceptedAt] = useState<Date | null>(null);
   const [isMapMoving, setIsMapMoving] = useState(false);
@@ -458,8 +459,50 @@ export function Home() {
   const [pendingPaymentInfo, setPendingPaymentInfo] = useState<any>(null);
   
   const [estimatedPrice, setEstimatedPrice] = useState<number | null>(null);
+  const [tariffRuleBadge, setTariffRuleBadge] = useState<string | null>(null);
+  const [couponCodeInput, setCouponCodeInput] = useState<string>('');
+  const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; discountXof: number } | null>(null);
+  const [isValidatingCoupon, setIsValidatingCoupon] = useState<boolean>(false);
+  const [corporateInfo, setCorporateInfo] = useState<{ id: string; name: string; availableCreditXof: number } | null>(null);
+  const [useCorporateAccount, setUseCorporateAccount] = useState<boolean>(false);
   const [estimatedDistance, setEstimatedDistance] = useState<number | null>(null);
   const [isCalculatingPrice, setIsCalculatingPrice] = useState<boolean>(false);
+
+  useEffect(() => {
+    let mounted = true;
+    api.get('/passengers/corporate-status')
+      .then((res) => {
+        if (mounted && res.data?.hasCorporate && res.data?.corporate) {
+          setCorporateInfo(res.data.corporate);
+        }
+      })
+      .catch(() => {});
+    return () => { mounted = false; };
+  }, []);
+
+  const handleApplyCoupon = useCallback(async () => {
+    const clean = couponCodeInput.trim().toUpperCase();
+    if (!clean) {
+      Alert.alert('Cupom', 'Digite o código promocional.');
+      return;
+    }
+    setIsValidatingCoupon(true);
+    try {
+      const res = await api.post('/passengers/coupons/validate', {
+        code: clean,
+        ridePriceXof: estimatedPrice || 0,
+      });
+      if (res.data?.success) {
+        setAppliedCoupon({ code: clean, discountXof: Number(res.data.discountXof || 0) });
+        Alert.alert('Cupom Aplicado!', `Desconto de ${res.data.discountXof} XOF aplicado na viagem.`);
+      }
+    } catch (err: any) {
+      setAppliedCoupon(null);
+      Alert.alert('Cupom Inválido', err?.response?.data?.error || 'Não foi possível validar este cupom.');
+    } finally {
+      setIsValidatingCoupon(false);
+    }
+  }, [couponCodeInput, estimatedPrice]);
   
   const [isMenuVisible, setIsMenuVisible] = useState(false);
   const [isSearchModalVisible, setIsSearchModalVisible] = useState(false);
@@ -1229,7 +1272,8 @@ const handleOpenChat = () => {
 
       setPassengerLocation(location);
 
-      if (!isManualPickupRef.current) {
+      const isRideLocked = rideStatusRef.current !== 'idle' || Boolean(activeRideIdRef.current);
+      if (!isManualPickupRef.current && !isRideLocked) {
         const { latitude, longitude } = location.coords;
         setPickupCoords({ latitude, longitude });
 
@@ -1597,10 +1641,20 @@ const handleOpenChat = () => {
       if (parsedDriver) {
         setDriverInfo(parsedDriver);
       }
-  const serverPrice = Number(data.priceXof ?? data.fareXOF ?? 0);
-      if (serverPrice > 0) setEstimatedPrice(Math.round(serverPrice));
-      const serverDist = Number(data.distanceKm ?? 0);
-      if (serverDist > 0) setEstimatedDistance(serverDist);
+      const serverPickupLat = Number(data.pickupLat ?? data.originLat ?? 0);
+      const serverPickupLng = Number(data.pickupLng ?? data.originLng ?? 0);
+      if (!isNaN(serverPickupLat) && !isNaN(serverPickupLng) && serverPickupLat !== 0 && serverPickupLng !== 0) {
+        setPickupCoords({ latitude: serverPickupLat, longitude: serverPickupLng });
+      }
+      if (data.originAddress) setPickupAddress(String(data.originAddress));
+
+      const serverPrice = Number(data.priceXof ?? data.fareXOF ?? data.estimatedPrice ?? 0);
+      if (serverPrice > 0) {
+        setEstimatedPrice(Math.round(serverPrice));
+        setAppliedCoupon(null);
+      }
+      const serverDist = Number(data.distanceKm ?? data.distance ?? 0);
+      if (serverDist > 0) setEstimatedDistance(Number(serverDist.toFixed(2)));
       const serverDur = Number(data.durationMin ?? 0);
       if (serverDur > 0) setDriverEta(serverDur);
       setAcceptedAt(new Date());
@@ -1779,8 +1833,20 @@ const handleOpenChat = () => {
 
     const handlePriceCalculated = (data: any) => {
       if (!isMountedRef.current || !data) return;
-      if (typeof data.price === 'number') setEstimatedPrice(data.price);
-      if (typeof data.distance === 'number') setEstimatedDistance(data.distance);
+      if (data.rideId) {
+        setActiveRideId(String(data.rideId));
+        activeRideIdRef.current = String(data.rideId);
+      }
+      const syncedVal = Number(data.priceXof ?? data.price ?? 0);
+      if (!isNaN(syncedVal) && syncedVal > 0) {
+        if (data?.appliedRuleLabel) setTariffRuleBadge(data.appliedRuleLabel);
+        setEstimatedPrice(Math.round(syncedVal));
+        setAppliedCoupon(null);
+      }
+      const syncedKm = Number(data.distanceKm ?? data.distance ?? 0);
+      if (!isNaN(syncedKm) && syncedKm > 0) {
+        setEstimatedDistance(Number(syncedKm.toFixed(2)));
+      }
     };
 
     const handleDriverPosition = (data: any) => {
@@ -1933,6 +1999,7 @@ const handleOpenChat = () => {
       deactivateKeepAwake('passenger_ride_tag').catch(() => {});
     };
   }, [rideStatus]);
+  useEffect(() => { rideStatusRef.current = rideStatus; }, [rideStatus]);
 
   async function handleInitialRequestRide() {
     const needsDropoff = serviceType !== 'aluguel';
@@ -2047,6 +2114,8 @@ const handleOpenChat = () => {
         extraStopLat: extraStopCoords?.latitude,
         extraStopLng: extraStopCoords?.longitude,
         extraStopAddress: extraStopAddress || undefined,
+        couponCode: appliedCoupon?.code || undefined,
+        useCorporateAccount: useCorporateAccount || undefined,
       };
 
       emitRequestRide(payload);
@@ -2080,9 +2149,12 @@ const handleOpenChat = () => {
 
   if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
-  // Se houver uma corrida ativa no banco, cancela via Socket/API
-  if (activeRideId && user?.id) {
-    cancelRideByPassenger(activeRideId, user.id, reason);
+  // Se houver uma corrida ativa no banco (mesmo ainda em busca), cancela via Socket + HTTP
+  const targetRideId = activeRideIdRef.current || activeRideId;
+  if (targetRideId && user?.id) {
+    cancelRideByPassenger(targetRideId, user.id, reason);
+    api.post('/passengers/rides/cancel', { rideId: targetRideId, reason })
+      .catch(() => api.post('/rides/cancel', { rideId: targetRideId, reason }).catch(() => {}));
   }
 
   AsyncStorage.multiRemove([
@@ -2174,12 +2246,19 @@ const handleOpenChat = () => {
       const baseUrl = apiDomain.replace(/\/api\/?$/, '').replace(/\/$/, '');
       const trackingUrl = `${baseUrl}/track/${activeRideId}`;
 
+      const liveLat = driverLocation?.latitude ?? pickupCoords?.latitude ?? passengerLocation?.coords?.latitude;
+      const liveLng = driverLocation?.longitude ?? pickupCoords?.longitude ?? passengerLocation?.coords?.longitude;
+      const mapsPinLine = liveLat && liveLng ? `📌 *GPS Atual:* https://maps.google.com/?q=${liveLat},${liveLng}\n` : '';
+      const otpShareLine = startOtp ? `🔐 *Código PIN de Embarque:* ${startOtp}\n` : '';
+
       const mensagem = 
         `🚕 *Acompanhe minha viagem no Nô Bai 245!*\n\n` +
         `👤 *Motorista:* ${driverInfo.name || 'Motorista'}\n` +
         `🚘 *Veículo:* ${driverInfo.carModel || 'Veículo'} (${driverInfo.carColor || 'N/A'}) — Placa: *${driverInfo.licensePlate || 'N/A'}*\n` +
+        otpShareLine +
         `📍 *Destino:* ${dropoffAddress}\n` +
-        `${driverEta ? `⏳ *Previsão de Chegada:* ${driverEta} min\n` : ''}\n` +
+        `${driverEta ? `⏳ *Previsão de Chegada:* ${driverEta} min\n` : ''}` +
+        mapsPinLine + `\n` +
         `🌐 *Acompanhe ao vivo no mapa pelo navegador:*\n${trackingUrl}`;
 
       await Share.share({ 

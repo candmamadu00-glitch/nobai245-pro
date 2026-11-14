@@ -256,6 +256,21 @@ export async function claimRechargeByTxId(req: Request, res: Response) {
         },
       });
 
+      await tx.companyWallet.upsert({
+        where: { id: 'bai245-main-wallet' },
+        update: {
+          balance: { increment: amount },
+          totalCollected: { increment: amount },
+          version: { increment: 1 },
+        },
+        create: {
+          id: 'bai245-main-wallet',
+          balance: amount,
+          totalCollected: amount,
+          version: 1,
+        },
+      });
+
       return updated;
     });
 

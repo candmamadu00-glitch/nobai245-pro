@@ -27,13 +27,14 @@ import { RatingModal } from '../components/RatingModal';
 import { StartRideOtpModal } from '../components/StartRideOtpModal';
 import { api } from '../services/api';
 import { DriverSOSModal } from '../components/DriverSOSModal';
+import { openExternalNavigation } from '../utils/navigationHelper';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { createAudioPlayer } from 'expo-audio';
 import { useBilingualVoice } from '../hooks/useBilingualVoice';
 import { speakText, triggerHapticFeedback } from '../utils/accessibility';
 
 // 🛡️ Token Mapbox
-const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
+const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN || 'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZTRyc3NmMDBzMTJ5cTA1anJvYjFsOSJ9.pUAoGXwZS8FtYNr85VD1TA';
 if (MAPBOX_TOKEN) {
   Mapbox.setAccessToken(MAPBOX_TOKEN);
 }
@@ -996,8 +997,12 @@ export function Home() {
         const route = data.routes[0];
         setRouteCoordinates(route.geometry.coordinates);
         
-        const eta = Math.ceil(route.duration / 60);
+        const eta = Math.max(1, Math.ceil(route.duration / 60));
         setDriverEta(eta);
+        if (route.distance && !activeRideIdRef.current && incomingRideRef.current && !incomingRideRef.current.distanceKm) {
+          const km = Number((route.distance / 1000).toFixed(2));
+          setIncomingRide((prev: any) => prev ? { ...prev, distanceKm: km } : prev);
+        }
 
         if (route.legs && route.legs.length > 0) {
           const steps = route.legs.flatMap((leg: any) => leg.steps || []);
@@ -2073,13 +2078,33 @@ export function Home() {
                 </View>
 
                 <View style={styles.etaHeader}>
-                  <Text style={styles.rideStateTitle}>
-                    {rideState === 'accepted' 
-                      ? (driverEta ? `Chegando em ${driverEta} min` : 'Indo ao local de embarque') 
-                      : rideState === 'arrived' 
-                      ? 'Aguardando Cliente' 
-                      : (driverEta ? `Chegando ao destino em ${driverEta} min` : 'Viagem em Andamento')}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                    <Text style={[styles.rideStateTitle, { flex: 1 }]}>
+                      {rideState === 'accepted' 
+                        ? (driverEta ? `Chegando em ${driverEta} min` : 'Indo ao local de embarque') 
+                        : rideState === 'arrived' 
+                        ? 'Aguardando Cliente' 
+                        : (driverEta ? `Chegando ao destino em ${driverEta} min` : 'Viagem em Andamento')}
+                    </Text>
+                    {((rideState === 'in_progress' && incomingRide?.destinationLat) || (rideState !== 'in_progress' && incomingRide?.pickupLat)) ? (
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => {
+                          const isTrip = rideState === 'in_progress';
+                          const lat = Number(isTrip ? incomingRide?.destinationLat : incomingRide?.pickupLat);
+                          const lng = Number(isTrip ? incomingRide?.destinationLng : incomingRide?.pickupLng);
+                          const label = isTrip ? incomingRide?.destinationAddress : incomingRide?.originAddress;
+                          if (!isNaN(lat) && !isNaN(lng)) {
+                            openExternalNavigation({ latitude: lat, longitude: lng, label });
+                          }
+                        }}
+                        style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#EAB308', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12, gap: 4, marginLeft: 8 }}
+                      >
+                        <Ionicons name="navigate" size={13} color="#0F172A" />
+                        <Text style={{ color: '#0F172A', fontSize: 11, fontWeight: '800' }}>Rota Externa</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
 
                   {incomingRide?.pickupLat && incomingRide?.destinationLat ? (
                     <View style={styles.distanceBadge}>

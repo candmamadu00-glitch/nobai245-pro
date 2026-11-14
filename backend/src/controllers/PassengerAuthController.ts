@@ -461,20 +461,29 @@ if (uploadedFile) {
 
       if (!passenger) return res.status(404).json({ success: false, error: 'Passageiro não encontrado.' });
 
-      const transactions = await prisma.transaction.findMany({
-        where: { passengerId },
-        orderBy: { createdAt: 'desc' },
-        take: 50,
-      });
+      const [transactions, sysConfig] = await Promise.all([
+        prisma.transaction.findMany({
+          where: { passengerId },
+          orderBy: { createdAt: 'desc' },
+          take: 60,
+        }),
+        prisma.systemConfig.findFirst().catch(() => null),
+      ]);
 
       return res.status(200).json({
         success: true,
         walletBalance: Number(passenger.walletBalance || 0),
         paymentProvider: passenger.paymentProvider || 'ORANGE_MONEY',
         paymentAccountNumber: passenger.paymentAccountNumber || passenger.phone,
+        adminOrangeNumber: sysConfig?.adminOrangeNumber || '245957330790',
+        adminMtnNumber: sysConfig?.adminMtnNumber || '245960000000',
+        adminMerchantCode: (sysConfig as any)?.adminMerchantCode || '72447321',
+        companyName: (sysConfig as any)?.companyName || 'NÔ BAI 245',
         transactions: transactions.map(t => ({
           ...t,
-          amount: Number(t.amount || 0)
+          amount: Number(t.amount || 0),
+          balanceBefore: t.balanceBefore !== null ? Number(t.balanceBefore) : null,
+          balanceAfter: t.balanceAfter !== null ? Number(t.balanceAfter) : null,
         })),
       });
     } catch (error: any) {

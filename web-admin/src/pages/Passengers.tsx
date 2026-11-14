@@ -1,7 +1,11 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { 
   Eye, ShieldAlert, CheckCircle, Search, Download, FileDown, 
-  X, Star, Wallet, Calendar, Loader2, Car, Trash2 
+  X, Star, Wallet, Calendar, Loader2, Car, Trash2,
+  PlusCircle,
+  MinusCircle,
+  ArrowUpRight,
+  ArrowDownRight
 } from 'lucide-react';
 import { api } from '../services/api';
 import { jsPDF } from 'jspdf';
@@ -29,6 +33,73 @@ export function Passengers() {
 
   const [selectedPassenger, setSelectedPassenger] = useState<Passenger | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // 👛 GESTÃO DE CARTEIRA / REEMBOLSO DO PASSAGEIRO
+  const [walletPassenger, setWalletPassenger] = useState<Passenger | null>(null);
+  const [walletLoading, setWalletLoading] = useState(false);
+  const [walletSubmitting, setWalletSubmitting] = useState(false);
+  const [walletTxs, setWalletTxs] = useState<any[]>([]);
+  const [walletType, setWalletType] = useState<'CREDIT' | 'DEBIT'>('CREDIT');
+  const [walletAmount, setWalletAmount] = useState('');
+  const [walletReason, setWalletReason] = useState('');
+
+  const handleUnlockPassengerApp = async (passengerId: string, fullName: string) => {
+    if (!window.confirm(`Destravar o aplicativo de ${fullName}?\nIsso limpa qualquer corrida fantasma presa na tela do passageiro.`)) return;
+    try {
+      const res = await api.patch(`/admin/users-unlock/passenger/${passengerId}`);
+      alert(res.data?.message || 'Aplicativo destravado!');
+      fetchPassengers();
+    } catch (err: any) {
+      alert(err?.response?.data?.error || 'Erro ao destravar passageiro.');
+    }
+  };
+
+  const handleOpenPassengerWallet = async (pax: Passenger) => {
+    setWalletPassenger(pax);
+    setWalletType('CREDIT');
+    setWalletAmount('');
+    setWalletReason('');
+    setWalletTxs([]);
+    setWalletLoading(true);
+    try {
+      const res = await api.get(`/admin/passengers/${pax.id}/wallet`);
+      if (res.data?.passenger) {
+        setWalletPassenger({ ...pax, walletBalance: res.data.passenger.walletBalance });
+      }
+      setWalletTxs(Array.isArray(res.data?.transactions) ? res.data.transactions : []);
+    } catch (err) {
+      console.error('Erro ao carregar carteira do passageiro:', err);
+    } finally {
+      setWalletLoading(false);
+    }
+  };
+
+  const handleSubmitPassengerWallet = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!walletPassenger) return;
+    const numeric = Number(walletAmount);
+    if (!numeric || numeric <= 0) return alert('Informe um valor válido em XOF.');
+    if (!walletReason.trim()) return alert('Informe o motivo do reembolso ou ajuste.');
+
+    try {
+      setWalletSubmitting(true);
+      const res = await api.patch(`/admin/passengers/${walletPassenger.id}/wallet`, {
+        amount: numeric,
+        type: walletType,
+        reason: walletReason.trim()
+      });
+      alert(res.data?.message || 'Saldo atualizado!');
+      setWalletAmount('');
+      setWalletReason('');
+      await handleOpenPassengerWallet({ ...walletPassenger, walletBalance: res.data.newBalance });
+      fetchPassengers();
+    } catch (err: any) {
+      alert(err?.response?.data?.error || 'Erro ao atualizar carteira do passageiro.');
+    } finally {
+      setWalletSubmitting(false);
+    }
+  };
+
 
   const fetchPassengers = useCallback(async () => {
     try {
@@ -260,6 +331,24 @@ export function Passengers() {
                   <td>
                     <div className="flex items-center gap-2">
                       <button 
+                        className="action-btn" 
+                        title="Gerenciar Carteira e Reembolso" 
+                        onClick={() => handleOpenPassengerWallet(passenger)}
+                        style={{ backgroundColor: '#ECFDF5', color: '#047857', borderColor: '#6EE7B7' }}
+                      >
+                        <Wallet size={16} /> Carteira
+                      </button>
+
+                      <button
+                        className="action-btn"
+                        title="Destravar corrida presa no app do passageiro"
+                        onClick={() => handleUnlockPassengerApp(passenger.id, passenger.fullName)}
+                        style={{ backgroundColor: '#FEF3C7', color: '#B45309', borderColor: '#FCD34D' }}
+                      >
+                        Destravar
+                      </button>
+
+                      <button 
                         className="action-btn btn-view" 
                         title="Ver Detalhes" 
                         onClick={() => handleOpenDetails(passenger)}
@@ -316,6 +405,179 @@ export function Passengers() {
           </tbody>
         </table>
       </div>
+
+
+      {/* MODAL DE CARTEIRA E REEMBOLSO DO PASSAGEIRO */}
+      {walletPassenger && (
+        <div className="modal-overlay" onClick={() => setWalletPassenger(null)}>
+          <div className="modal-content-sm" style={{ maxWidth: '580px', width: '95%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2>Carteira do Passageiro</h2>
+                <p style={{ fontSize: '0.85rem', color: '#64748B', marginTop: '2px' }}>
+                  {walletPassenger.fullName} • {walletPassenger.phone}
+                </p>
+              </div>
+              <button className="close-modal-btn" onClick={() => setWalletPassenger(null)}>
+                <X size={22} />
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{
+                background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)',
+                color: '#FFFFFF',
+                padding: '16px 20px',
+                borderRadius: '12px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}>
+                <div>
+                  <span style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#94A3B8' }}>
+                    Saldo Disponível
+                  </span>
+                  <div style={{ fontSize: '1.6rem', fontWeight: 800, color: '#34D399', marginTop: '2px' }}>
+                    {formatCurrency(walletPassenger.walletBalance)}
+                  </div>
+                </div>
+                <Wallet size={30} color="#34D399" />
+              </div>
+
+              <form onSubmit={handleSubmitPassengerWallet} style={{
+                backgroundColor: '#F8FAFC',
+                border: '1px solid #E2E8F0',
+                borderRadius: '10px',
+                padding: '14px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px'
+              }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setWalletType('CREDIT')}
+                    style={{
+                      padding: '8px 12px',
+                      borderRadius: '8px',
+                      fontWeight: 600,
+                      fontSize: '0.85rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px',
+                      border: walletType === 'CREDIT' ? '2px solid #059669' : '1px solid #CBD5E1',
+                      backgroundColor: walletType === 'CREDIT' ? '#ECFDF5' : '#FFFFFF',
+                      color: walletType === 'CREDIT' ? '#047857' : '#475569',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <PlusCircle size={15} /> Reembolsar / Creditar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWalletType('DEBIT')}
+                    style={{
+                      padding: '8px 12px',
+                      borderRadius: '8px',
+                      fontWeight: 600,
+                      fontSize: '0.85rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px',
+                      border: walletType === 'DEBIT' ? '2px solid #DC2626' : '1px solid #CBD5E1',
+                      backgroundColor: walletType === 'DEBIT' ? '#FEF2F2' : '#FFFFFF',
+                      color: walletType === 'DEBIT' ? '#B91C1C' : '#475569',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <MinusCircle size={15} /> Debitar Saldo
+                  </button>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '8px' }}>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    placeholder="Valor (XOF)"
+                    value={walletAmount}
+                    onChange={(e) => setWalletAmount(e.target.value)}
+                    style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #CBD5E1', fontWeight: 700 }}
+                  />
+                  <input
+                    type="text"
+                    required
+                    placeholder="Motivo (ex: Reembolso corrida cancelada #123)"
+                    value={walletReason}
+                    onChange={(e) => setWalletReason(e.target.value)}
+                    style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #CBD5E1' }}
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={walletSubmitting}
+                  style={{
+                    padding: '9px 14px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    fontWeight: 700,
+                    color: '#FFFFFF',
+                    backgroundColor: walletType === 'CREDIT' ? '#059669' : '#DC2626',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {walletSubmitting ? 'Processando...' : (walletType === 'CREDIT' ? 'Confirmar Crédito / Reembolso' : 'Confirmar Débito')}
+                </button>
+              </form>
+
+              <div>
+                <h4 style={{ fontSize: '0.85rem', fontWeight: 700, color: '#334155', marginBottom: '8px' }}>
+                  Últimas Movimentações
+                </h4>
+                {walletLoading ? (
+                  <p style={{ fontSize: '0.85rem', color: '#64748B' }}>Carregando extrato...</p>
+                ) : walletTxs.length === 0 ? (
+                  <p style={{ fontSize: '0.85rem', color: '#94A3B8' }}>Nenhuma movimentação registrada.</p>
+                ) : (
+                  <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {walletTxs.map((t: any) => {
+                      const isPositive = t.type === 'DEPOSIT' || t.type === 'REFUND';
+                      return (
+                        <div key={t.id} style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '8px 10px',
+                          backgroundColor: '#FFFFFF',
+                          border: '1px solid #E2E8F0',
+                          borderRadius: '8px',
+                          fontSize: '0.82rem'
+                        }}>
+                          <div>
+                            <div style={{ fontWeight: 600, color: '#1E293B', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              {isPositive ? <ArrowUpRight size={14} color="#059669" /> : <ArrowDownRight size={14} color="#DC2626" />}
+                              {t.description || t.type}
+                            </div>
+                            <div style={{ fontSize: '0.75rem', color: '#64748B' }}>
+                              {new Date(t.createdAt).toLocaleString('pt-BR')} • {t.status}
+                            </div>
+                          </div>
+                          <strong style={{ color: isPositive ? '#059669' : '#DC2626', fontFamily: 'monospace' }}>
+                            {isPositive ? '+' : '-'}{formatCurrency(t.amount)}
+                          </strong>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL DE DETALHES */}
       {isModalOpen && selectedPassenger && (

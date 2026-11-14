@@ -111,12 +111,21 @@ export const estimateRidePrice = async (req: Request, res: Response): Promise<vo
       return;
     }
 
+    let appliedRuleLabel: string | null = null;
     const estimates = await Promise.all(
       activeTariffs.map(async (tariff) => {
-        const totalPrice = await calculateRidePrice(distanceKm, durationMin, tariff.vehicleType as any, serviceType as any);
+        const calc: any = await calculateRidePrice(
+          distanceKm,
+          durationMin,
+          tariff.vehicleType as any,
+          serviceType as any,
+          { originLat: pLat, originLng: pLng, destinationLat: dLat, destinationLng: dLng }
+        );
+        if (calc?.appliedRuleLabel) appliedRuleLabel = calc.appliedRuleLabel;
         return { 
           vehicleType: tariff.vehicleType, 
-          priceXOF: Math.max(0, Math.round(Number((totalPrice as any)?.totalPrice ?? totalPrice)))
+          priceXOF: Math.max(0, Math.round(Number(calc?.totalPrice ?? calc))),
+          appliedRuleLabel: calc?.appliedRuleLabel || null
         };
       })
     );
@@ -231,6 +240,11 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
       originAddress: cleanOriginAddress, 
       destinationAddress: cleanDestinationAddress,
       stops: sanitizedStops,
+      estimatedPrice: req.body.estimatedPrice ? Number(req.body.estimatedPrice) : undefined,
+      distanceKm: req.body.distanceKm ? Number(req.body.distanceKm) : undefined,
+      durationMin: req.body.durationMin ? Number(req.body.durationMin) : undefined,
+      couponCode: req.body.couponCode ? sanitizeText(req.body.couponCode, 40) : undefined,
+      useCorporateAccount: Boolean(req.body.useCorporateAccount),
       idempotencyKey: cleanIdempotencyKey || undefined,
     });
 
@@ -281,8 +295,11 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
         destinationAddress: result.ride.destinationAddress,
         stops: rideStops,
         extraStopAddress: req.body.extraStopAddress || ((rideStops as any[])[0]?.address || null),
-        fareXOF: Number(result.ride.priceXof),
-        priceXof: Number(result.ride.priceXof),
+        fareXOF: Math.round(Number(result.ride.priceXof || 0)),
+        priceXof: Math.round(Number(result.ride.priceXof || 0)),
+        estimatedPrice: Math.round(Number(result.ride.priceXof || 0)),
+        distanceKm: Number(Number(result.ride.distanceKm || 0).toFixed(2)),
+        durationMin: Number(result.ride.durationMin || 0),
         vehicleType: result.ride.requestedVehicleType,
         serviceType: result.ride.serviceType,
         paymentMethod: result.ride.paymentMethod
@@ -680,7 +697,22 @@ export const getRideChatHistory = async (req: Request, res: Response): Promise<v
       }
     });
 
-    res.status(200).json({ success: true, messages });
+    const formattedMessages = messages.map((m: any) => {
+      const raw = String(m.message || '');
+      if (raw.startsWith('[AUDIO]')) {
+        const parts = raw.replace('[AUDIO]', '').split('|');
+        return {
+          ...m,
+          message: '',
+          text: '',
+          audioUrl: parts[0] || null,
+          audioDuration: Number(parts[1] || 0),
+        };
+      }
+      return m;
+    });
+
+    res.status(200).json({ success: true, messages: formattedMessages });
   } catch (error: any) {
     console.error('❌ Erro ao buscar chat da corrida:', error?.message || error);
     res.status(500).json({ success: false, error: 'Erro ao carregar histórico do chat.' });

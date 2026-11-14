@@ -1,6 +1,8 @@
+import { prisma } from '../config/prisma';
 import { Router } from 'express';
 import { PassengerAuthController } from '../controllers/PassengerAuthController';
 import { TicketController } from '../controllers/TicketController';
+import { MobileSyncController } from '../controllers/MobileSyncController';
 import { upload } from '../config/multer';
 import { authenticate, authorizeRole } from '../middlewares/authMiddleware';
 import { validate } from '../middlewares/validateMiddleware';
@@ -13,11 +15,12 @@ import {
   googleSignInSchema,
   completeGoogleRegistrationSchema
 } from '../schemas/authSchemas';
-import { estimateRidePrice, getRideChatHistory, rateRide } from '../controllers/rideController';
+import { estimateRidePrice, getRideChatHistory, rateRide, cancelRide } from '../controllers/rideController';
 
 const passengerRoutes = Router();
 const authController = new PassengerAuthController();
 const ticketController = new TicketController();
+const mobileSyncController = new MobileSyncController();
 
 // 🛡️ Middleware flexível para avatar do passageiro
 const handlePassengerAvatarUpload = upload.fields([
@@ -59,7 +62,47 @@ passengerRoutes.post('/emergency-contacts', (req, res) => authController.addEmer
 passengerRoutes.put('/payment-method', validate(updatePassengerPaymentSchema), (req, res) => authController.updatePaymentMethod(req, res));
 passengerRoutes.put('/device-token', validate(updateDeviceTokenSchema), (req, res) => authController.updateDeviceToken(req, res));
 passengerRoutes.post('/estimate', validate(estimateRideSchema), (req, res) => estimateRidePrice(req, res));
+passengerRoutes.post('/coupons/validate', (req, res) => mobileSyncController.validateCoupon(req, res));
+passengerRoutes.get('/promotions', (req, res) => mobileSyncController.getActivePromotions(req, res));
+passengerRoutes.get('/corporate-status', (req, res) => mobileSyncController.getCorporateStatus(req, res));
 passengerRoutes.post('/rides/rate', (req, res) => rateRide(req, res));
+passengerRoutes.post('/rides/cancel', (req, res) => cancelRide(req, res));
+
+// 🚨 Alerta de Emergência SOS (Fallback HTTP + Painel Admin em Tempo Real)
+passengerRoutes.post('/sos', async (req: any, res) => {
+  try {
+    const userId = req.user?.id;
+    const { rideId, latitude, longitude } = req.body || {};
+    const lat = Number(latitude);
+    const lng = Number(longitude);
+
+    if (!userId || isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return res.status(400).json({ error: 'Coordenadas de emergência inválidas.' });
+    }
+
+    const validRideId = typeof rideId === 'string' && /^[0-9a-fA-F-]{36}$/.test(rideId) ? rideId : null;
+
+    const alert = await prisma.sosAlert.create({
+      data: {
+        rideId: validRideId,
+        userType: 'PASSENGER' as any,
+        passengerId: userId,
+        driverId: null,
+        lat,
+        lng,
+        status: 'ACTIVE',
+      },
+    });
+
+    return res.status(201).json({ success: true, alertId: alert.id });
+  } catch (err) {
+    console.error('❌ [HTTP_SOS_ERROR]', err);
+    return res.status(500).json({ error: 'Erro ao registrar alerta de emergência.' });
+  }
+});
+
+
+
 passengerRoutes.delete('/me', (req, res) => authController.deleteAccount(req, res));
 
 // Chamados de Suporte

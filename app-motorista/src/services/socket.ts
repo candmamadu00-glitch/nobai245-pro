@@ -1,3 +1,4 @@
+import { api } from './api';
 import { io, Socket } from 'socket.io-client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { storage } from './storage';
@@ -148,8 +149,11 @@ export const startRideWithOtp = (rideId: string, otp: string) =>
 export const finishRide = (rideId: string, dropoffLat: number, dropoffLng: number) => 
   emitCriticoDriver('driver:finish_ride', { rideId, dropoffLat, dropoffLng });
 
-export const cancelRideByDriver = (rideId: string, userId: string, reason?: string) => 
-  emitCriticoDriver('ride:cancel', { rideId, userId, userType: 'DRIVER', reason: reason || 'Cancelado pelo motorista' });
+export const cancelRideByDriver = (rideId: string, userId: string, reason?: string) => {
+  const cleanReason = reason || 'Cancelado pelo motorista';
+  emitCriticoDriver('ride:cancel', { rideId, userId, userType: 'DRIVER', reason: cleanReason });
+  api.post('/drivers/rides/cancel', { rideId, reason: cleanReason }).catch(() => {});
+};
 
 export const sendLocationUpdate = (payload: { rideId: string; latitude: number; longitude: number; heading?: number }) => { 
   if (socket.connected) socket.emit('driver:location_update', payload); 

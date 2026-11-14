@@ -30,6 +30,7 @@ export function Wallet() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [financeData, setFinanceData] = useState<any>(null);
+  const [scaleStatus, setScaleStatus] = useState<any>(null);
 
   // Abas do Extrato
   const [historyTab, setHistoryTab] = useState<HistoryTab>('RIDES');
@@ -55,7 +56,11 @@ export function Wallet() {
 
   const fetchWalletData = useCallback(async () => {
     try {
-      const res = await api.get('/drivers/finance');
+      const [res, scaleRes] = await Promise.all([
+        api.get('/drivers/finance'),
+        api.get('/drivers/scale-status').catch(() => ({ data: null }))
+      ]);
+      if (scaleRes?.data?.success) setScaleStatus(scaleRes.data);
       if (!isMountedRef.current) return;
       const data = res.data || {};
       setFinanceData(data);
@@ -419,6 +424,47 @@ export function Wallet() {
                   </Text>
                 </View>
               </View>
+
+                            {/* METAS, DOCUMENTOS E FROTA (SINCRONIZADO COM O PAINEL ADMIN) */}
+              {scaleStatus && (
+                <View style={[styles.dailyClosingCard, { marginBottom: 16, borderColor: '#DBEAFE', backgroundColor: '#F8FAFC' }]}>
+                  <View style={styles.closingHeader}>
+                    <Ionicons name="ribbon-outline" size={18} color="#1D4ED8" />
+                    <Text style={[styles.closingTitle, { color: '#1E3A8A' }]}>Metas & Status Operacional</Text>
+                  </View>
+
+                  {scaleStatus.fleetPartner && (
+                    <View style={[styles.closingRow, { marginBottom: 8 }]}>
+                      <Text style={styles.closingLabel}>Frotista Vinculado ({scaleStatus.fleetPartner.ownerName})</Text>
+                      <Text style={[styles.closingVal, { color: '#1D4ED8' }]}>Repasse {scaleStatus.fleetPartner.ownerSharePercent}%</Text>
+                    </View>
+                  )}
+
+                  {Array.isArray(scaleStatus.compliance?.alerts) && scaleStatus.compliance.alerts.map((al: any, i: number) => (
+                    <View key={i} style={{ backgroundColor: al.status === 'EXPIRED' ? '#FEE2E2' : '#FEF3C7', padding: 8, borderRadius: 8, marginBottom: 6 }}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: al.status === 'EXPIRED' ? '#B91C1C' : '#B45309' }}>
+                        ⚠️ {al.type}: {al.status === 'EXPIRED' ? 'Vencido! Atualize seus documentos.' : 'Vence em breve.'}
+                      </Text>
+                    </View>
+                  ))}
+
+                  {Array.isArray(scaleStatus.missions) && scaleStatus.missions.length > 0 ? (
+                    scaleStatus.missions.map((m: any) => (
+                      <View key={m.id} style={{ marginTop: 6, paddingTop: 6, borderTopWidth: 1, borderTopColor: '#E2E8F0' }}>
+                        <View style={styles.closingRow}>
+                          <Text style={[styles.closingLabel, { fontWeight: '700', color: '#0F172A' }]}>🏆 {m.title}</Text>
+                          <Text style={[styles.closingVal, { color: '#059669' }]}>+{formatMoney(m.rewardXof)} XOF</Text>
+                        </View>
+                        <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
+                          Progresso: {m.completedRides}/{m.targetRides} corridas ({m.progressPercent}%)
+                        </Text>
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={{ fontSize: 12, color: '#64748B' }}>Nenhuma missão ativa no momento. Continue online para receber novas metas!</Text>
+                  )}
+                </View>
+              )}
 
               {/* RESUMO DE FATURAMENTO */}
               <Text style={[styles.sectionTitle, { marginTop: 20 }]}>Resumo de Faturamento</Text>

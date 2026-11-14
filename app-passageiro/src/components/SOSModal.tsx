@@ -1,19 +1,21 @@
 import React, { useState } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  Modal, 
-  Alert, 
-  ActivityIndicator, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Modal,
+  Alert,
+  ActivityIndicator,
   Linking,
   Platform
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
+import * as Haptics from 'expo-haptics';
 import { useTranslation } from 'react-i18next';
 import { api } from '../services/api';
+import { triggerSOS } from '../services/socket';
 
 interface SOSModalProps {
   visible: boolean;
@@ -26,6 +28,7 @@ export function SOSModal({ visible, onClose, currentRideId }: SOSModalProps) {
   const [loading, setLoading] = useState(false);
 
   const handleCallEmergency = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
     Linking.openURL('tel:112').catch(() => {
       Alert.alert(t('error_title', 'Erro'), t('cant_open_dialer', 'Não foi possível abrir o discador nativo.'));
     });
@@ -33,30 +36,45 @@ export function SOSModal({ visible, onClose, currentRideId }: SOSModalProps) {
 
   const handleSendLocationAlert = async () => {
     if (loading) return;
-    
+
     setLoading(true);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert(
-          t('permission_denied_title', 'Permissão Negada'), 
+          t('permission_denied_title', 'Permissão Negada'),
           t('sos_location_permission_msg', 'Precisamos da permissão de localização para disparar o SOS com precisão.')
         );
         setLoading(false);
         return;
       }
 
-      // Utiliza precisão balanceada para não demorar demais na obtenção em casos de emergência
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
+      let location: Location.LocationObject | null = null;
+      try {
+        location = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+      } catch {
+        location = await Location.getLastKnownPositionAsync();
+      }
 
-      const lat = Number(location.coords.latitude);
-      const lng = Number(location.coords.longitude);
+      const lat = Number(location?.coords?.latitude);
+      const lng = Number(location?.coords?.longitude);
 
-      if (isNaN(lat) || isNaN(lng)) {
+      if (isNaN(lat) || isNaN(lng) || lat === 0 || lng === 0) {
         throw new Error(t('invalid_coords_captured', 'Coordenadas inválidas capturadas pelo dispositivo.'));
       }
+
+      // Disparo duplo redundante: Tempo real via Socket + Persistência garantida via HTTP
+      try {
+        triggerSOS({
+          rideId: currentRideId ? String(currentRideId) : undefined,
+          latitude: lat,
+          longitude: lng,
+        });
+      } catch {}
 
       await api.post('/passengers/sos', {
         rideId: currentRideId ? String(currentRideId) : null,
@@ -65,15 +83,16 @@ export function SOSModal({ visible, onClose, currentRideId }: SOSModalProps) {
         timestamp: new Date().toISOString(),
       });
 
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       Alert.alert(
-        t('alert_triggered_title', 'Alerta Disparado!'),
-        t('alert_triggered_msg', 'Sua localização atual foi enviada para a central de segurança e contatos de emergência.')
+        t('alert_triggered_title', 'Alerta SOS Disparado! 🛡️'),
+        t('alert_triggered_msg', 'Sua localização em tempo real e os dados da viagem foram enviados para a central de segurança Nô Bai 245.')
       );
       onClose();
     } catch (error: any) {
       console.error('SOS Error:', error);
       Alert.alert(
-        t('alert_error_title', 'Erro no Alerta'), 
+        t('alert_error_title', 'Erro no Alerta'),
         t('alert_network_error_msg', 'Não foi possível disparar o SOS via rede. Ligue imediatamente para o 112.')
       );
     } finally {
@@ -82,10 +101,10 @@ export function SOSModal({ visible, onClose, currentRideId }: SOSModalProps) {
   };
 
   return (
-    <Modal 
-      visible={visible} 
-      transparent 
-      animationType="fade" 
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
       onRequestClose={onClose}
     >
       <View style={styles.overlay}>
@@ -99,8 +118,8 @@ export function SOSModal({ visible, onClose, currentRideId }: SOSModalProps) {
             {t('sos_center_desc', 'Se você estiver em perigo, utilize uma das opções abaixo para obter ajuda imediata.')}
           </Text>
 
-          <TouchableOpacity 
-            style={[styles.button, styles.sosButton, loading && styles.buttonDisabled]} 
+          <TouchableOpacity
+            style={[styles.button, styles.sosButton, loading && styles.buttonDisabled]}
             onPress={handleSendLocationAlert}
             disabled={loading}
             activeOpacity={0.8}
@@ -115,8 +134,8 @@ export function SOSModal({ visible, onClose, currentRideId }: SOSModalProps) {
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={[styles.button, styles.phoneButton]} 
+          <TouchableOpacity
+            style={[styles.button, styles.phoneButton]}
             onPress={handleCallEmergency}
             disabled={loading}
             activeOpacity={0.7}
@@ -125,8 +144,8 @@ export function SOSModal({ visible, onClose, currentRideId }: SOSModalProps) {
             <Text style={styles.buttonTextDark}>{t('call_police_btn', 'Ligar para Polícia (112)')}</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={styles.cancelButton} 
+          <TouchableOpacity
+            style={styles.cancelButton}
             onPress={onClose}
             disabled={loading}
             hitSlop={{ top: 10, bottom: 10, left: 20, right: 20 }}
@@ -140,83 +159,83 @@ export function SOSModal({ visible, onClose, currentRideId }: SOSModalProps) {
 }
 
 const styles = StyleSheet.create({
-  overlay: { 
-    flex: 1, 
-    backgroundColor: 'rgba(15, 23, 42, 0.75)', 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    padding: 20 
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20
   },
-  content: { 
-    width: '100%', 
-    backgroundColor: '#FFFFFF', 
-    borderRadius: 24, 
-    padding: 28, 
+  content: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 28,
     alignItems: 'center',
     ...Platform.select({
       ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.1, shadowRadius: 15 },
       android: { elevation: 10 },
     }),
   },
-  iconBadge: { 
-    width: 72, 
-    height: 72, 
-    borderRadius: 36, 
-    backgroundColor: '#FEF2F2', 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    marginBottom: 20 
+  iconBadge: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#FEF2F2',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20
   },
-  title: { 
-    fontSize: 22, 
-    fontWeight: '800', 
-    color: '#0F172A', 
-    textAlign: 'center', 
-    marginBottom: 10 
+  title: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0F172A',
+    textAlign: 'center',
+    marginBottom: 10
   },
-  description: { 
-    fontSize: 15, 
-    color: '#475569', 
-    textAlign: 'center', 
-    marginBottom: 30, 
-    lineHeight: 22 
+  description: {
+    fontSize: 15,
+    color: '#475569',
+    textAlign: 'center',
+    marginBottom: 30,
+    lineHeight: 22
   },
-  button: { 
-    width: '100%', 
-    height: 56, 
-    borderRadius: 16, 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    justifyContent: 'center', 
-    gap: 10, 
-    marginBottom: 14 
+  button: {
+    width: '100%',
+    height: 56,
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    marginBottom: 14
   },
   buttonDisabled: {
     opacity: 0.7
   },
-  sosButton: { 
-    backgroundColor: '#EF4444' 
+  sosButton: {
+    backgroundColor: '#EF4444'
   },
-  phoneButton: { 
-    backgroundColor: '#F1F5F9' 
+  phoneButton: {
+    backgroundColor: '#F1F5F9'
   },
-  buttonTextBold: { 
-    color: '#FFFFFF', 
-    fontSize: 16, 
-    fontWeight: '700' 
+  buttonTextBold: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700'
   },
-  buttonTextDark: { 
-    color: '#0F172A', 
-    fontSize: 16, 
-    fontWeight: '700' 
+  buttonTextDark: {
+    color: '#0F172A',
+    fontSize: 16,
+    fontWeight: '700'
   },
-  cancelButton: { 
-    marginTop: 12, 
-    paddingVertical: 12 
+  cancelButton: {
+    marginTop: 12,
+    paddingVertical: 12
   },
-  cancelText: { 
-    color: '#64748B', 
-    fontSize: 15, 
-    fontWeight: '600' 
+  cancelText: {
+    color: '#64748B',
+    fontSize: 15,
+    fontWeight: '600'
   },
 });

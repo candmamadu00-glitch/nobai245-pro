@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, Text, TouchableOpacity, StyleSheet, Modal, 
   KeyboardAvoidingView, Platform, Keyboard,
-  FlatList, TextInput, Image, TouchableWithoutFeedback, Alert
+  FlatList,
+  ScrollView, TextInput, Image, TouchableWithoutFeedback, Alert
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -83,6 +84,19 @@ const getPlayableAudioUri = async (msgId: string, audioUrl: string): Promise<str
   return `${cleanBase}${cleanPath}`;
 };
 
+const QUICK_REPLIES_PASSENGER = [
+  '📍 Já estou no ponto de embarque',
+  '🚶 Estou a sair agora',
+  '🚗 Qual é a cor do carro?',
+  '⏱️ Aguarde 1 minuto, por favor',
+];
+
+const QUICK_REPLIES_DRIVER = [
+  '📍 Cheguei ao ponto de embarque',
+  '🚗 Estou a caminho (2 min)',
+  '📌 Onde você está exatamente?',
+];
+
 export function ChatModal({ 
   visible, 
   onClose, 
@@ -118,7 +132,10 @@ export function ChatModal({
 
   const safeEmit = (event: string, payload: any) => {
     try {
-      if (socket && socket.connected) {
+      if (socket) {
+        if (!socket.connected && typeof socket.connect === 'function') {
+          socket.connect();
+        }
         socket.emit(event, payload);
       }
     } catch (err) {}
@@ -167,7 +184,7 @@ export function ChatModal({
                 id: String(msg.id || `hist-${Math.random().toString(36).substring(2, 7)}`),
                 sender: (msg.senderType === 'PASSENGER' || msg.sender === 'passenger' || msg.senderRole === 'passenger') ? 'passenger' : 'driver',
                 text: msg.message || msg.text || '',
-                audioUrl: msg.audioUrl || msg.audio || msg.fileUrl || null,
+                audioUrl: msg.audioUrl || msg.audio || msg.fileUrl || (typeof msg.message === 'string' && msg.message.startsWith('[AUDIO]') ? msg.message.replace('[AUDIO]', '').split('|')[0] : null),
                 audioDuration: Number(msg.audioDuration || msg.duration || 0),
                 senderPhoto: formatPhotoUrl(msg.senderPhoto || msg.userPhoto),
                 createdAt: msg.createdAt || new Date().toISOString(),
@@ -255,10 +272,11 @@ export function ChatModal({
     };
   }, [socket, visible, currentRole]);
 
-  const sendMessage = () => {
-    if (!inputText.trim()) return;
+  const sendMessage = (overrideText?: string) => {
+    const rawText = typeof overrideText === 'string' ? overrideText : inputText;
+    if (!rawText.trim()) return;
 
-    const text = inputText.trim();
+    const text = rawText.trim();
     const uniqueId = `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
     const newMsg: ChatMessage = {
@@ -296,6 +314,11 @@ export function ChatModal({
         return;
       }
 
+      try {
+        if (typeof (AudioModule as any)?.setAudioModeAsync === 'function') {
+          await (AudioModule as any).setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+        }
+      } catch (e) {}
       await audioRecorder.prepareToRecordAsync();
       audioRecorder.record();
       setIsRecording(true);
@@ -355,7 +378,7 @@ export function ChatModal({
       const newMsg: ChatMessage = {
         id: uniqueId,
         sender: currentRole,
-        audioUrl: audioPayload,
+        audioUrl: uri || audioPayload,
         audioDuration: durationSec,
         senderPhoto: formatPhotoUrl(currentUserPhoto),
         createdAt: new Date().toISOString(),
@@ -562,6 +585,28 @@ export function ChatModal({
             }}
           />
 
+          {!isRecording && (
+            <View style={styles.quickRepliesWrapper}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.quickRepliesContent}
+                keyboardShouldPersistTaps="handled"
+              >
+                {(currentRole === 'passenger' ? QUICK_REPLIES_PASSENGER : QUICK_REPLIES_DRIVER).map((phrase, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    style={styles.quickReplyChip}
+                    onPress={() => sendMessage(phrase)}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={styles.quickReplyText}>{phrase}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+
           <View style={[styles.chatInputContainer, { paddingBottom: dynamicBottomPadding }]}>
             {isRecording ? (
               <View style={styles.recordingBar}>
@@ -593,7 +638,7 @@ export function ChatModal({
                 />
 
                 {inputText.trim().length > 0 ? (
-                  <TouchableOpacity style={styles.chatSendButton} onPress={sendMessage} activeOpacity={0.8}>
+                  <TouchableOpacity style={styles.chatSendButton} onPress={() => sendMessage()} activeOpacity={0.8}>
                     <Ionicons name="send" size={18} color="#0F172A" style={styles.sendIcon} />
                   </TouchableOpacity>
                 ) : (
@@ -650,4 +695,8 @@ const styles = StyleSheet.create({
   recordingDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#EF4444' },
   recordingTimerText: { fontSize: 14, fontWeight: '700', color: '#FCA5A5' },
   sendAudioBtn: { backgroundColor: '#16A34A', width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  quickRepliesWrapper: { borderTopWidth: 1, borderTopColor: '#1E293B', backgroundColor: '#0B1220', paddingVertical: 8 },
+  quickRepliesContent: { paddingHorizontal: 14, gap: 8 },
+  quickReplyChip: { backgroundColor: '#1E293B', borderWidth: 1, borderColor: '#334155', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6 },
+  quickReplyText: { color: '#E2E8F0', fontSize: 12, fontWeight: '600' },
 });

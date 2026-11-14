@@ -6,7 +6,8 @@ import {
   PaymentIntentStatus, 
   TransactionType, 
   TransactionStatus,
-  RideStatus
+  RideStatus,
+  UserType
 } from '@prisma/client';
 import { prisma } from '../config/prisma';
 
@@ -185,6 +186,8 @@ export async function getMtnToken(type: 'COLLECTION' | 'DISBURSEMENT'): Promise<
 
 export interface ChargeParams {
   passengerId?: string;
+  driverId?: string;
+  userType?: 'PASSENGER' | 'DRIVER';
   phone: string;
   amount: number;
   provider: PaymentMethod | MobileMoneyProvider | string;
@@ -226,8 +229,15 @@ export async function chargePassengerMobileMoney(
     ? MobileMoneyProvider.MTN_MOMO 
     : MobileMoneyProvider.ORANGE_MONEY;
 
-  let passengerId = params.passengerId;
-  if (!passengerId && params.rideId) {
+  const paymentMethodEnum = enumProvider === MobileMoneyProvider.MTN_MOMO
+    ? PaymentMethod.MTN_MOMO
+    : PaymentMethod.ORANGE_MONEY;
+
+  let passengerId = params.passengerId || undefined;
+  const driverId = params.driverId || undefined;
+  const resolvedUserType: UserType = driverId ? UserType.DRIVER : UserType.PASSENGER;
+
+  if (!passengerId && !driverId && params.rideId) {
     const ride = await prisma.ride.findUnique({
       where: { id: params.rideId },
       select: { passengerId: true }
@@ -235,14 +245,36 @@ export async function chargePassengerMobileMoney(
     if (ride) passengerId = ride.passengerId;
   }
 
-  let createdIntentId: string | null = null;
+  const isRecharge = Boolean(params.isWalletRecharge || (!params.rideId && (passengerId || driverId)));
 
-  if (passengerId) {
+  let createdIntentId: string | null = null;
+  let createdTxId: string | null = isUuid(params.transactionId) ? params.transactionId! : null;
+
+  if (passengerId || driverId) {
+    if (isRecharge && !createdTxId) {
+      const operatorLabel = enumProvider === MobileMoneyProvider.ORANGE_MONEY ? 'Orange Money' : 'Telecel / MTN MoMo';
+      const pendingTx = await prisma.transaction.create({
+        data: {
+          passengerId: passengerId || null,
+          driverId: driverId || null,
+          type: TransactionType.DEPOSIT,
+          status: TransactionStatus.PENDING,
+          paymentMethod: paymentMethodEnum,
+          amount: cleanAmount,
+          reference: rawTransactionId,
+          description: `Recarga de Carteira via ${operatorLabel}`
+        }
+      });
+      createdTxId = pendingTx.id;
+    }
+
     const createdIntent = await prisma.paymentIntent.create({
       data: {
-        passengerId,
+        passengerId: passengerId || null,
+        driverId: driverId || null,
+        userType: resolvedUserType,
         rideId: params.rideId || null,
-        transactionId: isUuid(params.transactionId) ? params.transactionId : null,
+        transactionId: createdTxId,
         provider: enumProvider,
         phone: formattedPhone,
         amount: cleanAmount,
@@ -264,7 +296,9 @@ export async function chargePassengerMobileMoney(
         currency: 'XOF',
         order_id: rawTransactionId,
         amount: cleanAmount,
-        reference: `RIDE-${(params.rideId || rawTransactionId).substring(0, 8)}`,
+        reference: params.rideId
+          ? `RIDE-${params.rideId.substring(0, 8)}`
+          : `REC-${rawTransactionId.substring(0, 12)}`,
         subscriber_msisdn: cleanMsisdn,
         return_url: `${baseDomain}/api/payments/orange/return`,
         cancel_url: `${baseDomain}/api/payments/orange/cancel`,
@@ -278,6 +312,7 @@ export async function chargePassengerMobileMoney(
       return { 
         success: true, 
         providerRef: response.data?.notif_token || rawTransactionId, 
+        reference: rawTransactionId,
         paymentUrl: response.data?.payment_url, 
         status: 'PENDING_WEBHOOK' 
       };
@@ -291,8 +326,8 @@ export async function chargePassengerMobileMoney(
         currency: 'XOF',
         externalId: rawTransactionId,
         payer: { partyIdType: 'MSISDN', partyId: cleanMsisdn },
-        payerMessage: 'Pagamento Nô Bai 245',
-        payeeNote: `Corrida Nô Bai: ${params.rideId || 'N/A'}`,
+        payerMessage: params.rideId ? 'Pagamento Corrida Nô Bai 245' : 'Recarga Carteira Nô Bai 245',
+        payeeNote: params.rideId ? `Corrida Nô Bai: ${params.rideId}` : `Recarga Carteira (${resolvedUserType})`,
       };
 
       await apiClient.post(`${MTN_BASE_URL}/collection/v1_0/requesttopay`, payload, { 
@@ -304,18 +339,29 @@ export async function chargePassengerMobileMoney(
         } 
       });
 
-      return { success: true, providerRef: mtnReferenceId, status: 'PENDING_WEBHOOK' };
+      return { success: true, providerRef: mtnReferenceId, reference: rawTransactionId, status: 'PENDING_WEBHOOK' };
     }
   } catch (error: any) {
     const isAxios = axios.isAxiosError(error);
     const errObj = error as AxiosError;
+    const errDetails = isAxios ? JSON.stringify(errObj.response?.data || errObj.message) : error.message;
 
     if (createdIntentId) {
       await prisma.paymentIntent.update({
         where: { id: createdIntentId },
         data: { 
           status: PaymentIntentStatus.FAILED, 
-          failureReason: isAxios ? JSON.stringify(errObj.response?.data || errObj.message) : error.message 
+          failureReason: errDetails
+        }
+      }).catch(() => null);
+    }
+
+    if (createdTxId && isRecharge) {
+      await prisma.transaction.update({
+        where: { id: createdTxId },
+        data: {
+          status: TransactionStatus.FAILED,
+          failureReason: errDetails
         }
       }).catch(() => null);
     }
@@ -329,6 +375,8 @@ export async function chargePassengerMobileMoney(
 
   return { success: false, error: 'UNKNOWN_PROVIDER', details: 'Provedor de pagamento desconhecido.' };
 }
+
+export const chargeMobileMoney = chargePassengerMobileMoney;
 
 // -----------------------------------------------------------------------------
 // 3. RECONCILIAÇÃO E VERIFICAÇÃO DE TRANSAÇÃO (REQUERIDA PELO PAYOUT QUEUE / RECONCILIATION)
@@ -532,7 +580,7 @@ export async function processWebhookConfirmation(
   transactionId: string, 
   status: 'SUCCESS' | 'FAILED', 
   providerRef: string, 
-  rawPayload: any,
+  rawPayload: any, 
   providerName: string = 'ORANGE_MONEY'
 ) {
   return await prisma.$transaction(async (tx) => {
@@ -572,7 +620,13 @@ export async function processWebhookConfirmation(
     }
 
     if (intent.status === PaymentIntentStatus.SUCCESS) {
-      return { alreadyProcessed: true, rideId: intent.rideId };
+      return {
+        alreadyProcessed: true,
+        rideId: intent.rideId,
+        passengerId: intent.passengerId,
+        driverId: intent.driverId,
+        userType: intent.userType
+      };
     }
 
     if (status === 'FAILED') {
@@ -581,6 +635,13 @@ export async function processWebhookConfirmation(
         data: { status: PaymentIntentStatus.FAILED, failureReason: 'Recusado pelo cliente', rawResponse: rawPayload }
       });
 
+      if (intent.transactionId) {
+        await tx.transaction.update({
+          where: { id: intent.transactionId },
+          data: { status: TransactionStatus.FAILED, failureReason: 'Pagamento recusado ou expirado na operadora' }
+        }).catch(() => null);
+      }
+
       if (intent.rideId) {
         await tx.ride.update({
           where: { id: intent.rideId },
@@ -588,7 +649,14 @@ export async function processWebhookConfirmation(
         }).catch(() => null);
       }
 
-      return { success: false, status: 'FAILED' };
+      return {
+        success: false,
+        status: 'FAILED',
+        rideId: intent.rideId,
+        passengerId: intent.passengerId,
+        driverId: intent.driverId,
+        userType: intent.userType
+      };
     }
 
     await tx.paymentIntent.update({
@@ -596,32 +664,141 @@ export async function processWebhookConfirmation(
       data: { status: PaymentIntentStatus.SUCCESS, rawResponse: rawPayload }
     });
 
-    const transaction = await tx.transaction.create({
-      data: {
-        rideId: intent.rideId,
-        passengerId: intent.passengerId,
-        type: TransactionType.RIDE_PAYMENT,
-        status: TransactionStatus.HELD_IN_ESCROW,
-        amount: intent.amount,
-        reference: transactionId,
-        externalRef: providerRef,
-        paymentMethod: intent.provider
-      }
-    });
+    const amountNum = Number(intent.amount || 0);
+    const paymentMethodEnum = intent.provider === MobileMoneyProvider.MTN_MOMO
+      ? PaymentMethod.MTN_MOMO
+      : PaymentMethod.ORANGE_MONEY;
 
+    // -------------------------------------------------------------------------
+    // CASO A: PAGAMENTO DE CORRIDA (ESCROW)
+    // -------------------------------------------------------------------------
     if (intent.rideId) {
+      const transaction = await tx.transaction.create({
+        data: {
+          rideId: intent.rideId,
+          passengerId: intent.passengerId,
+          type: TransactionType.RIDE_PAYMENT,
+          status: TransactionStatus.HELD_IN_ESCROW,
+          amount: intent.amount,
+          reference: transactionId,
+          externalRef: providerRef,
+          paymentMethod: paymentMethodEnum
+        }
+      });
+
       await tx.ride.update({
         where: { id: intent.rideId },
         data: { status: RideStatus.SEARCHING }
       }).catch(() => null);
+
+      return { 
+        success: true, 
+        status: 'HELD', 
+        passengerId: intent.passengerId, 
+        rideId: intent.rideId,
+        transactionId: transaction.id
+      };
     }
 
-    return { 
-      success: true, 
-      status: 'HELD', 
-      passengerId: intent.passengerId, 
-      rideId: intent.rideId,
-      transactionId: transaction.id
+    // -------------------------------------------------------------------------
+    // CASO B: RECARGA DE CARTEIRA DIGITAL (PASSAGEIRO OU MOTORISTA -> CONTA ADMIN)
+    // -------------------------------------------------------------------------
+    const operatorLabel = paymentMethodEnum === PaymentMethod.ORANGE_MONEY ? 'Orange Money' : 'Telecel / MTN MoMo';
+    let balanceBefore = 0;
+    let newBalance = amountNum;
+
+    if (intent.driverId) {
+      const driver = await tx.driver.findUnique({
+        where: { id: intent.driverId },
+        select: { id: true, walletBalance: true }
+      });
+      if (!driver) throw new Error(`DRIVER_NOT_FOUND: Motorista ${intent.driverId} não encontrado.`);
+
+      balanceBefore = Number(driver.walletBalance || 0);
+      newBalance = balanceBefore + amountNum;
+
+      await tx.driver.update({
+        where: { id: driver.id },
+        data: {
+          walletBalance: newBalance,
+          version: { increment: 1 }
+        }
+      });
+    } else if (intent.passengerId) {
+      const passenger = await tx.passenger.findUnique({
+        where: { id: intent.passengerId },
+        select: { id: true, walletBalance: true }
+      });
+      if (!passenger) throw new Error(`PASSENGER_NOT_FOUND: Passageiro ${intent.passengerId} não encontrado.`);
+
+      balanceBefore = Number(passenger.walletBalance || 0);
+      newBalance = balanceBefore + amountNum;
+
+      await tx.passenger.update({
+        where: { id: passenger.id },
+        data: {
+          walletBalance: newBalance,
+          version: { increment: 1 }
+        }
+      });
+    }
+
+    // Credita a Conta Administrativa Central (CompanyWallet)
+    await tx.companyWallet.upsert({
+      where: { id: 'bai245-main-wallet' },
+      update: {
+        balance: { increment: amountNum },
+        totalCollected: { increment: amountNum },
+        version: { increment: 1 }
+      },
+      create: {
+        id: 'bai245-main-wallet',
+        balance: amountNum,
+        totalCollected: amountNum,
+        version: 1
+      }
+    });
+
+    let finalTx;
+    if (intent.transactionId) {
+      finalTx = await tx.transaction.update({
+        where: { id: intent.transactionId },
+        data: {
+          status: TransactionStatus.COMPLETED,
+          balanceBefore,
+          balanceAfter: newBalance,
+          externalRef: providerRef,
+          description: `Recarga automática via ${operatorLabel}`
+        }
+      });
+    } else {
+      finalTx = await tx.transaction.create({
+        data: {
+          passengerId: intent.passengerId,
+          driverId: intent.driverId,
+          type: TransactionType.DEPOSIT,
+          status: TransactionStatus.COMPLETED,
+          paymentMethod: paymentMethodEnum,
+          amount: intent.amount,
+          balanceBefore,
+          balanceAfter: newBalance,
+          reference: transactionId,
+          externalRef: providerRef,
+          description: `Recarga automática via ${operatorLabel}`
+        }
+      });
+    }
+
+    return {
+      success: true,
+      status: 'COMPLETED',
+      isWalletRecharge: true,
+      userType: intent.driverId ? 'DRIVER' : 'PASSENGER',
+      passengerId: intent.passengerId,
+      driverId: intent.driverId,
+      amount: amountNum,
+      newBalance,
+      transactionId: finalTx.id
     };
   });
 }

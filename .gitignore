@@ -9,3 +9,4 @@ build/
 backups/
 backups_ajustes/
 *.sql
+.backups_sync_*

@@ -85,6 +85,31 @@ export const RatingsPage: React.FC = () => {
         </div>
       </div>
 
+      {/* Resumo de Reputação */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+        gap: '14px',
+        marginBottom: '18px'
+      }}>
+        <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '14px 18px' }}>
+          <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>Total de Avaliações</span>
+          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#0F172A', marginTop: '4px' }}>{ratings.length}</div>
+        </div>
+        <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '14px 18px' }}>
+          <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>Média Geral</span>
+          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#059669', marginTop: '4px' }}>
+            {ratings.length > 0 ? (ratings.reduce((s, r) => s + Number(r.stars || 0), 0) / ratings.length).toFixed(1) : '5.0'} ⭐
+          </div>
+        </div>
+        <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '14px 18px' }}>
+          <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>Alertas Nota Baixa (≤ 3⭐)</span>
+          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#DC2626', marginTop: '4px' }}>
+            {ratings.filter((r) => Number(r.stars) <= 3).length}
+          </div>
+        </div>
+      </div>
+
       <div className="table-card">
         {loading ? (
           <div className="loading-state">Carregando dados...</div>

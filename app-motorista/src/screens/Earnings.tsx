@@ -61,6 +61,21 @@ export function Earnings({ navigation }: any) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [finance, setFinance] = useState<FinanceData | null>(null);
+  const [scaleStatus, setScaleStatus] = useState<{
+    wallet?: { balanceXof: number; minAllowedXof: number; isBlockedByDebt: boolean };
+    compliance?: { autoBlockExpiredDocs: boolean; alerts: Array<{ type: string; status: string; date: string }> };
+    fleetPartner?: { ownerName: string; ownerSharePercent: number } | null;
+    missions?: Array<{
+      id: string;
+      title: string;
+      description?: string;
+      targetRides: number;
+      completedRides: number;
+      progressPercent: number;
+      isCompleted: boolean;
+      rewardXof: number;
+    }>;
+  } | null>(null);
 
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [paymentProvider, setPaymentProvider] = useState<'ORANGE' | 'MTN'>('ORANGE');
@@ -69,8 +84,14 @@ export function Earnings({ navigation }: any) {
 
   const fetchFinanceData = async () => {
     try {
-      const response = await api.get('/drivers/finance');
+      const [response, scaleRes] = await Promise.all([
+        api.get('/drivers/finance'),
+        api.get('/drivers/scale-status').catch(() => null),
+      ]);
       setFinance(response.data);
+      if (scaleRes?.data?.success) {
+        setScaleStatus(scaleRes.data);
+      }
     } catch (error: any) {
       Alert.alert('Erro', error.response?.data?.error || 'Não foi possível carregar o extrato financeiro.');
     } finally {
@@ -167,6 +188,85 @@ export function Earnings({ navigation }: any) {
             </View>
           </View>
         </View>
+
+        {/* ALERTAS DE CONFORMIDADE DOCUMENTAL E LIMITE DE CARTEIRA */}
+        {scaleStatus?.wallet?.isBlockedByDebt && (
+          <View style={{ marginHorizontal: 16, marginBottom: 12, padding: 14, backgroundColor: '#FEF2F2', borderRadius: 12, borderWidth: 1, borderColor: '#FCA5A5', flexDirection: 'row', alignItems: 'center' }}>
+            <Ionicons name="alert-circle" size={24} color="#DC2626" />
+            <View style={{ marginLeft: 10, flex: 1 }}>
+              <Text style={{ color: '#991B1B', fontWeight: 'bold', fontSize: 13 }}>Saldo Abaixo do Mínimo Operacional</Text>
+              <Text style={{ color: '#B91C1C', fontSize: 12, marginTop: 2 }}>
+                Recarregue sua carteira (mínimo {formatCurrency(scaleStatus.wallet.minAllowedXof)} XOF) para continuar recebendo chamadas.
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {scaleStatus?.compliance?.alerts && scaleStatus.compliance.alerts.length > 0 && (
+          <View style={{ marginHorizontal: 16, marginBottom: 12, padding: 14, backgroundColor: '#FFFBEB', borderRadius: 12, borderWidth: 1, borderColor: '#FCD34D' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+              <Ionicons name="document-text" size={20} color="#D97706" />
+              <Text style={{ color: '#92400E', fontWeight: 'bold', fontSize: 13, marginLeft: 8 }}>Aviso de Documentação</Text>
+            </View>
+            {scaleStatus.compliance.alerts.map((al, idx) => (
+              <Text key={idx} style={{ color: '#B45309', fontSize: 12, marginTop: 2 }}>
+                • {al.type}: {al.status === 'EXPIRED' ? 'VENCIDO' : 'Vence em breve'} ({formatDate(al.date).split(' ')[0]})
+              </Text>
+            ))}
+          </View>
+        )}
+
+        {/* VÍNCULO COM FROTISTA */}
+        {scaleStatus?.fleetPartner && (
+          <View style={{ marginHorizontal: 16, marginBottom: 12, padding: 14, backgroundColor: '#EFF6FF', borderRadius: 12, borderWidth: 1, borderColor: '#BFDBFE', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name="car-sport" size={22} color="#2563EB" />
+              <View style={{ marginLeft: 10 }}>
+                <Text style={{ color: '#1E40AF', fontWeight: 'bold', fontSize: 13 }}>Veículo de Frota Parceira</Text>
+                <Text style={{ color: '#3B82F6', fontSize: 12 }}>Proprietário: {scaleStatus.fleetPartner.ownerName}</Text>
+              </View>
+            </View>
+            <Text style={{ color: '#1D4ED8', fontWeight: 'bold', fontSize: 12 }}>
+              Repasse {scaleStatus.fleetPartner.ownerSharePercent}%
+            </Text>
+          </View>
+        )}
+
+        {/* MISSÕES E METAS ATIVAS */}
+        {scaleStatus?.missions && scaleStatus.missions.length > 0 && (
+          <View style={{ marginHorizontal: 16, marginBottom: 16, padding: 16, backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="trophy" size={20} color="#D97706" />
+                <Text style={{ fontSize: 15, fontWeight: 'bold', color: '#1F2937', marginLeft: 8 }}>Missões & Bônus da Frota</Text>
+              </View>
+              <Text style={{ fontSize: 11, color: '#059669', fontWeight: '700' }}>ATIVO</Text>
+            </View>
+
+            {scaleStatus.missions.map((m) => (
+              <View key={m.id} style={{ backgroundColor: '#F9FAFB', padding: 12, borderRadius: 10, marginBottom: 10, borderWidth: 1, borderColor: m.isCompleted ? '#10B981' : '#E5E7EB' }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#111827', flex: 1 }}>{m.title}</Text>
+                  <View style={{ backgroundColor: '#D1FAE5', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                    <Text style={{ color: '#047857', fontWeight: 'bold', fontSize: 12 }}>+{formatCurrency(m.rewardXof)} XOF</Text>
+                  </View>
+                </View>
+                {m.description ? <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 3 }}>{m.description}</Text> : null}
+                <View style={{ height: 8, backgroundColor: '#E5E7EB', borderRadius: 4, overflow: 'hidden', marginTop: 10 }}>
+                  <View style={{ height: '100%', width: `${m.progressPercent}%`, backgroundColor: m.isCompleted ? '#059669' : '#F59E0B', borderRadius: 4 }} />
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
+                  <Text style={{ fontSize: 11, color: '#4B5563', fontWeight: '600' }}>
+                    Progresso: {m.completedRides} / {m.targetRides} viagens
+                  </Text>
+                  <Text style={{ fontSize: 11, color: m.isCompleted ? '#059669' : '#D97706', fontWeight: 'bold' }}>
+                    {m.isCompleted ? 'Meta Concluída!' : `${m.progressPercent}%`}
+                  </Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
 
         <View style={styles.accountCard}>
           <View style={styles.accountHeader}>

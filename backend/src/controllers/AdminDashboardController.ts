@@ -1,3 +1,6 @@
+import crypto from 'crypto';
+import { getIo } from '../server';
+import { cancelRideLogic } from '../services/rideService';
 import { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 
@@ -38,13 +41,41 @@ export class AdminDashboardController {
       const hojeLucro = Number(revenueAgg._sum.priceXof || 0);
       const geralLucro = Number(totalRevenue._sum.priceXof || 0);
 
+      const [
+        activeRidesCount,
+        pendingDriversCount,
+        pendingChangeReqCount,
+        openTicketsCount,
+        activeSosCount
+      ] = await Promise.all([
+        prisma.ride.count({
+          where: { status: { in: ['SEARCHING', 'ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] } }
+        }).catch(() => 0),
+        prisma.driver.count({
+          where: { status: 'PENDING_APPROVAL', deletedAt: null }
+        }).catch(() => 0),
+        prisma.driverChangeRequest.count({
+          where: { status: 'PENDING' }
+        }).catch(() => 0),
+        prisma.ticket.count({
+          where: { status: { notIn: ['CLOSED', 'RESOLVED'] as any } }
+        }).catch(() => 0),
+        prisma.sosAlert.count({
+          where: { status: { notIn: ['RESOLVED', 'CLOSED', 'FALSE_ALARM'] as any } }
+        }).catch(() => 0)
+      ]);
+
       return res.status(200).json({
         lucroHoje: hojeLucro > 0 ? hojeLucro : geralLucro,
         corridasHoje: todayRides > 0 ? todayRides : totalRides,
         corridasCompletas: completedRides,
         corridasCanceladas: cancelledRides,
+        corridasEmAndamento: activeRidesCount,
         motoristasOnline: onlineDrivers,
-        passageirosAtivos: activePassengers
+        passageirosAtivos: activePassengers,
+        motoristasPendentes: pendingDriversCount + pendingChangeReqCount,
+        ticketsAbertos: openTicketsCount,
+        alertasSosAtivos: activeSosCount
       });
     } catch (error) {
       console.error("❌ [ADMIN METRICS ERROR]:", error);
@@ -443,7 +474,7 @@ export class AdminDashboardController {
             lng: ride.destinationLng,
             heading: 0,
             speed: 0,
-            createdAt: (ride as any).finishedAt || (ride as any).completedAt || ride.updatedAt
+            createdAt: (ride as any).finishedAt || (ride as any).finishedAt || ride.updatedAt
           }
         ];
       }
@@ -488,4 +519,593 @@ export class AdminDashboardController {
       });
     }
   }
+
+  // 🚨 DESTRAVAR CORRIDA PRESA (FORÇAR CANCELAMENTO PELO ADMIN)
+  static async forceCancelRide(req: Request, res: Response): Promise<Response> {
+    try {
+      const { rideId } = req.params;
+      const { reason } = req.body || {};
+
+      const ride = await prisma.ride.findUnique({ where: { id: String(rideId) } });
+      if (!ride) {
+        return res.status(404).json({ success: false, error: 'Corrida não encontrada.' });
+      }
+
+      if (ride.status === 'COMPLETED' || ride.status === 'CANCELLED') {
+        return res.status(400).json({ success: false, error: `Corrida já encerrada (${ride.status}).` });
+      }
+
+      const cleanReason = String(reason || 'Cancelado manualmente pela central de operações (Admin)').trim();
+      const adminId = (req as any).user?.id || 'admin-operator';
+
+      const result = await cancelRideLogic(
+        String(rideId),
+        String(adminId),
+        'DRIVER',
+        cleanReason,
+        false
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Corrida destravada e cancelada com sucesso.',
+        result
+      });
+    } catch (error: any) {
+      console.error('❌ [FORCE CANCEL RIDE ERROR]:', error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || 'Erro ao forçar cancelamento da corrida.'
+      });
+    }
+  }
+
+
+  // ✅ 1. FORÇAR CONCLUSÃO DE CORRIDA (QUANDO MOTORISTA PERDE SINAL NO DESTINO)
+  static async forceFinishRide(req: Request, res: Response): Promise<Response> {
+    try {
+      const { rideId } = req.params;
+      const { reason } = req.body || {};
+
+      const ride = await prisma.ride.findUnique({
+        where: { id: String(rideId) },
+        include: { driver: true, passenger: true }
+      });
+
+      if (!ride) {
+        return res.status(404).json({ success: false, error: 'Corrida não encontrada.' });
+      }
+
+      if (ride.status === 'COMPLETED' || ride.status === 'CANCELLED') {
+        return res.status(400).json({ success: false, error: `Corrida já finalizada (${ride.status}).` });
+      }
+
+      if (!ride.driverId) {
+        return res.status(400).json({
+          success: false,
+          error: 'Atribua um motorista antes de concluir a corrida ou utilize Forçar Cancelamento.'
+        });
+      }
+
+      const gross = Math.round(Number(ride.priceXof || ride.estimatedPriceXof || 0));
+      let platformFee = Number(ride.platformFee || 0);
+      let driverEarnings = Number(ride.driverEarnings || 0);
+
+      if (platformFee <= 0 && gross > 0) {
+        const tariff = await prisma.tariffConfig.findFirst({
+          where: {
+            vehicleType: (ride.driverVehicleType || ride.requestedVehicleType) as any,
+            serviceType: ride.serviceType as any
+          }
+        });
+        const sysConfig = await prisma.systemConfig.findFirst();
+        const commRate = Number(tariff?.commissionRate ?? sysConfig?.defaultCommissionRate ?? 15);
+        platformFee = Math.round((gross * commRate) / 100);
+        driverEarnings = Math.max(0, gross - platformFee);
+      } else if (driverEarnings <= 0 && gross > 0) {
+        driverEarnings = Math.max(0, gross - platformFee);
+      }
+
+      const adminId = (req as any).user?.id || 'admin-operator';
+      const cleanReason = String(reason || 'Conclusão forçada pela central de operações (Admin)').trim();
+
+      const txResult = await prisma.$transaction(async (tx) => {
+        const updatedRide = await tx.ride.update({
+          where: { id: ride.id },
+          data: {
+            status: 'COMPLETED',
+            finishedAt: new Date(),
+            priceXof: gross,
+            platformFee,
+            driverEarnings,
+            version: { increment: 1 }
+          }
+        });
+
+        await (tx as any).rideEventLog.create({
+          data: {
+            rideId: ride.id,
+            status: 'COMPLETED',
+            triggeredBy: 'DRIVER',
+            userId: String(adminId),
+            metadata: { forcedByAdmin: true, reason: cleanReason }
+          }
+        });
+
+        await tx.passenger.update({
+          where: { id: ride.passengerId },
+          data: { currentRideId: null }
+        });
+
+        const nextQueued = await tx.ride.findFirst({
+          where: {
+            driverId: ride.driverId!,
+            status: { in: ['ACCEPTED', 'QUEUED' as any] },
+            id: { not: ride.id }
+          }
+        });
+
+        let newDriverBalance = Number(ride.driver?.walletBalance || 0);
+
+        if (ride.paymentMethod === 'CASH') {
+          if (platformFee > 0) {
+            const dUpd = await tx.driver.update({
+              where: { id: ride.driverId! },
+              data: {
+                currentRideId: nextQueued ? nextQueued.id : null,
+                isAvailable: !nextQueued,
+                walletBalance: { decrement: platformFee }
+              }
+            });
+            newDriverBalance = Number(dUpd.walletBalance || 0);
+
+            await tx.transaction.create({
+              data: {
+                rideId: ride.id,
+                driverId: ride.driverId!,
+                type: 'COMMISSION_FEE',
+                amount: platformFee,
+                status: 'COMPLETED',
+                paymentMethod: 'CASH',
+                reference: `COMM-ADM-${ride.id.slice(0, 8)}-${Date.now()}`,
+                description: `Comissão plataforma (Conclusão Admin #${ride.id.slice(0, 8)})`
+              }
+            });
+          } else {
+            await tx.driver.update({
+              where: { id: ride.driverId! },
+              data: {
+                currentRideId: nextQueued ? nextQueued.id : null,
+                isAvailable: !nextQueued
+              }
+            });
+          }
+        } else {
+          await tx.transaction.updateMany({
+            where: { rideId: ride.id, type: 'RIDE_PAYMENT', status: 'HELD_IN_ESCROW' },
+            data: { status: 'COMPLETED' }
+          });
+
+          const dUpd = await tx.driver.update({
+            where: { id: ride.driverId! },
+            data: {
+              currentRideId: nextQueued ? nextQueued.id : null,
+              isAvailable: !nextQueued,
+              walletBalance: { increment: driverEarnings }
+            }
+          });
+          newDriverBalance = Number(dUpd.walletBalance || 0);
+
+          if (driverEarnings > 0) {
+            await tx.transaction.create({
+              data: {
+                rideId: ride.id,
+                driverId: ride.driverId!,
+                type: 'DRIVER_PAYOUT',
+                amount: driverEarnings,
+                status: 'COMPLETED',
+                paymentMethod: ride.paymentMethod,
+                reference: `EARN-ADM-${ride.id.slice(0, 8)}-${Date.now()}`,
+                description: `Repasse líquido corrida concluída pelo Admin (#${ride.id.slice(0, 8)})`
+              }
+            });
+          }
+
+          if (platformFee > 0) {
+            await tx.transaction.create({
+              data: {
+                rideId: ride.id,
+                driverId: ride.driverId!,
+                type: 'COMMISSION_FEE',
+                amount: platformFee,
+                status: 'COMPLETED',
+                paymentMethod: ride.paymentMethod,
+                reference: `COMM-ADM-${ride.id.slice(0, 8)}-${Date.now()}`,
+                description: `Comissão plataforma (#${ride.id.slice(0, 8)})`
+              }
+            });
+          }
+        }
+
+        return { updatedRide, newDriverBalance };
+      });
+
+      try {
+        const io = getIo();
+        if (io) {
+          const payload = {
+            rideId: ride.id,
+            status: 'COMPLETED',
+            priceXof: gross,
+            driverEarnings,
+            platformFee
+          };
+          io.to(ride.passengerId).to(`passenger_${ride.passengerId}`).emit('ride:completed', payload);
+          io.to(ride.passengerId).to(`passenger_${ride.passengerId}`).emit('ride:finished', payload);
+          io.to(ride.driverId).to(`driver_${ride.driverId}`).emit('ride:completed', payload);
+          io.to(ride.driverId).to(`driver_${ride.driverId}`).emit('ride:finished', payload);
+          io.to(ride.driverId).to(`driver_${ride.driverId}`).emit('wallet:updated', {
+            driverId: ride.driverId,
+            walletBalance: txResult.newDriverBalance
+          });
+        }
+      } catch (sockErr) {
+        console.warn('⚠️ [SOCKET FORCE FINISH]:', sockErr);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: `Corrida concluída com sucesso (${gross} XOF • Líquido motorista: ${driverEarnings} XOF).`,
+        ride: txResult.updatedRide
+      });
+    } catch (error: any) {
+      console.error('❌ [FORCE FINISH RIDE ERROR]:', error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || 'Erro ao forçar conclusão da corrida.'
+      });
+    }
+  }
+
+  // 🔄 2. ATRIBUIR OU TROCAR MOTORISTA NA CORRIDA
+  static async assignDriverToRide(req: Request, res: Response): Promise<Response> {
+    try {
+      const { rideId } = req.params;
+      const { driverId } = req.body || {};
+
+      if (!driverId) {
+        return res.status(400).json({ success: false, error: 'Selecione um motorista válido.' });
+      }
+
+      const [ride, driver] = await Promise.all([
+        prisma.ride.findUnique({ where: { id: String(rideId) }, include: { passenger: true } }),
+        prisma.driver.findUnique({ where: { id: String(driverId) } })
+      ]);
+
+      if (!ride) {
+        return res.status(404).json({ success: false, error: 'Corrida não encontrada.' });
+      }
+      if (ride.status === 'COMPLETED' || ride.status === 'CANCELLED') {
+        return res.status(400).json({ success: false, error: 'Não é possível atribuir motorista a uma corrida encerrada.' });
+      }
+      if (!driver || driver.deletedAt) {
+        return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
+      }
+      if (driver.status !== 'APPROVED') {
+        return res.status(400).json({ success: false, error: 'Apenas motoristas aprovados podem receber corridas.' });
+      }
+
+      const previousDriverId = ride.driverId && ride.driverId !== driver.id ? ride.driverId : null;
+      const adminId = (req as any).user?.id || 'admin-operator';
+
+      const updatedRide = await prisma.$transaction(async (tx) => {
+        if (previousDriverId) {
+          await tx.driver.update({
+            where: { id: previousDriverId },
+            data: { currentRideId: null, isAvailable: true }
+          });
+        }
+
+        const r = await tx.ride.update({
+          where: { id: ride.id },
+          data: {
+            driverId: driver.id,
+            status: ride.status === 'SEARCHING' ? 'ACCEPTED' : ride.status,
+            acceptedAt: ride.acceptedAt || new Date(),
+            driverVehiclePlate: driver.vehiclePlate,
+            driverVehicleType: driver.vehicleType,
+            version: { increment: 1 }
+          },
+          include: { driver: true, passenger: true }
+        });
+
+        await tx.driver.update({
+          where: { id: driver.id },
+          data: {
+            currentRideId: ride.id,
+            isAvailable: false,
+            isOnline: true
+          }
+        });
+
+        await tx.passenger.update({
+          where: { id: ride.passengerId },
+          data: { currentRideId: ride.id }
+        });
+
+        await (tx as any).rideEventLog.create({
+          data: {
+            rideId: ride.id,
+            status: r.status,
+            triggeredBy: 'DRIVER',
+            userId: String(adminId),
+            metadata: { assignedByAdmin: true, driverId: driver.id, previousDriverId }
+          }
+        });
+
+        return r;
+      });
+
+      try {
+        const io = getIo();
+        if (io) {
+          if (previousDriverId) {
+            io.to(previousDriverId).to(`driver_${previousDriverId}`).emit('ride:cancelled', {
+              rideId: ride.id,
+              cancelledBy: 'ADMIN',
+              reason: 'Corrida reatribuída pela central de operações.'
+            });
+          }
+          io.to(ride.passengerId).to(`passenger_${ride.passengerId}`).emit('ride:accepted', {
+            rideId: ride.id,
+            ride: updatedRide,
+            driver
+          });
+          io.to(driver.id).to(`driver_${driver.id}`).emit('ride:assigned', {
+            rideId: ride.id,
+            ride: updatedRide
+          });
+          io.to(driver.id).to(`driver_${driver.id}`).emit('ride:accepted', {
+            rideId: ride.id,
+            ride: updatedRide
+          });
+        }
+      } catch (sockErr) {
+        console.warn('⚠️ [SOCKET ASSIGN DRIVER]:', sockErr);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: `Motorista ${driver.fullName} (${driver.vehiclePlate}) atribuído à corrida!`,
+        ride: updatedRide
+      });
+    } catch (error: any) {
+      console.error('❌ [ASSIGN DRIVER ERROR]:', error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || 'Erro ao atribuir motorista à corrida.'
+      });
+    }
+  }
+
+  // 📞 3. DESPACHO MANUAL DE CORRIDA PELA CENTRAL (CALL-CENTER)
+  static async manualDispatchRide(req: Request, res: Response): Promise<Response> {
+    try {
+      const {
+        passengerPhone,
+        passengerName,
+        originAddress,
+        originLat,
+        originLng,
+        destinationAddress,
+        destinationLat,
+        destinationLng,
+        vehicleType,
+        driverId,
+        priceXof
+      } = req.body || {};
+
+      const cleanPhone = String(passengerPhone || '').trim();
+      const cleanOrigin = String(originAddress || '').trim();
+      const cleanDest = String(destinationAddress || '').trim();
+
+      if (!cleanPhone || !cleanOrigin || !cleanDest) {
+        return res.status(400).json({
+          success: false,
+          error: 'Telefone do passageiro, origem e destino são obrigatórios.'
+        });
+      }
+
+      let passenger = await prisma.passenger.findFirst({
+        where: { phone: cleanPhone }
+      });
+
+      if (!passenger) {
+        passenger = await prisma.passenger.create({
+          data: {
+            fullName: String(passengerName || `Cliente ${cleanPhone}`).trim(),
+            phone: cleanPhone,
+            passwordHash: crypto.randomBytes(24).toString('hex'),
+            status: 'ACTIVE',
+            isVerified: true
+          }
+        });
+      }
+
+      const vType = (vehicleType || 'TAXI') as any;
+      const tariff = await prisma.tariffConfig.findFirst({
+        where: { vehicleType: vType, serviceType: 'RIDE' }
+      });
+      const sysConfig = await prisma.systemConfig.findFirst();
+
+      const oLat = Number(originLat) || 11.8636;
+      const oLng = Number(originLng) || -15.5977;
+      const dLat = Number(destinationLat) || 11.8810;
+      const dLng = Number(destinationLng) || -15.6120;
+
+      const gross = Math.max(
+        500,
+        Math.round(Number(priceXof) || Number(tariff?.minimumFare || 1000))
+      );
+      const commRate = Number(tariff?.commissionRate ?? sysConfig?.defaultCommissionRate ?? 15);
+      const platformFee = Math.round((gross * commRate) / 100);
+      const driverEarnings = Math.max(0, gross - platformFee);
+
+      let assignedDriver: any = null;
+      if (driverId) {
+        assignedDriver = await prisma.driver.findUnique({ where: { id: String(driverId) } });
+      }
+
+      const adminId = (req as any).user?.id || 'admin-operator';
+
+      const createdRide = await prisma.$transaction(async (tx) => {
+        const ride = await tx.ride.create({
+          data: {
+            passengerId: passenger!.id,
+            driverId: assignedDriver ? assignedDriver.id : null,
+            serviceType: 'RIDE',
+            requestedVehicleType: vType,
+            paymentMethod: 'CASH',
+            originAddress: cleanOrigin,
+            originLat: oLat,
+            originLng: oLng,
+            destinationAddress: cleanDest,
+            destinationLat: dLat,
+            destinationLng: dLng,
+            estimatedPriceXof: gross,
+            priceXof: gross,
+            platformFee,
+            driverEarnings,
+            driverVehiclePlate: assignedDriver?.vehiclePlate || null,
+            driverVehicleType: assignedDriver?.vehicleType || vType,
+            status: assignedDriver ? 'ACCEPTED' : 'SEARCHING',
+            acceptedAt: assignedDriver ? new Date() : null
+          },
+          include: { passenger: true, driver: true }
+        });
+
+        await tx.passenger.update({
+          where: { id: passenger!.id },
+          data: { currentRideId: ride.id }
+        });
+
+        if (assignedDriver) {
+          await tx.driver.update({
+            where: { id: assignedDriver.id },
+            data: {
+              currentRideId: ride.id,
+              isAvailable: false,
+              isOnline: true
+            }
+          });
+        }
+
+        await (tx as any).rideEventLog.create({
+          data: {
+            rideId: ride.id,
+            status: ride.status,
+            triggeredBy: 'PASSENGER',
+            userId: String(adminId),
+            metadata: { createdByCallCenter: true }
+          }
+        });
+
+        return ride;
+      });
+
+      try {
+        const io = getIo();
+        if (io && assignedDriver) {
+          io.to(assignedDriver.id).to(`driver_${assignedDriver.id}`).emit('ride:assigned', {
+            rideId: createdRide.id,
+            ride: createdRide
+          });
+          io.to(assignedDriver.id).to(`driver_${assignedDriver.id}`).emit('ride:accepted', {
+            rideId: createdRide.id,
+            ride: createdRide
+          });
+        }
+      } catch (sockErr) {
+        console.warn('⚠️ [SOCKET MANUAL DISPATCH]:', sockErr);
+      }
+
+      return res.status(201).json({
+        success: true,
+        message: assignedDriver
+          ? `Corrida criada e despachada para ${assignedDriver.fullName}!`
+          : 'Corrida criada na fila de busca!',
+        ride: createdRide
+      });
+    } catch (error: any) {
+      console.error('❌ [MANUAL DISPATCH ERROR]:', error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || 'Erro ao despachar corrida manualmente.'
+      });
+    }
+  }
+
+  // 🔓 4. DESTRAVAR APP DE MOTORISTA OU PASSAGEIRO
+  static async unlockUserApp(req: Request, res: Response): Promise<Response> {
+    try {
+      const { userType, userId } = req.params;
+
+      if (userType === 'driver') {
+        const driver = await prisma.driver.update({
+          where: { id: String(userId) },
+          data: { currentRideId: null, isAvailable: true }
+        });
+
+        try {
+          const io = getIo();
+          if (io) {
+            io.to(driver.id).to(`driver_${driver.id}`).emit('app:unlocked', { driverId: driver.id });
+            io.to(driver.id).to(`driver_${driver.id}`).emit('ride:cancelled', {
+              rideId: null,
+              cancelledBy: 'ADMIN',
+              reason: 'Sessão destravada pela central de suporte.'
+            });
+          }
+        } catch {}
+
+        return res.status(200).json({
+          success: true,
+          message: `Aplicativo do motorista ${driver.fullName} destravado com sucesso!`
+        });
+      }
+
+      if (userType === 'passenger') {
+        const passenger = await prisma.passenger.update({
+          where: { id: String(userId) },
+          data: { currentRideId: null }
+        });
+
+        try {
+          const io = getIo();
+          if (io) {
+            io.to(passenger.id).to(`passenger_${passenger.id}`).emit('app:unlocked', { passengerId: passenger.id });
+            io.to(passenger.id).to(`passenger_${passenger.id}`).emit('ride:cancelled', {
+              rideId: null,
+              cancelledBy: 'ADMIN',
+              reason: 'Sessão destravada pela central de suporte.'
+            });
+          }
+        } catch {}
+
+        return res.status(200).json({
+          success: true,
+          message: `Aplicativo do passageiro ${passenger.fullName} destravado com sucesso!`
+        });
+      }
+
+      return res.status(400).json({ success: false, error: 'Tipo de usuário inválido.' });
+    } catch (error: any) {
+      console.error('❌ [UNLOCK USER APP ERROR]:', error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || 'Erro ao destravar aplicativo.'
+      });
+    }
+  }
+
 }

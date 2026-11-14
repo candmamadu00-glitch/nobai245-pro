@@ -16,7 +16,12 @@ import { Settings } from './pages/Settings';
 import { SOSMonitor } from './pages/SOSMonitor';
 import { TrackRide } from './pages/TrackRide';
 import { Admins } from './pages/Admins';
-import Landmarks from './pages/Landmarks'; // 📍 Importação da página de Mapeamento
+import Landmarks from './pages/Landmarks';
+import { Promos } from './pages/Promos';
+import { Broadcast } from './pages/Broadcast';
+import { Analytics } from './pages/Analytics';
+import { Corporate } from './pages/Corporate';
+import { Governance } from './pages/Governance'; // 📍 Importação da página de Mapeamento
 
 import './App.css';
 
@@ -59,6 +64,11 @@ function AppRoutes() {
         <Route path="ratings" element={<RatingsPage />} />
         <Route path="tickets" element={<Tickets />} />
         <Route path="landmarks" element={<Landmarks />} /> {/* 📍 Rota cadastrada */}
+        <Route path="promos" element={<Promos />} />
+        <Route path="broadcast" element={<Broadcast />} />
+        <Route path="analytics" element={<Analytics />} />
+        <Route path="corporate" element={<Corporate />} />
+        <Route path="governance" element={<Governance />} />
         <Route path="settings" element={<Settings />} />
       </Route>
       

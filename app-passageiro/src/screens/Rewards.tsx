@@ -36,6 +36,7 @@ export function Rewards() {
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [activeCoupons, setActiveCoupons] = useState<Array<{ id: string; code: string; description: string; discountType: string; discountValue: number }>>([]);
   const [rewards, setRewards] = useState<RewardsData>({
     points: 0,
     nextTierPoints: 1000,
@@ -52,7 +53,13 @@ export function Rewards() {
 
   const fetchRewards = useCallback(async () => {
     try {
-      const response = await api.get('/passengers/rewards');
+      const [response, promoRes] = await Promise.all([
+        api.get('/passengers/rewards'),
+        api.get('/passengers/promotions').catch(() => ({ data: { coupons: [] } }))
+      ]);
+      if (promoRes?.data?.coupons && isMountedRef.current) {
+        setActiveCoupons(promoRes.data.coupons);
+      }
       if (response.data && isMountedRef.current) {
         setRewards({
           points: Number(response.data.points || 0),
@@ -129,6 +136,32 @@ export function Rewards() {
               </Text>
             </View>
           </View>
+
+          {activeCoupons.length > 0 && (
+            <View style={{ marginBottom: 24 }}>
+              <Text style={styles.sectionTitle}>Cupons Promocionais Ativos</Text>
+              {activeCoupons.map((cp) => (
+                <TouchableOpacity
+                  key={cp.id}
+                  style={[styles.benefitItem, { justifyContent: 'space-between', borderWidth: 1, borderColor: 'rgba(250, 204, 21, 0.35)' }]}
+                  onPress={() => Alert.alert('Código do Cupom', `Use o código ${cp.code} na tela inicial antes de chamar sua viagem!`)}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                    <Ionicons name="pricetag" size={22} color="#FACC15" />
+                    <View style={{ marginLeft: 12, flex: 1 }}>
+                      <Text style={{ color: '#FACC15', fontWeight: '800', fontSize: 15 }}>{cp.code}</Text>
+                      <Text style={{ color: '#CBD5E1', fontSize: 12, marginTop: 2 }}>{cp.description}</Text>
+                    </View>
+                  </View>
+                  <View style={{ backgroundColor: 'rgba(16, 185, 129, 0.2)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 }}>
+                    <Text style={{ color: '#34D399', fontWeight: 'bold', fontSize: 12 }}>
+                      {cp.discountType === 'PERCENT' ? `-${cp.discountValue}%` : `-${Math.round(cp.discountValue)} F`}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
 
           <Text style={styles.sectionTitle}>{t('unlocked_benefits', 'Benefícios Desbloqueados')}</Text>
           

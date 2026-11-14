@@ -308,6 +308,7 @@ model Driver {
   rides                Ride[]               @relation("DriverRidesHistory")
   rideOffers           RideOffer[]
   transactions         Transaction[]
+  paymentIntents        PaymentIntent[]
   sosAlerts            SosAlert[]
   changeRequests       DriverChangeRequest[]
   accountDeletionRequests AccountDeletionRequest[]
@@ -320,6 +321,7 @@ model Driver {
   @@index([orangeNumber])
   @@index([mtnNumber])
   @@index([deletedAt])
+  fleetPartnerLink     FleetPartnerDriver?
 }
 
 // ==========================================
@@ -546,7 +548,9 @@ model Transaction {
 
 model PaymentIntent {
   id            String              @id @default(uuid()) @db.Uuid
-  passengerId   String              @db.Uuid
+  passengerId   String?             @db.Uuid
+  driverId      String?             @db.Uuid
+  userType      UserType            @default(PASSENGER)
   transactionId String?             @unique @db.Uuid
   rideId        String?             @db.Uuid
   provider      MobileMoneyProvider
@@ -561,11 +565,13 @@ model PaymentIntent {
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt
 
-  passenger     Passenger           @relation(fields: [passengerId], references: [id], onDelete: Restrict)
+  passenger     Passenger?          @relation(fields: [passengerId], references: [id], onDelete: Restrict)
+  driver        Driver?             @relation(fields: [driverId], references: [id], onDelete: Restrict)
   transaction   Transaction?        @relation(fields: [transactionId], references: [id], onDelete: SetNull)
 
   @@index([reference])
   @@index([status])
+  @@index([driverId])
 }
 
 model TariffConfig {
@@ -589,8 +595,13 @@ model SystemConfig {
   id                    String   @id @default("bai245-system-config") @db.VarChar(50)
   adminOrangeNumber     String   @default("245950000000") @db.VarChar(20)
   adminMtnNumber        String   @default("245960000000") @db.VarChar(20)
+  adminMerchantCode     String   @default("72447321") @db.VarChar(30)
+  companyName           String   @default("NÔ BAI 245") @db.VarChar(80)
   defaultCommissionRate Decimal  @default(15.00) @db.Decimal(5, 2)
   globalSurgeActive     Boolean  @default(false)
+  globalSurgeMultiplier Decimal  @default(1.00) @db.Decimal(4, 2)
+  minDriverBalanceXof   Decimal  @default(0.00) @db.Decimal(12, 2)
+  autoBlockExpiredDocs  Boolean  @default(false)
   updatedAt             DateTime @updatedAt
 }
 
@@ -843,4 +854,107 @@ model TicketMessage {
   createdAt DateTime @default(now())
 
   @@index([ticketId])
+}
+
+// =========================================================
+// 🏢 MÓDULOS DE ESCALA EMPRESARIAL (B2B, FROTISTAS, ANTIFRAUDE, ZONAS, MISSÕES)
+// =========================================================
+
+model CorporateAccount {
+  id                String              @id @default(uuid()) @db.Uuid
+  name              String              @db.VarChar(120)
+  taxId             String?             @db.VarChar(50)
+  contactName       String?             @db.VarChar(100)
+  contactPhone      String              @db.VarChar(30)
+  contactEmail      String?             @db.VarChar(100)
+  creditLimitXof    Decimal             @default(0.00) @db.Decimal(12, 2)
+  currentBalanceXof Decimal             @default(0.00) @db.Decimal(12, 2)
+  costCenter        String?             @db.VarChar(80)
+  isActive          Boolean             @default(true)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  employees         CorporateEmployee[]
+}
+
+model CorporateEmployee {
+  id              String           @id @default(uuid()) @db.Uuid
+  corporateId     String           @db.Uuid
+  fullName        String           @db.VarChar(100)
+  phone           String           @db.VarChar(25)
+  department      String?          @db.VarChar(80)
+  monthlyLimitXof Decimal?         @db.Decimal(12, 2)
+  isActive        Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+
+  corporate       CorporateAccount @relation(fields: [corporateId], references: [id], onDelete: Cascade)
+
+  @@unique([corporateId, phone])
+  @@index([phone])
+}
+
+model FleetPartner {
+  id                String               @id @default(uuid()) @db.Uuid
+  ownerName         String               @db.VarChar(120)
+  phone             String               @unique @db.VarChar(25)
+  email             String?              @db.VarChar(100)
+  documentNumber    String?              @db.VarChar(50)
+  orangeNumber      String?              @db.VarChar(25)
+  mtnNumber         String?              @db.VarChar(25)
+  ownerSharePercent Decimal              @default(50.00) @db.Decimal(5, 2)
+  isActive          Boolean              @default(true)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  vehicles          FleetPartnerDriver[]
+}
+
+model FleetPartnerDriver {
+  id         String       @id @default(uuid()) @db.Uuid
+  partnerId  String       @db.Uuid
+  driverId   String       @unique @db.Uuid
+  assignedAt DateTime     @default(now())
+
+  partner    FleetPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  driver     Driver       @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@index([partnerId])
+}
+
+model BlacklistEntry {
+  id              String   @id @default(uuid()) @db.Uuid
+  identifierType  String   @db.VarChar(30)
+  identifierValue String   @db.VarChar(120)
+  reason          String   @db.VarChar(255)
+  blockedBy       String?  @db.VarChar(100)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  @@unique([identifierType, identifierValue])
+  @@index([identifierValue])
+}
+
+model TariffZone {
+  id            String   @id @default(uuid()) @db.Uuid
+  name          String   @db.VarChar(100)
+  zoneType      String   @default("FIXED_ROUTE") @db.VarChar(30)
+  centerLat     Decimal? @db.Decimal(10, 7)
+  centerLng     Decimal? @db.Decimal(10, 7)
+  radiusKm      Decimal  @default(2.00) @db.Decimal(6, 2)
+  fixedPriceXof Decimal? @db.Decimal(10, 2)
+  multiplier    Decimal  @default(1.00) @db.Decimal(4, 2)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+}
+
+model DriverMission {
+  id          String   @id @default(uuid()) @db.Uuid
+  title       String   @db.VarChar(120)
+  description String?  @db.VarChar(255)
+  targetRides Int      @default(10)
+  rewardXof   Decimal  @default(2000.00) @db.Decimal(10, 2)
+  startsAt    DateTime @default(now())
+  endsAt      DateTime
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
 }
