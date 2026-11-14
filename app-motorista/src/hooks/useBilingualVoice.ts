@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react';
-import { createAudioPlayer } from 'expo-audio';
+import { AudioModule, createAudioPlayer } from 'expo-audio';
 import * as Speech from 'expo-speech';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -16,6 +16,17 @@ const CREOLE_AUDIO_MAP: Record<string, any> = {
   new_ride: require('../../assets/audio/crioulo/new_ride.mp3'),
 };
 
+async function ensurePlaybackAudioMode() {
+  try {
+    if (typeof (AudioModule as any)?.setAudioModeAsync === 'function') {
+      await (AudioModule as any).setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: false,
+      });
+    }
+  } catch {}
+}
+
 export function useBilingualVoice() {
   const playerRef = useRef<any>(null);
   const lastSpokenRef = useRef<{ text: string; time: number }>({ text: '', time: 0 });
@@ -28,8 +39,7 @@ export function useBilingualVoice() {
     try {
       const now = Date.now();
 
-      // Trava antirrepetição (10 segundos)
-      if (lastSpokenRef.current.text === ptText && (now - lastSpokenRef.current.time) < 10000) {
+      if (lastSpokenRef.current.text === ptText && (now - lastSpokenRef.current.time) < 8000) {
         return;
       }
 
@@ -40,10 +50,13 @@ export function useBilingualVoice() {
 
       lastSpokenRef.current = { text: ptText, time: now };
 
-      try { Speech.stop(); } catch (e) {}
+      await ensurePlaybackAudioMode();
+
+      try { Speech.stop(); } catch {}
 
       if (playerRef.current) {
-        try { playerRef.current.pause(); } catch (e) {}
+        try { playerRef.current.pause(); } catch {}
+        try { playerRef.current.remove?.(); } catch {}
         playerRef.current = null;
       }
 
@@ -52,16 +65,17 @@ export function useBilingualVoice() {
         if (!asset) return;
 
         try {
+          await ensurePlaybackAudioMode();
           const player = createAudioPlayer(asset);
           playerRef.current = player;
           player.play();
         } catch (errMp3) {
-          console.error('💥 [VOZ LOG] ERRO ao tocar MP3 Crioulo:', errMp3);
+          console.warn('⚠️ [VOZ LOG] Erro ao tocar MP3 Crioulo:', errMp3);
         }
       };
 
       if (mode === 'PT') {
-        Speech.speak(ptText, { language: 'pt-PT', rate: 1.0 });
+        Speech.speak(ptText, { language: 'pt-PT', rate: 0.96, pitch: 1.0 });
         return;
       }
 
@@ -73,13 +87,14 @@ export function useBilingualVoice() {
       if (mode === 'BOTH') {
         Speech.speak(ptText, {
           language: 'pt-PT',
-          rate: 1.05,
+          rate: 1.0,
+          pitch: 1.0,
           onDone: () => { playCreoleMp3(); },
           onError: () => { playCreoleMp3(); },
         });
       }
     } catch (err) {
-      console.error('💥 [VOZ LOG] Erro crítico na voz:', err);
+      console.warn('⚠️ [VOZ LOG] Erro na voz:', err);
     }
   }, []);
 

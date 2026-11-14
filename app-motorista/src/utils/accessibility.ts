@@ -1,10 +1,16 @@
 import * as Speech from 'expo-speech';
+import { AudioModule } from 'expo-audio';
 import { Vibration, Platform } from 'react-native';
 
 /**
  * 🔊 Lê um texto em voz alta através do sintetizador de voz do sistema
  */
-export const speakText = (text: string, stopPrevious: boolean = true) => {
+export const speakText = async (text: string, stopPrevious: boolean = true) => {
+  try {
+    if (typeof (AudioModule as any)?.setAudioModeAsync === 'function') {
+      await (AudioModule as any).setAudioModeAsync({ playsInSilentMode: true, allowsRecording: false });
+    }
+  } catch {}
   if (!text || !text.trim()) return;
 
   try {

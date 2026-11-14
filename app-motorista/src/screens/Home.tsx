@@ -29,7 +29,7 @@ import { api } from '../services/api';
 import { DriverSOSModal } from '../components/DriverSOSModal';
 import { openExternalNavigation } from '../utils/navigationHelper';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
-import { createAudioPlayer } from 'expo-audio';
+import { AudioModule, createAudioPlayer } from 'expo-audio';
 import { useBilingualVoice } from '../hooks/useBilingualVoice';
 import { speakText, triggerHapticFeedback } from '../utils/accessibility';
 
@@ -713,18 +713,32 @@ export function Home() {
     if (isChatVisible) setUnreadCount(0);
   }, [isChatVisible]);
 
+  const seenChatMsgIdsRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     if (!socket) return;
     const handleChatMessage = (data: any) => {
-      if (data?.sender === 'driver' || data?.senderRole === 'driver') return;
+      if (!data) return;
+      if (data?.sender === 'driver' || data?.senderRole === 'driver' || data?.senderType === 'DRIVER') return;
+      const msgKey = String(data?.id || data?.clientTempId || ((data?.rideId || '') + '-' + (data?.text || data?.message || '') + '-' + (data?.audioDuration || '')));
+      if (seenChatMsgIdsRef.current.has(msgKey)) return;
+      seenChatMsgIdsRef.current.add(msgKey);
+      if (seenChatMsgIdsRef.current.size > 100) {
+        const first = seenChatMsgIdsRef.current.values().next().value;
+        if (first) seenChatMsgIdsRef.current.delete(first);
+      }
+
       if (!isChatVisibleRef.current) {
         setUnreadCount((prev) => prev + 1);
         try { Vibration.vibrate(200); } catch (e) {}
+        if (isVoiceAssistEnabled) {
+          speakText(data?.audioUrl || data?.audio ? 'Nova mensagem de áudio do passageiro.' : 'Nova mensagem do passageiro.', false);
+        }
       }
     };
     socket.on('chat:receive_message', handleChatMessage);
     return () => { socket.off('chat:receive_message', handleChatMessage); };
-  }, [socket]);
+  }, [socket, isVoiceAssistEnabled]);
 
   useEffect(() => {
     let heartbeatInterval: ReturnType<typeof setInterval>;
@@ -843,16 +857,35 @@ export function Home() {
       Vibration.vibrate([0, 800, 300, 800], false);
       try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning); } catch (e) {}
 
-      try {
-        const soundAsset = require('../../assets/sounds/alert.mp3');
-        const player = createAudioPlayer(soundAsset);
-        player.loop = true;
-        player.play();
-        alertPlayerRef.current = player;
-        activePlayer = player;
-      } catch (audioErr) {}
-
-      playBilingualVoice('new_ride', 'Nova viagem encontrada');
+      (async () => {
+        try {
+          if (typeof (AudioModule as any)?.setAudioModeAsync === 'function') {
+            await (AudioModule as any).setAudioModeAsync({
+              playsInSilentMode: true,
+              allowsRecording: false,
+            });
+          }
+          if (alertPlayerRef.current) {
+            try { alertPlayerRef.current.pause(); } catch {}
+            try { alertPlayerRef.current.remove?.(); } catch {}
+            alertPlayerRef.current = null;
+          }
+          const soundAsset = require('../../assets/sounds/alert.mp3');
+          const player = createAudioPlayer(soundAsset);
+          player.loop = true;
+          player.volume = 1.0;
+          player.play();
+          alertPlayerRef.current = player;
+          activePlayer = player;
+        } catch (audioErr) {
+          console.warn('⚠️ [ALERT AUDIO] Erro ao reproduzir alerta:', audioErr);
+        }
+        if (isVoiceAssistEnabled) {
+          setTimeout(() => {
+            playBilingualVoice('new_ride', 'Nova viagem encontrada');
+          }, 900);
+        }
+      })();
     } else {
       Vibration.cancel();
       if (alertPlayerRef.current) {
@@ -865,7 +898,7 @@ export function Home() {
       Vibration.cancel();
       if (activePlayer) { try { activePlayer.pause(); } catch (e) {} }
     };
-  }, [incomingRide, rideState, playBilingualVoice]);
+  }, [incomingRide, rideState, playBilingualVoice, isVoiceAssistEnabled]);
 
   useEffect(() => { if (route.params?.openChat) setIsChatVisible(true); }, [route.params]);
 
