@@ -125,9 +125,65 @@ export class DriverAuthController {
   }
 
   // ==========================================
+  // 📲 0. SOLICITAR CÓDIGO OTP PARA CADASTRO DE MOTORISTA
+  // ==========================================
+  async requestRegistrationOtp(req: Request, res: Response): Promise<Response> {
+    try {
+      const { phone } = req.body || {};
+      if (!phone) {
+        return res.status(400).json({ success: false, error: 'Número de telefone é obrigatório.' });
+      }
+
+      const formattedPhone = formatPhoneNumber(String(phone));
+      if (!isValidBissauPhone(formattedPhone)) {
+        return res.status(400).json({ success: false, error: 'Informe um número válido da Guiné-Bissau (+245).' });
+      }
+
+      const [driverExists, passengerExists] = await Promise.all([
+        prisma.driver.findFirst({ where: { phone: formattedPhone } }),
+        prisma.passenger.findFirst({ where: { phone: formattedPhone } }),
+      ]);
+
+      if (driverExists || passengerExists) {
+        return res.status(409).json({
+          success: false,
+          error: 'Este número de telefone já está cadastrado na plataforma.',
+        });
+      }
+
+      const otpCode = crypto.randomInt(100000, 1000000).toString();
+      const otpHash = await bcrypt.hash(otpCode, 10);
+
+      const smsSent = await sendSmsOtp(formattedPhone, otpCode, 'REGISTER');
+      if (!smsSent) {
+        return res.status(500).json({
+          success: false,
+          error: 'Falha ao enviar o SMS de verificação. Verifique o número e tente novamente.',
+        });
+      }
+
+      const otpToken = jwt.sign(
+        { phone: formattedPhone, otpHash, purpose: 'DRIVER_REGISTER' },
+        JWT_SECRET!,
+        { expiresIn: '15m' }
+      );
+
+      return res.status(200).json({
+        success: true,
+        otpToken,
+        message: 'Código de verificação enviado por SMS com sucesso.',
+      });
+    } catch (error: any) {
+      console.error('❌ Erro em requestRegistrationOtp:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro interno ao enviar código SMS.' });
+    }
+  }
+
+  // ==========================================
   // 📲 1. SOLICITAR CÓDIGO OTP VIA SMS (TERMII)
   // ==========================================
   async requestForgotPasswordOtp(req: Request, res: Response): Promise<Response> {
+
     try {
       const { phone } = req.body;
       if (!phone) {
@@ -318,7 +374,37 @@ export class DriverAuthController {
         return res.status(409).json({ success: false, error: 'Este número de telefone já está cadastrado na plataforma.' });
       }
 
+      // Validação do código SMS enviado no pré-cadastro
+      const incomingOtpCode = String(req.body.otpCode || '').trim();
+      const incomingOtpToken = String(req.body.otpToken || '').trim();
+
+      if (!incomingOtpCode || incomingOtpCode.length !== 6) {
+        return res.status(400).json({ success: false, error: 'Informe o código de verificação SMS de 6 dígitos.' });
+      }
+
+      if (!incomingOtpToken) {
+        return res.status(400).json({ success: false, error: 'Sessão de verificação SMS expirada. Solicite um novo código.' });
+      }
+
+      try {
+        const decodedOtp = jwt.verify(incomingOtpToken, JWT_SECRET!) as {
+          phone?: string;
+          otpHash?: string;
+          purpose?: string;
+        };
+        if (decodedOtp.purpose !== 'DRIVER_REGISTER' || decodedOtp.phone !== formattedPhone || !decodedOtp.otpHash) {
+          return res.status(400).json({ success: false, error: 'Token de verificação SMS inválido para este telefone.' });
+        }
+        const isOtpMatch = await bcrypt.compare(incomingOtpCode, decodedOtp.otpHash);
+        if (!isOtpMatch) {
+          return res.status(400).json({ success: false, error: 'Código de verificação SMS incorreto.' });
+        }
+      } catch {
+        return res.status(400).json({ success: false, error: 'O código SMS expirou. Volte e solicite um novo código.' });
+      }
+
       // Mapeamento flexível de arquivos do Multer (suporta múltiplos nomes de campos do frontend)
+
       const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
       
       const selfieFile = files?.['profilePicture']?.[0] || files?.['selfie']?.[0] || files?.['photo']?.[0] || (req as any).file;
@@ -953,7 +1039,9 @@ const driverAuthController = new DriverAuthController();
 
 export const login = (req: Request, res: Response) => driverAuthController.login(req, res);
 export const register = (req: Request, res: Response) => driverAuthController.register(req, res);
+export const requestRegistrationOtp = (req: Request, res: Response) => driverAuthController.requestRegistrationOtp(req, res);
 export const requestForgotPasswordOtp = (req: Request, res: Response) => driverAuthController.requestForgotPasswordOtp(req, res);
+
 export const resetPasswordWithOtp = (req: Request, res: Response) => driverAuthController.resetPasswordWithOtp(req, res);
 export const forgotPassword = (req: Request, res: Response) => driverAuthController.forgotPassword(req, res);
 export const resetPassword = (req: Request, res: Response) => driverAuthController.resetPassword(req, res);

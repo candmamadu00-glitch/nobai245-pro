@@ -37,6 +37,8 @@ passengerRoutes.post('/register', validate(registerPassengerSchema), (req, res) 
 passengerRoutes.post('/request-otp', (req, res) => authController.requestOTP(req, res));
 passengerRoutes.post('/forgot-password', (req, res) => authController.requestOTP(req, res));
 passengerRoutes.post('/verify-otp', (req, res) => authController.verifyOTP(req, res));
+passengerRoutes.post('/reset-password', (req, res) => authController.resetPassword(req, res));
+
 passengerRoutes.post('/login', validate(loginPassengerSchema), (req, res) => authController.login(req, res));
 passengerRoutes.post('/refresh-token', (req, res) => authController.refreshToken(req, res));
 passengerRoutes.post('/payments/initiate', authenticate, authorizeRole(['PASSENGER']), (req, res) => authController.initiatePayment(req, res));

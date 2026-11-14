@@ -32,12 +32,12 @@
         "CAMERA",
         "RECORD_AUDIO",
         "VIBRATE",
-        "SYSTEM_ALERT_WINDOW",
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_LOCATION",
         "POST_NOTIFICATIONS"
       ],
-      "googleServicesFile": "./google-services.json"
+      "googleServicesFile": "./google-services.json",
+      "predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png"

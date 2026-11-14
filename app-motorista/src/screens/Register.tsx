@@ -10,6 +10,14 @@ import * as ImagePicker from 'expo-image-picker';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { PrivacyPolicyModal } from '../components/PrivacyPolicyModal';
 import { theme } from '../theme/theme';
+import {
+  VEHICLE_COLOR_OPTIONS,
+  getVehicle3DIconAsset,
+  getDefaultColorForCategory,
+  getVehicleCategoryLabel,
+  resolveVehicleColorKey,
+} from '../utils/vehicleAssets';
+
 
 export function Register() {
   const { t } = useTranslation();
@@ -21,7 +29,9 @@ export function Register() {
   const [fullName, setFullName] = useState('');
   const [vehicleType, setVehicleType] = useState('TAXI'); 
   const [vehicleModel, setVehicleModel] = useState('');
-  const [vehicleColor, setVehicleColor] = useState('');
+  const [vehicleColor, setVehicleColor] = useState('Amarelo');
+  const [colorManuallyEdited, setColorManuallyEdited] = useState(false);
+
   const [vehiclePlate, setVehiclePlate] = useState('');
   const [vehicleSeats, setVehicleSeats] = useState('');
 
@@ -126,12 +136,16 @@ export function Register() {
     );
   }
 
+  const registrationOtpTokenRef = React.useRef<string>('');
+
   async function handleSendOtp() {
     const cleanPhone = phone.replace(/\D/g, '');
     if (!cleanPhone || cleanPhone.length !== 9) {
       return Alert.alert('Atenção', 'Informe um número de telefone válido com 9 dígitos.');
     }
-    if (!password) return Alert.alert('Atenção', 'Crie sua senha segura.');
+    if (!password || password.length < 6) {
+      return Alert.alert('Atenção', 'Crie uma senha segura com no mínimo 6 caracteres.');
+    }
     if (!selfie || !licenseFront || !licenseBack) {
       return Alert.alert('Fotos', 'Selfie e Carta de Condução são obrigatórias.');
     }
@@ -141,17 +155,23 @@ export function Register() {
 
     setSendingOtp(true);
     try {
-      // Tenta enviar o SMS via API do Termii
-      await api.post('/drivers/forgot-password', { phone: `+245${cleanPhone}` }).catch(() => null);
-      
+      const res = await api.post('/drivers/request-registration-otp', { phone: `+245${cleanPhone}` });
+      if (res.data?.otpToken) {
+        registrationOtpTokenRef.current = res.data.otpToken;
+      }
       setResendTimer(60);
       setStep(4);
-    } catch (error) {
-      setStep(4);
+    } catch (error: any) {
+      const errorMessage =
+        error.response?.data?.error ||
+        error.response?.data?.message ||
+        'Não foi possível enviar o código SMS. Verifique o número e tente novamente.';
+      Alert.alert('Erro no Envio de SMS', errorMessage);
     } finally {
       setSendingOtp(false);
     }
   }
+
 
   function handleNextStep() {
     if (step === 1) {
@@ -193,6 +213,10 @@ export function Register() {
       formData.append('vehicleColor', vehicleColor.trim());
       formData.append('vehicleType', vehicleType);
       formData.append('otpCode', cleanOtp);
+      if (registrationOtpTokenRef.current) {
+        formData.append('otpToken', registrationOtpTokenRef.current);
+      }
+
       
       if (vehicleType === 'TOCA_TOCA') {
         formData.append('vehicleSeats', vehicleSeats);
@@ -281,31 +305,91 @@ export function Register() {
                     <TouchableOpacity 
                       key={type} 
                       style={[styles.typeBadge, vehicleType === type && styles.typeBadgeActive]} 
-                      onPress={() => setVehicleType(type)}
+                      onPress={() => {
+                        setVehicleType(type);
+                        if (!colorManuallyEdited || !vehicleColor.trim()) {
+                          setVehicleColor(getDefaultColorForCategory(type));
+                        }
+                      }}
                     >
                       <Text style={[styles.typeBadgeText, vehicleType === type && styles.typeBadgeTextActive]}>
-                        {type.replace('_', ' ')}
+                        {getVehicleCategoryLabel(type)}
                       </Text>
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
 
+                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderRadius: 14, padding: 12, marginBottom: 14, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                  <Image source={getVehicle3DIconAsset(vehicleType, vehicleColor)} style={{ width: 58, height: 58, marginRight: 12 }} resizeMode="contain" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 12, fontWeight: '800', color: '#0F2537', textTransform: 'uppercase' }}>
+                      {getVehicleCategoryLabel(vehicleType)} • {vehicleColor.trim() || getDefaultColorForCategory(vehicleType)}
+                    </Text>
+                    <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                      {resolveVehicleColorKey(vehicleColor) || ['MOTO', 'MOTO_CARRO', 'TOCA_TOCA'].includes(vehicleType)
+                        ? 'Assim seu veículo aparecerá para você e para o passageiro'
+                        : 'Cor personalizada (usará ícone padrão da categoria no mapa)'}
+                    </Text>
+                  </View>
+                </View>
+
                 <Text style={styles.inputLabel}>Nome Completo</Text>
                 <TextInput style={styles.input} placeholder="Ex: Mamadu Candé" placeholderTextColor={theme.colors.textLight} value={fullName} onChangeText={setFullName} />
-                
+
                 <Text style={styles.inputLabel}>Marca e Modelo</Text>
                 <TextInput style={styles.input} placeholder="Ex: Toyota Corolla / Hiace" placeholderTextColor={theme.colors.textLight} value={vehicleModel} onChangeText={setVehicleModel} />
-                
+
                 <View style={styles.row}>
                   <View style={{ flex: 1, marginRight: 6 }}>
-                    <Text style={styles.inputLabel}>Cor</Text>
-                    <TextInput style={styles.input} placeholder="Ex: Azul" placeholderTextColor={theme.colors.textLight} value={vehicleColor} onChangeText={setVehicleColor} />
+                    <Text style={styles.inputLabel}>Cor do Veículo</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Ex: Azul"
+                      placeholderTextColor={theme.colors.textLight}
+                      value={vehicleColor}
+                      onChangeText={(txt) => {
+                        setColorManuallyEdited(true);
+                        setVehicleColor(txt);
+                      }}
+                    />
                   </View>
                   <View style={{ flex: 1, marginLeft: 6 }}>
                     <Text style={styles.inputLabel}>Matrícula</Text>
                     <TextInput style={styles.input} placeholder="Ex: RGB-12-34" placeholderTextColor={theme.colors.textLight} value={vehiclePlate} onChangeText={setVehiclePlate} autoCapitalize="characters" />
                   </View>
                 </View>
+
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }} contentContainerStyle={{ paddingRight: 10 }}>
+                  {VEHICLE_COLOR_OPTIONS.map((opt) => {
+                    const isSelected = resolveVehicleColorKey(vehicleColor) === opt.key;
+                    return (
+                      <TouchableOpacity
+                        key={opt.key}
+                        onPress={() => {
+                          setColorManuallyEdited(true);
+                          setVehicleColor(opt.label);
+                        }}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 20,
+                          marginRight: 8,
+                          backgroundColor: isSelected ? '#0F2537' : '#F1F5F9',
+                          borderWidth: 1,
+                          borderColor: isSelected ? '#0F2537' : '#CBD5E1',
+                        }}
+                      >
+                        <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: opt.hex, marginRight: 6, borderWidth: 1, borderColor: opt.borderHex || 'rgba(0,0,0,0.2)' }} />
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: isSelected ? '#FFFFFF' : '#334155' }}>
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+
 
                 {vehicleType === 'TOCA_TOCA' && (
                   <>

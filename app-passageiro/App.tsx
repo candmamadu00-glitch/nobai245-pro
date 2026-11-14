@@ -20,6 +20,8 @@ import { registerAndSendPushToken, setupNotificationListeners } from './src/serv
 import { Home } from './src/screens/Home'; 
 import { Login } from './src/screens/Login';
 import { Register } from './src/screens/Register';
+import { ForgotPassword } from './src/screens/ForgotPassword';
+
 import { Profile } from './src/screens/Profile';
 import { Wallet } from './src/screens/Wallet'; 
 import { RideHistory } from './src/screens/RideHistory'; 
@@ -171,6 +173,8 @@ function Rotas() {
             <>
               <Stack.Screen name="Login" component={Login} />
               <Stack.Screen name="Register" component={Register} />
+              <Stack.Screen name="ForgotPassword" component={ForgotPassword} />
+
             </>
           )}
         </Stack.Group>

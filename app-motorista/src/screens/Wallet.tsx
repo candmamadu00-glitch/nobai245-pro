@@ -140,7 +140,19 @@ export function Wallet() {
     return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} • ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   }
 
+  const showRechargeUnavailableAlert = () => {
+    Alert.alert(
+      'Recarga Online em Breve',
+      'A recarga automática via Orange Money e Telecel (MTN) está em fase final de configuração com as operadoras. Para adicionar saldo à sua carteira agora, entre em contato com o suporte oficial Nô Bai 245.',
+      [{ text: 'Entendi', style: 'default' }]
+    );
+  };
+
   const toggleRechargeModal = (visible: boolean, defaultTab: RechargeTab = 'AUTO') => {
+    if (visible) {
+      showRechargeUnavailableAlert();
+      return;
+    }
     setRechargeTab(defaultTab);
     setIsRechargeModalVisible(visible);
     if (!visible) {
@@ -322,12 +334,12 @@ export function Wallet() {
         {/* PILLS DE AÇÕES RÁPIDAS */}
         <View style={styles.quickPillRow}>
           <TouchableOpacity
-            style={[styles.quickPill, { backgroundColor: '#FFCC00' }]}
-            onPress={() => toggleRechargeModal(true, 'AUTO')}
+            style={[styles.quickPill, { backgroundColor: 'rgba(255, 255, 255, 0.14)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.22)' }]}
+            onPress={showRechargeUnavailableAlert}
             activeOpacity={0.85}
           >
-            <Ionicons name="flash" size={16} color="#0F172A" />
-            <Text style={[styles.quickPillText, { color: '#0F172A', fontWeight: '800' }]}>{t('recharge_wallet', 'Recarregar Saldo')}</Text>
+            <Ionicons name="lock-closed" size={15} color="#E2E8F0" />
+            <Text style={[styles.quickPillText, { color: '#E2E8F0', fontWeight: '800' }]}>{t('recharge_wallet', 'Recarregar Saldo')} (Em breve)</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -397,11 +409,11 @@ export function Wallet() {
                     </Text>
                   </View>
                   <TouchableOpacity
-                    style={styles.rechargeBtn}
-                    onPress={() => toggleRechargeModal(true, 'AUTO')}
+                    style={[styles.rechargeBtn, { backgroundColor: '#64748B' }]}
+                    onPress={showRechargeUnavailableAlert}
                     activeOpacity={0.85}
                   >
-                    <Ionicons name="add-circle" size={18} color="#FFF" />
+                    <Ionicons name="lock-closed" size={16} color="#FFF" />
                     <Text style={styles.rechargeBtnText}>{t('recharge_now', 'Recarregar')}</Text>
                   </TouchableOpacity>
                 </View>

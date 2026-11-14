@@ -10,75 +10,14 @@ import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import { Ionicons } from '@expo/vector-icons';
 import { useBilingualVoice } from '../hooks/useBilingualVoice';
+import { getVehicle3DIconAsset, getVehicleCategoryLabel, getVehicleColorHex, resolveVehicleColorKey, VEHICLE_COLOR_OPTIONS } from '../utils/vehicleAssets';
+
 
 export const STORAGE_VOICE_MODE_KEY = '@nobai245:driver_voice_mode';
 export type VoiceMode = 'BOTH' | 'CRI' | 'PT' | 'OFF';
 
 // 🏎️ Mapeamento seguro de imagens 3D existentes em assets/images/vehicles/
-function getVehicle3DIconAsset(vehicleType?: string, vehicleColor?: string) {
-  const type = (vehicleType || 'PARTICULAR').toUpperCase().trim();
-  const color = (vehicleColor || 'BRANCO').toUpperCase().trim();
 
-  // 1. Tipos Especiais com assets seguros
-  if (type === 'MOTO') {
-    return require('../../assets/images/vehicles/moto.png');
-  }
-  if (type === 'TOCA_TOCA' || type === 'VAN' || type === 'MOTO_CARRO') {
-    return require('../../assets/images/vehicles/car_yellow.png');
-  }
-  if (type === 'TAXI') {
-    return require('../../assets/images/vehicles/car_yellow.png');
-  }
-
-  // 2. Mapeamento por Cores
-  switch (color) {
-    case 'BLACK':
-    case 'PRETO':
-    case 'ESCURO':
-      return require('../../assets/images/vehicles/car_black.png');
-
-    case 'BLUE':
-    case 'AZUL':
-      return require('../../assets/images/vehicles/car_blue.png');
-
-    case 'RED':
-    case 'VERMELHO':
-    case 'VINHO':
-    case 'ENCARNADO':
-      return require('../../assets/images/vehicles/car_red.png');
-
-    case 'ORANGE':
-    case 'LARANJA':
-      return require('../../assets/images/vehicles/car_orange.png');
-
-    case 'GREEN':
-    case 'VERDE':
-      return require('../../assets/images/vehicles/car_green.png');
-
-    case 'GRAY':
-    case 'SILVER':
-    case 'CINZA':
-    case 'PRATA':
-    case 'GRAFITE':
-      return require('../../assets/images/vehicles/car_gray.png');
-
-    case 'BROWN':
-    case 'CASTANHO':
-    case 'MARROM':
-      return require('../../assets/images/vehicles/car_brown.png');
-
-    case 'YELLOW':
-    case 'AMARELO':
-    case 'OURO':
-    case 'DOURADO':
-      return require('../../assets/images/vehicles/car_yellow.png');
-
-    case 'WHITE':
-    case 'BRANCO':
-    default:
-      return require('../../assets/images/vehicles/car_white.png');
-  }
-}
 
 export function VehicleSettings() {
   const { t } = useTranslation();
@@ -237,19 +176,47 @@ export function VehicleSettings() {
             <Image source={vehicle3DAsset} style={styles.vehicle3DImage} resizeMode="contain" />
           </View>
 
-          <View style={styles.infoRow}>
-            <Text style={styles.label}>Marca / Modelo</Text>
-            <Text style={styles.value}>
-              {(driver as any)?.vehicleBrand || (driver as any)?.carModel || (driver as any)?.vehicleModel || (driver as any)?.vehicle?.brand || 'Não informado'}
-            </Text>
-          </View>
+           <View style={styles.infoRow}>
+             <Text style={styles.label}>Categoria</Text>
+             <Text style={styles.value}>
+               {getVehicleCategoryLabel((driver as any)?.vehicleType)}
+             </Text>
+           </View>
 
-          <View style={styles.infoRow}>
-            <Text style={styles.label}>Cor do Veículo</Text>
-            <Text style={styles.value}>
-              {(driver as any)?.vehicleColor || (driver as any)?.carColor || (driver as any)?.color || (driver as any)?.vehicle?.color || 'Não informada'}
-            </Text>
-          </View>
+           <View style={styles.infoRow}>
+             <Text style={styles.label}>Marca / Modelo</Text>
+             <Text style={styles.value}>
+               {(driver as any)?.vehicleBrand || (driver as any)?.carModel || (driver as any)?.vehicleModel || (driver as any)?.vehicle?.brand || 'Não informado'}
+             </Text>
+           </View>
+
+           <View style={styles.infoRow}>
+             <Text style={styles.label}>Cor do Veículo</Text>
+             {(() => {
+               const rawColor = (driver as any)?.vehicleColor || (driver as any)?.carColor || (driver as any)?.color || (driver as any)?.vehicle?.color;
+               const formattedColor = rawColor
+                 ? (VEHICLE_COLOR_OPTIONS.find((c) => c.key === resolveVehicleColorKey(rawColor))?.label || rawColor)
+                 : 'Não informada';
+               return (
+                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                   {!!rawColor && (
+                     <View
+                       style={{
+                         width: 12,
+                         height: 12,
+                         borderRadius: 6,
+                         backgroundColor: getVehicleColorHex(rawColor),
+                         borderWidth: 1,
+                         borderColor: '#CBD5E1',
+                         marginRight: 6,
+                       }}
+                     />
+                   )}
+                   <Text style={styles.value}>{formattedColor}</Text>
+                 </View>
+               );
+             })()}
+           </View>
 
           <View style={[styles.infoRow, { borderBottomWidth: 0, paddingBottom: 0 }]}>
             <Text style={styles.label}>Placa Cadastrada</Text>

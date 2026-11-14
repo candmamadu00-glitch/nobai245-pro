@@ -6,15 +6,13 @@ import axios from 'axios';
 import { prisma } from '../config/prisma';
 import { formatPhoneNumber, isValidBissauPhone, chargePassengerMobileMoney } from '../services/mobileMoneyService';
 import { sendWelcomeEmail } from '../services/emailService';
+import { sendSmsOtp } from '../services/smsService';
 import { OAuth2Client } from 'google-auth-library';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 
-const TERMII_API_KEY = process.env.TERMII_API_KEY;
-const TERMII_BASE_URL = process.env.TERMII_BASE_URL || 'https://v4.api.termii.com/';
-const TERMII_SENDER_ID = process.env.TERMII_SENDER_ID || 'BAI245';
 
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
@@ -39,31 +37,14 @@ const sanitizeText = (text?: string, maxLength = 255): string => {
 const DISABLED_STATUSES = ['SUSPENDED', 'BANNED', 'REJECTED', 'INACTIVE'];
 
 // Helper centralizado para envio de SMS via Termii
-async function sendTermiiSMS(formattedPhone: string, otpCode: string): Promise<boolean> {
-  const targetPhoneNoPlus = formattedPhone.replace(/^\+/, '');
-  const baseUrlClean = TERMII_BASE_URL.endsWith('/') ? TERMII_BASE_URL : `${TERMII_BASE_URL}/`;
-  const termiiEndpoint = `${baseUrlClean}api/sms/send`;
-
-  const termiiPayload = {
-    to: targetPhoneNoPlus,
-    from: TERMII_SENDER_ID,
-    sms: `O seu codigo de verificacao Nobai245 e ${otpCode}. Expira em 10 min.`,
-    type: 'plain',
-    channel: 'generic',
-    api_key: TERMII_API_KEY,
-  };
-
-  console.log(`📱 [ENVIO SMS TERMII] Enviando OTP ${otpCode} para +${targetPhoneNoPlus}...`);
-
-  try {
-    const termiiRes = await axios.post(termiiEndpoint, termiiPayload, { timeout: 10000 });
-    console.log(`✅ [TERMII SMS SUCESSO]:`, termiiRes.data);
-    return true;
-  } catch (termiiErr: any) {
-    console.error('❌ [ERRO TERMII SMS]:', termiiErr?.response?.data || termiiErr?.message);
-    return false;
-  }
+async function sendTermiiSMS(
+  formattedPhone: string,
+  otpCode: string,
+  purpose: 'REGISTER' | 'RESET_PASSWORD' = 'REGISTER'
+): Promise<boolean> {
+  return sendSmsOtp(formattedPhone, otpCode, purpose);
 }
+
 
 export class PassengerAuthController {
 
@@ -115,11 +96,12 @@ export class PassengerAuthController {
 
       const passwordHash = await bcrypt.hash(String(password), 12);
 
-      const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
+      const otpCode = crypto.randomInt(1000, 10000).toString();
       const otpCodeHash = await bcrypt.hash(otpCode, 10);
       const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-      console.log(`\n🔑 [NOVO CADASTRO PASSAGEIRO] Telefone: ${formattedPhone} | OTP: ${otpCode}`);
+      console.log(`\n🔑 [NOVO CADASTRO PASSAGEIRO] Telefone: ${formattedPhone}`);
+
 
       const passenger = await prisma.passenger.create({
         data: {
@@ -247,26 +229,44 @@ export class PassengerAuthController {
         return res.status(404).json({ success: false, error: 'Passageiro não encontrado com este número.' });
       }
 
-      const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
+      if (passenger.lastResetAttempt) {
+        const diffInSeconds = (Date.now() - new Date(passenger.lastResetAttempt).getTime()) / 1000;
+        if (diffInSeconds < 60) {
+          return res.status(429).json({
+            success: false,
+            error: 'Aguarde 60 segundos antes de solicitar um novo código SMS.',
+          });
+        }
+      }
+
+      const otpCode = crypto.randomInt(1000, 10000).toString();
       const otpCodeHash = await bcrypt.hash(otpCode, 10);
       const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-      console.log(`\n🔑 [SOLICITAÇÃO DE OTP] Telefone: ${formattedPhone} | OTP: ${otpCode}`);
+      console.log(`\n🔑 [SOLICITAÇÃO DE OTP PASSAGEIRO] Telefone: ${formattedPhone}`);
 
       await prisma.passenger.update({
         where: { id: passenger.id },
         data: {
           otpCodeHash,
           otpExpiresAt,
+          lastResetAttempt: new Date(),
         },
       });
 
-      await sendTermiiSMS(formattedPhone, otpCode);
+      const smsSent = await sendTermiiSMS(formattedPhone, otpCode, 'RESET_PASSWORD');
+      if (!smsSent) {
+        return res.status(500).json({
+          success: false,
+          error: 'Falha ao enviar o SMS de verificação. Tente novamente em instantes.',
+        });
+      }
 
       return res.status(200).json({
         success: true,
         message: 'Código de verificação enviado por SMS com sucesso!',
       });
+
     } catch (error: any) {
       console.error('❌ [SOLICITAR OTP]:', error?.message || error);
       return res.status(500).json({ success: false, error: 'Erro ao solicitar envio de OTP.' });
@@ -307,12 +307,80 @@ export class PassengerAuthController {
         },
       });
 
-      return res.status(200).json({ success: true, message: 'Conta verificada com sucesso!' });
-    } catch (error: any) {
-      console.error('❌ [VERIFICAR OTP]:', error?.message || error);
-      return res.status(500).json({ success: false, error: 'Erro ao verificar código OTP.' });
-    }
-  }
+          return res.status(200).json({ success: true, message: 'Conta verificada com sucesso!' });
+        } catch (error: any) {
+          console.error('❌ [VERIFICAR OTP]:', error?.message || error);
+          return res.status(500).json({ success: false, error: 'Erro ao verificar código OTP.' });
+        }
+      }
+
+      // 4B. REDEFINIR SENHA COM CÓDIGO OTP (SMS)
+      async resetPassword(req: Request, res: Response): Promise<Response> {
+        try {
+          const { phone, otp, code, otpCode, newPassword } = req.body || {};
+          const effectiveOtp = String(otp || code || otpCode || '').trim();
+
+          if (!phone || !effectiveOtp || !newPassword) {
+            return res.status(400).json({
+              success: false,
+              error: 'Telefone, código SMS e nova senha são obrigatórios.',
+            });
+          }
+
+          if (String(newPassword).length < 6) {
+            return res.status(400).json({
+              success: false,
+              error: 'A nova senha deve possuir no mínimo 6 caracteres.',
+            });
+          }
+
+          const formattedPhone = formatPhoneNumber(String(phone));
+          const passenger = await prisma.passenger.findUnique({ where: { phone: formattedPhone } });
+
+          if (!passenger || !passenger.otpCodeHash || !passenger.otpExpiresAt) {
+            return res.status(400).json({
+              success: false,
+              error: 'Solicitação de recuperação inválida ou expirada. Solicite um novo código.',
+            });
+          }
+
+          if (new Date() > new Date(passenger.otpExpiresAt)) {
+            return res.status(400).json({
+              success: false,
+              error: 'O código SMS expirou. Solicite um novo código.',
+            });
+          }
+
+          const isValidOtp = await bcrypt.compare(effectiveOtp, passenger.otpCodeHash);
+          if (!isValidOtp) {
+            return res.status(400).json({
+              success: false,
+              error: 'Código SMS incorreto.',
+            });
+          }
+
+          const newPasswordHash = await bcrypt.hash(String(newPassword), 12);
+
+          await prisma.passenger.update({
+            where: { id: passenger.id },
+            data: {
+              passwordHash: newPasswordHash,
+              isVerified: true,
+              otpCodeHash: null,
+              otpExpiresAt: null,
+            },
+          });
+
+          return res.status(200).json({
+            success: true,
+            message: 'Senha redefinida com sucesso! Você já pode fazer login.',
+          });
+        } catch (error: any) {
+          console.error('❌ [RESET PASSWORD PASSAGEIRO]:', error?.message || error);
+          return res.status(500).json({ success: false, error: 'Erro interno ao redefinir a senha.' });
+        }
+      }
+
   
   // 5. REFRESH TOKEN
   async refreshToken(req: Request, res: Response): Promise<Response> {
@@ -1086,6 +1154,8 @@ export const register = (req: Request, res: Response) => passengerAuthController
 export const login = (req: Request, res: Response) => passengerAuthController.login(req, res);
 export const requestOTP = (req: Request, res: Response) => passengerAuthController.requestOTP(req, res);
 export const verifyOTP = (req: Request, res: Response) => passengerAuthController.verifyOTP(req, res);
+export const resetPassword = (req: Request, res: Response) => passengerAuthController.resetPassword(req, res);
+
 export const refreshToken = (req: Request, res: Response) => passengerAuthController.refreshToken(req, res);
 export const getProfile = (req: Request, res: Response) => passengerAuthController.getProfile(req, res);
 export const updateProfile = (req: Request, res: Response) => passengerAuthController.updateProfile(req, res);

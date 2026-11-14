@@ -63,7 +63,9 @@ driverRoutes.post(
 
 driverRoutes.post('/login', validate(loginDriverSchema), (req, res) => authController.login(req, res));
 driverRoutes.post('/refresh-token', (req, res) => authController.refreshToken(req, res));
+driverRoutes.post('/request-registration-otp', validate(forgotPasswordSchema), (req, res) => authController.requestRegistrationOtp(req, res));
 driverRoutes.post('/forgot-password', validate(forgotPasswordSchema), (req, res) => authController.forgotPassword(req, res));
+
 driverRoutes.post('/reset-password', validate(resetPasswordSchema), (req, res) => authController.resetPassword(req, res));
 
 // -----------------------------------------------------------------------------
