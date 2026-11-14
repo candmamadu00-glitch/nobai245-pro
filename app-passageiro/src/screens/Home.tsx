@@ -563,9 +563,10 @@ export function Home() {
     }).catch(() => {});
   }, []);
 useEffect(() => {
+    if (rideStatus !== 'idle') return;
     roadDistanceRef.current = null;
     roadDurationRef.current = null;
-  }, [pickupCoords, dropoffCoords, extraStopCoords]);
+  }, [pickupCoords, dropoffCoords, extraStopCoords, rideStatus]);
   const toggleBorderGlow = async () => {
     const next = !isBorderGlowEnabled;
     setIsBorderGlowEnabled(next);
@@ -723,6 +724,7 @@ const handleFullCancelAndReset = useCallback(() => {
       destination: { latitude: number; longitude: number },
       extra?: { latitude: number; longitude: number } | null
     ) => {
+      if (rideStatus !== 'idle') return;
       if (rideStatus !== 'idle') return;
       setIsCalculatingPrice(true);
       if (serviceType === 'aluguel') {
@@ -1656,12 +1658,13 @@ const handleOpenChat = () => {
       }
       if (data.originAddress) setPickupAddress(String(data.originAddress));
 
-      const serverPrice = Number(data.priceXof ?? data.fareXOF ?? data.estimatedPrice ?? 0);
+      const ridePayload = data.ride || data;
+      const serverPrice = Number(ridePayload.priceXof ?? ridePayload.fareXOF ?? ridePayload.estimatedPrice ?? 0);
       if (serverPrice > 0) {
         setEstimatedPrice(Math.round(serverPrice));
         setAppliedCoupon(null);
       }
-      const serverDist = Number(data.distanceKm ?? data.distance ?? 0);
+      const serverDist = Number(ridePayload.distanceKm ?? ridePayload.distance ?? 0);
       if (serverDist > 0) setEstimatedDistance(Number(serverDist.toFixed(2)));
       const serverDur = Number(data.durationMin ?? 0);
       if (serverDur > 0) setDriverEta(serverDur);
@@ -1987,11 +1990,12 @@ const handleOpenChat = () => {
   }, [route.params?.openChat, navigation]);
 
   useEffect(() => {
+    if (rideStatus !== 'idle') return;
     if (pickupCoords && dropoffCoords) {
-      setEstimatedPrice(null); 
+      setEstimatedPrice(null);
       calculateEstimate(pickupCoords, dropoffCoords, extraStopCoords);
     }
-  }, [pickupCoords, dropoffCoords, extraStopCoords, serviceType, vehicleType, calculateEstimate]);
+  }, [pickupCoords, dropoffCoords, extraStopCoords, serviceType, vehicleType, calculateEstimate, rideStatus]);
 
   useEffect(() => {
     const activeRideStates = ['searching', 'accepted', 'arrived', 'in_progress'];
@@ -3076,7 +3080,7 @@ const handleOpenChat = () => {
                   <View style={styles.priceBadgeHeader}>
                     <Text style={styles.priceBadgeLabel}>VALOR</Text>
                     <Text style={styles.priceBadgeValue}>
-                      {estimatedPrice ? `${formatXof(estimatedPrice)} XOF` : 'A calcular'}
+                      {(() => { const displayPrice = estimatedPrice || (estimatedDistance ? calculateVehiclePrice(vehicleType, estimatedDistance) : null); return displayPrice ? `${formatXof(displayPrice)} XOF` : 'A calcular'; })()}
                     </Text>
                   </View>
                 </View>
