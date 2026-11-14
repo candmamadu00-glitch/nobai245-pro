@@ -174,6 +174,12 @@ const isNightTimeForPin = () => {
   return hour >= 18 || hour < 6;
 };
 
+function formatXof(value?: number | string | null): string {
+  const num = Math.round(Number(value || 0));
+  if (isNaN(num)) return '0';
+  return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
 function calculateVehiclePrice(type: VehicleType, distanceKm: number | null): number | null {
   if (distanceKm === null || distanceKm <= 0 || isNaN(distanceKm) || !isFinite(distanceKm)) return null;
 
@@ -717,6 +723,7 @@ const handleFullCancelAndReset = useCallback(() => {
       destination: { latitude: number; longitude: number },
       extra?: { latitude: number; longitude: number } | null
     ) => {
+      if (rideStatus !== 'idle') return;
       setIsCalculatingPrice(true);
       if (serviceType === 'aluguel') {
         const price = RENTAL_PRICES[selectedRegion]?.price || 25000;
@@ -735,7 +742,7 @@ const handleFullCancelAndReset = useCallback(() => {
       setEstimatedPrice(price);
       setIsCalculatingPrice(false);
     },
-    [serviceType, selectedRegion, vehicleType]
+    [serviceType, selectedRegion, vehicleType, rideStatus]
   );
 
   const changeLanguage = (code: string) => {
@@ -1111,7 +1118,8 @@ const handleOpenChat = () => {
             }
           }
 
-          if (ride.priceXof) setEstimatedPrice(Number(ride.priceXof));
+          const srvP = Number(ride.priceXof ?? ride.fareXOF ?? ride.estimatedPrice ?? 0);
+          if (srvP > 0) setEstimatedPrice(Math.round(srvP));
           if (ride.distanceKm) setEstimatedDistance(Number(ride.distanceKm));
           if (pCoords && dCoords) {
             fetchMapboxRoute(pCoords, dCoords, extraStopCoords);
@@ -1837,7 +1845,7 @@ const handleOpenChat = () => {
         setActiveRideId(String(data.rideId));
         activeRideIdRef.current = String(data.rideId);
       }
-      const syncedVal = Number(data.priceXof ?? data.price ?? 0);
+      const syncedVal = Number(data.priceXof ?? data.fareXOF ?? data.estimatedPrice ?? data.price ?? 0);
       if (!isNaN(syncedVal) && syncedVal > 0) {
         if (data?.appliedRuleLabel) setTariffRuleBadge(data.appliedRuleLabel);
         setEstimatedPrice(Math.round(syncedVal));
@@ -2402,7 +2410,7 @@ const handleOpenChat = () => {
                     <Ionicons name="person" size={18} color="#0F172A" />
                   )}
                 </View>
-                <Text style={styles.greetingText}>
+                <Text style={styles.greetingText} numberOfLines={1} ellipsizeMode="tail">
                   {t('greeting', 'Olá')}, {user?.fullName ? user.fullName.split(' ')[0] : t('passenger', 'Passageiro')}
                 </Text>
               </TouchableOpacity>
@@ -2441,7 +2449,8 @@ const handleOpenChat = () => {
       {/* 2. MAPA DE NAVEGAÇÃO MAPBOX */}
       <Mapbox.MapView
         style={StyleSheet.absoluteFill}
-        styleURL={Mapbox.StyleURL.Dark}
+        styleURL={Mapbox.StyleURL.Street}
+        scaleBarEnabled={false}
         logoEnabled={false}
         attributionEnabled={false}
         onCameraChanged={(e) => {
@@ -2679,7 +2688,7 @@ const handleOpenChat = () => {
             styles.bottomSheet, 
             { 
               transform: [{ translateY }], 
-              maxHeight: Dimensions.get('window').height * 0.68,
+              maxHeight: Dimensions.get('window').height * (['accepted', 'arrived', 'in_progress'].includes(rideStatus) ? 0.80 : 0.68),
               paddingBottom: Math.max((insets?.bottom || 0) + 12, 20) 
             }
           ]}
@@ -2692,7 +2701,7 @@ const handleOpenChat = () => {
             nestedScrollEnabled 
             showsVerticalScrollIndicator={false} 
             keyboardShouldPersistTaps="handled" 
-            contentContainerStyle={{ flexGrow: 1, paddingBottom: 16 }}
+            contentContainerStyle={{ flexGrow: 1, paddingBottom: Math.max((insets?.bottom || 0) + 28, 36) }}
           >
             {/* CONFIGURAÇÃO DE ROTA (APENAS QUANDO LIVRE) */}
             {rideStatus === 'idle' && bookingStep === 'ADDRESS' && (
@@ -3067,7 +3076,7 @@ const handleOpenChat = () => {
                   <View style={styles.priceBadgeHeader}>
                     <Text style={styles.priceBadgeLabel}>VALOR</Text>
                     <Text style={styles.priceBadgeValue}>
-                      {estimatedPrice ? `${estimatedPrice.toLocaleString('pt-GW')} XOF` : 'A calcular'}
+                      {estimatedPrice ? `${formatXof(estimatedPrice)} XOF` : 'A calcular'}
                     </Text>
                   </View>
                 </View>
@@ -3211,7 +3220,7 @@ const handleOpenChat = () => {
             onPress={() => speakText(`Valor total: ${estimatedPrice || 0} XOF`)}
             style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 6 }}
           >
-            <Text style={styles.priceText}>{estimatedPrice ? `${estimatedPrice.toLocaleString('pt-GW')} XOF` : '0 XOF'}</Text>
+            <Text style={styles.priceText}>{estimatedPrice ? `${formatXof(estimatedPrice)} XOF` : '0 XOF'}</Text>
             <Ionicons name="volume-high-outline" size={16} color="#EAB308" style={{ marginLeft: 6 }} />
           </TouchableOpacity>
         </View>
