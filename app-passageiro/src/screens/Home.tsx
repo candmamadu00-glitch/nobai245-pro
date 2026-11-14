@@ -1,3 +1,4 @@
+import { getVehicle3DIconAsset as resolveVehicleIcon, getVehicleColorHex, resolveVehicleColorKey, VEHICLE_COLOR_OPTIONS } from '../utils/vehicleAssets';
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { 
   View, Text, StyleSheet, TouchableOpacity, Alert, 
@@ -195,44 +196,10 @@ function calculateVehiclePrice(type: VehicleType, distanceKm: number | null): nu
   return Math.round(calculatedPrice / 50) * 50;
 }
 
-const normalizeVehicleType = (type?: string): string => {
-  if (!type) return 'particular';
-  const clean = type.toLowerCase().replace(/[-_]/g, '').trim();
-  if (clean.includes('motocarro')) return 'moto-carro';
-  if (clean.includes('moto')) return 'moto';
-  if (clean.includes('taxi')) return 'taxi';
-  if (clean.includes('toca')) return 'toca-toca';
-  return 'particular';
-};
-
-// 1. Ícones do Mapa
 export const getVehicle3DIconAsset = (type?: string, colorName?: string) => {
-  const normType = normalizeVehicleType(type);
-  const color = (colorName || 'BRANCO').toUpperCase().trim();
-
-  if (normType === 'moto') {
-    return require('../../assets/images/vehicles/moto.png');
-  }
-  if (normType === 'moto-carro' || normType === 'toca-toca' || normType === 'taxi') {
-    return require('../../assets/images/vehicles/car_yellow.png');
-  }
-
-  switch (color) {
-    case 'BLACK': case 'PRETO': case 'ESCURO':
-      return require('../../assets/images/vehicles/car_black.png');
-    case 'BLUE': case 'AZUL':
-      return require('../../assets/images/vehicles/car_blue.png');
-    case 'RED': case 'VERMELHO': case 'VINHO':
-      return require('../../assets/images/vehicles/car_red.png');
-    case 'YELLOW': case 'AMARELO': case 'DOURADO':
-      return require('../../assets/images/vehicles/car_yellow.png');
-    case 'GRAY': case 'SILVER': case 'CINZA': case 'PRATA':
-      return require('../../assets/images/vehicles/car_gray.png');
-    case 'WHITE': case 'BRANCO':
-    default:
-      return require('../../assets/images/vehicles/car_white.png');
-  }
+  return resolveVehicleIcon(type, colorName);
 };
+
 
 const getHaversineDistance = (p1: any, p2: any) => {
   if (!p1?.latitude || !p1?.longitude || !p2?.latitude || !p2?.longitude) return 0;
@@ -667,8 +634,9 @@ const handleFullCancelAndReset = useCallback(() => {
       id: 'moto-carro' as VehicleType, 
       title: 'Moto-carro', 
       subtitle: t('motocarro_subtitle', 'Ideal para bagagens leves'), 
-      image: require('../../assets/images/vehicles/car_yellow.png') 
+      image: require('../../assets/images/vehicles/motocarro.png') 
     },
+
   ], [t]);
   const persistRideState = async (
     rideId: string | null, 
@@ -1628,12 +1596,38 @@ const handleOpenChat = () => {
           const otpCode = String(ride.startOtp || ride.otpPin || ride.pin || '');
           if (otpCode) setStartOtp(otpCode);
 
-          const parsedDriver = extractDriverInfo(ride, otpCode);
-          if (parsedDriver) {
-            setDriverInfo(parsedDriver);
-          }
-        }
-      } catch (err) {
+              const parsedDriver = extractDriverInfo(ride, otpCode);
+              if (parsedDriver) {
+                setDriverInfo(parsedDriver);
+              }
+
+              const recoveredPrice = Number(ride.priceXof ?? ride.fareXOF ?? 0);
+              if (recoveredPrice > 0) setEstimatedPrice(Math.round(recoveredPrice));
+              const recoveredDist = Number(ride.distanceKm ?? 0);
+              if (recoveredDist > 0) setEstimatedDistance(Number(recoveredDist.toFixed(2)));
+
+              const rawStatus = String(ride.status || '').toUpperCase();
+              const mappedRecoveredStatus =
+                rawStatus === 'AWAITING_PAYMENT' ? 'awaiting_payment' :
+                rawStatus === 'SEARCHING' || rawStatus === 'PENDING' ? 'searching' :
+                rawStatus === 'QUEUED' ? 'queued' :
+                rawStatus === 'ACCEPTED' ? 'accepted' :
+                rawStatus === 'ARRIVED' ? 'arrived' :
+                rawStatus === 'IN_PROGRESS' ? 'in_progress' : null;
+
+              if (mappedRecoveredStatus) {
+                setRideStatus(mappedRecoveredStatus);
+                socket.emit('passenger:rejoin_ride', { rideId: ride.id });
+                persistRideState(ride.id, mappedRecoveredStatus, {
+                  driverInfo: parsedDriver,
+                  startOtp: otpCode,
+                  estimatedPrice: recoveredPrice > 0 ? Math.round(recoveredPrice) : estimatedPrice,
+                  estimatedDistance: recoveredDist > 0 ? recoveredDist : estimatedDistance,
+                });
+              }
+            }
+          } catch (err) {
+
         console.error('Erro ao processar estado recuperado:', err);
       }
     };
@@ -2014,6 +2008,7 @@ const handleOpenChat = () => {
   useEffect(() => { rideStatusRef.current = rideStatus; }, [rideStatus]);
 
   async function handleInitialRequestRide() {
+    if (rideStatus !== 'idle') return;
     const needsDropoff = serviceType !== 'aluguel';
     if (!pickupCoords || (needsDropoff && (!dropoffCoords || !dropoffAddress.trim())) || !user?.id) {
       Alert.alert(
@@ -2023,11 +2018,16 @@ const handleOpenChat = () => {
       return;
     }
 
+    // Verificacao rapida anti-GPS falso (max 1.5s para nunca travar o botao por 20-25s)
     try {
-      const currentLoc = await Location.getCurrentPositionAsync({ 
-        accuracy: Location.Accuracy.Balanced 
-      });
-      const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
+      const quickLoc =
+        (await Promise.race<Location.LocationObject | null>([
+          Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low }),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500)),
+        ])) ||
+        (await Location.getLastKnownPositionAsync({ maxAge: 120000 }).catch(() => null));
+
+      const isMocked = Boolean(quickLoc?.mocked || (quickLoc?.coords as any)?.mocked);
 
       if (isMocked) {
         Alert.alert(
@@ -2045,7 +2045,8 @@ const handleOpenChat = () => {
   }
 
   function executeRideRequest() {
-    if (!user?.id || !pickupCoords || !dropoffCoords) {
+    const needsDropoff = serviceType !== 'aluguel';
+    if (!user?.id || !pickupCoords || (needsDropoff && !dropoffCoords)) {
       Alert.alert(t('warning_title', 'Aviso ⚠️'), t('missing_data_msg', 'Preencha o local de partida e o destino final para continuar.'));
       return;
     }
@@ -2074,14 +2075,15 @@ const handleOpenChat = () => {
       }
 
       setRideStatus(isDigital ? 'awaiting_payment' : 'searching');
-      
+
       const mappedServiceType = serviceType === 'viagem' ? 'RIDE' : serviceType === 'entrega' ? 'DELIVERY' : 'RENTAL';
       const mappedVehicleType = 
+        serviceType === 'aluguel' ? 'TOCA_TOCA' :
         vehicleType === 'particular' ? 'PARTICULAR' : 
         vehicleType === 'moto-carro' ? 'MOTO_CARRO' : 
         (vehicleType as string) === 'toca-toca' ? 'TOCA_TOCA' :
         vehicleType.toUpperCase();
-        
+
       const regionLabel = RENTAL_PRICES[selectedRegion]?.label || selectedRegion;
       const finalPriceXof = estimatedPrice != null ? Math.round(Number(estimatedPrice)) : undefined;
       const finalDistanceKm = estimatedDistance != null ? Number(estimatedDistance.toFixed(2)) : undefined;
@@ -2108,6 +2110,9 @@ const handleOpenChat = () => {
           : undefined,
         guestName: isForAnotherPerson ? guestName : undefined,
         guestPhone: isForAnotherPerson ? guestPhone : undefined,
+        recipientName: mappedServiceType === 'DELIVERY' && isForAnotherPerson ? guestName : undefined,
+        deliveryNotes: mappedServiceType === 'DELIVERY' ? (dropoffReferencePoint.trim() || pickupReferencePoint.trim() || undefined) : undefined,
+
         estimatedPrice: finalPriceXof,
         priceXof: finalPriceXof,
         distanceKm: finalDistanceKm,
@@ -2528,8 +2533,9 @@ const handleOpenChat = () => {
               <View style={styles.driverMarkerWrapper}>
                 <View style={{ transform: [{ rotate: `${driver.heading || 0}deg` }] }}>
                   <Image
-                    source={getVehicle3DIconAsset(driver.vehicleType || 'TAXI', driver.carColor || 'AMARELO')}
+                    source={getVehicle3DIconAsset(driver.vehicleType, driver.carColor || (driver as any).vehicleColor)}
                     style={styles.driverMarkerImage}
+
                     fadeDuration={0}
                     resizeMode="contain"
                   />
@@ -2847,74 +2853,84 @@ const handleOpenChat = () => {
                     <Ionicons name={paymentMethod === 'CASH' ? 'checkmark-circle' : 'ellipse-outline'} size={22} color={paymentMethod === 'CASH' ? '#10B981' : '#64748B'} />
                   </TouchableOpacity>
 
-                  {/* OPÇÃO 2: ORANGE MONEY */}
-                  <TouchableOpacity 
+                  {/* OPÇÃO 2: ORANGE MONEY (TEMPORARIAMENTE INDISPONÍVEL) */}
+                  <TouchableOpacity
                     style={[
                       styles.paymentBtn,
                       {
-                        width: '100%',
                         flexDirection: 'row',
                         alignItems: 'center',
-                        backgroundColor: paymentMethod === 'ORANGE_MONEY' ? 'rgba(255, 121, 0, 0.18)' : 'rgba(30, 41, 59, 0.8)',
-                        borderColor: paymentMethod === 'ORANGE_MONEY' ? '#FF7900' : 'rgba(255,255,255,0.12)',
+                        backgroundColor: 'rgba(30, 41, 59, 0.45)',
+                        borderColor: 'rgba(255,255,255,0.08)',
                         borderWidth: 1.5,
                         paddingVertical: 12,
                         paddingHorizontal: 12,
-                        borderRadius: 14,
+                        opacity: 0.72,
                       }
                     ]}
                     onPress={() => {
-                      setPaymentMethod('ORANGE_MONEY');
-                      if (!payerPhone) {
-                        const raw = String((user as any)?.paymentAccountNumber || (user as any)?.phone || '').replace(/\D/g, '');
-                        setPayerPhone(raw.startsWith('245') ? raw.slice(3) : raw);
-                      }
+                      setPaymentMethod('CASH');
+                      Alert.alert(
+                        'Orange Money em Breve',
+                        'Estamos finalizando a integração oficial com a Orange Money para garantir máxima segurança nas suas transações. Por enquanto, utilize o pagamento em Dinheiro diretamente ao motorista.',
+                        [{ text: 'Entendi', style: 'default' }]
+                      );
                     }}
                     activeOpacity={0.85}
                   >
-                    <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255, 121, 0, 0.2)', justifyContent: 'center', alignItems: 'center' }}>
-                      <Ionicons name="phone-portrait-outline" size={18} color="#FF7900" />
+                    <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255, 121, 0, 0.14)', justifyContent: 'center', alignItems: 'center' }}>
+                      <Ionicons name="phone-portrait" size={18} color="#FF7900" />
                     </View>
                     <View style={{ flex: 1, marginLeft: 10 }}>
-                      <Text style={{ color: '#F8FAFC', fontWeight: '800', fontSize: 14 }}>Orange Money</Text>
-                      <Text style={{ color: '#94A3B8', fontSize: 11, marginTop: 1 }}>Confirme com seu PIN de 4 dígitos no celular</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={{ color: '#CBD5E1', fontWeight: '800', fontSize: 14 }}>Orange Money</Text>
+                        <View style={{ backgroundColor: 'rgba(255, 121, 0, 0.18)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+                          <Text style={{ color: '#FB923C', fontSize: 9, fontWeight: '800' }}>EM BREVE</Text>
+                        </View>
+                      </View>
+                      <Text style={{ color: '#64748B', fontSize: 11, marginTop: 1 }}>Disponível após conclusão da configuração</Text>
                     </View>
-                    <Ionicons name={paymentMethod === 'ORANGE_MONEY' ? 'checkmark-circle' : 'ellipse-outline'} size={22} color={paymentMethod === 'ORANGE_MONEY' ? '#FF7900' : '#64748B'} />
+                    <Ionicons name="lock-closed" size={18} color="#64748B" />
                   </TouchableOpacity>
 
-                  {/* OPÇÃO 3: TELECEL (ANTIGO MTN) */}
-                  <TouchableOpacity 
+                  {/* OPÇÃO 3: TELECEL / MTN (TEMPORARIAMENTE INDISPONÍVEL) */}
+                  <TouchableOpacity
                     style={[
                       styles.paymentBtn,
                       {
-                        width: '100%',
                         flexDirection: 'row',
                         alignItems: 'center',
-                        backgroundColor: paymentMethod === 'MTN_MOMO' ? 'rgba(234, 179, 8, 0.18)' : 'rgba(30, 41, 59, 0.8)',
-                        borderColor: paymentMethod === 'MTN_MOMO' ? '#EAB308' : 'rgba(255,255,255,0.12)',
+                        backgroundColor: 'rgba(30, 41, 59, 0.45)',
+                        borderColor: 'rgba(255,255,255,0.08)',
                         borderWidth: 1.5,
                         paddingVertical: 12,
                         paddingHorizontal: 12,
-                        borderRadius: 14,
+                        opacity: 0.72,
                       }
                     ]}
                     onPress={() => {
-                      setPaymentMethod('MTN_MOMO');
-                      if (!payerPhone) {
-                        const raw = String((user as any)?.paymentAccountNumber || (user as any)?.phone || '').replace(/\D/g, '');
-                        setPayerPhone(raw.startsWith('245') ? raw.slice(3) : raw);
-                      }
+                      setPaymentMethod('CASH');
+                      Alert.alert(
+                        'Telecel (MTN) em Breve',
+                        'Estamos finalizando a integração oficial com a Telecel / MTN MoMo para garantir máxima segurança nas suas transações. Por enquanto, utilize o pagamento em Dinheiro diretamente ao motorista.',
+                        [{ text: 'Entendi', style: 'default' }]
+                      );
                     }}
                     activeOpacity={0.85}
                   >
-                    <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(234, 179, 8, 0.2)', justifyContent: 'center', alignItems: 'center' }}>
-                      <Ionicons name="wallet-outline" size={18} color="#EAB308" />
+                    <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(234, 179, 8, 0.14)', justifyContent: 'center', alignItems: 'center' }}>
+                      <Ionicons name="wallet" size={18} color="#EAB308" />
                     </View>
                     <View style={{ flex: 1, marginLeft: 10 }}>
-                      <Text style={{ color: '#F8FAFC', fontWeight: '800', fontSize: 14 }}>Telecel (antigo MTN)</Text>
-                      <Text style={{ color: '#94A3B8', fontSize: 11, marginTop: 1 }}>Confirme com seu PIN de 4 dígitos no celular</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={{ color: '#CBD5E1', fontWeight: '800', fontSize: 14 }}>Telecel (antigo MTN)</Text>
+                        <View style={{ backgroundColor: 'rgba(234, 179, 8, 0.18)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+                          <Text style={{ color: '#FACC15', fontSize: 9, fontWeight: '800' }}>EM BREVE</Text>
+                        </View>
+                      </View>
+                      <Text style={{ color: '#64748B', fontSize: 11, marginTop: 1 }}>Disponível após conclusão da configuração</Text>
                     </View>
-                    <Ionicons name={paymentMethod === 'MTN_MOMO' ? 'checkmark-circle' : 'ellipse-outline'} size={22} color={paymentMethod === 'MTN_MOMO' ? '#EAB308' : '#64748B'} />
+                    <Ionicons name="lock-closed" size={18} color="#64748B" />
                   </TouchableOpacity>
                 </View>
 
@@ -3137,9 +3153,29 @@ const handleOpenChat = () => {
                   />
                   <View style={{ flex: 1, marginLeft: 12 }}>
                     <Text style={styles.driverNameCompact}>{driverInfo.name}</Text>
-                    <Text style={styles.vehicleModelCompact}>
-                      {driverInfo.carModel || 'Veículo'} {driverInfo.carColor ? `• ${driverInfo.carColor}` : ''}
-                    </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginTop: 2 }}>
+                        <Text style={styles.vehicleModelCompact}>
+                          {driverInfo.carModel || 'Veículo'}
+                        </Text>
+                        {!!driverInfo.carColor && (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 6 }}>
+                            <View
+                              style={{
+                                width: 10,
+                                height: 10,
+                                borderRadius: 5,
+                                backgroundColor: getVehicleColorHex(driverInfo.carColor),
+                                borderWidth: 1,
+                                borderColor: '#CBD5E1',
+                                marginRight: 4,
+                              }}
+                            />
+                            <Text style={styles.vehicleModelCompact}>
+                              {VEHICLE_COLOR_OPTIONS.find((c) => c.key === resolveVehicleColorKey(driverInfo.carColor))?.label || driverInfo.carColor}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
                     <View style={styles.plateBadgeCompact}>
                       <Text style={styles.plateTextCompact}>{driverInfo.licensePlate?.toUpperCase() || 'SEM PLACA'}</Text>
                     </View>

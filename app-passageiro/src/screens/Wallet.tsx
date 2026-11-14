@@ -165,6 +165,12 @@ export function Wallet() {
   };
 
   async function handleRecharge() {
+    Alert.alert(
+      'Recarga Digital em Breve',
+      'As recargas via Orange Money e Telecel (MTN) estão em fase final de configuração com as operadoras e serão liberadas muito em breve. Enquanto isso, você pode solicitar suas viagens normalmente pagando em Dinheiro ao motorista.',
+      [{ text: 'Entendi', style: 'default' }]
+    );
+    return;
     const amountNum = Math.round(Number(rechargeAmount.replace(/\D/g, '')));
     if (!amountNum || amountNum < 500) {
       return Alert.alert('Valor Inválido', 'O valor mínimo para recarga é de 500 XOF.');
@@ -173,7 +179,7 @@ export function Wallet() {
     const clean9 = rechargePhone.replace(/\D/g, '').replace(/^245/, '');
     const validationErr = validateBissauOperator(rechargeProvider, clean9);
     if (validationErr) {
-      return Alert.alert('Número Incompatível', validationErr);
+      return Alert.alert('Número Incompatível', validationErr || undefined);
     }
 
     setSubmittingRecharge(true);
@@ -421,17 +427,17 @@ export function Wallet() {
           </View>
 
           <TouchableOpacity
-            style={[styles.primaryBtn, submittingRecharge && { opacity: 0.7 }]}
+            style={[styles.primaryBtn, { backgroundColor: '#334155', opacity: 0.85 }]}
             onPress={handleRecharge}
-            disabled={submittingRecharge}
+            activeOpacity={0.85}
           >
             {submittingRecharge ? (
               <ActivityIndicator color="#0F172A" />
             ) : (
               <>
-                <Ionicons name="flash" size={18} color="#0F172A" />
-                <Text style={styles.primaryBtnText}>
-                  Recarregar {rechargeAmount ? `${formatMoney(Number(rechargeAmount))} XOF` : ''}
+                <Ionicons name="lock-closed" size={17} color="#E2E8F0" />
+                <Text style={[styles.primaryBtnText, { color: '#E2E8F0' }]}>
+                  Recarga Indisponível (Em Breve)
                 </Text>
               </>
             )}

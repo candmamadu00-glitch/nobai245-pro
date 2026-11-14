@@ -1,3 +1,4 @@
+import { getVehicle3DIconAsset } from '../utils/vehicleAssets';
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { 
@@ -201,39 +202,7 @@ function calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number
   return Math.round((brng + 360) % 360);
 }
 
-function getVehicle3DIconAsset(vehicleType?: string, vehicleColor?: string) {
-  const type = (vehicleType || 'PARTICULAR').toUpperCase().trim();
-  const color = (vehicleColor || 'BRANCO').toUpperCase().trim();
 
-  if (type === 'MOTO') {
-    return require('../../assets/images/vehicles/moto.png');
-  }
-  if (type === 'TAXI' || type === 'TOCA_TOCA' || type === 'VAN' || type === 'MOTO_CARRO') {
-    return require('../../assets/images/vehicles/car_yellow.png');
-  }
-
-  switch (color) {
-    case 'BLACK': case 'PRETO': 
-      return require('../../assets/images/vehicles/car_black.png');
-    case 'BLUE': case 'AZUL': 
-      return require('../../assets/images/vehicles/car_blue.png');
-    case 'RED': case 'VERMELHO': 
-      return require('../../assets/images/vehicles/car_red.png');
-    case 'ORANGE': case 'LARANJA': 
-      return require('../../assets/images/vehicles/car_orange.png');
-    case 'GREEN': case 'VERDE': 
-      return require('../../assets/images/vehicles/car_green.png');
-    case 'GRAY': case 'SILVER': case 'CINZA': case 'PRATA': 
-      return require('../../assets/images/vehicles/car_gray.png');
-    case 'BROWN': case 'CASTANHO': case 'MARROM': 
-      return require('../../assets/images/vehicles/car_brown.png');
-    case 'YELLOW': case 'AMARELO': 
-      return require('../../assets/images/vehicles/car_yellow.png');
-    case 'WHITE': case 'BRANCO': 
-    default: 
-      return require('../../assets/images/vehicles/car_white.png');
-  }
-}
 
 const formatCurrency = (val?: number | string | null): string => {
   const num = Number(val || 0);
@@ -1197,7 +1166,10 @@ export function Home() {
     Vibration.vibrate([0, 500, 200, 500], false);
   };
 
+  const isAcceptingRideRef = useRef(false);
+
   const handleRideAccepted = async (data: any) => {
+    isAcceptingRideRef.current = false;
     Vibration.cancel();
     if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
     if (!isMountedRef.current) return;
@@ -1317,11 +1289,40 @@ export function Home() {
       }
     };
 
+    const handleRideTaken = (data: any) => {
+      const takenRideId = data?.rideId;
+      if (!takenRideId || !isMountedRef.current) return;
+      if (data?.winnerDriverId && data.winnerDriverId === driver?.id) return;
+
+      if (incomingRideRef.current?.rideId === takenRideId && rideStateRef.current === 'idle') {
+        Vibration.cancel();
+        isAcceptingRideRef.current = false;
+        incomingRideRef.current = null;
+        setIncomingRide(null);
+        Alert.alert(
+          'Corrida Já Aceita',
+          data?.message || 'Outro motorista aceitou esta corrida primeiro.'
+        );
+      }
+
+      if (queuedOfferDataRef.current?.rideId === takenRideId) {
+        Vibration.cancel();
+        isAcceptingRideRef.current = false;
+        queuedOfferDataRef.current = null;
+        setQueuedOfferData(null);
+        Alert.alert(
+          'Corrida Já Aceita',
+          data?.message || 'Outro motorista aceitou esta corrida primeiro.'
+        );
+      }
+    };
+
     if (socket && !socket.connected) socket.connect();
 
     socket.on('connect', handleConnect);
     socket.on('driver:state_recovered', handleStateRecovered);
     socket.on('ride:new_request', handleNewRideRequest);
+    socket.on('ride:taken', handleRideTaken);
     socket.on('ride:accepted', handleRideAccepted);
     socket.on('driver:accept_ride_success', handleRideAccepted);
     socket.on('ride:started', handleRideStarted);
@@ -1335,6 +1336,7 @@ export function Home() {
       socket.off('connect', handleConnect);
       socket.off('driver:state_recovered', handleStateRecovered);
       socket.off('ride:new_request', handleNewRideRequest);
+      socket.off('ride:taken', handleRideTaken);
       socket.off('ride:accepted', handleRideAccepted);
       socket.off('driver:accept_ride_success', handleRideAccepted);
       socket.off('ride:started', handleRideStarted);
@@ -1564,17 +1566,39 @@ export function Home() {
 
   useEffect(() => { if (isOnline) startTrackingForState(rideState); }, [rideState, isOnline, isLowBattery]);
 
-  // 🛡️ ACEITAR CORRIDA BLINDADO (SEM ALERTA FALSO DE SINAL FRACO)
+  // 🛡️ ACEITAR CORRIDA BLINDADO (SEM ALERTA FALSO DE SINAL FRACO E COM ROLLBACK LIMPO)
   function acceptRide(rideId: string, driverId: string, currentLat: number, currentLng: number) {
+    if (isAcceptingRideRef.current) return;
+    isAcceptingRideRef.current = true;
     Vibration.cancel();
     setIsLoading(true);
+
+    const prevActiveRideId = activeRideIdRef.current;
+    const prevRideState = rideStateRef.current;
+
+    const rollbackFailedAccept = () => {
+      if (!prevActiveRideId || prevActiveRideId === rideId) {
+        activeRideIdRef.current = null;
+        rideStateRef.current = 'idle';
+        incomingRideRef.current = null;
+        setActiveRideId(null);
+        setRideState('idle');
+        setIncomingRide(null);
+      } else {
+        activeRideIdRef.current = prevActiveRideId;
+        rideStateRef.current = prevRideState;
+      }
+      setQueuedOfferData(null);
+    };
 
     activeRideIdRef.current = rideId;
     rideStateRef.current = 'accepted';
     setQueuedOfferData(null);
 
     if (!socket || !socket.connected) {
+      isAcceptingRideRef.current = false;
       setIsLoading(false);
+      rollbackFailedAccept();
       return Alert.alert('Sem Conexão', 'Sinal de internet insuficiente.');
     }
 
@@ -1592,14 +1616,17 @@ export function Home() {
           return;
         }
 
+        isAcceptingRideRef.current = false;
         setIsLoading(false);
+        rollbackFailedAccept();
         return Alert.alert('Sinal Fraco 📡', 'Não foi possível confirmar a tempo.');
       }
-      
+
+      isAcceptingRideRef.current = false;
       setIsLoading(false);
 
       if (response?.error) {
-        setQueuedOfferData(null); 
+        rollbackFailedAccept();
         return Alert.alert('Aviso', response.message);
       }
 
@@ -1608,11 +1635,14 @@ export function Home() {
       if (queuedOfferDataRef.current) {
         setIncomingRide(queuedOfferDataRef.current);
         persistActiveRideState(queuedOfferDataRef.current, 'accepted', rideId);
+      } else if (incomingRideRef.current) {
+        persistActiveRideState(incomingRideRef.current, 'accepted', rideId);
       }
       setQueuedOfferData(null);
       snapToState(true);
     });
   }
+
 
   async function handleArrived() {
     if (!activeRideId) return;
@@ -1706,35 +1736,51 @@ export function Home() {
     if (!activeRideId) return;
     setIsLoading(true);
 
+    const rideToFinish = activeRideId;
     const fallbackLat = Number(location?.coords?.latitude || incomingRide?.destinationLat || BISSAU_CENTER_LAT);
     const fallbackLng = Number(location?.coords?.longitude || incomingRide?.destinationLng || BISSAU_CENTER_LNG);
-    const payload = { rideId: activeRideId, dropoffLat: fallbackLat, dropoffLng: fallbackLng };
+    const payload = { rideId: rideToFinish, dropoffLat: fallbackLat, dropoffLng: fallbackLng };
 
     const finalPrice = Number(incomingRide?.priceXof || incomingRide?.estimatedPrice || 0);
     const paymentMethod = incomingRide?.paymentMethod || 'CASH';
-    const transactionId = incomingRide?.transactionId || `TRX-${Date.now().toString().slice(-6)}`;
+    const fallbackTxId = incomingRide?.transactionId || `TRX-${rideToFinish.slice(0, 6).toUpperCase()}`;
 
-    setFinishedRideSummary({
-      rideId: activeRideId,
-      passengerName: displayPassengerName,
-      totalAmount: finalPrice,
-      distanceKm: Number(incomingRide?.distanceKm ?? 0),
-      paymentMethod: paymentMethod,
-      transactionId: transactionId,
-    });
-
-    setFinishedRideId(activeRideId);
-    setFinishedTargetName(displayPassengerName);
+    const openReceipt = (serverData?: any) => {
+      setFinishedRideSummary({
+        rideId: rideToFinish,
+        passengerName: displayPassengerName,
+        totalAmount: Number(serverData?.fareXOF ?? finalPrice),
+        distanceKm: Number(serverData?.distanceKm ?? incomingRide?.distanceKm ?? 0),
+        paymentMethod: paymentMethod,
+        transactionId: serverData?.transactionId || fallbackTxId,
+      });
+      setFinishedRideId(rideToFinish);
+      setFinishedTargetName(displayPassengerName);
+      setIsLoading(false);
+      setShowReceiptModal(true);
+    };
 
     if (socket && socket.connected) {
-      socket.emit('driver:finish_ride', payload);
+      socket.timeout(6000).emit('driver:finish_ride', payload, async (err: any, response: any) => {
+        if (!isMountedRef.current) return;
+        if (err) {
+          await saveActionToQueue('driver:finish_ride', payload);
+          openReceipt();
+          return;
+        }
+        if (response?.error) {
+          setIsLoading(false);
+          Alert.alert('Aviso ao Finalizar', response.message || 'Não foi possível concluir a corrida.');
+          return;
+        }
+        openReceipt(response);
+      });
     } else {
       await saveActionToQueue('driver:finish_ride', payload);
+      openReceipt();
     }
-
-    setIsLoading(false);
-    setShowReceiptModal(true);
   }
+
 
   function handleNoShowCancel() {
     Alert.alert(
