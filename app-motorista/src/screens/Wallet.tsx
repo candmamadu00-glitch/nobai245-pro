@@ -702,7 +702,8 @@ export function Wallet() {
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <View style={styles.modalOverlay}>
             <KeyboardAvoidingView
-              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
               style={styles.modalCard}
             >
               <View style={styles.modalHeader}>
@@ -732,7 +733,12 @@ export function Wallet() {
               </View>
 
               {rechargeTab === 'AUTO' ? (
-                <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                <ScrollView
+                  showsVerticalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                  automaticallyAdjustKeyboardInsets={true}
+                  contentContainerStyle={{ paddingBottom: Math.max((insets?.bottom || 0) + 24, 32) }}
+                >
                   <Text style={styles.inputLabel}>Escolha a Operadora</Text>
                   <View style={styles.opRow}>
                     <TouchableOpacity
@@ -819,7 +825,12 @@ export function Wallet() {
                   </TouchableOpacity>
                 </ScrollView>
               ) : (
-                <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                <ScrollView
+                  showsVerticalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                  automaticallyAdjustKeyboardInsets={true}
+                  contentContainerStyle={{ paddingBottom: Math.max((insets?.bottom || 0) + 24, 32) }}
+                >
                   <Text style={styles.smsHelper}>
                     1. Transfira o valor desejado para a conta oficial Nô Bai 245:{'\n'}
                     2. Copie o código da transação (TxID) no SMS de confirmação e cole abaixo.
