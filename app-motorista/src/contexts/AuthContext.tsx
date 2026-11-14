@@ -14,6 +14,7 @@ export type Driver = {
   vehiclePlate: string;
   profilePicture?: string | null;
   kycVerified?: boolean;
+  walletBalance?: number;
 };
 
 type AuthContextData = {
@@ -37,7 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [driver, setDriver] = useState<Driver | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const deviceId = `${Device.brand || 'Device'}-${Device.modelName || 'Hardware'}-${Device.osInternalBuildId || Platform.OS}`;
+  const deviceId = useMemo(() => `${Device.brand || 'Device'}-${Device.modelName || 'Hardware'}-${Device.osInternalBuildId || Platform.OS}`, []);
 
   useEffect(() => {
     setUnauthorizedHandler(() => signOut());

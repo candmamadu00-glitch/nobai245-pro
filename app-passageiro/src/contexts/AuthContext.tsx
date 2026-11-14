@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect, ReactNode, useRef } from 'react';
+import React, { createContext, useState, useContext, useEffect, ReactNode, useRef, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api, setUnauthorizedHandler, SecureStorage } from '../services/api';
 import { socket, connectPassengerSocket, disconnectSocket } from '../services/passengerSocket';
@@ -102,7 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }
 
-  async function refreshPassengerProfile() {
+  const refreshPassengerProfile = useCallback(async () => {
     try {
       const response = await api.get('/passengers/profile');
       const updatedUser = response.data?.passenger || response.data?.user;
@@ -116,7 +116,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await signOut();
       }
     }
-  }
+  }, []);
 
   async function signIn(userData: User, accessToken: string, refreshToken: string) {
     try {

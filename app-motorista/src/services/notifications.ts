@@ -75,7 +75,7 @@ export async function registerAndSendPushToken(deviceId?: string, accessToken?: 
     const pushToken = pushTokenData?.data;
 
     if (pushToken) {
-      const currentKey = ${pushToken}:;
+      const currentKey = `${pushToken}:${deviceId || ''}`;
       if (lastSentPushKey === currentKey) return pushToken;
       lastSentPushKey = currentKey;
       await api.put('/drivers/device-token', {

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { changeLanguage } from '../services/i18n';
 import { useTranslation } from 'react-i18next';
 import { 
   View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, 

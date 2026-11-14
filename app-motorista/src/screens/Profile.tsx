@@ -1304,7 +1304,7 @@ const styles = StyleSheet.create({
   },
   deleteAccountText: { color: '#94A3B8', fontWeight: '700', fontSize: 12 },
   modalOverlay: { flex: 1, justifyContent: 'flex-end' },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(15, 23, 42, 0.6)' },
+  backdrop: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(15, 23, 42, 0.6)' },
   modalContainer: {
     backgroundColor: '#FFF',
     borderTopLeftRadius: 24,
