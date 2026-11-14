@@ -1305,13 +1305,13 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
             await safeRedis.geoAdd('drivers:locations', {
               longitude: fLng,
               latitude: fLat,
-              member: fallbackDrv.id
+              member: String((fallbackDrv as any).id)
             }).catch(() => null);
           }
         }
       }
 
-      const matchingDrivers = candidateDrivers.filter((driver: any) => {
+      const matchingDrivers: any[] = candidateDrivers.filter((driver: any) => {
         if (driver.isAvailable || !driver.currentRideId) return true;
         const activeRidesCount = Array.isArray(driver.rides) ? driver.rides.length : 0;
         return activeRidesCount <= 1;
@@ -1571,7 +1571,7 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
         const acceptPayLabel =
           updatedRide.paymentMethod === 'ORANGE_MONEY' ? 'via Orange Money' :
           updatedRide.paymentMethod === 'MTN_MOMO' ? 'via MTN MoMo' :
-          updatedRide.paymentMethod === 'CORPORATE' ? 'via Conta Corporativa' : 'em dinheiro';
+          (updatedRide.paymentMethod as string) === 'CORPORATE' ? 'via Conta Corporativa' : 'em dinheiro';
         sendPushNotification(
           passengerUser.deviceToken,
           '🚗 Motorista a Caminho!',
@@ -1902,7 +1902,7 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
               ? `Você chegou ao seu destino. Total: ${result.fareXOF} XOF (pago via Orange Money).`
               : rideInfo.paymentMethod === 'MTN_MOMO'
               ? `Você chegou ao seu destino. Total: ${result.fareXOF} XOF (pago via MTN MoMo).`
-              : rideInfo.paymentMethod === 'CORPORATE'
+              : (rideInfo.paymentMethod as string) === 'CORPORATE'
               ? `Você chegou ao seu destino. Total: ${result.fareXOF} XOF (faturado na conta corporativa).`
               : `Você chegou ao seu destino. Pague ${result.fareXOF} XOF em dinheiro ao motorista.`;
 
