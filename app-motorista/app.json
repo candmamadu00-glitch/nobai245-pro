@@ -57,7 +57,7 @@
         {
           "android": {
             "minSdkVersion": 24,
-            "targetSdkVersion": 34,
+            "targetSdkVersion": 36,
             "enableProguardInReleaseBuilds": false,
             "enableMinifyInReleaseBuilds": false
           }
@@ -118,3 +118,4 @@
     }
   }
 }
+

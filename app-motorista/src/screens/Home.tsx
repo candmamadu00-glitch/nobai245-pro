@@ -2565,51 +2565,83 @@ export function Home() {
               </View>
             )}
 
+            {/* Cabeçalho: Tipo de Serviço + Valor */}
             <View style={styles.newRequestHeader}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Ionicons name={activeOffer?.serviceType === 'DELIVERY' ? 'cube' : 'car-sport'} size={18} color="#EAB308" />
-                <Text style={styles.newRequestTitle}>
-                  {isRideActive ? t('queued_ride_request', 'Nova Oferta em Fila!') : t('new_ride_request', 'Nova Corrida!')}
-                </Text>
+              <View style={styles.newRequestTitleRow}>
+                <View style={styles.newRequestIconCircle}>
+                  <Ionicons
+                    name={activeOffer?.serviceType === 'DELIVERY' ? 'cube' : 'car-sport'}
+                    size={18}
+                    color="#EAB308"
+                  />
+                </View>
+                <View>
+                  <Text style={styles.newRequestTitle}>
+                    {isRideActive ? t('queued_ride_request', 'Nova Oferta em Fila!') : t('new_ride_request', 'Nova Corrida!')}
+                  </Text>
+                  <Text style={styles.timerText}>Expira em {timeLeft}s</Text>
+                </View>
               </View>
+
               <View style={styles.newRequestPriceBadge}>
                 <Text style={styles.newRequestPriceText}>{formatCurrency(activeOffer?.priceXof)} XOF</Text>
               </View>
             </View>
 
+            {/* Barra de contagem regressiva */}
             <View style={styles.progressBarContainer}>
               <View style={[styles.progressBarFill, { width: `${Math.max(0, (timeLeft / 15) * 100)}%` }]} />
             </View>
-            <Text style={styles.timerText}>Tempo restante: {timeLeft}s</Text>
 
+            {/* Cartão Profissional do Passageiro (Nome em linha inteira + Avaliação e Distância abaixo) */}
             <View style={styles.modalPassengerRow}>
               <View style={styles.passengerPhotoContainerSm}>
                 {activeOffer?.passengerPhoto ? (
-                  <Image source={{ uri: formatImageUrl(activeOffer.passengerPhoto) }} style={{ width: '100%', height: '100%', borderRadius: 18 }} />
+                  <Image
+                    source={{ uri: formatImageUrl(activeOffer.passengerPhoto) }}
+                    style={styles.modalPassengerPhotoImg}
+                  />
                 ) : (
-                  <Ionicons name="person" size={16} color="#94A3B8" />
+                  <Ionicons name="person" size={22} color="#94A3B8" />
                 )}
               </View>
-              <View style={{ flex: 1, marginLeft: 10 }}>
-                <Text style={styles.modalPassengerName}>{activeOffer?.guestName || activeOffer?.passengerName || 'Passageiro'}</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-                  <Ionicons name="star" size={12} color="#EAB308" />
-                  <Text style={styles.modalPassengerRating}>{activeOffer?.passengerRating?.toFixed(1) || '5.0'}</Text>
+
+              <View style={styles.modalPassengerInfoCol}>
+                <Text
+                  style={styles.modalPassengerName}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {activeOffer?.guestName || activeOffer?.passengerName || 'Passageiro'}
+                </Text>
+
+                <View style={styles.modalPassengerMetaRow}>
+                  <View style={styles.modalRatingPill}>
+                    <Ionicons name="star" size={12} color="#EAB308" />
+                    <Text style={styles.modalPassengerRating}>
+                      {activeOffer?.passengerRating?.toFixed(1) || '5.0'}
+                    </Text>
+                  </View>
+
+                  {Number(activeOffer?.distanceKm) > 0 && (
+                    <View style={styles.offerDistancePill}>
+                      <Ionicons name="navigate" size={12} color="#60A5FA" />
+                      <Text style={styles.offerDistancePillText}>
+                        {Number(activeOffer?.distanceKm).toFixed(1)} km
+                        {Number(activeOffer?.durationMin) > 0 ? ` • ~${activeOffer?.durationMin} min` : ''}
+                      </Text>
+                    </View>
+                  )}
                 </View>
               </View>
-              {Number(activeOffer?.distanceKm) > 0 && (
-                <View style={styles.distanceBadge}>
-                  <Text style={styles.distanceBadgeText}>
-                    📏 {Number(activeOffer?.distanceKm).toFixed(1)} km
-                    {Number(activeOffer?.durationMin) > 0 ? ` • ~${activeOffer?.durationMin} min` : ''}
-                  </Text>
-                </View>
-              )}
             </View>
 
+            {/* Trajeto da Corrida */}
             <View style={styles.routeTimelineContainer}>
               <View style={styles.timelineRow}>
-                <Ionicons name="location" size={16} color="#10B981" />
+                <View style={styles.timelineIconWrapGreen}>
+                  <Ionicons name="location" size={15} color="#10B981" />
+                </View>
                 <View style={styles.timelineTextContainer}>
                   <Text style={styles.timelineLabel}>BUSCAR EM:</Text>
                   <Text style={styles.timelineAddress} numberOfLines={2}>
@@ -2662,10 +2694,14 @@ export function Home() {
                 </View>
               ) : null}
 
+              <View style={styles.timelineDivider} />
+
               <View style={styles.timelineRow}>
-                <Ionicons name="flag" size={16} color="#EF4444" />
+                <View style={styles.timelineIconWrapRed}>
+                  <Ionicons name="flag" size={14} color="#EF4444" />
+                </View>
                 <View style={styles.timelineTextContainer}>
-                  <Text style={styles.timelineLabel}>LEVAR PARA:</Text>
+                  <Text style={styles.timelineLabelRed}>LEVAR PARA:</Text>
                   <Text style={styles.timelineAddress} numberOfLines={2}>
                     {activeOffer?.destinationAddress || 'Local de destino'}
                   </Text>
@@ -2689,6 +2725,7 @@ export function Home() {
               </View>
             </View>
 
+            {/* Botões de Ação */}
             <View style={styles.newRequestActions}>
               <TouchableOpacity 
                 style={styles.rejectBtn} 
@@ -3525,24 +3562,24 @@ const styles = StyleSheet.create({
   },
   newRequestOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    backgroundColor: 'rgba(2, 6, 23, 0.88)',
     justifyContent: 'center',
     paddingHorizontal: 16,
   },
   newRequestCard: {
     backgroundColor: '#1E293B',
     borderRadius: 24,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: '#EAB308',
-    elevation: 20,
+    padding: 18,
+    borderWidth: 1.5,
+    borderColor: 'rgba(234, 179, 8, 0.65)',
+    elevation: 24,
   },
   queuedBadge: {
     backgroundColor: '#3B82F6',
     paddingVertical: 6,
     paddingHorizontal: 12,
-    borderRadius: 8,
-    marginBottom: 10,
+    borderRadius: 10,
+    marginBottom: 12,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -3553,76 +3590,167 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
+  newRequestTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  newRequestIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(234, 179, 8, 0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(234, 179, 8, 0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   newRequestTitle: {
     color: '#FFFFFF',
     fontSize: 16,
-    fontWeight: '800',
+    fontWeight: '900',
+    letterSpacing: 0.2,
   },
   newRequestPriceBadge: {
-    backgroundColor: 'rgba(234, 179, 8, 0.15)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
+    backgroundColor: 'rgba(234, 179, 8, 0.16)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#EAB308',
   },
   newRequestPriceText: {
-    color: '#EAB308',
+    color: '#FACC15',
     fontWeight: '900',
-    fontSize: 14,
+    fontSize: 15,
   },
   progressBarContainer: {
-    height: 6,
-    backgroundColor: '#334155',
+    height: 5,
+    backgroundColor: '#0F172A',
     borderRadius: 3,
     overflow: 'hidden',
-    marginBottom: 6,
+    marginBottom: 14,
   },
   progressBarFill: {
     height: '100%',
     backgroundColor: '#EAB308',
+    borderRadius: 3,
   },
   timerText: {
     color: '#94A3B8',
     fontSize: 11,
-    textAlign: 'right',
-    marginBottom: 12,
+    fontWeight: '600',
+    marginTop: 1,
   },
   modalPassengerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#0F172A',
-    padding: 10,
-    borderRadius: 14,
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.07)',
     marginBottom: 12,
   },
   passengerPhotoContainerSm: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     backgroundColor: '#1E293B',
+    borderWidth: 1.5,
+    borderColor: 'rgba(234, 179, 8, 0.45)',
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'hidden',
+  },
+  modalPassengerPhotoImg: {
+    width: '100%',
+    height: '100%',
+  },
+  modalPassengerInfoCol: {
+    flex: 1,
+    minWidth: 0,
+    marginLeft: 12,
   },
   modalPassengerName: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+    marginBottom: 6,
+  },
+  modalPassengerMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  modalRatingPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(234, 179, 8, 0.14)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
   },
   modalPassengerRating: {
-    color: '#EAB308',
-    fontSize: 11,
+    color: '#FACC15',
+    fontSize: 12,
     marginLeft: 4,
-    fontWeight: '600',
+    fontWeight: '800',
+  },
+  offerDistancePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(96, 165, 250, 0.35)',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 999,
+    gap: 5,
+  },
+  offerDistancePillText: {
+    color: '#93C5FD',
+    fontSize: 12,
+    fontWeight: '700',
   },
   routeTimelineContainer: {
-    gap: 8,
+    backgroundColor: '#0F172A',
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    gap: 10,
     marginBottom: 16,
   },
   timelineRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 8,
+    gap: 10,
+  },
+  timelineIconWrapGreen: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(16, 185, 129, 0.14)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  timelineIconWrapRed: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(239, 68, 68, 0.14)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  timelineDivider: {
+    height: 1,
+    backgroundColor: 'rgba(148, 163, 184, 0.12)',
+    marginLeft: 36,
   },
   timelineTextContainer: {
     flex: 1,
@@ -3631,11 +3759,21 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#10B981',
     fontWeight: '800',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  timelineLabelRed: {
+    fontSize: 10,
+    color: '#EF4444',
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    marginBottom: 2,
   },
   timelineAddress: {
-    fontSize: 12,
-    color: '#CBD5E1',
+    fontSize: 13,
+    color: '#E2E8F0',
     fontWeight: '600',
+    lineHeight: 18,
   },
   newRequestActions: {
     flexDirection: 'row',
@@ -3643,27 +3781,33 @@ const styles = StyleSheet.create({
   },
   rejectBtn: {
     flex: 1,
-    backgroundColor: '#334155',
-    paddingVertical: 12,
+    backgroundColor: '#0F172A',
+    borderWidth: 1,
+    borderColor: '#334155',
+    paddingVertical: 14,
     borderRadius: 14,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   rejectText: {
-    color: '#94A3B8',
+    color: '#CBD5E1',
     fontWeight: '800',
-    fontSize: 13,
+    fontSize: 14,
   },
   acceptBtn: {
     flex: 2,
     backgroundColor: '#EAB308',
-    paddingVertical: 12,
+    paddingVertical: 14,
     borderRadius: 14,
     alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 4,
   },
   acceptText: {
     color: '#0F172A',
     fontWeight: '900',
-    fontSize: 14,
+    fontSize: 15,
+    letterSpacing: 0.2,
   },
 });
 

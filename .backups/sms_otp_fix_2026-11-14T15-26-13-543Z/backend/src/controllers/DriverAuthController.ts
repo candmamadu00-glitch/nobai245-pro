@@ -1,0 +1,969 @@
+import { Request, Response } from 'express';
+import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
+import { prisma } from '../config/prisma';
+import { chargeMobileMoney } from '../services/mobileMoneyService';
+import { getIo } from '../server';
+import { formatPhoneNumber, isValidBissauPhone } from '../services/mobileMoneyService';
+import { sendSmsOtp } from '../services/smsService';
+
+const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
+
+if (!JWT_SECRET || !JWT_REFRESH_SECRET) {
+  throw new Error('❌ [AUTH] FATAL: JWT_SECRET e JWT_REFRESH_SECRET devem estar configurados nas variáveis de ambiente.');
+}
+
+function hashToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+const sanitize = (text?: string): string => {
+  if (!text || typeof text !== 'string') return '';
+  return text.replace(/[^\w]/g, '').toUpperCase();
+};
+
+const sanitizeText = (text?: string, maxLength = 255): string => {
+  if (!text || typeof text !== 'string') return '';
+  return text.trim().slice(0, maxLength);
+};
+
+const isValidCoordinate = (lat: any, lng: any): boolean => {
+  if (lat === null || lng === null || typeof lat === 'boolean' || typeof lng === 'boolean') return false;
+  const l = Number(lat);
+  const lg = Number(lng);
+  return Number.isFinite(l) && Number.isFinite(lg) && l >= -90 && l <= 90 && lg >= -180 && lg <= 180;
+};
+
+const DISABLED_STATUSES = ['SUSPENDED', 'BANNED', 'REJECTED', 'INACTIVE'];
+
+export class DriverAuthController {
+
+  // ==========================================
+  // 🔑 LOGIN DO MOTORISTA (CORRIGIDO)
+  // ==========================================
+  async login(req: Request, res: Response): Promise<Response> {
+    try {
+      const { password, deviceToken } = req.body;
+      const rawPhone = req.body.phone ? String(req.body.phone) : '';
+
+      if (!rawPhone || !password) {
+        return res.status(400).json({ success: false, error: 'Telefone e senha são obrigatórios.' });
+      }
+
+      const formattedPhone = formatPhoneNumber(rawPhone);
+
+      const driver = await prisma.driver.findFirst({
+        where: {
+          OR: [
+            { phone: formattedPhone },
+            { phone: rawPhone.trim() }
+          ]
+        }
+      });
+
+      const dummyHash = '$2b$12$e8Y547uXN8L8i0S9sS9O9e0mQxV1L3yS0N0c0W0X0Y0Z0a0b0c0d';
+      const hashToCompare = driver ? driver.passwordHash : dummyHash;
+      const isValidPassword = await bcrypt.compare(String(password), hashToCompare);
+
+      if (!driver || !isValidPassword) {
+        return res.status(401).json({ success: false, error: 'Credenciais inválidas.' });
+      }
+
+      if (DISABLED_STATUSES.includes((driver.status || '').toUpperCase())) {
+        return res.status(403).json({ success: false, error: 'Sua conta de motorista está suspensa, rejeitada ou inativa.' });
+      }
+
+      const accessToken = jwt.sign(
+        { id: driver.id, role: 'DRIVER', status: driver.status }, 
+        JWT_SECRET!, 
+        { expiresIn: '1h' }
+      );
+      
+      const refreshToken = jwt.sign(
+        { id: driver.id, role: 'DRIVER' }, 
+        JWT_REFRESH_SECRET!, 
+        { expiresIn: '7d' }
+      );
+
+      const cleanDeviceToken = deviceToken ? sanitizeText(String(deviceToken), 255) : undefined;
+
+      await prisma.driver.update({
+        where: { id: driver.id },
+        data: {
+          refreshTokenHash: hashToken(refreshToken),
+          ...(cleanDeviceToken && { deviceToken: cleanDeviceToken })
+        }
+      });
+
+      return res.json({
+        success: true,
+        message: 'Login realizado com sucesso!',
+        accessToken,
+        refreshToken,
+        driver: { 
+          id: driver.id, 
+          fullName: driver.fullName, 
+          phone: driver.phone,
+          status: driver.status,
+          vehiclePlate: driver.vehiclePlate,
+          vehicleBrand: driver.vehicleBrand,
+          vehicleType: driver.vehicleType,
+          vehicleColor: driver.vehicleColor,       // 🟢 ADICIONADO AQUI
+          documentNumber: driver.documentNumber,   // 🟢 ADICIONADO AQUI
+          documentType: driver.documentType,       // 🟢 ADICIONADO AQUI
+          profilePicture: driver.profilePicture,
+          walletBalance: Number(driver.walletBalance || 0),
+          ratingAverage: Number(driver.ratingAverage || 5.0)
+        },
+      });
+    } catch (error: any) {
+      console.error('❌ [LOGIN MOTORISTA ERROR]:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro interno ao fazer login.' });
+    }
+  }
+
+  // ==========================================
+  // 📲 1. SOLICITAR CÓDIGO OTP VIA SMS (TERMII)
+  // ==========================================
+  async requestForgotPasswordOtp(req: Request, res: Response): Promise<Response> {
+    try {
+      const { phone } = req.body;
+      if (!phone) {
+        return res.status(400).json({ success: false, error: 'Número de telefone é obrigatório.' });
+      }
+
+      const formattedPhone = formatPhoneNumber(String(phone));
+
+      const driver = await prisma.driver.findFirst({
+        where: {
+          OR: [
+            { phone: formattedPhone },
+            { phone: String(phone).trim() }
+          ]
+        }
+      });
+
+      if (!driver) {
+        return res.status(200).json({ 
+          success: true, 
+          message: 'Se o número estiver cadastrado, o código SMS será enviado.' 
+        });
+      }
+
+      if (driver.lastResetAttempt) {
+        const diffInSeconds = (new Date().getTime() - new Date(driver.lastResetAttempt).getTime()) / 1000;
+        if (diffInSeconds < 60) {
+          return res.status(429).json({ 
+            success: false, 
+            error: 'Aguarde 60 segundos antes de solicitar um novo código SMS.' 
+          });
+        }
+      }
+
+      const otpCode = crypto.randomInt(100000, 1000000).toString();
+      const otpCodeHash = await bcrypt.hash(otpCode, 10);
+      const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+      await prisma.driver.update({
+        where: { id: driver.id },
+        data: {
+          otpCodeHash,
+          otpExpiresAt,
+          lastResetAttempt: new Date(),
+        },
+      });
+
+      const smsSent = await sendSmsOtp(driver.phone, otpCode);
+
+      if (!smsSent) {
+        return res.status(500).json({ 
+          success: false, 
+          error: 'Falha ao enviar o SMS de verificação. Tente novamente em instantes.' 
+        });
+      }
+
+      return res.status(200).json({ 
+        success: true, 
+        message: 'Código de verificação enviado por SMS com sucesso.' 
+      });
+    } catch (error: any) {
+      console.error('❌ Erro em requestForgotPasswordOtp:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro interno ao processar solicitação de recuperação.' });
+    }
+  }
+
+  async forgotPassword(req: Request, res: Response): Promise<Response> {
+    return this.requestForgotPasswordOtp(req, res);
+  }
+
+  // ==========================================
+  // 🔐 2. VALIDAR CÓDIGO OTP E DEFINIR NOVA SENHA
+  // ==========================================
+  async resetPasswordWithOtp(req: Request, res: Response): Promise<Response> {
+    try {
+      const { phone, otpCode, code, newPassword } = req.body;
+      const effectiveOtp = String(otpCode || code || '').trim();
+
+      if (!phone || !effectiveOtp || !newPassword) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Telefone, código OTP e nova senha são obrigatórios.' 
+        });
+      }
+
+      if (String(newPassword).length < 6) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'A nova senha deve ter no mínimo 6 caracteres.' 
+        });
+      }
+
+      const formattedPhone = formatPhoneNumber(String(phone));
+
+      const driver = await prisma.driver.findFirst({
+        where: {
+          OR: [
+            { phone: formattedPhone },
+            { phone: String(phone).trim() }
+          ]
+        }
+      });
+
+      if (!driver || !driver.otpCodeHash || !driver.otpExpiresAt) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Solicitação de recuperação inválida ou expirada.' 
+        });
+      }
+
+      if (new Date() > new Date(driver.otpExpiresAt)) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'O código de verificação expirou. Solicite um novo código.' 
+        });
+      }
+
+      const isOtpValid = await bcrypt.compare(effectiveOtp, driver.otpCodeHash);
+      if (!isOtpValid) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Código de verificação incorreto.' 
+        });
+      }
+
+      const newPasswordHash = await bcrypt.hash(String(newPassword), 12);
+
+      await prisma.driver.update({
+        where: { id: driver.id },
+        data: {
+          passwordHash: newPasswordHash,
+          otpCodeHash: null,
+          otpExpiresAt: null,
+        },
+      });
+
+      return res.status(200).json({ 
+        success: true, 
+        message: 'Senha redefinida com sucesso! Você já pode fazer login.' 
+      });
+    } catch (error: any) {
+      console.error('❌ Erro em resetPasswordWithOtp:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro interno ao redefinir a senha.' });
+    }
+  }
+
+  async resetPassword(req: Request, res: Response): Promise<Response> {
+    return this.resetPasswordWithOtp(req, res);
+  }
+
+  // ==========================================
+  // 📝 REGISTRO DE MOTORISTA (CORRIGIDO)
+  // ==========================================
+  async register(req: Request, res: Response): Promise<Response> {
+    try {
+      const { 
+        fullName, vehicleModel, vehicleBrand, password, vehicleColor, vehicleType, documentType 
+      } = req.body;
+
+      const rawPhone = req.body.phone ? String(req.body.phone).trim() : '';
+      const formattedPhone = formatPhoneNumber(rawPhone);
+
+      // Trata campos com valores padrão se não forem enviados na etapa inicial
+      const vehiclePlate = sanitize(req.body.vehiclePlate) || `P-${Date.now().toString().slice(-6)}`;
+      const documentNumber = sanitize(req.body.documentNumber) || `DOC-${Date.now().toString().slice(-6)}`;
+      const cleanFullName = sanitizeText(fullName, 120);
+      const cleanVehicleBrand = sanitizeText(vehicleBrand || vehicleModel, 80) || 'Não informado';
+      const cleanVehicleColor = sanitizeText(vehicleColor, 40) || 'Branco';
+
+      if (!isValidBissauPhone(formattedPhone)) {
+        return res.status(400).json({ success: false, error: 'O número de telefone deve ser válido para a Guiné-Bissau (+245).' });
+      }
+
+      if (!cleanFullName || !password) {
+        return res.status(400).json({ success: false, error: 'Nome completo e senha são obrigatórios.' });
+      }
+
+      if (String(password).length < 6) {
+        return res.status(400).json({ success: false, error: 'A senha deve conter no mínimo 6 caracteres.' });
+      }
+
+      const [driverPhone, passengerPhone] = await Promise.all([
+        prisma.driver.findFirst({ where: { phone: formattedPhone } }),
+        prisma.passenger.findFirst({ where: { phone: formattedPhone } }),
+      ]);
+
+      if (driverPhone || passengerPhone) {
+        return res.status(409).json({ success: false, error: 'Este número de telefone já está cadastrado na plataforma.' });
+      }
+
+      // Mapeamento flexível de arquivos do Multer (suporta múltiplos nomes de campos do frontend)
+      const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+      
+      const selfieFile = files?.['profilePicture']?.[0] || files?.['selfie']?.[0] || files?.['photo']?.[0] || (req as any).file;
+      const licenseFrontFile = files?.['documentFront']?.[0] || files?.['licenseFront']?.[0] || files?.['cnhPhoto']?.[0] || files?.['document']?.[0];
+      const licenseBackFile = files?.['documentBack']?.[0] || files?.['licenseBack']?.[0] || files?.['vehiclePhoto']?.[0];
+
+      // Salva o caminho relativo padrão (/uploads/nome_arquivo) garantindo compatibilidade com o servidor
+      const profilePicture = selfieFile ? `/uploads/${encodeURIComponent(selfieFile.filename)}` : null;
+      const licenseFrontPicture = licenseFrontFile ? `/uploads/${encodeURIComponent(licenseFrontFile.filename)}` : null;
+      const licenseBackPicture = licenseBackFile ? `/uploads/${encodeURIComponent(licenseBackFile.filename)}` : null;
+
+      const passwordHash = await bcrypt.hash(String(password), 12);
+
+      const driver = await prisma.driver.create({
+        data: { 
+          fullName: cleanFullName, 
+          phone: formattedPhone, 
+          passwordHash,
+          vehiclePlate, 
+          vehicleBrand: cleanVehicleBrand, 
+          vehicleType: vehicleType || 'TAXI', 
+          vehicleColor: cleanVehicleColor, 
+          documentType: documentType || 'BI',
+          documentNumber,
+          profilePicture,
+          licenseFrontPicture,
+          licenseBackPicture,
+          status: 'PENDING_APPROVAL'
+        },
+      });
+
+      return res.status(201).json({
+        success: true,
+        message: 'Cadastro realizado com sucesso! Aguarde a aprovação do seu perfil.',
+        driver: { 
+          id: driver.id, 
+          fullName: driver.fullName, 
+          phone: driver.phone, 
+          status: driver.status, 
+          profilePicture: driver.profilePicture 
+        },
+      });
+    } catch (error: any) {
+      console.error('❌ [REGISTRO MOTORISTA]:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro interno no servidor ao cadastrar motorista.' });
+    }
+  }
+
+  // ==========================================
+  // 🚨 BOTÃO DE EMERGÊNCIA (SOS)
+  // ==========================================
+  async triggerSos(req: Request, res: Response): Promise<Response> {
+    try {
+      const driverId = (req as any).user?.id;
+      const { rideId, latitude, longitude, audioBase64 } = req.body;
+
+      if (!driverId) {
+        return res.status(401).json({ success: false, error: 'Motorista não autenticado.' });
+      }
+
+      if (!isValidCoordinate(latitude, longitude)) {
+        return res.status(400).json({ success: false, error: 'Coordenadas de emergência inválidas.' });
+      }
+
+      const sosAlert = await prisma.sosAlert.create({
+        data: {
+          driverId,
+          rideId: rideId ? String(rideId) : null,
+          lat: Number(latitude),
+          lng: Number(longitude),
+          userType: 'DRIVER',
+          audioUrl: audioBase64 ? String(audioBase64) : null,
+          status: 'ACTIVE',
+        },
+        include: {
+          driver: {
+            select: { fullName: true, phone: true, vehiclePlate: true, vehicleBrand: true },
+          },
+          ride: {
+            select: { id: true, originAddress: true, destinationAddress: true },
+          },
+        },
+      });
+
+      const io = getIo();
+      if (io) {
+        io.to('admin_dashboard').emit('admin:sos_alert', {
+          id: sosAlert.id,
+          driverId,
+          driverName: sosAlert.driver?.fullName,
+          vehiclePlate: sosAlert.driver?.vehiclePlate,
+          vehicleModel: sosAlert.driver?.vehicleBrand,
+          phone: sosAlert.driver?.phone,
+          latitude: Number(latitude),
+          longitude: Number(longitude),
+          audioUrl: sosAlert.audioUrl,
+          createdAt: sosAlert.createdAt,
+        });
+      }
+
+      return res.status(201).json({ success: true, sosId: sosAlert.id });
+    } catch (error: any) {
+      console.error('❌ Erro ao disparar SOS do motorista:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro interno ao acionar emergência.' });
+    }
+  }
+
+  // ==========================================
+  // 🔄 REFRESH TOKEN
+  // ==========================================
+  async refreshToken(req: Request, res: Response): Promise<Response> {
+    try {
+      const { refreshToken } = req.body;
+      if (!refreshToken || typeof refreshToken !== 'string') {
+        return res.status(400).json({ success: false, error: 'Refresh Token não fornecido.' });
+      }
+
+      const decoded = jwt.verify(refreshToken, JWT_REFRESH_SECRET!) as { id: string; role: string };
+      const driver = await prisma.driver.findUnique({ where: { id: decoded.id } });
+
+      const incomingHash = hashToken(refreshToken);
+
+      if (!driver || DISABLED_STATUSES.includes((driver.status || '').toUpperCase()) || driver.refreshTokenHash !== incomingHash) {
+        return res.status(403).json({ success: false, error: 'Refresh Token inválido, revogado ou conta suspensa.' });
+      }
+
+      const accessToken = jwt.sign(
+        { id: driver.id, role: 'DRIVER', status: driver.status }, 
+        JWT_SECRET!, 
+        { expiresIn: '1h' }
+      );
+
+      return res.json({ success: true, accessToken });
+    } catch (error) {
+      return res.status(401).json({ success: false, error: 'Refresh Token inválido ou expirado.' });
+    }
+  }
+
+  // ==========================================
+  // 👤 CONSULTAR PERFIL DO MOTORISTA
+  // ==========================================
+  async getProfile(req: Request, res: Response): Promise<Response> {
+    try {
+      const driverId = (req as any).user?.id;
+      if (!driverId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
+
+      const driver = await prisma.driver.findUnique({
+        where: { id: driverId },
+        select: {
+          id: true,
+          fullName: true,
+          phone: true,
+          status: true,
+          vehiclePlate: true,
+          vehicleBrand: true,
+          vehicleType: true,
+          vehicleColor: true,
+          documentType: true,
+          documentNumber: true,
+          profilePicture: true,
+          licenseFrontPicture: true,
+          licenseBackPicture: true,
+          walletBalance: true,
+          ratingAverage: true,
+          totalRatings: true,
+          isOnline: true,
+          isAvailable: true,
+          orangeNumber: true,
+          mtnNumber: true,
+          paymentAccountNumber: true,
+          createdAt: true
+        }
+      });
+
+      if (!driver) {
+        return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
+      }
+
+      return res.status(200).json({ 
+        success: true, 
+        driver: {
+          ...driver,
+          walletBalance: Number(driver.walletBalance || 0),
+          ratingAverage: Number(driver.ratingAverage || 5.0)
+        } 
+      });
+    } catch (error: any) {
+      console.error('❌ [PERFIL MOTORISTA]:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro interno ao buscar perfil.' });
+    }
+  }
+  // ==========================================
+  // 💰 EXTRATO E FINANÇAS
+  // ==========================================
+  async getFinance(req: Request, res: Response): Promise<Response> {
+    try {
+      const driverId = (req as any).user?.id;
+      if (!driverId) return res.status(401).json({ success: false, error: 'Usuário não autenticado.' });
+
+      const driver = await prisma.driver.findUnique({
+        where: { id: driverId },
+        select: { 
+          fullName: true,
+          phone: true,
+          walletBalance: true,
+          orangeNumber: true,
+          mtnNumber: true,
+          paymentAccountNumber: true
+        } 
+      });
+
+      if (!driver) return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
+
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      const startOfWeek = new Date(startOfToday.getTime() - 6 * 24 * 60 * 60 * 1000);
+
+      const [sysConfig, recentRides, completedRidesAll, transactions] = await Promise.all([
+        prisma.systemConfig.findFirst().catch(() => null),
+        prisma.ride.findMany({
+          where: { driverId, status: { in: ['COMPLETED', 'CANCELLED'] } },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+          select: {
+            id: true, createdAt: true, finishedAt: true, originAddress: true, destinationAddress: true,
+            paymentMethod: true, priceXof: true, status: true, driverEarnings: true, platformFee: true,
+            passenger: { select: { fullName: true, profilePicture: true } },
+            ratings: { where: { reviewerType: 'PASSENGER' }, select: { stars: true } }
+          }
+        }),
+        prisma.ride.findMany({
+          where: { driverId, status: 'COMPLETED' },
+          select: {
+            createdAt: true,
+            finishedAt: true,
+            priceXof: true,
+            driverEarnings: true,
+            platformFee: true
+          }
+        }),
+        prisma.transaction.findMany({
+          where: { driverId },
+          orderBy: { createdAt: 'desc' },
+          take: 60
+        })
+      ]);
+
+      let todayEarned = 0, todayGross = 0, todayCommission = 0, todayRides = 0;
+      let weeklyEarned = 0, weeklyGross = 0, weeklyCommission = 0, weeklyRides = 0;
+      let totalEarned = 0, totalGross = 0, totalCommission = 0;
+
+      for (const r of completedRidesAll) {
+        const gross = Number(r.priceXof || 0);
+        const net = r.driverEarnings !== null && r.driverEarnings !== undefined
+          ? Number(r.driverEarnings)
+          : Math.round(gross * 0.85);
+        const fee = r.platformFee !== null && r.platformFee !== undefined
+          ? Number(r.platformFee)
+          : Math.max(0, gross - net);
+
+        totalGross += gross;
+        totalEarned += net;
+        totalCommission += fee;
+
+        const refDate = r.finishedAt ? new Date(r.finishedAt) : new Date(r.createdAt);
+        if (refDate >= startOfToday) {
+          todayGross += gross;
+          todayEarned += net;
+          todayCommission += fee;
+          todayRides += 1;
+        }
+        if (refDate >= startOfWeek) {
+          weeklyGross += gross;
+          weeklyEarned += net;
+          weeklyCommission += fee;
+          weeklyRides += 1;
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        walletBalance: Number(driver.walletBalance || 0),
+        todayEarned: Math.round(todayEarned),
+        todayGross: Math.round(todayGross),
+        todayCommission: Math.round(todayCommission),
+        todayRides,
+        weeklyEarned: Math.round(weeklyEarned),
+        weeklyGross: Math.round(weeklyGross),
+        weeklyCommission: Math.round(weeklyCommission),
+        weeklyRides,
+        totalEarned: Math.round(totalEarned),
+        totalGross: Math.round(totalGross),
+        totalCommission: Math.round(totalCommission),
+        totalRides: completedRidesAll.length,
+        mobileMoneyAccount: driver.paymentAccountNumber || driver.phone,
+        orangeNumber: driver.orangeNumber,
+        mtnNumber: driver.mtnNumber,
+        adminOrangeNumber: sysConfig?.adminOrangeNumber || '245957330790',
+        adminMtnNumber: sysConfig?.adminMtnNumber || '245960000000',
+        adminMerchantCode: (sysConfig as any)?.adminMerchantCode || '72447321',
+        companyName: (sysConfig as any)?.companyName || 'NÔ BAI 245',
+        history: recentRides.map(r => ({
+          ...r,
+          priceXof: Number(r.priceXof || 0),
+          driverEarnings: Number(r.driverEarnings || 0),
+          platformFee: Number(r.platformFee || 0)
+        })),
+        transactions: transactions.map(t => ({
+          ...t,
+          amount: Number(t.amount || 0),
+          balanceBefore: t.balanceBefore !== null ? Number(t.balanceBefore) : null,
+          balanceAfter: t.balanceAfter !== null ? Number(t.balanceAfter) : null,
+        }))
+      });
+    } catch (error: any) {
+      console.error('❌ [FINANCEIRO MOTORISTA]:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro interno ao buscar extrato.' });
+    }
+  }
+
+  // ==========================================
+  // 💳 RECARGA AUTOMÁTICA DE CARTEIRA DO MOTORISTA (CONTA ADMIN)
+  // ==========================================
+  async rechargeWallet(req: Request, res: Response): Promise<Response> {
+    try {
+      const driverId = (req as any).user?.id;
+      if (!driverId) {
+        return res.status(401).json({ success: false, error: 'Não autorizado.' });
+      }
+
+      const rawAmount = req.body.amount ?? req.body.value;
+      const rawPhone = req.body.phone ?? req.body.paymentAccountNumber;
+      const rawProvider = req.body.provider ?? req.body.paymentMethod ?? 'ORANGE_MONEY';
+
+      const cleanAmount = Math.round(Number(rawAmount));
+      if (isNaN(cleanAmount) || cleanAmount < 100) {
+        return res.status(400).json({ success: false, error: 'O valor mínimo de recarga é 100 XOF.' });
+      }
+
+      const driver = await prisma.driver.findUnique({
+        where: { id: String(driverId) },
+        select: { phone: true, orangeNumber: true, mtnNumber: true, paymentAccountNumber: true }
+      });
+
+      if (!driver) {
+        return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
+      }
+
+      const isMtn = String(rawProvider).toUpperCase().includes('MTN') || String(rawProvider).toUpperCase().includes('TELECEL');
+      const fallbackPhone = isMtn
+        ? (driver.mtnNumber || driver.paymentAccountNumber || driver.phone)
+        : (driver.orangeNumber || driver.paymentAccountNumber || driver.phone);
+
+      const targetPhone = formatPhoneNumber(String(rawPhone || fallbackPhone));
+      if (!isValidBissauPhone(targetPhone)) {
+        return res.status(400).json({ success: false, error: 'Número Mobile Money inválido para Guiné-Bissau (+245).' });
+      }
+
+      const chargeResult = await chargeMobileMoney({
+        driverId: String(driverId),
+        userType: 'DRIVER',
+        phone: targetPhone,
+        amount: cleanAmount,
+        provider: isMtn ? 'MTN_MOMO' : 'ORANGE_MONEY',
+        isWalletRecharge: true
+      });
+
+      if (!chargeResult.success) {
+        return res.status(400).json({
+          success: false,
+          error: chargeResult.error || 'PROVIDER_REJECTED',
+          message: chargeResult.details || 'Não foi possível iniciar a cobrança na operadora.'
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: !isMtn
+          ? 'Autorize o pagamento na janela da Orange Money ou digite seu PIN no telemóvel.'
+          : 'Solicitação enviada para seu número Telecel/MTN. Digite seu PIN para confirmar.',
+        paymentUrl: chargeResult.paymentUrl || null,
+        providerRef: chargeResult.providerRef,
+        reference: chargeResult.reference,
+        status: chargeResult.status
+      });
+    } catch (error: any) {
+      console.error('❌ [RECARGA MOTORISTA]:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro interno ao iniciar recarga.' });
+    }
+  }
+
+  // ==========================================
+  // 🗑️ EXCLUSÃO DE CONTA
+  // ==========================================
+  async deleteAccount(req: Request, res: Response): Promise<Response> {
+    try {
+      const driverId = (req as any).user?.id;
+      if (!driverId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
+
+      const driver = await prisma.driver.findUnique({
+        where: { id: driverId },
+        include: { rides: { take: 1 }, transactions: { take: 1 } },
+      });
+
+      if (!driver) return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
+
+      const hasHistory = driver.rides.length > 0 || driver.transactions.length > 0;
+
+      if (!hasHistory) {
+        await prisma.driver.delete({ where: { id: driverId } });
+      } else {
+        const stamp = Date.now().toString().slice(-8);
+        await prisma.driver.update({
+          where: { id: driverId },
+          data: {
+            phone: `d_${stamp}`,
+            vehiclePlate: `p_${stamp}`,
+            documentNumber: `doc_${stamp}`,
+            orangeNumber: null,
+            mtnNumber: null,
+            paymentAccountNumber: null,
+            status: 'SUSPENDED',
+            isOnline: false,
+            isAvailable: false,
+            currentRideId: null,
+            deletedAt: new Date(),
+            refreshTokenHash: null,
+            deviceToken: null,
+          },
+        });
+      }
+
+      return res.status(200).json({ success: true, message: 'Sua conta foi excluída e seus dados foram liberados com sucesso.' });
+    } catch (error: any) {
+      console.error('❌ [EXCLUSÃO DE CONTA MOTORISTA]:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro ao processar exclusão de conta.' });
+    }
+  }
+
+  // ==========================================
+  // 📱 ATUALIZAR MOBILE MONEY (ORANGE / MTN)
+  // ==========================================
+  async updatePaymentInfo(req: Request, res: Response): Promise<Response> {
+    try {
+      const driverId = (req as any).user?.id;
+      if (!driverId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
+
+      const { 
+        mobileMoneyProvider, 
+        paymentProvider, 
+        provider,
+        mobileMoneyNumber, 
+        paymentAccountNumber, 
+        orangeNumber, 
+        mtnNumber 
+      } = req.body;
+
+      const rawNumber = mobileMoneyNumber || paymentAccountNumber || orangeNumber || mtnNumber;
+      if (!rawNumber) {
+        return res.status(400).json({ success: false, error: 'Informe o número de telefone do Mobile Money.' });
+      }
+
+      let cleanDigits = String(rawNumber).replace(/\D/g, '');
+      if (cleanDigits.startsWith('245')) {
+        cleanDigits = cleanDigits.substring(3);
+      }
+
+      if (cleanDigits.length !== 9) {
+        return res.status(400).json({ success: false, error: 'O número deve conter exatamente 9 dígitos (ex: 955800991).' });
+      }
+
+      const prefix = cleanDigits.substring(0, 2);
+      const provStr = String(mobileMoneyProvider || paymentProvider || provider || '').toUpperCase();
+      
+      const isOrange = provStr.includes('ORANGE') || (!provStr && prefix === '95');
+      const isMtn = provStr.includes('MTN') || provStr.includes('TELECEL') || provStr.includes('MOMO') || (!provStr && ['96', '97'].includes(prefix));
+
+      if (isOrange && prefix !== '95') {
+        return res.status(400).json({ success: false, error: 'O número do Orange Money deve começar com 95.' });
+      }
+
+      if (isMtn && !['96', '97'].includes(prefix)) {
+        return res.status(400).json({ success: false, error: 'O número da Telecel (antigo MTN) deve começar com 96 ou 97.' });
+      }
+
+      const formattedNumber = `+245${cleanDigits}`;
+
+      const updateData = isOrange 
+        ? { orangeNumber: formattedNumber, paymentAccountNumber: formattedNumber }
+        : { mtnNumber: formattedNumber, paymentAccountNumber: formattedNumber };
+
+      const updatedDriver = await prisma.driver.update({
+        where: { id: driverId },
+        data: updateData,
+        select: {
+          id: true,
+          paymentAccountNumber: true,
+          orangeNumber: true,
+          mtnNumber: true
+        },
+      });
+
+      return res.status(200).json({ 
+        success: true,
+        message: 'Conta de recebimento salva com sucesso!',
+        paymentInfo: updatedDriver
+      });
+    } catch (error: any) {
+      console.error('❌ [PAGAMENTO MOTORISTA]:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro ao atualizar dados de pagamento.' });
+    }
+  }
+
+  // ==========================================
+  // 🔔 ATUALIZAR TOKEN DE NOTIFICAÇÃO (PUSH)
+  // ==========================================
+  async updateDeviceToken(req: Request, res: Response): Promise<Response> {
+    try {
+      const driverId = (req as any).user?.id;
+      if (!driverId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
+
+      const { deviceToken } = req.body;
+      if (!deviceToken || typeof deviceToken !== 'string') {
+        return res.status(400).json({ success: false, error: 'Token de notificação inválido ou ausente.' });
+      }
+
+      await prisma.driver.update({
+        where: { id: driverId },
+        data: { deviceToken: sanitizeText(deviceToken, 255) }
+      });
+
+      return res.status(200).json({ success: true, message: 'Token de notificação atualizado com sucesso!' });
+    } catch (error: any) {
+      console.error('❌ [PUSH TOKEN MOTORISTA]:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro interno ao salvar token.' });
+    }
+  }
+
+  // ==========================================
+  // ✏️ SOLICITAÇÃO DE ALTERAÇÃO DE DADOS
+  // ==========================================
+  async requestProfileUpdate(req: Request, res: Response): Promise<Response> {
+    try {
+      const driverId = (req as any).user?.id;
+      if (!driverId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
+
+      const { newFullName, newVehiclePlate, newVehicleBrand, newVehicleColor, newDocumentNumber } = req.body;
+
+      const pendingRequest = await prisma.driverChangeRequest.findFirst({
+        where: { driverId, status: 'PENDING' }
+      });
+
+      if (pendingRequest) {
+        return res.status(400).json({ success: false, error: 'Você já possui uma solicitação em análise pela central.' });
+      }
+
+      const changeRequest = await prisma.driverChangeRequest.create({
+        data: {
+          driverId,
+          newFullName: sanitizeText(newFullName, 120) || undefined,
+          newVehiclePlate: newVehiclePlate ? sanitize(newVehiclePlate) : undefined,
+          newVehicleBrand: sanitizeText(newVehicleBrand, 80) || undefined,
+          newVehicleColor: sanitizeText(newVehicleColor, 40) || undefined,
+          newDocumentNumber: newDocumentNumber ? sanitize(newDocumentNumber) : undefined
+        }
+      });
+
+      return res.status(201).json({ success: true, message: 'Solicitação enviada com sucesso!', changeRequest });
+    } catch (error: any) {
+      console.error('❌ [SOLICITAÇÃO ALTERAÇÃO MOTORISTA]:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro ao processar solicitação.' });
+    }
+  }
+
+  async checkPendingRequest(req: Request, res: Response): Promise<Response> {
+    try {
+      const driverId = (req as any).user?.id;
+      if (!driverId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
+
+      const pendingRequest = await prisma.driverChangeRequest.findFirst({
+        where: { driverId, status: 'PENDING' }
+      });
+
+      return res.status(200).json({ success: true, hasPendingRequest: !!pendingRequest, requestData: pendingRequest });
+    } catch (error: any) {
+      console.error('❌ [CHECAR PENDÊNCIA MOTORISTA]:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro ao checar solicitações.' });
+    }
+  }
+
+  // ==========================================
+  // 🖼️ ATUALIZAR FOTO DE PERFIL
+  // ==========================================
+  async updateProfilePicture(req: Request, res: Response): Promise<Response> {
+    try {
+      const driverId = (req as any).user?.id;
+      if (!driverId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
+
+      const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+      const file = req.file || 
+                   files?.['profilePicture']?.[0] || 
+                   files?.['photo']?.[0] || 
+                   files?.['file']?.[0] || 
+                   files?.['image']?.[0];
+
+      // 🖼️ ATUALIZAR FOTO DE PERFIL
+if (!file) {
+  return res.status(400).json({ success: false, error: 'Nenhuma imagem foi enviada.' });
+}
+
+// Salva o caminho relativo padrão no banco
+const newProfilePicture = `/uploads/${encodeURIComponent(file.filename)}`;
+
+await prisma.driver.update({
+  where: { id: driverId },
+  data: { profilePicture: newProfilePicture }
+});
+
+      return res.status(200).json({ 
+        success: true, 
+        message: 'Foto atualizada com sucesso', 
+        profilePicture: newProfilePicture 
+      }); 
+    } catch (error: any) {
+      console.error('❌ [FOTO PERFIL]:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro ao processar imagem.' });
+    }
+  }
+}
+
+const driverAuthController = new DriverAuthController();
+
+export const login = (req: Request, res: Response) => driverAuthController.login(req, res);
+export const register = (req: Request, res: Response) => driverAuthController.register(req, res);
+export const requestForgotPasswordOtp = (req: Request, res: Response) => driverAuthController.requestForgotPasswordOtp(req, res);
+export const resetPasswordWithOtp = (req: Request, res: Response) => driverAuthController.resetPasswordWithOtp(req, res);
+export const forgotPassword = (req: Request, res: Response) => driverAuthController.forgotPassword(req, res);
+export const resetPassword = (req: Request, res: Response) => driverAuthController.resetPassword(req, res);
+export const triggerSos = (req: Request, res: Response) => driverAuthController.triggerSos(req, res);
+export const refreshToken = (req: Request, res: Response) => driverAuthController.refreshToken(req, res);
+export const getProfile = (req: Request, res: Response) => driverAuthController.getProfile(req, res);
+export const getFinance = (req: Request, res: Response) => driverAuthController.getFinance(req, res);
+export const deleteAccount = (req: Request, res: Response) => driverAuthController.deleteAccount(req, res);
+export const updatePaymentInfo = (req: Request, res: Response) => driverAuthController.updatePaymentInfo(req, res);
+export const updateDeviceToken = (req: Request, res: Response) => driverAuthController.updateDeviceToken(req, res);
+export const requestProfileUpdate = (req: Request, res: Response) => driverAuthController.requestProfileUpdate(req, res);
+export const checkPendingRequest = (req: Request, res: Response) => driverAuthController.checkPendingRequest(req, res);
+export const updateProfilePicture = (req: Request, res: Response) => driverAuthController.updateProfilePicture(req, res);
