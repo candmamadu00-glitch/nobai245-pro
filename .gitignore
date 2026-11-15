@@ -10,3 +10,6 @@ backups/
 backups_ajustes/
 *.sql
 .backups_sync_*
+
+.backups/
+*.bak
