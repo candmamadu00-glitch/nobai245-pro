@@ -9,7 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Socket } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
-import { AudioModule, RecordingPresets, useAudioRecorder, createAudioPlayer } from 'expo-audio';
+import { AudioModule, RecordingPresets, useAudioRecorder, createAudioPlayer, setAudioModeAsync, setIsAudioActiveAsync } from 'expo-audio';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystemLegacy from 'expo-file-system/legacy';
 const FileSystem: any = FileSystemLegacy;
@@ -61,17 +61,19 @@ const formatTime = (isoString?: string) => {
 };
 
 const getPlayableAudioUri = async (msgId: string, audioUrl: string): Promise<string> => {
-  if (audioUrl.startsWith('http://') || audioUrl.startsWith('https://') || audioUrl.startsWith('file://')) {
+  if (audioUrl.startsWith('file://')) {
     return audioUrl;
   }
+
+  const safeId = (msgId + '_' + audioUrl.slice(-24)).replace(/[^a-zA-Z0-9]/g, '') || String(Date.now());
+  const fileUri = FileSystem.cacheDirectory + 'audio_' + safeId + '.m4a';
+
   if (audioUrl.startsWith('data:') || audioUrl.length > 500) {
     try {
       const base64Data = audioUrl.includes('base64,') ? audioUrl.split('base64,')[1] : audioUrl;
-      const safeId = msgId.replace(/[^a-zA-Z0-9]/g, '') || String(Date.now());
-      const fileUri = FileSystem.cacheDirectory + 'audio_' + safeId + '.m4a';
       const encodingOpt = FileSystem?.EncodingType?.Base64 || 'base64';
       const fileInfo = await FileSystem.getInfoAsync(fileUri);
-      if (!fileInfo.exists) {
+      if (!fileInfo.exists || (fileInfo.size ?? 0) === 0) {
         await FileSystem.writeAsStringAsync(fileUri, base64Data, {
           encoding: encodingOpt,
         });
@@ -81,9 +83,28 @@ const getPlayableAudioUri = async (msgId: string, audioUrl: string): Promise<str
       console.warn('⚠️ Erro ao converter áudio base64 em arquivo local:', e);
     }
   }
-  const cleanBase = API_URL.replace(/\/$/, '');
-  const cleanPath = audioUrl.startsWith('/') ? audioUrl : '/' + audioUrl;
-  return cleanBase + cleanPath;
+
+  const remoteUrl = (audioUrl.startsWith('http://') || audioUrl.startsWith('https://'))
+    ? audioUrl
+    : API_URL.replace(/\/$/, '') + (audioUrl.startsWith('/') ? audioUrl : '/' + audioUrl);
+
+  try {
+    const fileInfo = await FileSystem.getInfoAsync(fileUri);
+    if (fileInfo.exists && (fileInfo.size ?? 0) > 100) {
+      return fileUri;
+    }
+    if (fileInfo.exists) {
+      await FileSystem.deleteAsync(fileUri, { idempotent: true }).catch(() => {});
+    }
+    const downloadRes = await FileSystem.downloadAsync(remoteUrl, fileUri);
+    if (downloadRes?.status === 200 && downloadRes?.uri) {
+      return downloadRes.uri;
+    }
+  } catch (dlErr) {
+    console.warn('⚠️ Falha ao baixar áudio para cache local, usando URL remota:', dlErr);
+  }
+
+  return remoteUrl;
 };
 
 const QUICK_REPLIES_DRIVER = [
@@ -363,12 +384,12 @@ export function ChatModal({
     } catch {}
 
     try {
-      if (typeof (AudioModule as any)?.setAudioModeAsync === 'function') {
-        await (AudioModule as any).setAudioModeAsync({
+      await setAudioModeAsync({
           allowsRecording: false,
           playsInSilentMode: true,
-        });
-      }
+          shouldRouteThroughEarpiece: false,
+          interruptionMode: 'mixWithOthers',
+        }).catch(() => {});
     } catch {}
 
     try {
@@ -444,12 +465,12 @@ export function ChatModal({
         return;
       }
 
-      if (typeof (AudioModule as any)?.setAudioModeAsync === 'function') {
-        await (AudioModule as any).setAudioModeAsync({
+      await setAudioModeAsync({
           allowsRecording: true,
           playsInSilentMode: true,
-        });
-      }
+          shouldRouteThroughEarpiece: false,
+          interruptionMode: 'doNotMix',
+        }).catch(() => {});
 
       await audioRecorder.prepareToRecordAsync();
       audioRecorder.record();
@@ -486,9 +507,12 @@ export function ChatModal({
     isRecordingRef.current = false;
     try { await audioRecorder.stop(); } catch {}
     try {
-      if (typeof (AudioModule as any)?.setAudioModeAsync === 'function') {
-        await (AudioModule as any).setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
-      }
+      await setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
+          shouldRouteThroughEarpiece: false,
+          interruptionMode: 'mixWithOthers',
+        }).catch(() => {});
     } catch {}
     recordDurationRef.current = 0;
     setIsRecording(false);
@@ -506,31 +530,60 @@ export function ChatModal({
 
       stopActivePlayer();
 
-      if (typeof (AudioModule as any)?.setAudioModeAsync === 'function') {
-        await (AudioModule as any).setAudioModeAsync({
-          playsInSilentMode: true,
-          allowsRecording: false,
-        });
-      }
+      await setIsAudioActiveAsync(true).catch(() => {});
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: false,
+        shouldRouteThroughEarpiece: false,
+        interruptionMode: 'doNotMix',
+        shouldPlayInBackground: false,
+      }).catch(() => {});
 
       const playableUri = await getPlayableAudioUri(msgId, audioUrl);
-      const player = createAudioPlayer({ uri: playableUri });
+      const player = createAudioPlayer(
+        { uri: playableUri },
+        { updateInterval: 200, keepAudioSessionActive: true }
+      );
       if (!player) return;
 
+      if ('muted' in player) (player as any).muted = false;
+      if ('mute' in player) (player as any).mute = false;
       player.volume = 1.0;
       activePlayerRef.current = player;
       setPlayingAudioId(msgId);
 
-      if (typeof player.play === 'function') player.play();
+      let startedPlayback = false;
+      const triggerPlay = () => {
+        if (startedPlayback || activePlayerRef.current !== player) return;
+        startedPlayback = true;
+        try {
+          if ('muted' in player) (player as any).muted = false;
+          if ('mute' in player) (player as any).mute = false;
+          player.volume = 1.0;
+          player.play();
+        } catch (playErr) {
+          console.warn('⚠️ Erro ao iniciar reprodução de áudio:', playErr);
+        }
+      };
 
       if (typeof player.addListener === 'function') {
         player.addListener('playbackStatusUpdate', (status: any) => {
+          if (status?.isLoaded && !startedPlayback && !status?.didJustFinish) {
+            triggerPlay();
+          }
           if (status?.didJustFinish || status?.error) {
             stopActivePlayer();
           }
         });
       }
-    } catch {
+
+      if (player.isLoaded) {
+        triggerPlay();
+      } else {
+        setTimeout(triggerPlay, 150);
+      }
+    } catch (err) {
+      console.warn('⚠️ Falha geral no player de áudio:', err);
       stopActivePlayer();
     }
   };
