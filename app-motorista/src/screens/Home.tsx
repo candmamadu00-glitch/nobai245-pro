@@ -202,6 +202,68 @@ function calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number
   return Math.round((brng + 360) % 360);
 }
 
+function lerpAngle(start: number, end: number, t: number): number {
+  const diff = ((end - start + 540) % 360) - 180;
+  return (start + diff * t + 360) % 360;
+}
+
+function getRouteAlignedPosition(
+  lat: number,
+  lng: number,
+  rawHeading: number,
+  routeCoords: number[][] | null
+): { latitude: number; longitude: number; bearing: number; isOnRoute: boolean } {
+  if (!routeCoords || routeCoords.length < 2) {
+    return { latitude: lat, longitude: lng, bearing: rawHeading, isOnRoute: false };
+  }
+
+  const cosLat = Math.cos((lat * Math.PI) / 180);
+  let bestDistSq = Infinity;
+  let bestLng = lng;
+  let bestLat = lat;
+  let bestBearing = rawHeading;
+
+  for (let i = 0; i < routeCoords.length - 1; i++) {
+    const [x1, y1] = routeCoords[i];
+    const [x2, y2] = routeCoords[i + 1];
+    if (x1 === x2 && y1 === y2) continue;
+
+    const dx = (x2 - x1) * cosLat;
+    const dy = y2 - y1;
+    const px = (lng - x1) * cosLat;
+    const py = lat - y1;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq === 0) continue;
+
+    const t = Math.max(0, Math.min(1, (px * dx + py * dy) / lenSq));
+    const projLng = x1 + t * (x2 - x1);
+    const projLat = y1 + t * (y2 - y1);
+
+    const errX = (lng - projLng) * cosLat;
+    const errY = lat - projLat;
+    const distSq = errX * errX + errY * errY;
+
+    if (distSq < bestDistSq) {
+      bestDistSq = distSq;
+      bestLng = projLng;
+      bestLat = projLat;
+      bestBearing = calculateBearing(y1, x1, y2, x2);
+    }
+  }
+
+  const distMeters = Math.sqrt(bestDistSq) * 111320;
+  if (distMeters <= 35) {
+    return {
+      latitude: bestLat,
+      longitude: bestLng,
+      bearing: bestBearing,
+      isOnRoute: true,
+    };
+  }
+
+  return { latitude: lat, longitude: lng, bearing: rawHeading, isOnRoute: false };
+}
+
 
 
 const formatCurrency = (val?: number | string | null): string => {
@@ -284,8 +346,21 @@ export function Home() {
   const isOnlineRef = useRef(isOnline);
   const serviceFiltersRef = useRef(serviceFilters);
   const lastDriverCoordsRef = useRef<{ latitude: number; longitude: number; heading: number } | null>(null);
-  const { speakInstruction: playBilingualVoice } = useBilingualVoice();
+  const routeCoordinatesRef = useRef<number[][] | null>(null);
+  const lastRouteFetchRef = useRef<{ time: number; state: string; rideId: string | null; stopIdx: number }>({
+    time: 0,
+    state: '',
+    rideId: null,
+    stopIdx: 0,
+  });
+  const [mapCameraHeading, setMapCameraHeading] = useState(0);
+  const [snappedCarPos, setSnappedCarPos] = useState<{ latitude: number; longitude: number; heading: number } | null>(null);
+  const { speakInstruction: playBilingualVoice, resetVoiceHistory, stopVoice } = useBilingualVoice();
   const alertPlayerRef = useRef<any>(null);
+
+  useEffect(() => {
+    routeCoordinatesRef.current = routeCoordinates;
+  }, [routeCoordinates]);
 
   useEffect(() => { rideStateRef.current = rideState; }, [rideState]);
   useEffect(() => { incomingRideRef.current = incomingRide; }, [incomingRide]);
@@ -1034,24 +1109,79 @@ export function Home() {
   };
 
   useEffect(() => {
+    resetVoiceHistory();
+    if (!isVoiceAssistEnabled || rideState === 'idle') {
+      stopVoice();
+    }
+  }, [rideState, activeRideId, isVoiceAssistEnabled, resetVoiceHistory, stopVoice]);
+
+  useEffect(() => {
+    if (!isVoiceAssistEnabled) return;
     if (!location?.coords || routeSteps.length === 0 || currentStepIndex >= routeSteps.length) return;
+    if (!['accepted', 'in_progress'].includes(rideState)) return;
+
     const currentStep = routeSteps[currentStepIndex];
     if (!currentStep?.maneuver?.location) return;
 
     const [stepLng, stepLat] = currentStep.maneuver.location;
-    const distToStepKm = calculateDirectDistance(location.coords.latitude, location.coords.longitude, stepLat, stepLng);
+    const distMeters = calculateDirectDistance(
+      location.coords.latitude,
+      location.coords.longitude,
+      stepLat,
+      stepLng
+    ) * 1000;
 
-    if (distToStepKm * 1000 <= 40) {
+    const rideKey = activeRideId || incomingRide?.rideId || 'active';
+
+    if (distMeters > 45 && distMeters <= 120 && currentStepIndex > 0) {
+      const instruction = currentStep?.maneuver?.instruction;
+      if (instruction) {
+        playBilingualVoice(
+          'navigation',
+          `Em 100 metros, ${translateToKriol(instruction)}`,
+          undefined,
+          `${rideKey}_${rideState}_step_${currentStepIndex}_pre`
+        );
+      }
+    }
+
+    if (distMeters <= 40) {
       const nextIndex = currentStepIndex + 1;
       if (nextIndex < routeSteps.length) {
         setCurrentStepIndex(nextIndex);
         const nextInstruction = routeSteps[nextIndex]?.maneuver?.instruction;
-        if (nextInstruction) playBilingualVoice('navigation', translateToKriol(nextInstruction));
+        if (nextInstruction) {
+          playBilingualVoice(
+            'navigation',
+            translateToKriol(nextInstruction),
+            undefined,
+            `${rideKey}_${rideState}_step_${nextIndex}_exec`
+          );
+        }
       } else {
-        playBilingualVoice('navigation', 'Bu sta kuazi pa tchega na bu distinu');
+        const arrivalMsg = rideState === 'accepted'
+          ? 'Você chegou ao ponto de embarque do passageiro'
+          : 'Bu sta kuazi pa tchega na bu distinu';
+        const arrivalKey = rideState === 'accepted' ? 'arrived_pickup' : 'arrived_dest';
+        playBilingualVoice(
+          arrivalKey,
+          arrivalMsg,
+          undefined,
+          `${rideKey}_${rideState}_arrived`
+        );
       }
     }
-  }, [location?.coords, routeSteps, currentStepIndex, playBilingualVoice]);
+  }, [
+    location?.coords?.latitude,
+    location?.coords?.longitude,
+    routeSteps,
+    currentStepIndex,
+    rideState,
+    activeRideId,
+    incomingRide?.rideId,
+    isVoiceAssistEnabled,
+    playBilingualVoice,
+  ]);
 
   useEffect(() => {
     if (!location?.coords || !incomingRide) return;
@@ -1063,10 +1193,40 @@ export function Home() {
     const dLat = Number(incomingRide.destinationLat);
     const dLng = Number(incomingRide.destinationLng);
 
+    const currentRideKey = activeRideId || incomingRide.rideId || null;
+    const now = Date.now();
+    const prevFetch = lastRouteFetchRef.current;
+
+    const stateOrRideChanged =
+      prevFetch.state !== rideState ||
+      prevFetch.rideId !== currentRideKey ||
+      prevFetch.stopIdx !== currentStopIndex;
+
+    let isOffRoute = false;
+    const currentRoute = routeCoordinatesRef.current;
+    if (currentRoute && currentRoute.length >= 2) {
+      const check = getRouteAlignedPosition(driverLat, driverLng, 0, currentRoute);
+      isOffRoute = !check.isOnRoute;
+    }
+
+    const canRefetchOffRoute = isOffRoute && (now - prevFetch.time > 12000);
+
+    if (!stateOrRideChanged && !canRefetchOffRoute && currentRoute && currentRoute.length > 0) {
+      persistActiveRideState(incomingRide, rideState, activeRideId);
+      return;
+    }
+
+    lastRouteFetchRef.current = {
+      time: now,
+      state: rideState,
+      rideId: currentRideKey,
+      stopIdx: currentStopIndex,
+    };
+
     if (rideState === 'accepted' || rideState === 'arrived') {
       if (!isNaN(pLat) && !isNaN(pLng) && pLat !== 0 && pLng !== 0) {
         fetchMapboxRoute(driverLng, driverLat, pLng, pLat);
-        fitMapBounds(driverLng, driverLat, pLng, pLat);
+        if (stateOrRideChanged) fitMapBounds(driverLng, driverLat, pLng, pLat);
       }
     } else if (rideState === 'in_progress') {
       if (!isNaN(dLat) && !isNaN(dLng) && dLat !== 0 && dLng !== 0) {
@@ -1084,7 +1244,7 @@ export function Home() {
           });
         }
         fetchMapboxRoute(driverLng, driverLat, dLng, dLat, pendingStops);
-        fitMapBounds(driverLng, driverLat, dLng, dLat);
+        if (stateOrRideChanged) fitMapBounds(driverLng, driverLat, dLng, dLat);
       }
     } else if (rideState === 'idle' && incomingRide) {
       if (!isNaN(pLat) && !isNaN(pLng) && !isNaN(dLat) && !isNaN(dLng)) {
@@ -1095,7 +1255,15 @@ export function Home() {
     }
 
     persistActiveRideState(incomingRide, rideState, activeRideId);
-  }, [rideState, activeRideId, location?.coords?.latitude, location?.coords?.longitude, incomingRide, fitMapBounds]);
+  }, [
+    rideState,
+    activeRideId,
+    currentStopIndex,
+    location?.coords?.latitude,
+    location?.coords?.longitude,
+    incomingRide,
+    fitMapBounds,
+  ]);
 
   const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean; rideId?: string }) => {
     if (!isMountedRef.current) return;
@@ -1439,48 +1607,66 @@ export function Home() {
           if (!isMountedRef.current) return;
           setLocation(newLocation);
 
-          const { latitude, longitude } = newLocation.coords;
-          let calculatedHeading = newLocation.coords.heading;
+          const { latitude, longitude, speed } = newLocation.coords;
+          const prevCoords = lastDriverCoordsRef.current;
+          let rawHeading = newLocation.coords.heading;
 
-          if (calculatedHeading == null || calculatedHeading < 0) {
-            if (lastDriverCoordsRef.current) {
-              const distKm = calculateDirectDistance(
-                lastDriverCoordsRef.current.latitude,
-                lastDriverCoordsRef.current.longitude,
+          if (rawHeading == null || rawHeading < 0 || (speed != null && speed < 1.2)) {
+            if (prevCoords) {
+              const distMeters = calculateDirectDistance(
+                prevCoords.latitude,
+                prevCoords.longitude,
                 latitude,
                 longitude
-              );
+              ) * 1000;
 
-              if (distKm * 1000 > 2) {
-                calculatedHeading = calculateBearing(
-                  lastDriverCoordsRef.current.latitude,
-                  lastDriverCoordsRef.current.longitude,
+              if (distMeters > 3) {
+                rawHeading = calculateBearing(
+                  prevCoords.latitude,
+                  prevCoords.longitude,
                   latitude,
                   longitude
                 );
               } else {
-                calculatedHeading = lastDriverCoordsRef.current.heading || 0;
+                rawHeading = prevCoords.heading || 0;
               }
             } else {
-              calculatedHeading = 0;
+              rawHeading = 0;
             }
           }
 
-          const prevCoords = lastDriverCoordsRef.current;
-          let smoothLat = latitude;
-          let smoothLng = longitude;
+          const aligned = getRouteAlignedPosition(
+            latitude,
+            longitude,
+            rawHeading,
+            routeCoordinatesRef.current
+          );
+
+          let smoothLat = aligned.latitude;
+          let smoothLng = aligned.longitude;
+          let smoothHeading = aligned.bearing;
 
           if (prevCoords) {
-            smoothLat = lerp(prevCoords.latitude, latitude, 0.3);
-            smoothLng = lerp(prevCoords.longitude, longitude, 0.3);
+            smoothLat = lerp(prevCoords.latitude, aligned.latitude, 0.45);
+            smoothLng = lerp(prevCoords.longitude, aligned.longitude, 0.45);
+            smoothHeading = lerpAngle(prevCoords.heading, aligned.bearing, 0.45);
           }
 
-          lastDriverCoordsRef.current = { 
-            latitude: smoothLat, 
-            longitude: smoothLng, 
-            heading: calculatedHeading 
+          lastDriverCoordsRef.current = {
+            latitude: smoothLat,
+            longitude: smoothLng,
+            heading: smoothHeading,
           };
 
+          setSnappedCarPos({
+            latitude: smoothLat,
+            longitude: smoothLng,
+            heading: smoothHeading,
+          });
+
+          if (isRideActive) {
+            setMapCameraHeading(Math.round(smoothHeading));
+          }
           updateCameraThrottled(smoothLng, smoothLat);
 
           if (driver?.id && socket?.connected) {
@@ -1490,7 +1676,7 @@ export function Home() {
               latitude: smoothLat,
               longitude: smoothLng,
               speed: Math.max(0, newLocation.coords.speed || 0),
-              heading: calculatedHeading,
+              heading: smoothHeading,
             });
           }
         }
@@ -1879,6 +2065,13 @@ export function Home() {
         scaleBarEnabled={false}
         attributionEnabled={false}
         onDidFinishLoadingMap={() => setIsMapReady(true)}
+        onCameraChanged={(state: any) => {
+          const camHeading = Number(state?.properties?.heading);
+          if (!isNaN(camHeading)) {
+            const rounded = Math.round((camHeading + 360) % 360);
+            setMapCameraHeading((prev) => (Math.abs(prev - rounded) >= 2 ? rounded : prev));
+          }
+        }}
       >
         <Mapbox.Camera
           ref={cameraRef}
@@ -1908,46 +2101,45 @@ export function Home() {
           </Mapbox.ShapeSource>
         )}
 
-        {/* 🏎️ MARCADOR VEICULAR 3D */}
-        {isOnline && location?.coords && (
-          <Mapbox.PointAnnotation 
-            key={`driver-car-${driver?.id || 'active'}`}
-            id="car-location" 
-            coordinate={[
-              Number(location.coords.longitude || 0), 
-              Number(location.coords.latitude || 0)
-            ]}
-            anchor={{ x: 0.5, y: 0.5 }}
-          >
-            <View style={styles.vehicle3DContainer}>
-              <View 
-                style={[
-                  styles.vehicle3DRotator,
-                  { 
-                    transform: [
-                      { 
-                        rotate: `${Math.round(
-                          Number(lastDriverCoordsRef.current?.heading) || 
-                          Number(location.coords.heading) || 0
-                        )}deg` 
-                      }
-                    ]
-                  }
-                ]}
-              >
-                <Image
-                  source={getVehicle3DIconAsset(
-                    (driver as any)?.vehicleType || incomingRide?.vehicleType || 'PARTICULAR',
-                    (driver as any)?.carColor || (driver as any)?.vehicleColor || 'BRANCO'
-                  )}
-                  style={styles.vehicle3DImage}
-                  fadeDuration={0}
-                  resizeMode="contain"
-                />
+        {/* 🏎️ MARCADOR VEICULAR 3D ALINHADO COM A ROTA */}
+        {isOnline && (snappedCarPos || location?.coords) && (() => {
+          const carLat = Number(snappedCarPos?.latitude ?? location?.coords.latitude ?? 0);
+          const carLng = Number(snappedCarPos?.longitude ?? location?.coords.longitude ?? 0);
+          const worldHeading = Number(snappedCarPos?.heading ?? lastDriverCoordsRef.current?.heading ?? location?.coords.heading ?? 0);
+          const screenRelativeRotation = Math.round((worldHeading - mapCameraHeading + 360) % 360);
+
+          return (
+            <Mapbox.PointAnnotation 
+              key={`driver-car-${driver?.id || 'active'}`}
+              id="car-location" 
+              coordinate={[carLng, carLat]}
+              anchor={{ x: 0.5, y: 0.5 }}
+            >
+              <View style={styles.vehicle3DContainer}>
+                <View 
+                  style={[
+                    styles.vehicle3DRotator,
+                    { 
+                      transform: [
+                        { rotate: `${screenRelativeRotation}deg` }
+                      ]
+                    }
+                  ]}
+                >
+                  <Image
+                    source={getVehicle3DIconAsset(
+                      (driver as any)?.vehicleType || incomingRide?.vehicleType || 'PARTICULAR',
+                      (driver as any)?.carColor || (driver as any)?.vehicleColor || 'BRANCO'
+                    )}
+                    style={styles.vehicle3DImage}
+                    fadeDuration={0}
+                    resizeMode="contain"
+                  />
+                </View>
               </View>
-            </View>
-          </Mapbox.PointAnnotation>
-        )}
+            </Mapbox.PointAnnotation>
+          );
+        })()}
 
         {/* 🛣️ LINHA DA ROTA */}
         {routeCoordinates && routeCoordinates.length > 0 && (

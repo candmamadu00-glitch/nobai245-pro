@@ -16,6 +16,38 @@ const CREOLE_AUDIO_MAP: Record<string, any> = {
   new_ride: require('../../assets/audio/crioulo/new_ride.mp3'),
 };
 
+function resolveCreoleAsset(actionKey: string, text: string) {
+  if (CREOLE_AUDIO_MAP[actionKey]) {
+    return CREOLE_AUDIO_MAP[actionKey];
+  }
+
+  const normalized = (text || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  if (normalized.includes('esquerda') || normalized.includes('skerda')) {
+    return CREOLE_AUDIO_MAP.turn_left;
+  }
+  if (normalized.includes('direita') || normalized.includes('direta')) {
+    return CREOLE_AUDIO_MAP.turn_right;
+  }
+  if (normalized.includes('100m') || normalized.includes('100 metros') || normalized.includes('cem metros')) {
+    return CREOLE_AUDIO_MAP.in_100m;
+  }
+  if (normalized.includes('passageiro') || normalized.includes('embarque') || normalized.includes('buscar')) {
+    return CREOLE_AUDIO_MAP.arrived_pickup;
+  }
+  if (normalized.includes('destino') || normalized.includes('distinu') || normalized.includes('tchega')) {
+    return CREOLE_AUDIO_MAP.arrived_dest;
+  }
+  if (normalized.includes('frente') || normalized.includes('reto') || normalized.includes('siga') || normalized.includes('continue')) {
+    return CREOLE_AUDIO_MAP.go_straight;
+  }
+
+  return null;
+}
+
 async function ensurePlaybackAudioMode() {
   try {
     if (typeof (AudioModule as any)?.setAudioModeAsync === 'function') {
@@ -30,16 +62,45 @@ async function ensurePlaybackAudioMode() {
 export function useBilingualVoice() {
   const playerRef = useRef<any>(null);
   const lastSpokenRef = useRef<{ text: string; time: number }>({ text: '', time: 0 });
+  const spokenKeysRef = useRef(new Map() as Map<string, number>);
+  const sessionTokenRef = useRef<number>(0);
+
+  const stopVoice = useCallback(() => {
+    sessionTokenRef.current += 1;
+    try { Speech.stop(); } catch {}
+    if (playerRef.current) {
+      try { playerRef.current.pause(); } catch {}
+      try { playerRef.current.remove?.(); } catch {}
+      playerRef.current = null;
+    }
+  }, []);
+
+  const resetVoiceHistory = useCallback(() => {
+    spokenKeysRef.current.clear();
+    lastSpokenRef.current = { text: '', time: 0 };
+  }, []);
 
   const speakInstruction = useCallback(async (
     actionKey: string,
     ptText: string,
-    forcedMode?: VoiceMode
+    forcedMode?: VoiceMode,
+    dedupeKey?: string
   ) => {
     try {
+      const cleanText = (ptText || '').trim();
+      if (!cleanText) return;
+
       const now = Date.now();
 
-      if (lastSpokenRef.current.text === ptText && (now - lastSpokenRef.current.time) < 8000) {
+      if (dedupeKey) {
+        const prevTime = spokenKeysRef.current.get(dedupeKey);
+        if (prevTime && (now - prevTime) < 120000) {
+          return;
+        }
+      }
+
+      const normalizedCompare = cleanText.toLowerCase();
+      if (lastSpokenRef.current.text === normalizedCompare && (now - lastSpokenRef.current.time) < 25000) {
         return;
       }
 
@@ -48,24 +109,25 @@ export function useBilingualVoice() {
 
       if (mode === 'OFF') return;
 
-      lastSpokenRef.current = { text: ptText, time: now };
+      if (dedupeKey) {
+        spokenKeysRef.current.set(dedupeKey, now);
+      }
+      lastSpokenRef.current = { text: normalizedCompare, time: now };
+
+      stopVoice();
+      const currentToken = sessionTokenRef.current;
 
       await ensurePlaybackAudioMode();
-
-      try { Speech.stop(); } catch {}
-
-      if (playerRef.current) {
-        try { playerRef.current.pause(); } catch {}
-        try { playerRef.current.remove?.(); } catch {}
-        playerRef.current = null;
-      }
+      if (sessionTokenRef.current !== currentToken) return;
 
       const playCreoleMp3 = async () => {
-        const asset = CREOLE_AUDIO_MAP[actionKey];
+        if (sessionTokenRef.current !== currentToken) return;
+        const asset = resolveCreoleAsset(actionKey, cleanText);
         if (!asset) return;
 
         try {
           await ensurePlaybackAudioMode();
+          if (sessionTokenRef.current !== currentToken) return;
           const player = createAudioPlayer(asset);
           playerRef.current = player;
           player.play();
@@ -75,7 +137,7 @@ export function useBilingualVoice() {
       };
 
       if (mode === 'PT') {
-        Speech.speak(ptText, { language: 'pt-PT', rate: 0.96, pitch: 1.0 });
+        Speech.speak(cleanText, { language: 'pt-PT', rate: 0.98, pitch: 1.0 });
         return;
       }
 
@@ -85,18 +147,26 @@ export function useBilingualVoice() {
       }
 
       if (mode === 'BOTH') {
-        Speech.speak(ptText, {
+        Speech.speak(cleanText, {
           language: 'pt-PT',
           rate: 1.0,
           pitch: 1.0,
-          onDone: () => { playCreoleMp3(); },
-          onError: () => { playCreoleMp3(); },
+          onDone: () => {
+            if (sessionTokenRef.current === currentToken) {
+              playCreoleMp3();
+            }
+          },
+          onError: () => {
+            if (sessionTokenRef.current === currentToken) {
+              playCreoleMp3();
+            }
+          },
         });
       }
     } catch (err) {
       console.warn('⚠️ [VOZ LOG] Erro na voz:', err);
     }
-  }, []);
+  }, [stopVoice]);
 
-  return { speakInstruction };
+  return { speakInstruction, resetVoiceHistory, stopVoice };
 }
