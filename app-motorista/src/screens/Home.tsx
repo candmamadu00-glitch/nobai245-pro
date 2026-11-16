@@ -127,15 +127,22 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) =>
         } catch (e) {}
       };
 
-      if (socket && socket.connected) {
-        socket.emit('driver:location_update', payload);
-      } else {
-        sendFallbackHttp(payload, token);
+      const nowTask = Date.now();
+      if (nowTask - lastSocketLocationEmitAt >= 3000) {
+        lastSocketLocationEmitAt = nowTask;
+        if (socket && socket.connected) {
+          socket.emit('driver:location_update', payload);
+        } else {
+          sendFallbackHttp(payload, token);
+        }
       }
     } catch (err) {}
   }
 });
- 
+
+let lastSocketLocationEmitAt = 0;
+let lastDriverOnlineEmitAt = 0;
+
 export type RideState = 'idle' | 'searching' | 'accepted' | 'arrived' | 'in_progress' | 'completed';
 
 export interface IncomingRideData {
@@ -524,7 +531,11 @@ export function Home() {
     } catch (err) {}
   };
 
+  const lastActiveRideSyncRef = useRef<number>(0);
   const syncActiveRideWithServer = useCallback(async () => {
+    const nowSync = Date.now();
+    if (nowSync - lastActiveRideSyncRef.current < 2500) return;
+    lastActiveRideSyncRef.current = nowSync;
     try {
       if (!api || typeof api.get !== 'function') return;
       const response = await api.get('/drivers/active-ride').catch(() => null);
@@ -1088,15 +1099,19 @@ export function Home() {
         }
 
         if ((activeRideId || incomingRide?.rideId) && driver?.id && location?.coords && socket?.connected) {
-          socket.emit('driver:location_update', {
-            rideId: activeRideId || incomingRide?.rideId,
-            driverId: driver.id,
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
-            speed: location.coords.speed || 0,
-            heading: location.coords.heading || 0,
-            durationMinutes: eta
-          });
+          const nowRouteEmit = Date.now();
+          if (nowRouteEmit - lastSocketLocationEmitAt >= 3000) {
+            lastSocketLocationEmitAt = nowRouteEmit;
+            socket.emit('driver:location_update', {
+              rideId: activeRideId || incomingRide?.rideId,
+              driverId: driver.id,
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude,
+              speed: location.coords.speed || 0,
+              heading: location.coords.heading || 0,
+              durationMinutes: eta
+            });
+          }
         }
       }
     } catch (err) {
@@ -1442,11 +1457,15 @@ export function Home() {
         }
 
         if (isOnlineRef.current && location?.coords) {
-          socket.emit('driver:online', {
-            driverId: driver.id,
-            lat: location.coords.latitude,
-            lng: location.coords.longitude
-          });
+          const nowOnline = Date.now();
+          if (nowOnline - lastDriverOnlineEmitAt >= 3000) {
+            lastDriverOnlineEmitAt = nowOnline;
+            socket.emit('driver:online', {
+              driverId: driver.id,
+              lat: location.coords.latitude,
+              lng: location.coords.longitude
+            });
+          }
         }
       }
     };
@@ -1545,11 +1564,15 @@ export function Home() {
         }
 
         if (isOnlineRef.current && driver?.id && location?.coords) {
-          socket.emit('driver:online', {
-            driverId: driver.id,
-            lat: location.coords.latitude,
-            lng: location.coords.longitude
-          });
+          const nowOnline = Date.now();
+          if (nowOnline - lastDriverOnlineEmitAt >= 3000) {
+            lastDriverOnlineEmitAt = nowOnline;
+            socket.emit('driver:online', {
+              driverId: driver.id,
+              lat: location.coords.latitude,
+              lng: location.coords.longitude
+            });
+          }
         }
 
         await syncActiveRideWithServer();
@@ -1670,14 +1693,18 @@ export function Home() {
           updateCameraThrottled(smoothLng, smoothLat);
 
           if (driver?.id && socket?.connected) {
-            socket.emit('driver:location_update', {
-              driverId: driver.id,
-              rideId: activeRideIdRef.current || undefined,
-              latitude: smoothLat,
-              longitude: smoothLng,
-              speed: Math.max(0, newLocation.coords.speed || 0),
-              heading: smoothHeading,
-            });
+            const nowGps = Date.now();
+            if (nowGps - lastSocketLocationEmitAt >= 3000) {
+              lastSocketLocationEmitAt = nowGps;
+              socket.emit('driver:location_update', {
+                driverId: driver.id,
+                rideId: activeRideIdRef.current || undefined,
+                latitude: smoothLat,
+                longitude: smoothLng,
+                speed: Math.max(0, newLocation.coords.speed || 0),
+                heading: smoothHeading,
+              });
+            }
           }
         }
       );
@@ -1728,8 +1755,9 @@ export function Home() {
           speed: currentLoc.coords.speed || 0,
         };
 
+        lastDriverOnlineEmitAt = Date.now();
+        lastSocketLocationEmitAt = Date.now();
         socketToUse.emit('driver:online', payload);
-        socketToUse.emit('driver:location_update', payload);
       }
 
       await startTrackingForState(rideState);

@@ -14,6 +14,7 @@ let cachedDriverId: string | null = null;
 let cachedToken: string | null = null;
 let cachedRideId: string | undefined = undefined;
 let lastCacheUpdate = 0;
+let lastBgLocationEmitAt = 0;
 
 const refreshCache = async () => {
   const now = Date.now();
@@ -74,10 +75,14 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) =>
         }
       };
 
-      if (socket.connected) {
-        socket.emit('driver:location_update', payload);
-      } else {
-        sendFallbackHttp();
+      const nowBg = Date.now();
+      if (nowBg - lastBgLocationEmitAt >= 3000) {
+        lastBgLocationEmitAt = nowBg;
+        if (socket.connected) {
+          socket.emit('driver:location_update', payload);
+        } else {
+          sendFallbackHttp();
+        }
       }
     } catch (err) {
       console.error('⚠️ [BACKGROUND TASK ERR]:', err);
