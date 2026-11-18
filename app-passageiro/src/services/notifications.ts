@@ -57,19 +57,39 @@ export async function registerAndSendPushToken(accessToken?: string): Promise<st
 
     const projectId =
       Constants.expoConfig?.extra?.eas?.projectId ||
-      Constants.easConfig?.projectId;
+      Constants.easConfig?.projectId ||
+      (Constants as any).manifest2?.extra?.eas?.projectId ||
+      (Constants as any).manifest?.extra?.eas?.projectId;
 
-    if (!projectId) return null;
+    let tokenData: Notifications.ExpoPushToken | null = null;
+    try {
+      tokenData = projectId
+        ? await Notifications.getExpoPushTokenAsync({ projectId })
+        : await Notifications.getExpoPushTokenAsync();
+    } catch {
+      tokenData = await Notifications.getExpoPushTokenAsync().catch(() => null);
+    }
 
-    const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
-    const pushToken = tokenData?.data;
+    const pushToken = tokenData?.data || null;
 
     if (pushToken) {
-      await api.put(
-        '/passengers/device-token',
-        { deviceToken: pushToken },
-        accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : undefined
-      ).catch((err) => console.warn('⚠️ [PUSH] Falha ao salvar deviceToken HTTP:', err?.message));
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await api.put(
+            '/passengers/device-token',
+            { deviceToken: pushToken },
+            accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : undefined
+          );
+          await AsyncStorage.setItem('@nobai245:last_passenger_push_token', pushToken).catch(() => {});
+          break;
+        } catch (err: any) {
+          if (attempt === 3) {
+            console.warn('⚠️ [PUSH] Falha ao salvar deviceToken HTTP após 3 tentativas:', err?.message);
+          } else {
+            await new Promise((r) => setTimeout(r, attempt * 1500));
+          }
+        }
+      }
       if (socket && socket.connected) {
         socket.emit('passenger:update_device_token', { deviceToken: pushToken });
       }

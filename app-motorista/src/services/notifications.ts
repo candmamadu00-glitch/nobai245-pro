@@ -67,21 +67,41 @@ export async function registerAndSendPushToken(deviceId?: string, accessToken?: 
     if (finalStatus !== 'granted') return null;
 
     const projectId =
-      Constants.expoConfig?.extra?.eas?.projectId || Constants.easConfig?.projectId;
+      Constants.expoConfig?.extra?.eas?.projectId ||
+      Constants.easConfig?.projectId ||
+      (Constants as any).manifest2?.extra?.eas?.projectId ||
+      (Constants as any).manifest?.extra?.eas?.projectId;
 
-    if (!projectId) return null;
+    let pushTokenData: Notifications.ExpoPushToken | null = null;
+    try {
+      pushTokenData = projectId
+        ? await Notifications.getExpoPushTokenAsync({ projectId })
+        : await Notifications.getExpoPushTokenAsync();
+    } catch {
+      pushTokenData = await Notifications.getExpoPushTokenAsync().catch(() => null);
+    }
 
-    const pushTokenData = await Notifications.getExpoPushTokenAsync({ projectId });
-    const pushToken = pushTokenData?.data;
+    const pushToken = pushTokenData?.data || null;
 
     if (pushToken) {
       const currentKey = `${pushToken}:${deviceId || ''}`;
       if (lastSentPushKey === currentKey) return pushToken;
-      lastSentPushKey = currentKey;
-      await api.put('/drivers/device-token', {
-        deviceToken: pushToken,
-        deviceId,
-      }).catch(() => {});
+
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await api.put(
+            '/drivers/device-token',
+            { deviceToken: pushToken, deviceId },
+            accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : undefined
+          );
+          lastSentPushKey = currentKey;
+          break;
+        } catch {
+          if (attempt < 3) {
+            await new Promise((r) => setTimeout(r, attempt * 1500));
+          }
+        }
+      }
       return pushToken;
     }
   } catch (err) {

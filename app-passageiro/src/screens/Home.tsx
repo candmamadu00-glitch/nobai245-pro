@@ -1694,6 +1694,26 @@ const handleOpenChat = () => {
 
     initAppAndPermissions();
 
+    (async () => {
+      try {
+        const packs = await Mapbox.offlineManager.getPacks();
+        const exists = packs.some((p) => p.name === 'bissau_city_map');
+        if (!exists) {
+          await Mapbox.offlineManager.createPack(
+            {
+              name: 'bissau_city_map',
+              styleURL: Mapbox.StyleURL.Street,
+              minZoom: 11,
+              maxZoom: 16,
+              bounds: [[-15.65, 11.80], [-15.50, 11.92]],
+            },
+            () => {},
+            () => {}
+          );
+        }
+      } catch {}
+    })();
+
     // 🛡️ PASSENGER_APPSTATE_SYNC: Fecha overlays transitórios no background e reconcilia estado ao voltar
     const appStateSub = AppState.addEventListener('change', async (nextState) => {
       appStateRef.current = nextState;
@@ -1702,6 +1722,7 @@ const handleOpenChat = () => {
         setShowCancelModal(false);
       } else if (nextState === 'active') {
         getCurrentLocationWithFallback().catch(() => {});
+        registerAndSendPushToken().catch(() => {});
         if (socket && !socket.connected) {
           connectPassengerSocket().catch(() => {});
         }

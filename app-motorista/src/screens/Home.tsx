@@ -991,7 +991,7 @@ export function Home() {
         await Mapbox.offlineManager.createPack(
           {
             name: 'bissau_city_map',
-            styleURL: 'mapbox://styles/mapbox/streets-v12',
+            styleURL: Mapbox.StyleURL.Street,
             minZoom: 11,
             maxZoom: 16,
             bounds: [[-15.65, 11.80], [-15.50, 11.92]],

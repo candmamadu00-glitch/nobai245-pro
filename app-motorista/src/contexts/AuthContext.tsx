@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, useEffect, useCallback, useMemo, useRef, ReactNode } from 'react';
-import { Platform, Alert, Vibration } from 'react-native';
+import { Platform, Alert, Vibration, AppState } from 'react-native';
 import * as Device from 'expo-device';
 import { api, setUnauthorizedHandler } from '../services/api';
 import { socket, connectDriverSocket, disconnectDriverSocket } from '../services/socket';
@@ -134,11 +134,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     };
 
+    const appStateSub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        registerAndSendPushToken(deviceId).catch(() => {});
+      }
+    });
+
     socket.on('wallet:updated', handleRealtimeWalletUpdate);
     return () => {
+      appStateSub.remove();
       socket.off('wallet:updated', handleRealtimeWalletUpdate);
     };
-  }, [driver?.id, refreshDriverProfile]);
+  }, [driver?.id, deviceId, refreshDriverProfile]);
 
   async function signIn(driverData: Driver, accessToken: string, refreshToken: string) {
     setDriver(driverData);
