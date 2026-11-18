@@ -271,6 +271,70 @@ function getRouteAlignedPosition(
   return { latitude: lat, longitude: lng, bearing: rawHeading, isOnRoute: false };
 }
 
+function trimRouteFromPosition(
+  routeCoords: number[][] | null,
+  carLng: number,
+  carLat: number,
+  carHeading?: number
+): number[][] | null {
+  if (!routeCoords || routeCoords.length < 2) return routeCoords;
+  if (!Number.isFinite(carLng) || !Number.isFinite(carLat)) return routeCoords;
+
+  const cosLat = Math.cos((carLat * Math.PI) / 180);
+  let bestScore = Infinity;
+  let bestDistSq = Infinity;
+  let bestIdx = 0;
+
+  for (let i = 0; i < routeCoords.length - 1; i++) {
+    const [x1, y1] = routeCoords[i];
+    const [x2, y2] = routeCoords[i + 1];
+    if (x1 === x2 && y1 === y2) continue;
+
+    const dx = (x2 - x1) * cosLat;
+    const dy = y2 - y1;
+    const px = (carLng - x1) * cosLat;
+    const py = carLat - y1;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq === 0) continue;
+
+    const t = Math.max(0, Math.min(1, (px * dx + py * dy) / lenSq));
+    const projLng = x1 + t * (x2 - x1);
+    const projLat = y1 + t * (y2 - y1);
+
+    const errX = (carLng - projLng) * cosLat;
+    const errY = carLat - projLat;
+    const distSq = errX * errX + errY * errY;
+
+    let score = distSq;
+    if (typeof carHeading === 'number' && Number.isFinite(carHeading)) {
+      const segBearing = calculateBearing(y1, x1, y2, x2);
+      const angleDiff = Math.abs(((segBearing - carHeading + 540) % 360) - 180);
+      if (angleDiff > 110) {
+        const penaltyDeg = 25 / 111320;
+        score += penaltyDeg * penaltyDeg;
+      }
+    }
+
+    if (score < bestScore) {
+      bestScore = score;
+      bestDistSq = distSq;
+      bestIdx = i;
+    }
+  }
+
+  const distMeters = Math.sqrt(bestDistSq) * 111320;
+  if (distMeters > 45) {
+    return routeCoords;
+  }
+
+  const remaining = routeCoords.slice(bestIdx + 1);
+  if (remaining.length === 0) {
+    return routeCoords.slice(-2);
+  }
+
+  return [[carLng, carLat], ...remaining];
+}
+
 
 
 const formatCurrency = (val?: number | string | null): string => {
@@ -506,6 +570,7 @@ export function Home() {
     setFinishedRideSummary(null);
     setDriverEta(null);
     setRouteCoordinates(null);
+    setIsChatVisible(false);
     setShowCancelModal(false);
     setShowRatingModal(false);
     setShowReceiptModal(false);
@@ -551,8 +616,26 @@ export function Home() {
 
         // Só reseta se o servidor respondeu HTTP 200 confirmando que NÃO há corrida ativa
         if (!activeRide || activeRide.status === 'CANCELLED' || activeRide.status === 'COMPLETED') {
-          if (rideStateRef.current !== 'idle' || activeRideIdRef.current !== null) {
+          const prevLocalRideId = activeRideIdRef.current;
+          const lastRide = response.data.lastRide;
+          if (rideStateRef.current !== 'idle' || prevLocalRideId !== null) {
             await resetDriverState();
+            const terminalId = String(lastRide?.id || prevLocalRideId || '');
+            const isPassengerCancelled =
+              lastRide?.status === 'CANCELLED' &&
+              String(lastRide?.cancelledBy || '').toUpperCase() === 'PASSENGER';
+            if (isPassengerCancelled && terminalId) {
+              const terminalKey = '@nobai245:last_notified_terminal_ride';
+              const alreadyNotified = await AsyncStorage.getItem(terminalKey).catch(() => null);
+              if (alreadyNotified !== terminalId) {
+                await AsyncStorage.setItem(terminalKey, terminalId).catch(() => {});
+                Alert.alert(
+                  'Corrida Cancelada ⚠️',
+                  lastRide?.cancelReason || 'O passageiro cancelou a corrida.',
+                  [{ text: 'OK', style: 'default' }]
+                );
+              }
+            }
           }
           return;
         }
@@ -713,6 +796,10 @@ export function Home() {
       await resetDriverState();
 
       if (data.cancelledBy === 'PASSENGER') {
+        const cancelledId = String(data.rideId || '');
+        if (cancelledId) {
+          AsyncStorage.setItem('@nobai245:last_notified_terminal_ride', cancelledId).catch(() => {});
+        }
         Alert.alert(
           'Corrida Cancelada ⚠️',
           data.reason || 'O passageiro cancelou a corrida.',
@@ -834,19 +921,47 @@ export function Home() {
     if (nextState) speakText('Assistência de voz do motorista ativada');
   };
 
+  const announcedDriverStateKeyRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (rideState === 'idle' || !isVoiceAssistEnabled) return;
+    if (rideState === 'idle') {
+      announcedDriverStateKeyRef.current = null;
+      return;
+    }
+    if (!isVoiceAssistEnabled) return;
+
+    const rideKey = activeRideId || incomingRide?.rideId || 'active';
+    const stateDedupKey = `${rideKey}:${rideState}`;
+    if (announcedDriverStateKeyRef.current === stateDedupKey) return;
+    announcedDriverStateKeyRef.current = stateDedupKey;
+
     if (rideState === 'accepted') {
-      speakText(`Corrida aceita. Vá ao local de embarque: ${incomingRide?.originAddress || 'Endereço de partida'}.`, true);
+      const passengerName = incomingRide?.passengerName ? `de ${incomingRide.passengerName} ` : '';
+      speakText(
+        `Corrida aceita. Siga para o ponto de embarque ${passengerName}em ${incomingRide?.originAddress || 'local indicado'}.`,
+        true
+      );
       triggerHapticFeedback('NEW_OFFER');
     } else if (rideState === 'arrived') {
-      speakText('Você chegou ao local. Aguarde o passageiro ou solicite o PIN de confirmação.');
+      speakText(
+        'Você chegou ao local de embarque. Aguarde o passageiro, confirme o código PIN e lembre-o de utilizar o cinto de segurança.'
+      );
       triggerHapticFeedback('ARRIVED');
     } else if (rideState === 'in_progress') {
-      speakText(`Viagem iniciada para: ${incomingRide?.destinationAddress || 'Destino final'}.`);
+      speakText(
+        `Viagem iniciada com destino a ${incomingRide?.destinationAddress || 'destino final'}. Boa viagem e conduza com segurança.`
+      );
       triggerHapticFeedback('BUTTON_PRESS');
     }
-  }, [rideState, incomingRide?.originAddress, incomingRide?.destinationAddress, isVoiceAssistEnabled]);
+  }, [
+    rideState,
+    activeRideId,
+    incomingRide?.rideId,
+    incomingRide?.passengerName,
+    incomingRide?.originAddress,
+    incomingRide?.destinationAddress,
+    isVoiceAssistEnabled,
+  ]);
 
   useEffect(() => {
   async function setupBissauOfflineMap() {
@@ -1174,9 +1289,16 @@ export function Home() {
           );
         }
       } else {
+        const payMethod = String(incomingRide?.paymentMethod || 'CASH').toUpperCase();
+        const priceVal = Math.round(Number(incomingRide?.priceXof || 0));
+        const paymentGuidance =
+          payMethod === 'CASH'
+            ? (priceVal > 0 ? `Receba ${priceVal} francos CFA em dinheiro.` : 'Receba o valor da corrida em dinheiro.')
+            : 'Pagamento digital já confirmado pelo aplicativo.';
+
         const arrivalMsg = rideState === 'accepted'
-          ? 'Você chegou ao ponto de embarque do passageiro'
-          : 'Bu sta kuazi pa tchega na bu distinu';
+          ? 'Você está chegando ao ponto de embarque do passageiro.'
+          : `Você está chegando ao destino final. Estacione em local seguro, lembre o passageiro de conferir seus pertences e ${paymentGuidance}`;
         const arrivalKey = rideState === 'accepted' ? 'arrived_pickup' : 'arrived_dest';
         playBilingualVoice(
           arrivalKey,
@@ -1341,6 +1463,7 @@ export function Home() {
       stops: stopsArray,
     };
 
+    offerExpiresAtRef.current = Date.now() + 15000;
     setTimeLeft(15);
     setQueuedOfferData(null);
     setIncomingRide(formattedOffer);
@@ -1534,26 +1657,37 @@ export function Home() {
     };
   }, [driver?.id, resetDriverState, snapToState, syncActiveRideWithServer, handleRideCancelled]);
 
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
-    const currentOffer = queuedOfferData || (rideState === 'idle' ? incomingRide : null);
+  const offerExpiresAtRef = useRef<number | null>(null);
 
-    if (currentOffer) {
-      if (timeLeft > 0) {
-        timer = setInterval(() => {
-          if (isMountedRef.current) setTimeLeft((prev) => prev - 1);
-        }, 1000);
-      } else {
-        Vibration.cancel();
-        if (isMountedRef.current) {
-          setQueuedOfferData(null);
-          if (rideState === 'idle') setIncomingRide(null);
-          setTimeLeft(15);
-        }
-      }
+  useEffect(() => {
+    const currentOffer = queuedOfferData || (rideState === 'idle' ? incomingRide : null);
+    if (!currentOffer) {
+      offerExpiresAtRef.current = null;
+      return;
     }
+
+    if (!offerExpiresAtRef.current) {
+      offerExpiresAtRef.current = Date.now() + 15000;
+    }
+
+    const tickOfferTimer = () => {
+      if (!isMountedRef.current || !offerExpiresAtRef.current) return;
+      const remaining = Math.ceil((offerExpiresAtRef.current - Date.now()) / 1000);
+      if (remaining <= 0) {
+        offerExpiresAtRef.current = null;
+        Vibration.cancel();
+        setQueuedOfferData(null);
+        if (rideStateRef.current === 'idle') setIncomingRide(null);
+        setTimeLeft(15);
+      } else {
+        setTimeLeft(remaining);
+      }
+    };
+
+    tickOfferTimer();
+    const timer = setInterval(tickOfferTimer, 500);
     return () => clearInterval(timer);
-  }, [queuedOfferData, incomingRide, timeLeft, rideState]);
+  }, [queuedOfferData, incomingRide, rideState]);
 
   // 🛡️ RECONEXÃO ROBUSTA AO VOLTAR DE SEGUNDO PLANO
   useEffect(() => {
@@ -1891,9 +2025,15 @@ export function Home() {
   }
 
   async function handleConfirmCancel(reason: string) {
-    if (!activeRideId) return;
+    const rideToCancel = activeRideIdRef.current || activeRideId;
+    if (!rideToCancel) return;
+    setShowCancelModal(false);
+    setIsChatVisible(false);
     setIsLoading(true);
-    const rideToCancel = activeRideId;
+
+    // 🛡️ Garantia dupla idêntica ao passageiro: HTTP direto + Socket + Fila offline
+    const httpCancelPromise = api.post('/drivers/rides/cancel', { rideId: rideToCancel, reason })
+      .catch(() => api.post('/rides/cancel', { rideId: rideToCancel, reason }));
 
     if (socket && socket.connected) {
       socket.timeout(4000).emit('ride:cancel', { 
@@ -1902,11 +2042,21 @@ export function Home() {
         userType: 'DRIVER', 
         reason 
       }, async (err: any) => {
-        if (err) await saveActionToQueue('ride:cancel', { rideId: rideToCancel, userId: driver?.id, userType: 'DRIVER', reason });
+        try {
+          await httpCancelPromise;
+        } catch (httpErr) {
+          if (err) {
+            await saveActionToQueue('ride:cancel', { rideId: rideToCancel, userId: driver?.id, userType: 'DRIVER', reason });
+          }
+        }
         await resetDriverState();
       });
     } else {
-      await saveActionToQueue('ride:cancel', { rideId: rideToCancel, userId: driver?.id, userType: 'DRIVER', reason });
+      try {
+        await httpCancelPromise;
+      } catch (httpErr) {
+        await saveActionToQueue('ride:cancel', { rideId: rideToCancel, userId: driver?.id, userType: 'DRIVER', reason });
+      }
       await resetDriverState();
     }
   }
@@ -1974,22 +2124,54 @@ export function Home() {
       setShowReceiptModal(true);
     };
 
+    // 🛡️ FINALIZAÇÃO ENTERPRISE INSTANTÂNEA: Dispara HTTP e Socket em paralelo para o passageiro receber na hora
+    const httpFinishPromise = api.post(`/drivers/rides/${rideToFinish}/finish`, {
+      finalLat: fallbackLat,
+      finalLng: fallbackLng,
+    }).catch(() =>
+      api.post(`/rides/${rideToFinish}/finish`, {
+        finalLat: fallbackLat,
+        finalLng: fallbackLng,
+      })
+    );
+
     if (socket && socket.connected) {
-      socket.timeout(6000).emit('driver:finish_ride', payload, async (err: any, response: any) => {
+      socket.timeout(5000).emit('driver:finish_ride', payload, async (err: any, response: any) => {
         if (!isMountedRef.current) return;
-        if (err) {
-          await saveActionToQueue('driver:finish_ride', payload);
-          openReceipt();
-          return;
-        }
-        if (response?.error) {
+        if (response?.error && !String(response?.message || '').includes('RIDE_FINISHED')) {
+          try {
+            const httpRes = await httpFinishPromise;
+            if (httpRes?.data?.success) {
+              openReceipt(httpRes.data.data);
+              return;
+            }
+          } catch {}
           setIsLoading(false);
           Alert.alert('Aviso ao Finalizar', response.message || 'Não foi possível concluir a corrida.');
+          return;
+        }
+        if (err) {
+          try {
+            const httpRes = await httpFinishPromise;
+            if (httpRes?.data?.success) {
+              openReceipt(httpRes.data.data);
+              return;
+            }
+          } catch {}
+          await saveActionToQueue('driver:finish_ride', payload);
+          openReceipt();
           return;
         }
         openReceipt(response);
       });
     } else {
+      try {
+        const httpRes = await httpFinishPromise;
+        if (httpRes?.data?.success) {
+          openReceipt(httpRes.data.data);
+          return;
+        }
+      } catch {}
       await saveActionToQueue('driver:finish_ride', payload);
       openReceipt();
     }
@@ -2009,16 +2191,22 @@ export function Home() {
 
   function handleSubmitRating(stars: number, tags: string[], comment: string) {
     const rideToRate = finishedRideId || activeRideId;
-    if (rideToRate && incomingRide && socket && socket.connected) {
-      socket.emit('ride:rate', { 
+    const passengerTargetId = incomingRide?.passengerId || (incomingRide as any)?.passenger?.id;
+    if (rideToRate && passengerTargetId && driver?.id) {
+      const ratingPayload = { 
         rideId: rideToRate, 
-        reviewerId: driver?.id, 
+        reviewerId: driver.id, 
         reviewerType: 'DRIVER', 
-        receiverId: incomingRide.passengerId, 
+        receiverId: passengerTargetId, 
         stars, 
         tags, 
         comment 
-      });
+      };
+      if (socket && socket.connected) {
+        socket.emit('ride:rate', ratingPayload);
+      }
+      api.post('/drivers/rides/rate', ratingPayload)
+        .catch(() => api.post('/rides/rate', ratingPayload).catch(() => {}));
     }
     setShowRatingModal(false);
     setFinishedRideId(null);
@@ -2079,6 +2267,22 @@ export function Home() {
       status: s.status || 'PENDING'
     }));
   }, [activeOffer?.stops, activeOffer?.extraStopReferencePoint, incomingRide?.stops, incomingRide?.extraStopReferencePoint]);
+
+  const displayedRouteCoordinates = useMemo(() => {
+    if (!routeCoordinates || routeCoordinates.length < 2) return routeCoordinates;
+    const carLat = Number(snappedCarPos?.latitude ?? location?.coords?.latitude);
+    const carLng = Number(snappedCarPos?.longitude ?? location?.coords?.longitude);
+    const carHeading = Number(snappedCarPos?.heading ?? location?.coords?.heading);
+    return trimRouteFromPosition(routeCoordinates, carLng, carLat, carHeading);
+  }, [
+    routeCoordinates,
+    snappedCarPos?.latitude,
+    snappedCarPos?.longitude,
+    snappedCarPos?.heading,
+    location?.coords?.latitude,
+    location?.coords?.longitude,
+    location?.coords?.heading,
+  ]);
 
   return (
     <View style={styles.container}>
@@ -2170,13 +2374,13 @@ export function Home() {
         })()}
 
         {/* 🛣️ LINHA DA ROTA */}
-        {routeCoordinates && routeCoordinates.length > 0 && (
+        {displayedRouteCoordinates && displayedRouteCoordinates.length > 0 && (
           <Mapbox.ShapeSource 
             id="routeSource" 
             shape={{ 
               type: 'Feature', 
               properties: {}, 
-              geometry: { type: 'LineString', coordinates: routeCoordinates } 
+              geometry: { type: 'LineString', coordinates: displayedRouteCoordinates } 
             }}
           >
             <Mapbox.LineLayer 

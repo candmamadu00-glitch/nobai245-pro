@@ -1,0 +1,36 @@
+{
+    email {$ACME_EMAIL:admin@nobai245.com}
+}
+
+{$API_DOMAIN:api.nobai245.com} {
+    encode gzip zstd
+
+    request_body {
+        max_size 50MB
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    reverse_proxy nobai245-api:3333 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}
+
+{$ADMIN_DOMAIN:admin.nobai245.com} {
+    encode gzip zstd
+
+    header {
+        -Server
+    }
+
+    reverse_proxy nobai245-web-admin:80 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}

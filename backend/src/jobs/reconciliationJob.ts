@@ -417,6 +417,17 @@ export const startCronJobs = (): void => {
               },
             });
 
+            await tx.paymentIntent.updateMany({
+              where: {
+                rideId: ride.id,
+                status: 'PENDING',
+              },
+              data: {
+                status: 'FAILED',
+                failureReason: 'Tempo limite do PIN expirou',
+              },
+            }).catch(() => null);
+
             return true;
           });
 

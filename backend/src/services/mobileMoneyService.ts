@@ -630,23 +630,44 @@ export async function processWebhookConfirmation(
     }
 
     if (status === 'FAILED') {
-      await tx.paymentIntent.update({
-        where: { id: intent.id },
+      const failClaim = await tx.paymentIntent.updateMany({
+        where: {
+          id: intent.id,
+          status: { notIn: [PaymentIntentStatus.SUCCESS, PaymentIntentStatus.FAILED] }
+        },
         data: { status: PaymentIntentStatus.FAILED, failureReason: 'Recusado pelo cliente', rawResponse: rawPayload }
       });
 
+      if (failClaim.count === 0) {
+        return {
+          alreadyProcessed: true,
+          duplicated: true,
+          rideId: intent.rideId,
+          passengerId: intent.passengerId,
+          driverId: intent.driverId,
+          userType: intent.userType
+        };
+      }
+
       if (intent.transactionId) {
-        await tx.transaction.update({
-          where: { id: intent.transactionId },
+        await tx.transaction.updateMany({
+          where: { id: intent.transactionId, status: { not: TransactionStatus.COMPLETED } },
           data: { status: TransactionStatus.FAILED, failureReason: 'Pagamento recusado ou expirado na operadora' }
         }).catch(() => null);
       }
 
       if (intent.rideId) {
-        await tx.ride.update({
-          where: { id: intent.rideId },
-          data: { status: RideStatus.CANCELLED, cancellationReason: 'Pagamento recusado no Mobile Money' }
+        await tx.ride.updateMany({
+          where: { id: intent.rideId, status: RideStatus.AWAITING_PAYMENT },
+          data: { status: RideStatus.CANCELLED, cancellationReason: 'Pagamento recusado no Mobile Money', version: { increment: 1 } }
         }).catch(() => null);
+
+        if (intent.passengerId) {
+          await tx.passenger.updateMany({
+            where: { id: intent.passengerId, currentRideId: intent.rideId },
+            data: { currentRideId: null }
+          }).catch(() => null);
+        }
       }
 
       return {
@@ -659,10 +680,25 @@ export async function processWebhookConfirmation(
       };
     }
 
-    await tx.paymentIntent.update({
-      where: { id: intent.id },
+    // 🛡️ COMPARE-AND-SWAP ATÔMICO: Garante execução única mesmo com retries concorrentes
+    const successClaim = await tx.paymentIntent.updateMany({
+      where: {
+        id: intent.id,
+        status: { notIn: [PaymentIntentStatus.SUCCESS, PaymentIntentStatus.FAILED] }
+      },
       data: { status: PaymentIntentStatus.SUCCESS, rawResponse: rawPayload }
     });
+
+    if (successClaim.count === 0) {
+      return {
+        alreadyProcessed: true,
+        duplicated: true,
+        rideId: intent.rideId,
+        passengerId: intent.passengerId,
+        driverId: intent.driverId,
+        userType: intent.userType
+      };
+    }
 
     const amountNum = Number(intent.amount || 0);
     const paymentMethodEnum = intent.provider === MobileMoneyProvider.MTN_MOMO
@@ -670,26 +706,72 @@ export async function processWebhookConfirmation(
       : PaymentMethod.ORANGE_MONEY;
 
     // -------------------------------------------------------------------------
-    // CASO A: PAGAMENTO DE CORRIDA (ESCROW)
+    // CASO A: PAGAMENTO DE CORRIDA (ESCROW OU ESTORNO SE EXPIRADA)
     // -------------------------------------------------------------------------
     if (intent.rideId) {
+      const rideActivation = await tx.ride.updateMany({
+        where: { id: intent.rideId, status: RideStatus.AWAITING_PAYMENT },
+        data: { status: RideStatus.SEARCHING, version: { increment: 1 } }
+      });
+
+      const isLatePayment = rideActivation.count === 0;
+
       const transaction = await tx.transaction.create({
         data: {
           rideId: intent.rideId,
           passengerId: intent.passengerId,
           type: TransactionType.RIDE_PAYMENT,
-          status: TransactionStatus.HELD_IN_ESCROW,
+          status: isLatePayment ? TransactionStatus.REVERSED : TransactionStatus.HELD_IN_ESCROW,
           amount: intent.amount,
           reference: transactionId,
           externalRef: providerRef,
-          paymentMethod: paymentMethodEnum
+          idempotencyKey: `ride-pay-${intent.id}`,
+          paymentMethod: paymentMethodEnum,
+          description: isLatePayment
+            ? 'Pagamento confirmado após cancelamento da corrida (estorno automático)'
+            : 'Pagamento de corrida retido em escrow'
         }
       });
 
-      await tx.ride.update({
-        where: { id: intent.rideId },
-        data: { status: RideStatus.SEARCHING }
-      }).catch(() => null);
+      if (isLatePayment) {
+        const refundTx = await tx.transaction.create({
+          data: {
+            rideId: intent.rideId,
+            passengerId: intent.passengerId,
+            type: TransactionType.REFUND,
+            status: TransactionStatus.PENDING,
+            amount: intent.amount,
+            paymentMethod: paymentMethodEnum,
+            reference: `REFUND-LATE-${intent.rideId.slice(0, 8)}-${Date.now()}`,
+            idempotencyKey: `refund-late-${intent.id}`,
+            description: 'Estorno automático: pagamento aprovado após expiração da corrida'
+          }
+        });
+
+        await tx.outboxEvent.create({
+          data: {
+            eventType: 'PROCESS_REFUND',
+            payload: {
+              transactionId: refundTx.id,
+              rideId: intent.rideId,
+              passengerId: intent.passengerId,
+              phone: intent.phone,
+              amountXOF: amountNum,
+              provider: paymentMethodEnum,
+              originalRef: providerRef
+            }
+          }
+        });
+
+        return {
+          success: true,
+          status: 'REFUND_QUEUED_LATE_PAYMENT',
+          passengerId: intent.passengerId,
+          rideId: intent.rideId,
+          transactionId: transaction.id,
+          refundTransactionId: refundTx.id
+        };
+      }
 
       return { 
         success: true, 

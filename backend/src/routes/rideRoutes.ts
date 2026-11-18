@@ -12,7 +12,9 @@ import {
   cancelRide, 
   getRideChatHistory, 
   uploadChatAudio,
-  rateRide
+  rateRide,
+  getPassengerActiveRide,
+  getDriverActiveRide
 } from '../controllers/rideController';
 
 const rideRoutes = Router();
@@ -20,6 +22,7 @@ const rideRoutes = Router();
 // -----------------------------------------------------------------------------
 // ROTAS DE PASSAGEIRO
 // -----------------------------------------------------------------------------
+rideRoutes.get('/active', authenticate, (req: any, res: any) => req.user?.role === 'DRIVER' ? getDriverActiveRide(req, res) : getPassengerActiveRide(req, res));
 rideRoutes.post('/request', authenticate, authorizeRole(['PASSENGER']), requestRide);
 rideRoutes.get('/:rideId/payment-status', authenticate, getRidePaymentStatus);
 rideRoutes.post('/estimate', authenticate, estimateRidePrice);

@@ -9,11 +9,36 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Socket } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
-import { AudioModule, RecordingPresets, useAudioRecorder, createAudioPlayer, setAudioModeAsync, setIsAudioActiveAsync } from 'expo-audio';
+import { AudioModule, RecordingPresets, useAudioRecorder, useAudioPlayer, useAudioPlayerStatus, setAudioModeAsync, setIsAudioActiveAsync } from 'expo-audio';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystemLegacy from 'expo-file-system/legacy';
 const FileSystem: any = FileSystemLegacy;
 import { api } from '../services/api';
+
+const VOICE_RECORDING_PRESET = {
+  ...RecordingPresets.HIGH_QUALITY,
+  extension: '.m4a',
+  sampleRate: 22050,
+  numberOfChannels: 1,
+  bitRate: 64000,
+  android: {
+    ...(RecordingPresets.HIGH_QUALITY?.android || {}),
+    extension: '.m4a',
+    outputFormat: 'mpeg4' as const,
+    audioEncoder: 'aac' as const,
+    sampleRate: 22050,
+  },
+  ios: {
+    ...(RecordingPresets.HIGH_QUALITY?.ios || {}),
+    extension: '.m4a',
+    outputFormat: 'aac ' as const,
+    audioQuality: 64,
+    sampleRate: 22050,
+    linearPCMBitDepth: 16,
+    linearPCMIsBigEndian: false,
+    linearPCMIsFloat: false,
+  },
+};
 
 export interface ChatMessage {
   id: string;
@@ -167,7 +192,9 @@ export function ChatModal({
   const [inputText, setInputText] = useState('');
   const [hasRenderError, setHasRenderError] = useState(false);
 
-  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const audioRecorder = useAudioRecorder(VOICE_RECORDING_PRESET);
+  const chatPlayer = useAudioPlayer(null, { updateInterval: 150 });
+  const playerStatus = useAudioPlayerStatus(chatPlayer);
 
   const [isRecording, setIsRecording] = useState(false);
   const [recordDuration, setRecordDuration] = useState(0);
@@ -193,13 +220,20 @@ export function ChatModal({
   }, [socket]);
 
   const stopActivePlayer = useCallback(() => {
+    try {
+      if (chatPlayer) {
+        chatPlayer.pause();
+        chatPlayer.seekTo(0);
+      }
+    } catch {}
     if (activePlayerRef.current) {
-      try { activePlayerRef.current.pause(); } catch {}
+      try { activePlayerRef.current.pause?.(); } catch {}
+      try { activePlayerRef.current.release?.(); } catch {}
       try { activePlayerRef.current.remove?.(); } catch {}
       activePlayerRef.current = null;
     }
     setPlayingAudioId(null);
-  }, []);
+  }, [chatPlayer]);
 
   useEffect(() => {
     if (!rideId) setMessages([]);
@@ -221,6 +255,14 @@ export function ChatModal({
       }
     };
   }, [stopActivePlayer]);
+
+  useEffect(() => {
+    if (!playingAudioId) return;
+    if (playerStatus?.didJustFinish || playerStatus?.error) {
+      setPlayingAudioId(null);
+      try { chatPlayer?.seekTo(0); } catch {}
+    }
+  }, [playerStatus?.didJustFinish, playerStatus?.error, playingAudioId, chatPlayer]);
 
   useEffect(() => {
     if (visible && rideId) {
@@ -254,16 +296,23 @@ export function ChatModal({
                   : [];
 
             if (rawList.length > 0) {
-              const history: ChatMessage[] = rawList.map((msg: any) => ({
-                id: String(msg.id || ('hist-' + Math.random().toString(36).substring(2, 7))),
-                clientTempId: msg.clientTempId ? String(msg.clientTempId) : undefined,
-                sender: (msg.senderType === 'PASSENGER' || msg.sender === 'passenger' || msg.senderRole === 'passenger') ? 'passenger' : 'driver',
-                text: msg.message || msg.text || '',
-                audioUrl: msg.audioUrl || msg.audio || msg.fileUrl || (typeof msg.message === 'string' && msg.message.startsWith('[AUDIO]') ? msg.message.replace('[AUDIO]', '').split('|')[0] : null),
-                audioDuration: Number(msg.audioDuration || msg.duration || 0),
-                senderPhoto: formatPhotoUrl(msg.senderPhoto || msg.userPhoto),
-                createdAt: msg.createdAt || new Date().toISOString(),
-              }));
+              const history: ChatMessage[] = rawList.map((msg: any) => {
+                const rawMsgStr = typeof msg.message === 'string' ? msg.message : '';
+                const isLegacyAudio = rawMsgStr.startsWith('[AUDIO]');
+                const audioParts = isLegacyAudio ? rawMsgStr.replace('[AUDIO]', '').split('|') : [];
+                const parsedAudioUrl = msg.audioUrl || msg.audio || msg.fileUrl || (isLegacyAudio ? audioParts[0] : null);
+                const parsedDuration = Number(msg.audioDuration || msg.duration || (isLegacyAudio && audioParts[1] ? audioParts[1] : 0)) || 0;
+                return {
+                  id: String(msg.id || ('hist-' + Math.random().toString(36).substring(2, 7))),
+                  clientTempId: msg.clientTempId ? String(msg.clientTempId) : undefined,
+                  sender: (msg.senderType === 'PASSENGER' || msg.sender === 'passenger' || msg.senderRole === 'passenger') ? 'passenger' : 'driver',
+                  text: parsedAudioUrl ? '' : (rawMsgStr || msg.text || ''),
+                  audioUrl: parsedAudioUrl,
+                  audioDuration: parsedDuration,
+                  senderPhoto: formatPhotoUrl(msg.senderPhoto || msg.userPhoto),
+                  createdAt: msg.createdAt || new Date().toISOString(),
+                };
+              });
 
               setMessages((prev) => {
                 const next = [...prev];
@@ -430,19 +479,60 @@ export function ChatModal({
 
       setMessages((prev) => (isDuplicateMessage(prev, newMsg) ? prev : [...prev, newMsg]));
 
-      safeEmit('chat:send_message', {
-        rideId,
-        audioUrl: audioPayload,
-        audio: audioPayload,
-        audioDuration: durationSec,
-        duration: durationSec,
-        id: uniqueId,
-        clientTempId: uniqueId,
-        sender: currentRole,
-        senderRole: currentRole,
-        text: '',
-        message: ''
-      });
+      if (socket && socket.connected) {
+        safeEmit('chat:send_message', {
+          rideId,
+          audioUrl: audioPayload,
+          audio: audioPayload,
+          audioDuration: durationSec,
+          duration: durationSec,
+          id: uniqueId,
+          clientTempId: uniqueId,
+          sender: currentRole,
+          senderRole: currentRole,
+          text: '',
+          message: ''
+        });
+      } else if (api && typeof api.post === 'function' && rideId) {
+        const audioForm = new FormData();
+        audioForm.append('audio', {
+          uri,
+          name: `chat_${Date.now()}.m4a`,
+          type: 'audio/m4a',
+        } as any);
+        audioForm.append('audioDuration', String(durationSec));
+        api.post(`/rides/${rideId}/chat/audio`, audioForm, {
+          headers: { 'Content-Type': 'multipart/form-data', Accept: 'application/json' },
+        }).catch(() => {
+          safeEmit('chat:send_message', {
+            rideId,
+            audioUrl: audioPayload,
+            audio: audioPayload,
+            audioDuration: durationSec,
+            duration: durationSec,
+            id: uniqueId,
+            clientTempId: uniqueId,
+            sender: currentRole,
+            senderRole: currentRole,
+            text: '',
+            message: ''
+          });
+        });
+      } else {
+        safeEmit('chat:send_message', {
+          rideId,
+          audioUrl: audioPayload,
+          audio: audioPayload,
+          audioDuration: durationSec,
+          duration: durationSec,
+          id: uniqueId,
+          clientTempId: uniqueId,
+          sender: currentRole,
+          senderRole: currentRole,
+          text: '',
+          message: ''
+        });
+      }
 
       recordDurationRef.current = 0;
       setRecordDuration(0);
@@ -523,7 +613,7 @@ export function ChatModal({
     if (!audioUrl) return;
 
     try {
-      if (playingAudioId === msgId && activePlayerRef.current) {
+      if (playingAudioId === msgId) {
         stopActivePlayer();
         return;
       }
@@ -540,48 +630,22 @@ export function ChatModal({
       }).catch(() => {});
 
       const playableUri = await getPlayableAudioUri(msgId, audioUrl);
-      const player = createAudioPlayer(
-        { uri: playableUri },
-        { updateInterval: 200, keepAudioSessionActive: true }
-      );
-      if (!player) return;
+      if (!playableUri) return;
 
-      if ('muted' in player) (player as any).muted = false;
-      if ('mute' in player) (player as any).mute = false;
-      player.volume = 1.0;
-      activePlayerRef.current = player;
-      setPlayingAudioId(msgId);
-
-      let startedPlayback = false;
-      const triggerPlay = () => {
-        if (startedPlayback || activePlayerRef.current !== player) return;
-        startedPlayback = true;
-        try {
-          if ('muted' in player) (player as any).muted = false;
-          if ('mute' in player) (player as any).mute = false;
-          player.volume = 1.0;
-          player.play();
-        } catch (playErr) {
-          console.warn('⚠️ Erro ao iniciar reprodução de áudio:', playErr);
+      if (playableUri.startsWith('file://')) {
+        const info = await FileSystem.getInfoAsync(playableUri).catch(() => null);
+        if (!info || !info.exists || (info.size ?? 0) === 0) {
+          console.warn('⚠️ Arquivo de áudio local vazio ou inexistente:', playableUri);
+          return;
         }
-      };
-
-      if (typeof player.addListener === 'function') {
-        player.addListener('playbackStatusUpdate', (status: any) => {
-          if (status?.isLoaded && !startedPlayback && !status?.didJustFinish) {
-            triggerPlay();
-          }
-          if (status?.didJustFinish || status?.error) {
-            stopActivePlayer();
-          }
-        });
       }
 
-      if (player.isLoaded) {
-        triggerPlay();
-      } else {
-        setTimeout(triggerPlay, 150);
-      }
+      setPlayingAudioId(msgId);
+      chatPlayer.replace({ uri: playableUri });
+      if ('muted' in chatPlayer) (chatPlayer as any).muted = false;
+      chatPlayer.volume = 1.0;
+      await chatPlayer.seekTo(0).catch(() => {});
+      chatPlayer.play();
     } catch (err) {
       console.warn('⚠️ Falha geral no player de áudio:', err);
       stopActivePlayer();
@@ -618,8 +682,10 @@ export function ChatModal({
     );
   }
 
+  if (!visible) return null;
+
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" transparent statusBarTranslucent onRequestClose={onClose}>
       <KeyboardAvoidingView
         style={styles.chatOverlay}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}

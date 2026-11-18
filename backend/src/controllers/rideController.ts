@@ -522,11 +522,7 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
     try {
       const io = getIo();
       if (io) {
-        const finishedPayload = { rideId: currentRide.id, fareXOF: result.fareXOF, distanceKm: result.distanceKm };
-        io.to(currentRide.id).emit('ride:finished', finishedPayload);
-        io.to(currentRide.id).emit('ride:completed', finishedPayload);
         io.to('admin_dashboard').emit('admin:ride_update', { rideId: currentRide.id, status: 'FINISHED' });
-
         const driverSockets = await io.in(driverId).fetchSockets();
         for (const s of driverSockets) {
           s.leave(currentRide.id);
@@ -537,22 +533,8 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
           }
         }
       }
-
-      if (currentRide.passenger?.deviceToken) {
-        const isDigital = result.paymentMethod === 'ORANGE_MONEY' || result.paymentMethod === 'MTN_MOMO';
-        const paymentText = isDigital
-          ? `Pagamento de ${result.fareXOF} XOF via ${result.paymentMethod === 'ORANGE_MONEY' ? 'Orange Money' : 'Telecel / MTN'} já liquidado!`
-          : `Pague ${result.fareXOF} XOF em dinheiro ao motorista.`;
-        sendPushNotification(
-          currentRide.passenger.deviceToken,
-          "🏁 Corrida Concluída!",
-          `Sua viagem foi finalizada. ${paymentText} Obrigado por viajar com o Nô Bai 245!`,
-          { type: 'RIDE_COMPLETED', rideId: currentRide.id, fareXOF: result.fareXOF, paymentMethod: result.paymentMethod },
-          PUSH_CHANNELS.RIDE_UPDATE
-        ).catch(pErr => console.warn('⚠️ [PUSH] Erro de notificação do passageiro:', pErr?.message || pErr));
-      }
     } catch (wsErr) {
-      console.warn('⚠️ [SOCKET/PUSH] Erro ao notificar fim da corrida:', wsErr);
+      console.warn('⚠️ [SOCKET] Erro ao atualizar salas do motorista:', wsErr);
     }
 
     res.json({ success: true, message: 'Corrida finalizada com sucesso!', data: result });
@@ -607,46 +589,6 @@ export const cancelRide = async (req: Request, res: Response): Promise<void> => 
     
     const cancelResult = await cancelRideLogic(currentRide.id, userId, userRole as any, cleanReason);
     const refundResult = { success: Boolean((cancelResult as any)?.refundTxId) };
-
-    try {
-      const io = getIo();
-      await safeRedis.del(`active_ride:${currentRide.id}`);
-      if (currentRide.driverId) {
-        await safeRedis.del(`driver_active_ride:${currentRide.driverId}`);
-      }
-      const cancelPayload = {
-        rideId: currentRide.id,
-        status: 'CANCELLED',
-        cancelledBy: userRole,
-        reason: cleanReason
-      };
-      if (io) {
-        io.to(currentRide.id).emit('ride:cancelled', cancelPayload);
-        if (currentRide.driverId) {
-          io.to(`driver_${currentRide.driverId}`).emit('ride:cancelled', cancelPayload);
-        }
-        io.to(`passenger_${currentRide.passengerId}`).emit('ride:cancelled', cancelPayload);
-        if (currentRide.status === 'SEARCHING') {
-          io.to('available_drivers').emit('ride:cancelled_by_passenger', { rideId: currentRide.id });
-        }
-      }
-      const fullRide = await prisma.ride.findUnique({
-        where: { id: currentRide.id },
-        include: { passenger: true, driver: true }
-      });
-      const pushToken = userRole === 'DRIVER' ? fullRide?.passenger?.deviceToken : fullRide?.driver?.deviceToken;
-      if (pushToken) {
-        sendPushNotification(
-          pushToken,
-          '⚠️ Corrida Cancelada',
-          userRole === 'DRIVER' ? 'O motorista cancelou a viagem.' : 'O passageiro cancelou a viagem.',
-          { rideId: currentRide.id, type: 'RIDE_CANCELLED' },
-          PUSH_CHANNELS.RIDE_UPDATE
-        ).catch(() => {});
-      }
-    } catch (wsErr: any) {
-      console.warn(`⚠️ [SOCKET] Falha ao notificar cancelamento: ${wsErr?.message || wsErr}`);
-    }
     
     res.json({ 
       success: true, 
@@ -754,7 +696,8 @@ export const uploadChatAudio = async (req: Request, res: Response): Promise<void
     const baseUrl = process.env.APP_URL ? process.env.APP_URL.replace(/\/$/, '') : `${req.protocol}://${req.get('host')}`;
     const safeFilename = encodeURIComponent(file.filename);
     const audioUrl = `${baseUrl}/uploads/${safeFilename}`;
-    const formattedMessage = `[AUDIO]${audioUrl}`;
+    const parsedDuration = Math.max(0, Number(req.body?.audioDuration || req.body?.duration || 0));
+    const formattedMessage = `[AUDIO]${audioUrl}|${parsedDuration}`;
 
     const chatMessage = await prisma.rideChatMessage.create({
       data: {
@@ -771,12 +714,30 @@ export const uploadChatAudio = async (req: Request, res: Response): Promise<void
       if (io) {
         const messagePayload = {
           id: chatMessage.id,
+          rideId: String(rideId),
           sender: senderType.toLowerCase(),
-          text: chatMessage.message,
+          senderType,
+          text: '',
+          message: '',
+          audioUrl,
+          audioDuration: parsedDuration,
           senderPhoto: null,
           createdAt: chatMessage.createdAt.toISOString()
         };
-        io.to(String(rideId)).emit('chat:receive_message', messagePayload);
+        const targetRooms = [
+          String(rideId),
+          `ride_${rideId}`,
+          ride.passengerId,
+          `passenger_${ride.passengerId}`,
+          ride.driverId,
+          `driver_${ride.driverId}`,
+        ].filter(Boolean) as string[];
+
+        targetRooms.forEach((room) => {
+          io.to(room).emit('chat:receive_message', messagePayload);
+          io.to(room).emit('chat:message', messagePayload);
+          io.to(room).emit('chat:new_message', messagePayload);
+        });
       }
     } catch (wsErr) {
       console.warn('⚠️ [SOCKET] Erro ao emitir mensagem de áudio:', wsErr);
@@ -875,10 +836,105 @@ export const getDriverActiveRide = async (req: any, res: any) => {
       },
     });
 
-    return res.json({ ride: activeRide || null });
+    if (activeRide) {
+      return res.json({ ride: activeRide, lastRide: null });
+    }
+
+    const lastRide = await prisma.ride.findFirst({
+      where: {
+        driverId,
+        status: { in: ['COMPLETED', 'CANCELLED'] },
+      },
+      orderBy: { updatedAt: 'desc' },
+      select: {
+        id: true,
+        status: true,
+        cancelledBy: true,
+        cancelReason: true,
+        updatedAt: true,
+      },
+    });
+
+    return res.json({ ride: null, lastRide: lastRide || null });
   } catch (error: any) {
     console.error('❌ [GET_DRIVER_ACTIVE_RIDE_ERROR]:', error?.message);
     return res.status(500).json({ error: 'Erro ao buscar corrida ativa do motorista.' });
+  }
+};
+
+// 🔄 OBTER CORRIDA ATIVA (OU TERMINAL RECENTE) DO PASSAGEIRO
+// -----------------------------------------------------------------------------
+export const getPassengerActiveRide = async (req: any, res: any) => {
+  try {
+    const passengerId = req.user?.id;
+    if (!passengerId) {
+      return res.status(401).json({ error: 'Passageiro não autenticado.' });
+    }
+
+    const driverSelect = {
+      id: true,
+      fullName: true,
+      phone: true,
+      profilePicture: true,
+      ratingAverage: true,
+      vehicleType: true,
+      vehicleBrand: true,
+      vehicleColor: true,
+      vehiclePlate: true,
+      currentLat: true,
+      currentLng: true,
+      heading: true,
+    };
+
+    const activeRide = await prisma.ride.findFirst({
+      where: {
+        passengerId,
+        status: {
+          in: ['AWAITING_PAYMENT', 'SEARCHING', 'PENDING', 'QUEUED', 'ACCEPTED', 'ARRIVED', 'IN_PROGRESS'],
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        driver: { select: driverSelect },
+      },
+    });
+
+    if (activeRide) {
+      return res.json({ ride: activeRide, lastRide: null });
+    }
+
+    // 🛡️ SEM JANELA DE EXPIRAÇÃO: Mesmo se a corrida durou dias/meses ou o passageiro saiu do app,
+    // retorna a última corrida finalizada/cancelada e informa se o passageiro já a avaliou no banco.
+    const lastRide = await prisma.ride.findFirst({
+      where: {
+        passengerId,
+        status: { in: ['COMPLETED', 'CANCELLED'] },
+      },
+      orderBy: { updatedAt: 'desc' },
+      include: {
+        driver: { select: driverSelect },
+      },
+    });
+
+    let lastRidePayload: any = lastRide || null;
+    if (lastRide) {
+      const existingPassengerRating = await prisma.rating.findUnique({
+        where: {
+          rideId_reviewerId: { rideId: lastRide.id, reviewerId: passengerId },
+        },
+        select: { id: true, stars: true },
+      });
+      lastRidePayload = {
+        ...lastRide,
+        isRated: Boolean(existingPassengerRating),
+        passengerRating: existingPassengerRating || null,
+      };
+    }
+
+    return res.json({ ride: null, lastRide: lastRidePayload });
+  } catch (error: any) {
+    console.error('❌ [GET_PASSENGER_ACTIVE_RIDE_ERROR]:', error?.message);
+    return res.status(500).json({ error: 'Erro ao buscar corrida ativa do passageiro.' });
   }
 };
 

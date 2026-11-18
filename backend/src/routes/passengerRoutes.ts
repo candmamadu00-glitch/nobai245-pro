@@ -15,7 +15,7 @@ import {
   googleSignInSchema,
   completeGoogleRegistrationSchema
 } from '../schemas/authSchemas';
-import { estimateRidePrice, getRideChatHistory, rateRide, cancelRide } from '../controllers/rideController';
+import { estimateRidePrice, getRideChatHistory, rateRide, cancelRide, getPassengerActiveRide } from '../controllers/rideController';
 
 const passengerRoutes = Router();
 const authController = new PassengerAuthController();
@@ -57,6 +57,7 @@ passengerRoutes.get('/profile', (req, res) => authController.getProfile(req, res
 passengerRoutes.put('/me', handlePassengerAvatarUpload, (req, res) => authController.updateProfile(req, res));
 passengerRoutes.get('/finance', (req, res) => authController.getFinance(req, res));
 passengerRoutes.post('/wallet/recharge', (req, res) => authController.rechargeWallet(req, res));
+passengerRoutes.get('/active-ride', (req, res) => getPassengerActiveRide(req, res));
 passengerRoutes.get('/rides', (req, res) => authController.getRideHistory(req, res));
 passengerRoutes.get('/rides/:rideId/chat', (req, res) => getRideChatHistory(req, res));
 passengerRoutes.get('/emergency-contacts', (req, res) => authController.getEmergencyContacts(req, res));

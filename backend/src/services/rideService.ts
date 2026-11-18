@@ -10,7 +10,7 @@ import {
 import axios from 'axios';
 import { prisma } from '../config/prisma';
 import { sendPushNotification, PUSH_CHANNELS } from './pushNotifications';
-import { getIo } from '../server';
+import { getIo, safeRedis } from '../server';
 import { chargePassengerMobileMoney } from './mobileMoneyService';
 import { enqueuePayoutJob, enqueueRefundJob } from '../jobs/payoutQueue';
 
@@ -48,6 +48,7 @@ export interface FinalizeRideResult {
   driverEarnings: number;
   platformFee: number;
   distanceKm: number;
+  transactionId?: string;
   paymentMethod: string;
   hasQueuedRide: boolean;
   nextRideId: string | null;
@@ -919,8 +920,22 @@ export const acceptRide = acceptRideLogic;
 // -----------------------------------------------------------------------------
 export async function driverArrivedLogic(rideId: string, driverId: string) {
   console.log(`📡 [ARRIVED_RIDE] Motorista ${driverId} informou chegada ao local na corrida ${rideId}`);
-  const ride = await prisma.ride.findUnique({ where: { id: rideId } });
+  const ride = await prisma.ride.findUnique({
+    where: { id: rideId },
+    include: {
+      passenger: {
+        select: { id: true, fullName: true, profilePicture: true, ratingAverage: true, phone: true, deviceToken: true }
+      }
+    }
+  });
   if (!ride || ride.driverId !== driverId) throw new Error('UNAUTHORIZED: Motorista não associado a esta viagem.');
+  if (ride.status === RideStatus.ARRIVED || ride.status === RideStatus.IN_PROGRESS) {
+    console.log(`ℹ️ [ARRIVED_IDEMPOTENT] Corrida ${rideId} já estava em status ${ride.status}.`);
+    return {
+      ...ride,
+      passenger: ride.passenger ? { ...ride.passenger, phone: maskPhoneNumber(ride.passenger.phone) } : null
+    };
+  }
   if (ride.status !== RideStatus.ACCEPTED) throw new Error('INVALID_STATUS: A corrida não está em estado aceito.');
 
   const updated = await prisma.$transaction(async (tx) => {
@@ -993,6 +1008,13 @@ export async function startRideLogic(rideId: string, driverId: string, otpInput:
     include: { passenger: { select: { id: true, deviceToken: true } } }
   });
   if (!ride || ride.driverId !== driverId) throw new Error('UNAUTHORIZED: Operação não autorizada.');
+  if (ride.status === RideStatus.IN_PROGRESS) {
+    console.log(`ℹ️ [START_IDEMPOTENT] Corrida ${rideId} já estava em andamento.`);
+    return ride;
+  }
+  if (ride.status === RideStatus.COMPLETED || ride.status === RideStatus.CANCELLED) {
+    throw new Error('STATE_CONFLICT: Esta corrida já foi encerrada.');
+  }
 
   const cleanOtpInput = String(otpInput || '').trim().padStart(4, '0');
   const cleanStartOtp = String(ride.startOtp || '').trim().padStart(4, '0');
@@ -1120,9 +1142,25 @@ export async function finalizeRideAndCharge(
     throw new Error('NOT_FOUND: Dados completos da corrida não localizados.');
   }
   
-  if (ride.status === RideStatus.COMPLETED || ride.status === RideStatus.CANCELLED) {
-    console.warn(`⚠️ [FINALIZE_WARN] Corrida ID ${rideId} já estava em estado final: ${ride.status}`);
-    throw new Error('RIDE_FINISHED: A corrida já foi finalizada ou cancelada anteriormente.');
+  if (ride.status === RideStatus.COMPLETED) {
+    console.log(`ℹ️ [FINALIZE_IDEMPOTENT] Corrida ID ${rideId} já foi finalizada anteriormente. Retornando recibo consolidado.`);
+    const existingDriver = await prisma.driver.findUnique({ where: { id: ride.driverId! }, select: { walletBalance: true, currentRideId: true } });
+    return {
+      success: true,
+      fareXOF: Math.round(Number(ride.priceXof || 0)),
+      driverEarnings: Math.round(Number(ride.driverEarnings || 0)),
+      platformFee: Math.round(Number(ride.platformFee || 0)),
+      distanceKm: Number(ride.distanceKm || 0),
+      paymentMethod: ride.paymentMethod,
+      hasQueuedRide: Boolean(existingDriver?.currentRideId),
+      nextRideId: existingDriver?.currentRideId || null,
+      alreadyCompleted: true,
+    } as any;
+  }
+
+  if (ride.status === RideStatus.CANCELLED) {
+    console.warn(`⚠️ [FINALIZE_WARN] Corrida ID ${rideId} já estava cancelada.`);
+    throw new Error('RIDE_CANCELLED: Esta corrida foi cancelada anteriormente.');
   }
 
   const rideFinishOtp = (ride as any).finishOtp;
@@ -1139,9 +1177,21 @@ export async function finalizeRideAndCharge(
   // 🟢 PRESERVA O VALOR E A QUILOMETRAGEM ACORDADOS NA CORRIDA PARA EVITAR DIVERGÊNCIA ENTRE APPS
   const calculatedFare = Math.round(Number(ride.priceXof || 0));
   const savedDistanceKm = Number(ride.distanceKm || 0);
-  const distanceKm = savedDistanceKm > 0
+  let distanceKm = savedDistanceKm > 0
     ? Number(savedDistanceKm.toFixed(2))
     : (await getRouteDistanceAndDuration(Number(ride.originLat), Number(ride.originLng), finalLat, finalLng)).distanceKm;
+
+  // 🛡️ PROTEÇÃO ANTI-SALTO DE GPS (SANIDADE DE DISTÂNCIA URBANA)
+  if (savedDistanceKm <= 0 && distanceKm > 0) {
+    const elapsedMinutes = ride.startedAt
+      ? Math.max(10, (Date.now() - new Date(ride.startedAt).getTime()) / 60000)
+      : 60;
+    const maxPlausibleKm = Number(((elapsedMinutes / 60) * 110).toFixed(2));
+    if (distanceKm > maxPlausibleKm) {
+      console.warn(`⚠️ [ANTI_GPS_JUMP] Distância anômala (${distanceKm} km em ${Math.round(elapsedMinutes)} min) limitada a ${maxPlausibleKm} km na corrida ${rideId}.`);
+      distanceKm = maxPlausibleKm;
+    }
+  }
   
   const tariff = await prisma.tariffConfig.findUnique({
     where: { vehicleType_serviceType: { vehicleType: ride.requestedVehicleType, serviceType: ride.serviceType } }
@@ -1377,6 +1427,7 @@ export async function finalizeRideAndCharge(
     driverEarnings, 
     platformFee, 
     distanceKm, 
+    transactionId: commissionTransactionId || `TRX-${ride.id.slice(0, 6).toUpperCase()}`,
     paymentMethod: ride.paymentMethod, 
     hasQueuedRide: !!queuedRideToPromote, 
     nextRideId: queuedRideToPromote?.id || null 
@@ -1397,6 +1448,16 @@ export async function cancelRideLogic(
   const ride = await prisma.ride.findUnique({ where: { id: rideId }, include: { passenger: true, driver: true } });
   if (!ride) throw new Error('NOT_FOUND: Corrida não encontrada.');
 
+  // 🛡️ IDEMPOTÊNCIA ENTERPRISE: Se já foi cancelada por requisição concorrente (Socket vs HTTP), retorna sucesso sem duplicar Push/Socket
+  if (ride.status === RideStatus.CANCELLED) {
+    console.log(`ℹ️ [CANCEL_IDEMPOTENT] Corrida ${rideId} já estava cancelada. Ignorando duplicata.`);
+    return { appliedPenalty: false, penaltyAmount: 0, refundTxId: null, refundAmount: 0, refundProvider: PaymentMethod.ORANGE_MONEY, alreadyCancelled: true };
+  }
+
+  if (ride.status === RideStatus.COMPLETED) {
+    throw new Error('STATE_CONFLICT: Esta viagem já foi concluída e não pode ser cancelada.');
+  }
+
   if (ride.status === RideStatus.IN_PROGRESS) {
     console.warn(`⚠️ [CANCEL_INFO] Corrida em andamento (ID: ${rideId}) cancelada por ${userType}.`);
   }
@@ -1411,6 +1472,22 @@ export async function cancelRideLogic(
 
   const cleanReason = reason || 'Sem justificativa informada';
 
+  // 🛡️ POLÍTICA ENTERPRISE DE NO-SHOW E TAXA DE CANCELAMENTO (500 XOF)
+  const NO_SHOW_FEE_XOF = 500;
+  const NO_SHOW_GRACE_MS = 2 * 60 * 1000; // 2 minutos de tolerância após chegada do motorista
+  const arrivedAtMs = ride.arrivedAt ? new Date(ride.arrivedAt).getTime() : null;
+  const waitedLongEnough = ride.status === RideStatus.ARRIVED && arrivedAtMs !== null && (Date.now() - arrivedAtMs) >= NO_SHOW_GRACE_MS;
+  const normalizedReason = cleanReason.toLowerCase();
+  const isDriverNoShowClaim =
+    userType === 'DRIVER' &&
+    (normalizedReason.includes('no-show') ||
+      normalizedReason.includes('no show') ||
+      normalizedReason.includes('não apareceu') ||
+      normalizedReason.includes('nao apareceu') ||
+      normalizedReason.includes('passageiro não compareceu') ||
+      normalizedReason.includes('passageiro nao compareceu'));
+  const shouldApplyNoShowPenalty = Boolean(ride.driverId && waitedLongEnough && (userType === 'PASSENGER' || isDriverNoShowClaim));
+
   const dbResult = await prisma.$transaction(async (tx) => {
     const updatedRide = await tx.ride.updateMany({
       where: { id: rideId, version: ride.version, status: { notIn: [RideStatus.COMPLETED, RideStatus.CANCELLED] } },
@@ -1421,17 +1498,91 @@ export async function cancelRideLogic(
       throw new Error('STATE_CONFLICT: A corrida já foi alterada por outra operação.');
     }
 
-    await (tx as any).rideEventLog.create({
-      data: {
-        rideId,
-        status: RideStatus.CANCELLED,
-        triggeredBy: userType as UserType,
-        userId,
-        metadata: { reason: cleanReason }
-      }
-    });
-
     await tx.passenger.update({ where: { id: ride.passengerId }, data: { currentRideId: null } });
+
+    let refundTxId: string | null = null;
+    let refundAmount = 0;
+    let refundProvider: PaymentMethod = PaymentMethod.ORANGE_MONEY;
+    let appliedPenalty = false;
+    let penaltyAmount = 0;
+    let driverCompensationTxId: string | null = null;
+
+    if (originalPayment) {
+      const isPaidDigital = (originalPayment.paymentMethod === PaymentMethod.ORANGE_MONEY || originalPayment.paymentMethod === PaymentMethod.MTN_MOMO) &&
+        (originalPayment.status === TransactionStatus.HELD_IN_ESCROW || originalPayment.status === TransactionStatus.COMPLETED);
+
+      if (isPaidDigital) {
+        await tx.transaction.update({ where: { id: originalPayment.id }, data: { status: TransactionStatus.REVERSED } });
+        const totalPaid = Math.round(Number(originalPayment.amount));
+        refundProvider = originalPayment.paymentMethod || PaymentMethod.ORANGE_MONEY;
+
+        if (shouldApplyNoShowPenalty && totalPaid > 0 && ride.driverId) {
+          appliedPenalty = true;
+          penaltyAmount = Math.min(NO_SHOW_FEE_XOF, totalPaid);
+          refundAmount = Math.max(0, totalPaid - penaltyAmount);
+
+          const driverRecord = await tx.driver.findUnique({
+            where: { id: ride.driverId },
+            select: { walletBalance: true }
+          });
+          const balanceBefore = Number(driverRecord?.walletBalance || 0);
+          const balanceAfter = Number((balanceBefore + penaltyAmount).toFixed(2));
+
+          await tx.driver.update({
+            where: { id: ride.driverId },
+            data: { walletBalance: balanceAfter }
+          });
+
+          const compTx = await tx.transaction.create({
+            data: {
+              rideId: ride.id,
+              driverId: ride.driverId,
+              passengerId: ride.passengerId,
+              type: TransactionType.DRIVER_PAYOUT,
+              status: TransactionStatus.COMPLETED,
+              paymentMethod: refundProvider,
+              amount: penaltyAmount,
+              balanceBefore,
+              balanceAfter,
+              reference: `NOSHOW-COMP-${ride.id.slice(0, 8)}-${Date.now()}`,
+              idempotencyKey: `noshow-comp-${ride.id}`,
+              description: `Compensação por No-Show / espera no embarque (${penaltyAmount} XOF)`
+            }
+          });
+          driverCompensationTxId = compTx.id;
+        } else {
+          refundAmount = totalPaid;
+        }
+
+        if (refundAmount > 0) {
+          const rTx = await tx.transaction.create({
+            data: {
+              rideId: ride.id,
+              passengerId: ride.passengerId,
+              type: TransactionType.REFUND,
+              status: TransactionStatus.PENDING,
+              paymentMethod: refundProvider,
+              amount: refundAmount,
+              reference: `REFUND-${ride.id.slice(0, 8)}-${Date.now()}`,
+              idempotencyKey: `refund-cancel-${ride.id}`,
+              description: appliedPenalty
+                ? `Estorno parcial pós-taxa de espera (${refundAmount} XOF de ${totalPaid} XOF)`
+                : `Estorno automático (${formatPaymentMethodLabel(refundProvider)})`
+            }
+          });
+          refundTxId = rTx.id;
+        }
+      } else {
+        await tx.transaction.update({ where: { id: originalPayment.id }, data: { status: TransactionStatus.CANCELLED } });
+        if (shouldApplyNoShowPenalty) {
+          appliedPenalty = true;
+          penaltyAmount = NO_SHOW_FEE_XOF;
+        }
+      }
+    } else if (shouldApplyNoShowPenalty) {
+      appliedPenalty = true;
+      penaltyAmount = NO_SHOW_FEE_XOF;
+    }
 
     if (ride.driverId) {
       const remainingQueuedRide = await tx.ride.findFirst({
@@ -1451,32 +1602,23 @@ export async function cancelRideLogic(
       });
     }
 
-    let refundTxId: string | null = null;
-    let refundAmount = 0;
-    let refundProvider: PaymentMethod = PaymentMethod.ORANGE_MONEY;
-
-    if (originalPayment) {
-      const isPaidDigital = (originalPayment.paymentMethod === PaymentMethod.ORANGE_MONEY || originalPayment.paymentMethod === PaymentMethod.MTN_MOMO) &&
-        (originalPayment.status === TransactionStatus.HELD_IN_ESCROW || originalPayment.status === TransactionStatus.COMPLETED);
-
-      if (isPaidDigital) {
-        await tx.transaction.update({ where: { id: originalPayment.id }, data: { status: TransactionStatus.REVERSED } });
-        refundAmount = Math.round(Number(originalPayment.amount));
-        refundProvider = originalPayment.paymentMethod || PaymentMethod.ORANGE_MONEY;
-        const rTx = await tx.transaction.create({
-          data: {
-            rideId: ride.id, passengerId: ride.passengerId, type: TransactionType.REFUND, status: TransactionStatus.PENDING,
-            paymentMethod: refundProvider, amount: refundAmount, reference: `REFUND-${ride.id.slice(0, 8)}-${Date.now()}`,
-            description: `Estorno automático (${formatPaymentMethodLabel(refundProvider)})`
-          }
-        });
-        refundTxId = rTx.id;
-      } else {
-        await tx.transaction.update({ where: { id: originalPayment.id }, data: { status: TransactionStatus.CANCELLED } });
+    await (tx as any).rideEventLog.create({
+      data: {
+        rideId,
+        status: RideStatus.CANCELLED,
+        triggeredBy: userType as UserType,
+        userId,
+        metadata: {
+          reason: cleanReason,
+          appliedPenalty,
+          penaltyAmount,
+          refundAmount,
+          driverCompensationTxId
+        }
       }
-    }
+    });
 
-    return { appliedPenalty: false, penaltyAmount: 0, refundTxId, refundAmount, refundProvider };
+    return { appliedPenalty, penaltyAmount, refundTxId, refundAmount, refundProvider, driverCompensationTxId };
   });
 
   if (dbResult.refundTxId && dbResult.refundAmount > 0) {
@@ -1489,26 +1631,43 @@ export async function cancelRideLogic(
 
   console.log(`⚠️ [RIDE_LOG_CANCEL] Corrida ID: ${rideId} cancelada por ${userType}. Motivo: ${cleanReason}`);
 
-  safeSocketEmit(`passenger_${ride.passengerId}`, 'ride:cancelled', {
+  await safeRedis.del(`active_ride:${ride.id}`).catch(() => {});
+  if (ride.driverId) {
+    await safeRedis.del(`driver_active_ride:${ride.driverId}`).catch(() => {});
+  }
+
+  const cancelPayload = {
     rideId: ride.id,
+    status: 'CANCELLED',
     cancelledBy: userType,
-    reason: cleanReason
-  });
+    reason: cleanReason,
+    appliedPenalty: Boolean(dbResult?.appliedPenalty),
+    penaltyAmount: Number(dbResult?.penaltyAmount || 0)
+  };
+
+  safeSocketEmit(ride.id, 'ride:cancelled', cancelPayload);
+  safeSocketEmit(`passenger_${ride.passengerId}`, 'ride:cancelled', cancelPayload);
+  safeSocketEmit(`passenger:${ride.passengerId}`, 'ride:cancelled', cancelPayload);
 
   if (ride.driverId) {
-    safeSocketEmit(`driver_${ride.driverId}`, 'ride:cancelled', {
-      rideId: ride.id,
-      cancelledBy: userType,
-      reason: cleanReason
-    });
+    safeSocketEmit(`driver_${ride.driverId}`, 'ride:cancelled', cancelPayload);
+    safeSocketEmit(`driver:${ride.driverId}`, 'ride:cancelled', cancelPayload);
+  }
+
+  if (ride.status === RideStatus.SEARCHING || ride.status === RideStatus.PENDING) {
+    safeSocketEmit('available_drivers', 'ride:cancelled_by_passenger', { rideId: ride.id });
   }
 
   if (userType === 'DRIVER' && ride.passenger?.deviceToken) {
+    const passengerCancelBody = dbResult.appliedPenalty
+      ? `Corrida encerrada por tempo de espera no embarque (taxa de ${dbResult.penaltyAmount} XOF aplicada).${dbResult.refundAmount > 0 ? ` Estorno de ${dbResult.refundAmount} XOF em processamento.` : ''}`
+      : `O motorista precisou cancelar a corrida. Motivo: ${cleanReason}`;
+
     sendPushNotification(
       ride.passenger.deviceToken,
-      '⚠️ Corrida Cancelada pelo Motorista',
-      `O motorista precisou cancelar a corrida. Motivo: ${cleanReason}`,
-      { type: 'RIDE_CANCELLED', rideId: ride.id },
+      dbResult.appliedPenalty ? '⚠️ Corrida Cancelada (No-Show)' : '⚠️ Corrida Cancelada pelo Motorista',
+      passengerCancelBody,
+      { type: 'RIDE_CANCELLED', rideId: ride.id, appliedPenalty: dbResult.appliedPenalty, penaltyAmount: dbResult.penaltyAmount },
       PUSH_CHANNELS.RIDE_UPDATE
     ).catch(err => console.error('❌ Erro no push de cancelamento:', err));
   }

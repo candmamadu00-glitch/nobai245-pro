@@ -41,7 +41,7 @@ const DISABLED_STATUSES = ['SUSPENDED', 'BANNED', 'REJECTED', 'INACTIVE'];
 export class DriverAuthController {
 
   // ==========================================
-  // 🔑 LOGIN DO MOTORISTA (CORRIGIDO)
+  // 🔑 LOGIN DO MOTORISTA
   // ==========================================
   async login(req: Request, res: Response): Promise<Response> {
     try {
@@ -110,9 +110,9 @@ export class DriverAuthController {
           vehiclePlate: driver.vehiclePlate,
           vehicleBrand: driver.vehicleBrand,
           vehicleType: driver.vehicleType,
-          vehicleColor: driver.vehicleColor,       // 🟢 ADICIONADO AQUI
-          documentNumber: driver.documentNumber,   // 🟢 ADICIONADO AQUI
-          documentType: driver.documentType,       // 🟢 ADICIONADO AQUI
+          vehicleColor: driver.vehicleColor,
+          documentNumber: driver.documentNumber,
+          documentType: driver.documentType,
           profilePicture: driver.profilePicture,
           walletBalance: Number(driver.walletBalance || 0),
           ratingAverage: Number(driver.ratingAverage || 5.0)
@@ -180,10 +180,9 @@ export class DriverAuthController {
   }
 
   // ==========================================
-  // 📲 1. SOLICITAR CÓDIGO OTP VIA SMS (TERMII)
+  // 📲 1. SOLICITAR CÓDIGO OTP VIA SMS PARA RECUPERAÇÃO DE SENHA
   // ==========================================
   async requestForgotPasswordOtp(req: Request, res: Response): Promise<Response> {
-
     try {
       const { phone } = req.body;
       if (!phone) {
@@ -301,7 +300,9 @@ export class DriverAuthController {
         });
       }
 
+      // 🛡️ CORREÇÃO DE SEGURANÇA: Validar OTP corretamente usando bcrypt.compare
       const isOtpValid = await bcrypt.compare(effectiveOtp, driver.otpCodeHash);
+      
       if (!isOtpValid) {
         return res.status(400).json({ 
           success: false, 
@@ -335,7 +336,7 @@ export class DriverAuthController {
   }
 
   // ==========================================
-  // 📝 REGISTRO DE MOTORISTA (CORRIGIDO)
+  // 📝 REGISTRO DE MOTORISTA
   // ==========================================
   async register(req: Request, res: Response): Promise<Response> {
     try {
@@ -346,7 +347,6 @@ export class DriverAuthController {
       const rawPhone = req.body.phone ? String(req.body.phone).trim() : '';
       const formattedPhone = formatPhoneNumber(rawPhone);
 
-      // Trata campos com valores padrão se não forem enviados na etapa inicial
       const vehiclePlate = sanitize(req.body.vehiclePlate) || `P-${Date.now().toString().slice(-6)}`;
       const documentNumber = sanitize(req.body.documentNumber) || `DOC-${Date.now().toString().slice(-6)}`;
       const cleanFullName = sanitizeText(fullName, 120);
@@ -374,8 +374,7 @@ export class DriverAuthController {
         return res.status(409).json({ success: false, error: 'Este número de telefone já está cadastrado na plataforma.' });
       }
 
-      // Validação do código SMS enviado no pré-cadastro
-      const incomingOtpCode = String(req.body.otpCode || '').trim();
+      const incomingOtpCode = String(req.body.otpCode || '').replace(/\D/g, '').trim();
       const incomingOtpToken = String(req.body.otpToken || '').trim();
 
       if (!incomingOtpCode || incomingOtpCode.length !== 6) {
@@ -403,20 +402,20 @@ export class DriverAuthController {
         return res.status(400).json({ success: false, error: 'O código SMS expirou. Volte e solicite um novo código.' });
       }
 
-      // Mapeamento flexível de arquivos do Multer (suporta múltiplos nomes de campos do frontend)
-
       const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
       
       const selfieFile = files?.['profilePicture']?.[0] || files?.['selfie']?.[0] || files?.['photo']?.[0] || (req as any).file;
       const licenseFrontFile = files?.['documentFront']?.[0] || files?.['licenseFront']?.[0] || files?.['cnhPhoto']?.[0] || files?.['document']?.[0];
       const licenseBackFile = files?.['documentBack']?.[0] || files?.['licenseBack']?.[0] || files?.['vehiclePhoto']?.[0];
 
-      // Salva o caminho relativo padrão (/uploads/nome_arquivo) garantindo compatibilidade com o servidor
       const profilePicture = selfieFile ? `/uploads/${encodeURIComponent(selfieFile.filename)}` : null;
       const licenseFrontPicture = licenseFrontFile ? `/uploads/${encodeURIComponent(licenseFrontFile.filename)}` : null;
       const licenseBackPicture = licenseBackFile ? `/uploads/${encodeURIComponent(licenseBackFile.filename)}` : null;
 
       const passwordHash = await bcrypt.hash(String(password), 12);
+
+      const parsedSeats = req.body.vehicleSeats ? parseInt(String(req.body.vehicleSeats), 10) : NaN;
+      const validVehicleSeats = Number.isFinite(parsedSeats) && parsedSeats > 0 && parsedSeats <= 50 ? parsedSeats : undefined;
 
       const driver = await prisma.driver.create({
         data: { 
@@ -426,7 +425,8 @@ export class DriverAuthController {
           vehiclePlate, 
           vehicleBrand: cleanVehicleBrand, 
           vehicleType: vehicleType || 'TAXI', 
-          vehicleColor: cleanVehicleColor, 
+          vehicleColor: cleanVehicleColor,
+          ...(validVehicleSeats !== undefined && { vehicleSeats: validVehicleSeats }), 
           documentType: documentType || 'BI',
           documentNumber,
           profilePicture,
@@ -448,6 +448,16 @@ export class DriverAuthController {
         },
       });
     } catch (error: any) {
+      if (error?.code === 'P2002') {
+        const targetFields = Array.isArray(error?.meta?.target) ? error.meta.target.join(',') : String(error?.meta?.target || '');
+        if (targetFields.includes('vehiclePlate')) {
+          return res.status(409).json({ success: false, error: 'Esta matrícula/placa de veículo já está cadastrada na plataforma.' });
+        }
+        if (targetFields.includes('documentNumber')) {
+          return res.status(409).json({ success: false, error: 'Este número de documento já está cadastrado na plataforma.' });
+        }
+        return res.status(409).json({ success: false, error: 'Estes dados já estão cadastrados na plataforma.' });
+      }
       console.error('❌ [REGISTRO MOTORISTA]:', error?.message || error);
       return res.status(500).json({ success: false, error: 'Erro interno no servidor ao cadastrar motorista.' });
     }
@@ -596,6 +606,7 @@ export class DriverAuthController {
       return res.status(500).json({ success: false, error: 'Erro interno ao buscar perfil.' });
     }
   }
+
   // ==========================================
   // 💰 EXTRATO E FINANÇAS
   // ==========================================
@@ -726,7 +737,7 @@ export class DriverAuthController {
   }
 
   // ==========================================
-  // 💳 RECARGA AUTOMÁTICA DE CARTEIRA DO MOTORISTA (CONTA ADMIN)
+  // 💳 RECARGA AUTOMÁTICA DE CARTEIRA DO MOTORISTA
   // ==========================================
   async rechargeWallet(req: Request, res: Response): Promise<Response> {
     try {
@@ -873,48 +884,31 @@ export class DriverAuthController {
       }
 
       if (cleanDigits.length !== 9) {
-        return res.status(400).json({ success: false, error: 'O número deve conter exatamente 9 dígitos (ex: 955800991).' });
+        return res.status(400).json({ success: false, error: 'O número deve conter exatamente 9 dígitos (ex: 95XXXXXXX ou 96XXXXXXX).' });
       }
 
-      const prefix = cleanDigits.substring(0, 2);
-      const provStr = String(mobileMoneyProvider || paymentProvider || provider || '').toUpperCase();
+      const formattedPhone = `245${cleanDigits}`;
       
-      const isOrange = provStr.includes('ORANGE') || (!provStr && prefix === '95');
-      const isMtn = provStr.includes('MTN') || provStr.includes('TELECEL') || provStr.includes('MOMO') || (!provStr && ['96', '97'].includes(prefix));
+      const activeProvider = String(mobileMoneyProvider || paymentProvider || provider || '').toUpperCase();
+      const isMtn = activeProvider.includes('MTN') || activeProvider.includes('TELECEL');
 
-      if (isOrange && prefix !== '95') {
-        return res.status(400).json({ success: false, error: 'O número do Orange Money deve começar com 95.' });
-      }
-
-      if (isMtn && !['96', '97'].includes(prefix)) {
-        return res.status(400).json({ success: false, error: 'O número da Telecel (antigo MTN) deve começar com 96 ou 97.' });
-      }
-
-      const formattedNumber = `+245${cleanDigits}`;
-
-      const updateData = isOrange 
-        ? { orangeNumber: formattedNumber, paymentAccountNumber: formattedNumber }
-        : { mtnNumber: formattedNumber, paymentAccountNumber: formattedNumber };
-
-      const updatedDriver = await prisma.driver.update({
+      await prisma.driver.update({
         where: { id: driverId },
-        data: updateData,
-        select: {
-          id: true,
-          paymentAccountNumber: true,
-          orangeNumber: true,
-          mtnNumber: true
-        },
+        data: {
+          paymentAccountNumber: formattedPhone,
+          ...(isMtn ? { mtnNumber: formattedPhone } : { orangeNumber: formattedPhone })
+        }
       });
 
       return res.status(200).json({ 
-        success: true,
-        message: 'Conta de recebimento salva com sucesso!',
-        paymentInfo: updatedDriver
+        success: true, 
+        message: 'Informações de pagamento atualizadas com sucesso!',
+        paymentAccountNumber: formattedPhone
       });
+
     } catch (error: any) {
-      console.error('❌ [PAGAMENTO MOTORISTA]:', error?.message || error);
-      return res.status(500).json({ success: false, error: 'Erro ao atualizar dados de pagamento.' });
+      console.error('❌ [ATUALIZAR PAGAMENTO MOTORISTA]:', error?.message || error);
+      return res.status(500).json({ success: false, error: 'Erro interno ao atualizar informações de pagamento.' });
     }
   }
 
@@ -1010,18 +1004,16 @@ export class DriverAuthController {
                    files?.['file']?.[0] || 
                    files?.['image']?.[0];
 
-      // 🖼️ ATUALIZAR FOTO DE PERFIL
-if (!file) {
-  return res.status(400).json({ success: false, error: 'Nenhuma imagem foi enviada.' });
-}
+      if (!file) {
+        return res.status(400).json({ success: false, error: 'Nenhuma imagem foi enviada.' });
+      }
 
-// Salva o caminho relativo padrão no banco
-const newProfilePicture = `/uploads/${encodeURIComponent(file.filename)}`;
+      const newProfilePicture = `/uploads/${encodeURIComponent(file.filename)}`;
 
-await prisma.driver.update({
-  where: { id: driverId },
-  data: { profilePicture: newProfilePicture }
-});
+      await prisma.driver.update({
+        where: { id: driverId },
+        data: { profilePicture: newProfilePicture }
+      });
 
       return res.status(200).json({ 
         success: true, 

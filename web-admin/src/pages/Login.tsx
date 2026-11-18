@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Mail, Lock, Eye, EyeOff, ShieldCheck, Loader2, AlertCircle } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, ShieldCheck } from 'lucide-react';
 import './Login.css';
 
 interface ApiError {
@@ -19,16 +19,33 @@ export function Login() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [infoBanner, setInfoBanner] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const { signIn } = useAuth();
+  const { signIn, admin } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  useEffect(() => {
+    if (admin) {
+      navigate('/', { replace: true });
+      return;
+    }
+
+    const reason = searchParams.get('reason');
+    if (reason === 'inactivity') {
+      setInfoBanner('Sessão encerrada automaticamente após 15 minutos de inatividade por segurança.');
+    } else if (reason === 'expired') {
+      setInfoBanner('Sua credencial de acesso expirou. Autentique-se novamente para continuar.');
+    }
+  }, [admin, navigate, searchParams]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (isSubmitting) return;
 
     setError('');
+    setInfoBanner('');
     const cleanEmail = email.trim().toLowerCase();
 
     if (!cleanEmail || !password) {
@@ -57,16 +74,38 @@ export function Login() {
     <div className="login-container">
       <div className="login-card">
         <div className="login-header">
-  <div className="login-icon" style={{ background: 'transparent', padding: 0 }}>
-    <img 
-      src="/logo-pwa.png" 
-      alt="BAI 245" 
-      style={{ width: 56, height: 56, objectFit: 'contain' }} 
-    />
-  </div>
-  <h1 className="login-title">NOBAI 245 Admin</h1>
-  <p className="login-subtitle">Acesso restrito ao sistema de controle</p>
-</div>
+          <div className="login-icon" style={{ background: 'transparent', padding: 0 }}>
+            <img
+              src="/logo-pwa.png"
+              alt="BAI 245"
+              style={{ width: 56, height: 56, objectFit: 'contain' }}
+            />
+          </div>
+          <h1 className="login-title">NOBAI 245 Admin</h1>
+          <p className="login-subtitle">Acesso restrito ao sistema de controle</p>
+        </div>
+
+        {infoBanner && (
+          <div
+            role="status"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              backgroundColor: '#fef3c7',
+              border: '1px solid #f59e0b',
+              color: '#92400e',
+              padding: '10px 12px',
+              borderRadius: '8px',
+              fontSize: '12px',
+              fontWeight: 600,
+              marginBottom: '14px'
+            }}
+          >
+            <ShieldCheck size={18} className="shrink-0" />
+            <span>{infoBanner}</span>
+          </div>
+        )}
 
         {error && (
           <div className="error-message" role="alert">

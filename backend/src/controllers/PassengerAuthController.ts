@@ -7,14 +7,20 @@ import { prisma } from '../config/prisma';
 import { formatPhoneNumber, isValidBissauPhone, chargePassengerMobileMoney } from '../services/mobileMoneyService';
 import { sendWelcomeEmail } from '../services/emailService';
 import { sendSmsOtp } from '../services/smsService';
-import { OAuth2Client } from 'google-auth-library';
-
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 
-
-const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
+let googleClient: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { OAuth2Client } = require('google-auth-library');
+  if (typeof OAuth2Client === 'function') {
+    googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
+  }
+} catch {
+  googleClient = null;
+}
 
 if (!JWT_SECRET || !JWT_REFRESH_SECRET) {
   throw new Error('❌ [AUTH] FATAL: JWT_SECRET e JWT_REFRESH_SECRET devem estar configurados.');
@@ -801,6 +807,9 @@ if (uploadedFile) {
       let payload: any = null;
 
       try {
+        if (!googleClient) {
+          throw new Error('GOOGLE_CLIENT_UNAVAILABLE');
+        }
         const ticket = await googleClient.verifyIdToken({
           idToken,
           audience: configuredClientId ? [configuredClientId] : undefined,
@@ -808,8 +817,12 @@ if (uploadedFile) {
         payload = ticket.getPayload();
       } catch (verifyErr: any) {
         try {
-          const googleTokenRes = await axios.get(`https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`, { timeout: 8000 });
-          if (googleTokenRes.data && googleTokenRes.data.email) {
+          const googleTokenRes = await axios.get(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`, { timeout: 8000 });
+          if (
+            googleTokenRes.data &&
+            googleTokenRes.data.email &&
+            (!configuredClientId || googleTokenRes.data.aud === configuredClientId)
+          ) {
             payload = {
               email: googleTokenRes.data.email,
               name: googleTokenRes.data.name || googleTokenRes.data.email.split('@')[0],

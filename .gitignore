@@ -13,3 +13,11 @@ backups_ajustes/
 
 .backups/
 *.bak
+
+backend/logs/
+
+backend/dist/
+
+web-admin/.env
+web-admin/src/.env
+web-admin/dist/

@@ -9,7 +9,7 @@ const router = Router();
 
 const ORANGE_WEBHOOK_SECRET = process.env.ORANGE_WEBHOOK_SECRET || '';
 const MTN_WEBHOOK_SECRET = process.env.MTN_WEBHOOK_SECRET || '';
-const SMS_GATEWAY_SECRET = process.env.SMS_GATEWAY_SECRET || 'bai245_sms_gateway_secret_2026_key';
+const SMS_GATEWAY_SECRET = process.env.SMS_GATEWAY_SECRET || '';
 
 const ALLOWED_IPS = (process.env.ALLOWED_WEBHOOK_IPS || '127.0.0.1,192.168.1.1')
   .split(',')
@@ -135,6 +135,11 @@ router.all('/sms-gateway', async (req: Request, res: Response): Promise<any> => 
     // 2. Extração do secret de autenticação
     const secret = (req.headers['x-secret'] || payload?.secret || req.query?.secret) as string;
 
+    if (!SMS_GATEWAY_SECRET) {
+      console.error('🚨 [SMS GATEWAY] SMS_GATEWAY_SECRET não configurado no ambiente (.env).');
+      return res.status(503).json({ error: 'Gateway SMS não configurado no servidor.' });
+    }
+
     if (!secureCompare(secret, SMS_GATEWAY_SECRET)) {
       console.warn('🚨 [SMS GATEWAY] Tentativa de acesso com secret inválido.');
       return res.status(401).json({ error: 'Secret de autenticação inválido.' });
@@ -204,13 +209,49 @@ router.all('/sms-gateway', async (req: Request, res: Response): Promise<any> => 
       return res.status(404).json({ error: 'Motorista não encontrado no sistema.' });
     }
 
-    // Executa a recarga transacional no banco
+    if (!Number.isFinite(amountXOF) || amountXOF < 100 || amountXOF > 500000) {
+      console.warn(`⚠️ [SMS GATEWAY] Valor fora dos limites permitidos: ${amountXOF} XOF`);
+      return res.status(400).json({ error: 'Valor de recarga fora dos limites permitidos (100 a 500.000 XOF).' });
+    }
+
+    // 🛡️ ANTI-REPLAY BANCÁRIO: Fingerprint determinístico impede crédito duplo em reenvios de SMS
+    const normalizedSmsText = message.toLowerCase().replace(/\s+/g, ' ').trim();
+    const smsFingerprint = crypto
+      .createHash('sha256')
+      .update(`${driver.id}|${last8Digits}|${amountXOF}|${normalizedSmsText}`)
+      .digest('hex')
+      .slice(0, 32);
+    const smsEventId = `SMS-${smsFingerprint}`;
+
+    // Executa a recarga transacional no banco com idempotência atômica
     const result = await prisma.$transaction(async (tx) => {
-      const currentBalance = Number(driver.walletBalance || 0);
+      try {
+        await tx.webhookEvent.create({
+          data: {
+            eventId: smsEventId,
+            provider: 'SMS_GATEWAY',
+            payload: { sender, message, amountXOF, driverId: driver.id },
+            isProcessed: true,
+          },
+        });
+      } catch (err: any) {
+        if (err?.code === 'P2002') {
+          return { duplicated: true, driverId: driver.id, newBalance: Number(driver.walletBalance || 0), fullName: driver.fullName };
+        }
+        throw err;
+      }
+
+      const freshDriver = await tx.driver.findUnique({
+        where: { id: driver.id },
+        select: { id: true, fullName: true, walletBalance: true },
+      });
+      if (!freshDriver) throw new Error('DRIVER_NOT_FOUND');
+
+      const currentBalance = Number(freshDriver.walletBalance || 0);
       const newBalance = currentBalance + amountXOF;
 
       await tx.driver.update({
-        where: { id: driver.id },
+        where: { id: freshDriver.id },
         data: { walletBalance: newBalance, version: { increment: 1 } }
       });
 
@@ -231,20 +272,31 @@ router.all('/sms-gateway', async (req: Request, res: Response): Promise<any> => 
 
       await tx.transaction.create({
         data: {
-          driverId: driver.id,
+          driverId: freshDriver.id,
           type: 'MANUAL_RECHARGE',
           status: 'COMPLETED',
           amount: amountXOF,
           balanceBefore: currentBalance,
           balanceAfter: newBalance,
           paymentMethod: 'ORANGE_MONEY',
-          reference: `SMS-AUTO-${Date.now()}`,
+          reference: `SMS-AUTO-${smsFingerprint.slice(0, 16)}`,
+          externalRef: smsEventId,
+          idempotencyKey: smsEventId,
           description: `Recarga automática por SMS de ${amountXOF} XOF/FCFA`
         }
       });
 
-      return { driverId: driver.id, newBalance, fullName: driver.fullName };
+      return { duplicated: false, driverId: freshDriver.id, newBalance, fullName: freshDriver.fullName };
     });
+
+    if ((result as any).duplicated) {
+      console.log(`♻️ [SMS GATEWAY] SMS duplicado ignorado com segurança (${smsEventId}).`);
+      return res.status(200).json({
+        success: true,
+        duplicated: true,
+        message: 'SMS já processado anteriormente.'
+      });
+    }
 
     console.log(`✅ [RECARGA SMS CONCLUÍDA] Motorista: ${result.fullName} | Saldo Creditado: ${amountXOF} FCFA | Novo Saldo: ${result.newBalance} FCFA`);
 
@@ -289,8 +341,9 @@ router.post('/orange', ipWhitelistMiddleware, async (req: Request, res: Response
     const { order_id, txnid, amount } = req.body;
     const rawStatus = req.body.status || req.body.txstat || '';
 
-    if (!order_id || !txnid || amount === undefined) {
-      return res.status(400).json({ error: 'Payload incompleto.' });
+    const parsedOrangeAmount = Number(amount);
+    if (!order_id || !txnid || !Number.isFinite(parsedOrangeAmount) || parsedOrangeAmount <= 0) {
+      return res.status(400).json({ error: 'Payload incompleto ou valor inválido.' });
     }
 
     const normalizedStatus = String(rawStatus).toUpperCase();
@@ -311,7 +364,20 @@ router.post('/orange', ipWhitelistMiddleware, async (req: Request, res: Response
     const resAny = result as any;
     const io = getIo();
 
-    if (resAny.success) {
+    if (resAny.status === 'REFUND_QUEUED_LATE_PAYMENT') {
+      if (io && resAny.rideId) {
+        io.to(resAny.rideId).emit('payment:late_refund', {
+          rideId: resAny.rideId,
+          message: 'Pagamento aprovado após expiração da corrida. Estorno automático iniciado.'
+        });
+      }
+      if (io && resAny.passengerId) {
+        io.to(resAny.passengerId).to(`passenger_${resAny.passengerId}`).emit('payment:late_refund', {
+          rideId: resAny.rideId,
+          message: 'Pagamento aprovado após expiração da corrida. Estorno automático iniciado.'
+        });
+      }
+    } else if (resAny.success) {
       await emitSuccessSockets(resAny.rideId, resAny.passengerId, resAny.driverId, resAny.newBalance, resAny.amount);
     } else {
       if (io && resAny.rideId) io.to(resAny.rideId).emit('payment:failed', { message: 'Pagamento falhou ou foi cancelado.' });
@@ -343,8 +409,9 @@ router.post('/mtn', ipWhitelistMiddleware, async (req: Request, res: Response): 
     const refId = externalId || (req.headers['x-reference-id'] as string);
     const eventId = financialTransactionId || refId;
 
-    if (!refId || amount === undefined) {
-      return res.status(400).json({ error: 'Payload incompleto.' });
+    const parsedMtnAmount = Number(amount);
+    if (!refId || !Number.isFinite(parsedMtnAmount) || parsedMtnAmount <= 0) {
+      return res.status(400).json({ error: 'Payload incompleto ou valor inválido.' });
     }
 
     const normalizedStatus = String(status || '').toUpperCase();
@@ -365,7 +432,20 @@ router.post('/mtn', ipWhitelistMiddleware, async (req: Request, res: Response): 
     const resAny = result as any;
     const io = getIo();
 
-    if (resAny.success) {
+    if (resAny.status === 'REFUND_QUEUED_LATE_PAYMENT') {
+      if (io && resAny.rideId) {
+        io.to(resAny.rideId).emit('payment:late_refund', {
+          rideId: resAny.rideId,
+          message: 'Pagamento aprovado após expiração da corrida. Estorno automático iniciado.'
+        });
+      }
+      if (io && resAny.passengerId) {
+        io.to(resAny.passengerId).to(`passenger_${resAny.passengerId}`).emit('payment:late_refund', {
+          rideId: resAny.rideId,
+          message: 'Pagamento aprovado após expiração da corrida. Estorno automático iniciado.'
+        });
+      }
+    } else if (resAny.success) {
       await emitSuccessSockets(resAny.rideId, resAny.passengerId, resAny.driverId, resAny.newBalance, resAny.amount);
     } else {
       if (io && resAny.rideId) io.to(resAny.rideId).emit('payment:failed', { message: 'Pagamento falhou ou foi cancelado.' });

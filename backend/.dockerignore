@@ -1,0 +1,11 @@
+node_modules
+dist
+logs
+uploads
+.git
+.backups
+*.log
+erros.txt
+webhooks.http.txt
+docker-compose.yml
+ecosystem.config.js

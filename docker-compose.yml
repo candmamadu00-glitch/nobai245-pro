@@ -1,0 +1,131 @@
+services:
+  nobai245-db:
+    image: postgres:16-alpine
+    container_name: nobai245-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Bai245_Pr0d_Db_S3cur3_998877}
+      POSTGRES_DB: ${POSTGRES_DB:-nobai245}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-nobai245}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+    networks:
+      - nobai245-net
+
+  nobai245-redis:
+    image: redis:7-alpine
+    container_name: nobai245-redis
+    command: redis-server --maxmemory 512mb --maxmemory-policy noeviction --appendonly yes
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+    networks:
+      - nobai245-net
+
+  nobai245-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: nobai245-api
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      NODE_ENV: production
+      PORT: 3333
+      REDIS_HOST: nobai245-redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://nobai245-redis:6379
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-Bai245_Pr0d_Db_S3cur3_998877}@nobai245-db:5432/${POSTGRES_DB:-nobai245}?schema=public
+    depends_on:
+      nobai245-db:
+        condition: service_healthy
+      nobai245-redis:
+        condition: service_healthy
+    volumes:
+      - uploads_data:/app/uploads
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3333/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+    networks:
+      - nobai245-net
+
+  nobai245-web-admin:
+    build:
+      context: ./web-admin
+      dockerfile: Dockerfile
+    container_name: nobai245-web-admin
+    restart: unless-stopped
+    depends_on:
+      - nobai245-api
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - nobai245-net
+
+  nobai245-proxy:
+    image: caddy:2-alpine
+    container_name: nobai245-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    env_file:
+      - .env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - nobai245-api
+      - nobai245-web-admin
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+    networks:
+      - nobai245-net
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  nobai245-net:
+    driver: bridge

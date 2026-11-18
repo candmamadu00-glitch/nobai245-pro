@@ -1,30 +1,59 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { api } from '../services/api';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { api, BASE_SERVER_URL } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 import { useAdminSocket } from '../hooks/useAdminSocket';
 import type { SosAlertPayload } from '../hooks/useAdminSocket';
 import './SOSMonitor.css';
 
-// URL base da API para carregar o áudio estático do backend
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-
 export function SOSMonitor() {
+  const { admin, token } = useAuth();
   const [sosList, setSosList] = useState<SosAlertPayload[]>([]);
   const [selectedSos, setSelectedSos] = useState<SosAlertPayload | null>(null);
   const [filter, setFilter] = useState<'ACTIVE' | 'RESOLVED' | 'FALSE_ALARM'>('ACTIVE');
   const [loading, setLoading] = useState(true);
+  const [soundMuted, setSoundMuted] = useState(false);
 
-  // Áudio para o alarme sonoro da sala de controle
-  const alarmRef = useRef<HTMLAudioElement | null>(null);
+  const lastAlertIdRef = useRef<string | null>(null);
+  const { incomingSosAlert } = useAdminSocket(admin?.id, token || undefined);
 
-  const { incomingSosAlert } = useAdminSocket('CURRENT_ADMIN_ID');
+  // Sirene sintetizada via Web Audio API (funciona offline/sem depender de MP3 externo)
+  const playEmergencySiren = useCallback(() => {
+    if (soundMuted) return;
+    try {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
 
-  const fetchSosAlerts = async () => {
+      osc.type = 'sawtooth';
+      const now = ctx.currentTime;
+      osc.frequency.setValueAtTime(680, now);
+      osc.frequency.linearRampToValueAtTime(980, now + 0.25);
+      osc.frequency.linearRampToValueAtTime(680, now + 0.5);
+      osc.frequency.linearRampToValueAtTime(980, now + 0.75);
+
+      gain.gain.setValueAtTime(0.18, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.85);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.85);
+      osc.onended = () => ctx.close().catch(() => {});
+    } catch {
+      // Ignora bloqueio de autoplay antes da primeira interação do usuário
+    }
+  }, [soundMuted]);
+
+  const fetchSosAlerts = useCallback(async () => {
     try {
       setLoading(true);
       const response = await api.get(`/admin/sos?status=${filter}`);
-      setSosList(response.data);
-      if (response.data.length > 0) {
-        setSelectedSos(response.data[0]);
+      const items = Array.isArray(response.data) ? response.data : [];
+      setSosList(items);
+      if (items.length > 0) {
+        setSelectedSos(items[0]);
       } else {
         setSelectedSos(null);
       }
@@ -33,68 +62,88 @@ export function SOSMonitor() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filter]);
 
   useEffect(() => {
     fetchSosAlerts();
-  }, [filter]);
+  }, [fetchSosAlerts]);
 
-  // Quando chegar um novo SOS via WebSocket
   useEffect(() => {
-    if (incomingSosAlert) {
-      if (filter === 'ACTIVE') {
-        setSosList((prev) => [incomingSosAlert, ...prev]);
-      }
-      setSelectedSos(incomingSosAlert);
-      
-      // Tocar alarme sonoro
-      if (alarmRef.current) {
-        alarmRef.current.play().catch(() => {});
-      }
+    if (!incomingSosAlert || incomingSosAlert.id === lastAlertIdRef.current) return;
+    lastAlertIdRef.current = incomingSosAlert.id;
+
+    if (filter === 'ACTIVE') {
+      setSosList((prev) =>
+        prev.some((item) => item.id === incomingSosAlert.id) ? prev : [incomingSosAlert, ...prev]
+      );
     }
-  }, [incomingSosAlert]);
+    setSelectedSos(incomingSosAlert);
+    playEmergencySiren();
+  }, [incomingSosAlert, filter, playEmergencySiren]);
 
   const handleUpdateStatus = async (id: string, status: 'RESOLVED' | 'FALSE_ALARM') => {
+    const label = status === 'RESOLVED' ? 'RESOLVIDO' : 'FALSO ALARME';
+    if (!window.confirm(`Confirmar encerramento deste chamado SOS como ${label}?`)) return;
+
     try {
       await api.patch(`/admin/sos/${id}/status`, { status });
       fetchSosAlerts();
-    } catch (err) {
+    } catch {
       alert('Erro ao atualizar status do incidente.');
     }
   };
 
-  // Trata a URL do áudio (se for relativa, adiciona a base da API)
   const getAudioSource = (url: string) => {
-    if (url.startsWith('http')) return url;
-    return `${API_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    return `${BASE_SERVER_URL}${url.startsWith('/') ? '' : '/'}${url}`;
   };
 
   return (
     <div className="sos-container">
-      {/* Alarme sonoro em background */}
-      <audio ref={alarmRef} src="/alarm.mp3" preload="auto" />
-
       <header className="sos-header">
         <div>
           <h1>🚨 Sala de Controle de Emergências (SOS)</h1>
           <p>Monitoramento e resposta rápida para incidentes de segurança na Guiné-Bissau</p>
         </div>
 
-        <div className="sos-filters">
-          <button 
-            className={filter === 'ACTIVE' ? 'active danger' : ''} 
+        <div className="sos-filters" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <button
+            type="button"
+            onClick={() => setSoundMuted((prev) => !prev)}
+            style={{
+              backgroundColor: soundMuted ? '#fef2f2' : '#ecfdf5',
+              color: soundMuted ? '#dc2626' : '#059669',
+              border: `1px solid ${soundMuted ? '#fecaca' : '#a7f3d0'}`,
+              fontWeight: 700
+            }}
+            title="Ativar ou silenciar sirene sonora de novos alertas SOS"
+          >
+            {soundMuted ? '🔇 Sirene Silenciada' : '🔊 Sirene Ativa'}
+          </button>
+          <button
+            type="button"
+            onClick={playEmergencySiren}
+            title="Testar alerta sonoro na sala de controle"
+          >
+            🔔 Testar Som
+          </button>
+          <button
+            type="button"
+            className={filter === 'ACTIVE' ? 'active danger' : ''}
             onClick={() => setFilter('ACTIVE')}
           >
             Ativos
           </button>
-          <button 
-            className={filter === 'RESOLVED' ? 'active' : ''} 
+          <button
+            type="button"
+            className={filter === 'RESOLVED' ? 'active' : ''}
             onClick={() => setFilter('RESOLVED')}
           >
             Resolvidos
           </button>
-          <button 
-            className={filter === 'FALSE_ALARM' ? 'active' : ''} 
+          <button
+            type="button"
+            className={filter === 'FALSE_ALARM' ? 'active' : ''}
             onClick={() => setFilter('FALSE_ALARM')}
           >
             Falsos Alarmes
@@ -103,7 +152,6 @@ export function SOSMonitor() {
       </header>
 
       <div className="sos-content">
-        {/* Painel Esquerdo: Lista de Incidentes */}
         <div className="sos-list-panel">
           {loading ? (
             <p className="empty-state">Carregando chamados de emergência...</p>
@@ -127,7 +175,6 @@ export function SOSMonitor() {
           )}
         </div>
 
-        {/* Painel Direito: Detalhes e Ações Imediatas */}
         <div className="sos-detail-panel">
           {selectedSos ? (
             <div className="sos-detail-card">
@@ -155,7 +202,6 @@ export function SOSMonitor() {
                 )}
               </div>
 
-              {/* Player de Áudio de Segurança */}
               {selectedSos.audioUrl && (
                 <div className="audio-player-box">
                   <label>🔊 Gravação de Segurança do Ambiente:</label>
@@ -163,7 +209,6 @@ export function SOSMonitor() {
                 </div>
               )}
 
-              {/* Localização GPS no Google Maps Embed */}
               <div className="map-preview">
                 <iframe
                   title="GPS Location"
@@ -174,7 +219,6 @@ export function SOSMonitor() {
                 />
               </div>
 
-              {/* Ações de Emergência */}
               <div className="sos-actions">
                 <a
                   href={`tel:${selectedSos.passenger?.phone || selectedSos.driver?.phone}`}
@@ -188,16 +232,18 @@ export function SOSMonitor() {
                 >
                   🚓 Acionar Polícia POP (112)
                 </a>
-                
+
                 {selectedSos.status === 'ACTIVE' && (
                   <>
                     <button
+                      type="button"
                       className="btn btn-resolve"
                       onClick={() => handleUpdateStatus(selectedSos.id, 'RESOLVED')}
                     >
                       ✅ Resolver Incidente
                     </button>
                     <button
+                      type="button"
                       className="btn btn-false-alarm"
                       onClick={() => handleUpdateStatus(selectedSos.id, 'FALSE_ALARM')}
                     >

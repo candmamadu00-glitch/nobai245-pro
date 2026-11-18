@@ -32,6 +32,7 @@ import {
   submitRatingLogic,
 } from './services/rideService';
 import { startCronJobs } from './jobs/reconciliationJob';
+import { startOutboxWorker } from './services/outboxWorker';
 import locationRoutes from './routes/location.routes';
 
 declare global {
@@ -80,8 +81,9 @@ for (const env of REQUIRED_ENVS) {
 
 const JWT_SECRET = process.env.JWT_SECRET as string;
 
-// Inicia jobs de reconciliação financeira em segundo plano
+// Inicia jobs de reconciliação financeira e consumidor do Transactional Outbox em segundo plano
 startCronJobs();
+startOutboxWorker();
 
 const app = express();
 const server = http.createServer(app);
@@ -132,27 +134,70 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   }
   next(err);
 });
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+  if (err && (err.name === 'MulterError' || err.code === 'LIMIT_FILE_SIZE' || String(err.message || '').includes('Formato inválido'))) {
+    const msg = err.code === 'LIMIT_FILE_SIZE'
+      ? 'Uma das imagens enviadas é muito grande (máximo 10MB por foto).'
+      : (err.message || 'Erro no envio dos arquivos.');
+    return res.status(400).json({ success: false, error: msg });
+  }
+  next(err);
+});
+
 app.use('/uploads', (req, res, next) => {
   console.log(`📸 [FOTO_DEBUG] Acessando arquivo estático: /uploads${req.url}`);
   next();
 }, express.static(path.join(process.cwd(), 'uploads')));
 
+let isShuttingDown = false;
+
+function extractBearerUserId(req: Request): string | null {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  try {
+    const decoded = jwt.decode(authHeader.slice(7)) as { id?: string } | null;
+    return decoded && typeof decoded.id === 'string' && decoded.id.length > 0 ? decoded.id : null;
+  } catch {
+    return null;
+  }
+}
+
+// 🛡️ CAMADA 1: Teto amplo por IP (compatível com CGNAT das operadoras Orange/MTN na Guiné-Bissau)
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 600,
+  max: 2500,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.path.startsWith('/webhooks') || req.path.startsWith('/payments'),
-  message: { error: 'Muitas requisições vindas deste IP. Tente novamente em instantes.' }
+  skip: (req) => req.path.startsWith('/webhooks') || req.path.startsWith('/payments') || req.path === '/health',
+  message: { error: 'Tráfego elevado na rede. Tente novamente em instantes.' }
 });
 
-// 🛡️ PROTEÇÃO CONTRA FORÇA BRUTA E ROBÔS DE SMS/OTP (15 tentativas / 15 min por IP)
-const authBruteForceLimiter = rateLimit({
+// 🛡️ CAMADA 2: Limite granular por userId autenticado (isola abusos por conta sem afetar outros usuários)
+const userAccountLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 15,
+  max: 450,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Muitas tentativas de autenticação ou código. Aguarde 15 minutos e tente novamente.' }
+  validate: { keyGeneratorIpFallback: false },
+  skip: (req) => req.path.startsWith('/webhooks') || req.path.startsWith('/payments') || !extractBearerUserId(req),
+  keyGenerator: (req) => `user:${extractBearerUserId(req)}`,
+  message: { error: 'Muitas requisições nesta conta. Aguarde alguns instantes.' }
+});
+
+// 🛡️ CAMADA 3: Proteção contra força bruta e SMS bombing chaveada por telefone/e-mail (CGNAT-safe)
+const authBruteForceLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 12,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { keyGeneratorIpFallback: false },
+  keyGenerator: (req) => {
+    const rawPhone = typeof req.body?.phone === 'string' ? req.body.phone.replace(/\D/g, '') : '';
+    const rawEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const identifier = rawPhone || rawEmail;
+    return identifier ? `auth:${identifier}` : `auth-ip:${req.ip || 'unknown'}`;
+  },
+  message: { error: 'Muitas tentativas para esta conta. Aguarde 15 minutos e tente novamente.' }
 });
 
 app.use('/api/admin/login', authBruteForceLimiter);
@@ -168,6 +213,7 @@ app.use('/api/passengers/forgot-password', authBruteForceLimiter);
 app.use('/api/passengers/verify-otp', authBruteForceLimiter);
 
 app.use('/api/', apiLimiter);
+app.use('/api/', userAccountLimiter);
 
 app.use((req, _res, next) => {
   console.log(`📡 [API_DEBUG] [${req.method}] ${req.url} | IP: ${req.ip}`);
@@ -185,16 +231,64 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/rides', rideRoutes);
 app.use('/api', locationRoutes);
 
-app.get('/health', (_req, res) => {
-  res.json({
-    status: 'online',
+const deepHealthHandler = async (_req: Request, res: Response) => {
+  if (isShuttingDown) {
+    return res.status(503).json({
+      status: 'shutting_down',
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('HEALTHCHECK_TIMEOUT')), ms);
+      promise
+        .then((val) => { clearTimeout(timer); resolve(val); })
+        .catch((err) => { clearTimeout(timer); reject(err); });
+    });
+
+  let dbOk = false;
+  let dbLatencyMs = -1;
+  const dbStart = Date.now();
+  try {
+    await withTimeout(prisma.$queryRaw`SELECT 1`, 2500);
+    dbOk = true;
+    dbLatencyMs = Date.now() - dbStart;
+  } catch {
+    dbOk = false;
+    dbLatencyMs = Date.now() - dbStart;
+  }
+
+  let redisOk = false;
+  let redisLatencyMs = -1;
+  const redisStart = Date.now();
+  try {
+    if (redisClient?.isOpen) {
+      const pong = await withTimeout(redisClient.ping(), 1500);
+      redisOk = pong === 'PONG';
+    }
+    redisLatencyMs = Date.now() - redisStart;
+  } catch {
+    redisOk = false;
+    redisLatencyMs = Date.now() - redisStart;
+  }
+
+  const httpStatus = dbOk ? 200 : 503;
+  return res.status(httpStatus).json({
+    status: !dbOk ? 'degraded' : redisOk ? 'online' : 'degraded_cache',
+    uptimeSec: Math.round(process.uptime()),
     country: 'Guiné-Bissau 🇬🇼',
     currency: 'XOF',
-    ridePayment: 'Dinheiro (Cash Only)',
-    walletRecharge: 'Orange Money & MTN MoMo',
+    checks: {
+      database: { status: dbOk ? 'up' : 'down', latencyMs: dbLatencyMs },
+      redis: { status: redisOk ? 'up' : 'degraded', latencyMs: redisLatencyMs },
+    },
     timestamp: new Date().toISOString(),
   });
-});
+};
+
+app.get('/health', deepHealthHandler);
+app.get('/api/health', deepHealthHandler);
 
 // -----------------------------------------------------------------------------
 // 4. CLIENTES REDIS (SAFE REDIS + PUBSUB PARA CLUSTER)
@@ -1853,22 +1947,6 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
       socket.join(`driver_${driverId}`);
       socket.leave(rideId);
 
-      const finishedPayload = {
-        rideId,
-        status: 'FINISHED',
-        fareXOF: result?.fareXOF,
-        priceXof: result?.fareXOF,
-        totalAmount: result?.fareXOF,
-        distanceKm: result?.distanceKm,
-        driverEarnings: result?.driverEarnings,
-        platformFee: result?.platformFee,
-      };
-
-        const rideInfo = await prisma.ride.findUnique({
-          where: { id: rideId },
-          select: { passengerId: true, paymentMethod: true, passenger: { select: { deviceToken: true } } }
-        });
-
         if (typeof ackCallback === 'function') {
           ackCallback({
             success: true,
@@ -1877,43 +1955,11 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
             driverEarnings: result?.driverEarnings,
             platformFee: result?.platformFee,
             distanceKm: result?.distanceKm,
-            transactionId: result?.commissionTransactionId || `TRX-${rideId.slice(0, 6).toUpperCase()}`,
+            transactionId: result?.transactionId || result?.commissionTransactionId || `TRX-${rideId.slice(0, 6).toUpperCase()}`,
           });
         }
 
-        const targetRooms = [
-          rideId,
-          rideInfo?.passengerId,
-          `passenger_${rideInfo?.passengerId}`,
-          `passenger:${rideInfo?.passengerId}`,
-          `user_${rideInfo?.passengerId}`
-        ].filter(Boolean);
-
-        targetRooms.forEach(room => {
-          io.to(room).emit('ride:finished', finishedPayload);
-          io.to(room).emit('ride:completed', finishedPayload);
-        });
-
         io.to('admin_dashboard').emit('admin:ride_update', { rideId, status: 'FINISHED' });
-
-        if (rideInfo?.passenger?.deviceToken) {
-          const finishPushBody =
-            rideInfo.paymentMethod === 'ORANGE_MONEY'
-              ? `Você chegou ao seu destino. Total: ${result.fareXOF} XOF (pago via Orange Money).`
-              : rideInfo.paymentMethod === 'MTN_MOMO'
-              ? `Você chegou ao seu destino. Total: ${result.fareXOF} XOF (pago via MTN MoMo).`
-              : (rideInfo.paymentMethod as string) === 'CORPORATE'
-              ? `Você chegou ao seu destino. Total: ${result.fareXOF} XOF (faturado na conta corporativa).`
-              : `Você chegou ao seu destino. Pague ${result.fareXOF} XOF em dinheiro ao motorista.`;
-
-          sendPushNotification(
-            rideInfo.passenger.deviceToken,
-            '🏁 Viagem Concluída!',
-            finishPushBody,
-            { type: 'RIDE_COMPLETED', rideId },
-            PUSH_CHANNELS.RIDE_UPDATE
-          ).catch(() => null);
-        }
       } catch (err: any) {
         const errMsg = err?.message || 'Erro ao finalizar a corrida e debitar comissão.';
         console.error(`🚨 [FINALIZE_ERROR] Falha ao finalizar corrida ${rideId}:`, err);
@@ -1955,17 +2001,26 @@ handleSocketEvent(socket, 'chat:send_message', async (data) => {
         finalAudioUrl = rawAudio;
       } else {
         try {
-          const uploadDir = path.join(process.cwd(), 'uploads', 'chat');
-          fs.mkdirSync(uploadDir, { recursive: true });
-          const cleanBase64 = rawAudio.replace(/^data:audio\/[^;]+;base64,/, '');
-          const fileName = `${rideId}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.m4a`;
-          fs.writeFileSync(path.join(uploadDir, fileName), Buffer.from(cleanBase64, 'base64'));
-          const baseUrl = (process.env.APP_URL || 'https://api.nobai245.com').replace(/\/$/, '');
-          finalAudioUrl = `${baseUrl}/uploads/chat/${fileName}`;
-        } catch (fileErr: any) {
-          console.error('❌ [CHAT_AUDIO_SAVE_ERR]:', fileErr?.message);
-          finalAudioUrl = rawAudio;
-        }
+  const uploadDir = path.join(process.cwd(), 'uploads', 'chat');
+  
+  // Usamos fs.promises para não bloquear a thread principal
+  await fs.promises.mkdir(uploadDir, { recursive: true }); 
+  
+  const cleanBase64 = rawAudio.replace(/^data:audio\/[^;]+;base64,/, '');
+  const fileName = `${rideId}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.m4a`;
+  
+  // writeFile assíncrono
+  await fs.promises.writeFile(
+    path.join(uploadDir, fileName), 
+    Buffer.from(cleanBase64, 'base64')
+  );
+  
+  const baseUrl = (process.env.APP_URL || 'https://api.nobai245.com').replace(/\/$/, '');
+  finalAudioUrl = `${baseUrl}/uploads/chat/${fileName}`;
+} catch (fileErr: any) {
+  console.error('❌ [CHAT_AUDIO_SAVE_ERR]:', fileErr?.message);
+  finalAudioUrl = rawAudio;
+}
       }
     }
 
@@ -2060,58 +2115,10 @@ handleSocketEvent(socket, 'chat:send_message', async (data) => {
       }
 
 
-      const previousStatus = rideToCancel.status;
       const cleanReason = typeof reason === 'string' ? reason.trim().slice(0, 250) : 'Corrida cancelada';
       const normalizedUserType = (userType || socket.data.user?.role || socket.data.user?.userType) === 'DRIVER' ? 'DRIVER' : 'PASSENGER';
 
       const result = await cancelRideLogic(rideId, currentUserId, normalizedUserType, cleanReason);
-
-      await safeRedis.del(`active_ride:${rideId}`);
-      if (rideToCancel.driverId) {
-        await safeRedis.del(`driver_active_ride:${rideToCancel.driverId}`);
-      }
-
-      const cancelPayload = {
-        rideId,
-        status: 'CANCELLED',
-        cancelledBy: normalizedUserType,
-        reason: cleanReason,
-        appliedPenalty: Boolean(result?.appliedPenalty),
-        penaltyAmount: Number(result?.penaltyAmount || 0)
-      };
-
-      const targetRooms = [
-        rideId,
-        `ride_${rideId}`,
-        rideToCancel.passengerId,
-        `passenger_${rideToCancel.passengerId}`,
-        `passenger:${rideToCancel.passengerId}`,
-        rideToCancel.driverId,
-        `driver_${rideToCancel.driverId}`,
-        `driver:${rideToCancel.driverId}`
-      ].filter(Boolean) as string[];
-
-      targetRooms.forEach(room => {
-        io.to(room).emit('ride:cancelled', cancelPayload);
-      });
-
-      if (previousStatus === 'SEARCHING') {
-        io.to('available_drivers').emit('ride:cancelled_by_passenger', { rideId });
-      }
-
-      const recipientToken = normalizedUserType === 'DRIVER'
-        ? rideToCancel.passenger?.deviceToken
-        : rideToCancel.driver?.deviceToken;
-
-        if (recipientToken) {
-          sendPushNotification(
-            recipientToken,
-            '⚠️ Corrida Cancelada',
-            normalizedUserType === 'DRIVER' ? 'O motorista cancelou a viagem.' : 'O passageiro cancelou a viagem.',
-            { rideId, type: 'RIDE_CANCELLED' },
-            PUSH_CHANNELS.RIDE_UPDATE
-          ).catch(() => {});
-        }
 
         if (typeof ackCallback === 'function') {
           ackCallback({
@@ -2137,12 +2144,25 @@ handleSocketEvent(socket, 'chat:send_message', async (data) => {
 // 7. ENCERRAMENTO GRACIOSO DO SERVIDOR (SHUTDOWN)
 // -----------------------------------------------------------------------------
 const shutdown = async () => {
-  console.log('\n🛑 [SISTEMA BAI245] Iniciando shutdown seguro...');
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log('\n🛑 [SISTEMA BAI245] Iniciando shutdown seguro e drenagem de conexões...');
 
   const forceExitTimeout = setTimeout(() => {
     console.error('⚠️ [SHUTDOWN] Forçando encerramento do processo após timeout de 10s.');
     process.exit(1);
   }, 10000);
+
+  try {
+    io.emit('server:reconnecting', { reason: 'deploy_maintenance', retryAfterMs: 2000 });
+    await new Promise<void>((resolve) => {
+      io.close(() => resolve());
+      setTimeout(resolve, 1500);
+    });
+    console.log('📡 [SOCKET.IO] Conexões WebSocket drenadas.');
+  } catch (sockErr) {
+    console.warn('⚠️ [SHUTDOWN] Aviso ao encerrar Socket.IO:', sockErr);
+  }
 
   server.close(async () => {
     try {
@@ -2218,12 +2238,22 @@ setInterval(async () => {
     for (const d of staleDrivers) {
       const lastSeen = await safeRedis.get(`driver:last_seen:${d.id}`).catch(() => null);
       if (!lastSeen || now - Number(lastSeen) > 180000) {
-        await (safeRedis as any).zRem?.('drivers:locations', d.id).catch?.(() => {});
-        await prisma.driver.updateMany({
-          where: { id: d.id, isOnline: true, currentRideId: null },
-          data: { isOnline: false }
-        }).catch(() => {});
-      }
+  try {
+    // Verifica qual é o método real disponível na sua biblioteca do Redis (ioredis ou redis v4)
+    if (typeof safeRedis.zRem === 'function') {
+      await safeRedis.zRem('drivers:locations', d.id);
+    } else {
+      console.warn(`⚠️ [WATCHDOG_REDIS_WARN] Método para remover do geo-index não encontrado!`);
+    }
+  } catch (geoErr) {
+    console.error(`⚠️ [WATCHDOG_REDIS_ERR] Falha ao remover motorista ${d.id} do mapa:`, geoErr);
+  }
+
+  await prisma.driver.updateMany({
+    where: { id: d.id, isOnline: true, currentRideId: null },
+    data: { isOnline: false }
+  }).catch(() => {});
+}
     }
 
     // 2. Expirar corridas em SEARCHING há mais de 5 minutos sem motorista e liberar passageiro

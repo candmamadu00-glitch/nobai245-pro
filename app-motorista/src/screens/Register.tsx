@@ -91,7 +91,7 @@ export function Register() {
               const result = await ImagePicker.launchCameraAsync({
                 mediaTypes: ['images'],
                 allowsEditing: true,
-                quality: 0.8,
+                quality: 0.65,
               });
 
               if (!result.canceled && result.assets && result.assets[0]?.uri) {
@@ -115,7 +115,7 @@ export function Register() {
               const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: ['images'],
                 allowsEditing: true,
-                quality: 0.8,
+                quality: 0.65,
               });
 
               if (!result.canceled && result.assets && result.assets[0]?.uri) {
@@ -136,6 +136,7 @@ export function Register() {
     );
   }
 
+  const [registrationOtpToken, setRegistrationOtpToken] = useState<string>('');
   const registrationOtpTokenRef = React.useRef<string>('');
 
   async function handleSendOtp() {
@@ -158,6 +159,7 @@ export function Register() {
       const res = await api.post('/drivers/request-registration-otp', { phone: `+245${cleanPhone}` });
       if (res.data?.otpToken) {
         registrationOtpTokenRef.current = res.data.otpToken;
+        setRegistrationOtpToken(res.data.otpToken);
       }
       setResendTimer(60);
       setStep(4);
@@ -194,10 +196,15 @@ export function Register() {
 
   async function handleRegister() {
     const cleanPhone = phone.replace(/\D/g, '');
-    const cleanOtp = otpCode.trim();
+    const cleanOtp = otpCode.replace(/\D/g, '').trim();
+    const activeOtpToken = registrationOtpTokenRef.current || registrationOtpToken;
 
     if (!cleanOtp || cleanOtp.length !== 6) {
       return Alert.alert('Atenção', 'Digite o código de verificação SMS de 6 dígitos.');
+    }
+
+    if (!activeOtpToken) {
+      return Alert.alert('Sessão SMS Expirada', 'Volte à etapa anterior e solicite um novo código SMS.');
     }
 
     setLoading(true);
@@ -213,15 +220,12 @@ export function Register() {
       formData.append('vehicleColor', vehicleColor.trim());
       formData.append('vehicleType', vehicleType);
       formData.append('otpCode', cleanOtp);
-      if (registrationOtpTokenRef.current) {
-        formData.append('otpToken', registrationOtpTokenRef.current);
+      formData.append('otpToken', activeOtpToken);
+
+      if (vehicleType === 'TOCA_TOCA' && vehicleSeats) {
+        formData.append('vehicleSeats', String(vehicleSeats).trim());
       }
 
-      
-      if (vehicleType === 'TOCA_TOCA') {
-        formData.append('vehicleSeats', vehicleSeats);
-      }
-      
       formData.append('documentType', documentType);
       formData.append('documentNumber', documentNumber.trim().toUpperCase());
 
@@ -229,10 +233,11 @@ export function Register() {
         const filename = uri.split('/').pop() || `${key}.jpg`;
         const match = /\.(\w+)$/.exec(filename);
         const ext = match ? match[1].toLowerCase() : 'jpg';
-        const type = ext === 'png' ? 'image/png' : 'image/jpeg';
+        const type = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+        const normalizedUri = Platform.OS === 'android' ? uri : uri.replace('file://', '');
 
         formData.append(key, {
-          uri: uri,
+          uri: normalizedUri,
           name: filename,
           type,
         } as any);
@@ -244,9 +249,10 @@ export function Register() {
 
       const response = await api.post('/drivers/register', formData, {
         headers: {
+          'Content-Type': 'multipart/form-data',
           'Accept': 'application/json',
         },
-        transformRequest: (data) => data,
+        timeout: 60000,
       });
 
       console.log('=== ✅ [DEBUG CADASTRO] SUCESSO ===', response.data);

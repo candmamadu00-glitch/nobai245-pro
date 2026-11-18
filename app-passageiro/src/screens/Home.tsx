@@ -720,11 +720,30 @@ const handleFullCancelAndReset = useCallback(() => {
     setLangModalVisible(false);
   };
 
+  const isVoiceAssistEnabledRef = useRef<boolean>(isVoiceAssistEnabled);
+  useEffect(() => {
+    isVoiceAssistEnabledRef.current = isVoiceAssistEnabled;
+  }, [isVoiceAssistEnabled]);
+
+  useEffect(() => {
+    AsyncStorage.getItem('@bai245:passenger_voice_assist')
+      .then((val) => {
+        if (val !== null) {
+          const enabled = val === 'true';
+          setIsVoiceAssistEnabled(enabled);
+          isVoiceAssistEnabledRef.current = enabled;
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const toggleVoiceAssist = () => {
     const next = !isVoiceAssistEnabled;
     setIsVoiceAssistEnabled(next);
+    isVoiceAssistEnabledRef.current = next;
+    AsyncStorage.setItem('@bai245:passenger_voice_assist', String(next)).catch(() => {});
     triggerHapticFeedback('BUTTON_PRESS');
-    speakText(next ? 'Assistência por voz ativada' : 'Assistência por voz desativada');
+    speakText(next ? 'Assistente de voz ativado' : 'Assistente de voz desativado');
   };
 
   const panResponder = useRef(
@@ -1129,14 +1148,10 @@ const handleOpenChat = () => {
       }
 
       // 🧹 SERVIDOR CONFIRMOU QUE NÃO HÁ CORRIDA ATIVA (ride: null ou COMPLETED/CANCELLED)
-      const staleRideId = ride?.id || activeRideIdRef.current;
-      if (!staleRideId) {
-        AsyncStorage.removeItem(STORAGE_RIDE_KEY).catch(() => {});
-        return;
-      }
-
       let resolvedRide: any = ride || response.data.lastRide || null;
-      if (!resolvedRide) {
+      const staleRideId = resolvedRide?.id || activeRideIdRef.current;
+
+      if (!resolvedRide && staleRideId) {
         const histRes = await api.get('/passengers/rides').catch(() => null);
         const list = histRes?.data?.rides || histRes?.data?.data || (Array.isArray(histRes?.data) ? histRes.data : []);
         if (Array.isArray(list)) {
@@ -1146,10 +1161,22 @@ const handleOpenChat = () => {
 
       if (!isMountedRef.current) return;
 
+      if (!resolvedRide || !staleRideId) {
+        if (activeRideIdRef.current) {
+          resetRideState();
+        } else {
+          AsyncStorage.removeItem(STORAGE_RIDE_KEY).catch(() => {});
+        }
+        return;
+      }
+
+      const terminalKey = '@bai245:last_notified_terminal_ride';
+      const lastNotifiedId = await AsyncStorage.getItem(terminalKey).catch(() => null);
       const finalStatus = String(resolvedRide?.status || '').toUpperCase();
       const alreadyRated = Boolean(resolvedRide?.passengerRating || resolvedRide?.rating || resolvedRide?.isRated);
 
       if ((finalStatus === 'COMPLETED' || finalStatus === 'FINISHED') && !alreadyRated) {
+        await AsyncStorage.setItem(terminalKey, String(staleRideId)).catch(() => {});
         const finalPrice = Number(resolvedRide?.fareXOF ?? resolvedRide?.priceXof ?? resolvedRide?.totalAmount ?? 0);
         if (finalPrice > 0) setEstimatedPrice(Math.round(finalPrice));
         const finalDist = Number(resolvedRide?.distanceKm ?? 0);
@@ -1158,13 +1185,34 @@ const handleOpenChat = () => {
         const parsedDriver = extractDriverInfo(resolvedRide, '');
         if (parsedDriver) setDriverInfo(parsedDriver);
 
+        setIsChatVisible(false);
         setActiveRideId(staleRideId);
         activeRideIdRef.current = staleRideId;
         setRideStatus('completed');
         setShowRatingModal(true);
         await persistRideState(null, 'idle');
-      } else {
+      } else if (finalStatus === 'CANCELLED' && lastNotifiedId !== String(staleRideId)) {
+        await AsyncStorage.setItem(terminalKey, String(staleRideId)).catch(() => {});
+        const cancelReason = String(resolvedRide?.cancelReason || resolvedRide?.cancellationReason || '');
+        const isDriverCancel =
+          String(resolvedRide?.cancelledBy || '').toUpperCase() === 'DRIVER' ||
+          cancelReason.toLowerCase().includes('motorista') ||
+          Boolean(resolvedRide?.driverId);
+
+        const title = isDriverCancel ? t('warning_title', 'Aviso ⚠️') : t('cancelled_title', 'Corrida Cancelada');
+        const body = isDriverCancel
+          ? t('driver_cancelled_msg', 'O motorista cancelou a corrida. Por favor, solicite um novo veículo.')
+          : t('ride_cancelled_msg', 'Sua corrida foi cancelada.');
+
+        setIsChatVisible(false);
         resetRideState();
+        Alert.alert(title, body, [{ text: 'OK' }]);
+      } else {
+        if (activeRideIdRef.current) {
+          resetRideState();
+        } else {
+          AsyncStorage.removeItem(STORAGE_RIDE_KEY).catch(() => {});
+        }
       }
     } catch (err) {
       console.warn('⚠️ [SYNC_DEBUG] Erro na rede ao sincronizar corrida:', err);
@@ -1589,11 +1637,17 @@ const handleOpenChat = () => {
 
     initAppAndPermissions();
 
-    // 🛡️ PASSENGER_APPSTATE_SYNC: Reconcilia estado da corrida ao retornar de segundo plano
+    // 🛡️ PASSENGER_APPSTATE_SYNC: Fecha overlays transitórios no background e reconcilia estado ao voltar
     const appStateSub = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active') {
+      if (nextState === 'background' || nextState === 'inactive') {
+        setIsChatVisible(false);
+        setShowCancelModal(false);
+        setIsSearchModalVisible(false);
+        setIsMenuVisible(false);
+      } else if (nextState === 'active') {
+        setIsChatVisible(false);
         if (socket && !socket.connected) connectPassengerSocket();
-        syncPassengerActiveRide(false);
+        syncPassengerActiveRide(true);
       }
     });
 
@@ -1633,7 +1687,6 @@ const handleOpenChat = () => {
         }
 
         if (data?.hasActiveRide && data?.ride) {
-          appStateSub.remove();
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
           const ride = data.ride;
           setActiveRideId(ride.id);
@@ -1731,7 +1784,13 @@ const handleOpenChat = () => {
         estimatedDistance: serverDist > 0 ? serverDist : estimatedDistance,
       });
 
-      speakRideStatusUpdate(data.isQueuedRide ? 'queued' : 'accepted', { driverName: parsedDriver?.name });
+      speakRideStatusUpdate(data.isQueuedRide ? 'queued' : 'accepted', {
+        driverName: parsedDriver?.name,
+        carModel: parsedDriver?.carModel,
+        carColor: parsedDriver?.carColor,
+        plate: parsedDriver?.licensePlate,
+        enabled: isVoiceAssistEnabledRef.current,
+      });
 
       Notifications.scheduleNotificationAsync({
         content: {
@@ -1750,7 +1809,10 @@ const handleOpenChat = () => {
       if (data?.startOtp) setStartOtp(data.startOtp);
       if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'arrived');
       
-      speakRideStatusUpdate('arrived');
+      speakRideStatusUpdate('arrived', {
+        startOtp: data?.startOtp || startOtp,
+        enabled: isVoiceAssistEnabledRef.current,
+      });
 
       Notifications.scheduleNotificationAsync({
         content: {
@@ -1767,20 +1829,38 @@ const handleOpenChat = () => {
       if (!isMountedRef.current) return;
       setRideStatus('in_progress'); 
       setIsChatVisible(false); 
-      speakRideStatusUpdate('in_progress');
+      speakRideStatusUpdate('in_progress', {
+        destination: dropoffAddress,
+        enabled: isVoiceAssistEnabledRef.current,
+      });
       if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'in_progress');
     };
 
     const handleRideFinished = (data: any) => { 
       if (!isMountedRef.current) return;
+      const finishedId = String(data?.rideId || activeRideIdRef.current || '');
+      if (finishedId) {
+        setActiveRideId(finishedId);
+        activeRideIdRef.current = finishedId;
+        AsyncStorage.setItem('@bai245:last_notified_terminal_ride', finishedId).catch(() => {});
+      }
+
       const finalPrice = Number(data?.fareXOF ?? data?.priceXof ?? data?.totalAmount ?? 0);
       if (finalPrice > 0) setEstimatedPrice(Math.round(finalPrice));
       const finalDist = Number(data?.distanceKm ?? 0);
       if (finalDist > 0) setEstimatedDistance(finalDist);
 
-      setRideStatus('completed');
+      setIsChatVisible(false);
+      setRideStatus((prev) => {
+        if (prev !== 'completed') {
+          speakRideStatusUpdate('completed', {
+            price: finalPrice > 0 ? Math.round(finalPrice) : (estimatedPrice || 0),
+            enabled: isVoiceAssistEnabledRef.current,
+          });
+        }
+        return 'completed';
+      });
       setShowRatingModal(true); 
-      speakRideStatusUpdate('completed');
       persistRideState(null, 'idle');
     };
 
@@ -1803,6 +1883,11 @@ const handleOpenChat = () => {
         trigger: null,
       }).catch(() => {});
 
+      const cancelledId = data?.rideId || activeRideIdRef.current;
+      if (cancelledId) {
+        AsyncStorage.setItem('@bai245:last_notified_terminal_ride', String(cancelledId)).catch(() => {});
+      }
+      setIsChatVisible(false);
       Alert.alert(title, body, [{ text: 'OK' }]);
       resetRideState();
     };
@@ -1935,7 +2020,10 @@ const handleOpenChat = () => {
     socket.on('driver:position', handleDriverPosition);
     const handleSocketRideError = (err: any) => {
       if (!isMountedRef.current) return;
-      const msg = err?.message || err?.error || 'Não foi possível concluir a solicitação.';
+      const msg = String(err?.message || err?.error || 'Não foi possível concluir a solicitação.');
+      if (msg.includes('STATE_CONFLICT') || msg.includes('já foi cancelada') || msg.includes('já foi alterada')) {
+        return;
+      }
       setRideStatus((prev) => {
         if (prev === 'awaiting_payment' || prev === 'searching') {
           if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
@@ -2012,6 +2100,13 @@ const handleOpenChat = () => {
     t
   ]);
 
+  const lastPassengerRouteCacheRef = useRef<{
+    key: string;
+    lat: number;
+    lng: number;
+    timestamp: number;
+  } | null>(null);
+
   useEffect(() => {
     let origin = pickupCoords;
     let destination = dropoffCoords;
@@ -2027,14 +2122,63 @@ const handleOpenChat = () => {
       extra = extraStopCoords;
     }
 
-    if (origin && destination) {
-      let fitPoints = [origin, destination];
-      if (extra) fitPoints.push(extra);
-      
-      fitMapBounds(fitPoints);
+    if (!origin || !destination) {
+      lastPassengerRouteCacheRef.current = null;
+      return;
+    }
+
+    const extraKey = extra ? `${extra.latitude.toFixed(4)},${extra.longitude.toFixed(4)}` : 'none';
+    const routeKey = `${rideStatus}:${destination.latitude.toFixed(4)},${destination.longitude.toFixed(4)}:${extraKey}`;
+    const now = Date.now();
+    const prev = lastPassengerRouteCacheRef.current;
+
+    const isSameKey = prev?.key === routeKey;
+    const movedDeg = prev
+      ? Math.hypot(origin.latitude - prev.lat, origin.longitude - prev.lng)
+      : Infinity;
+    const elapsedMs = prev ? now - prev.timestamp : Infinity;
+
+    // 🛡️ ENTERPRISE ROUTE THROTTLE: Recalcula na API Mapbox apenas se mudar estado/destino,
+    // ou após 20s se o veículo deslocou mais de ~65m (evita centenas de chamadas por corrida)
+    if (!isSameKey || (elapsedMs >= 20000 && movedDeg >= 0.0006)) {
+      lastPassengerRouteCacheRef.current = {
+        key: routeKey,
+        lat: origin.latitude,
+        lng: origin.longitude,
+        timestamp: now,
+      };
+      if (!isSameKey) {
+        const fitPoints = extra ? [origin, destination, extra] : [origin, destination];
+        fitMapBounds(fitPoints);
+      }
       fetchMapboxRoute(origin, destination, extra);
     }
   }, [pickupCoords, dropoffCoords, extraStopCoords, driverLocation, rideStatus, fitMapBounds, fetchMapboxRoute]);
+
+  const announcedNearingDestRideRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (rideStatus !== 'in_progress' || !driverLocation || !dropoffCoords) return;
+    if (!isVoiceAssistEnabledRef.current) return;
+
+    const currentId = activeRideIdRef.current || activeRideId;
+    if (!currentId || announcedNearingDestRideRef.current === currentId) return;
+
+    const dLat = (dropoffCoords.latitude - driverLocation.latitude) * (Math.PI / 180);
+    const dLng = (dropoffCoords.longitude - driverLocation.longitude) * (Math.PI / 180);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(driverLocation.latitude * (Math.PI / 180)) *
+        Math.cos(dropoffCoords.latitude * (Math.PI / 180)) *
+        Math.sin(dLng / 2) *
+        Math.sin(dLng / 2);
+    const distMeters = 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    if (distMeters > 20 && distMeters <= 250) {
+      announcedNearingDestRideRef.current = currentId;
+      speakRideStatusUpdate('nearing_destination', { enabled: true });
+    }
+  }, [rideStatus, driverLocation, dropoffCoords, activeRideId]);
 
   useEffect(() => {
     if (route.params?.openChat) {
@@ -2229,6 +2373,8 @@ const handleOpenChat = () => {
   // Se houver uma corrida ativa no banco (mesmo ainda em busca), cancela via Socket + HTTP
   const targetRideId = activeRideIdRef.current || activeRideId;
   if (targetRideId && user?.id) {
+    AsyncStorage.setItem('@bai245:last_notified_terminal_ride', String(targetRideId)).catch(() => {});
+    setIsChatVisible(false);
     cancelRideByPassenger(targetRideId, user.id, reason);
     api.post('/passengers/rides/cancel', { rideId: targetRideId, reason })
       .catch(() => api.post('/rides/cancel', { rideId: targetRideId, reason }).catch(() => {}));
@@ -2287,15 +2433,21 @@ const handleOpenChat = () => {
   }, [rideStatus, bookingStep]);
 
   const handleSubmitRating = useCallback((stars: number, tags: string[], comment: string) => {
-    if (activeRideId && driverInfo && user?.id) {
-      rateDriver({ 
-        rideId: activeRideId, 
+    const targetRideId = activeRideIdRef.current || activeRideId;
+    if (targetRideId && driverInfo?.id && user?.id) {
+      const ratingPayload = { 
+        rideId: targetRideId, 
         reviewerId: user.id, 
+        reviewerType: 'PASSENGER',
         receiverId: driverInfo.id, 
         stars, 
         tags,
         comment 
-      });
+      };
+      rateDriver(ratingPayload);
+      api.post('/passengers/rides/rate', ratingPayload)
+        .catch(() => api.post('/rides/rate', ratingPayload).catch(() => {}));
+      AsyncStorage.setItem('@bai245:last_notified_terminal_ride', String(targetRideId)).catch(() => {});
     }
     setShowRatingModal(false);
     resetRideState();
