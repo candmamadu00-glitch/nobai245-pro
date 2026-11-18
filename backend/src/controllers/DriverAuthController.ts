@@ -76,14 +76,14 @@ export class DriverAuthController {
       }
 
       const accessToken = jwt.sign(
-        { id: driver.id, role: 'DRIVER', status: driver.status }, 
-        JWT_SECRET!, 
+        { id: driver.id, role: 'DRIVER', status: driver.status },
+        JWT_SECRET!,
         { expiresIn: '1h' }
       );
-      
+
       const refreshToken = jwt.sign(
-        { id: driver.id, role: 'DRIVER' }, 
-        JWT_REFRESH_SECRET!, 
+        { id: driver.id, role: 'DRIVER' },
+        JWT_REFRESH_SECRET!,
         { expiresIn: '7d' }
       );
 
@@ -102,9 +102,9 @@ export class DriverAuthController {
         message: 'Login realizado com sucesso!',
         accessToken,
         refreshToken,
-        driver: { 
-          id: driver.id, 
-          fullName: driver.fullName, 
+        driver: {
+          id: driver.id,
+          fullName: driver.fullName,
           phone: driver.phone,
           status: driver.status,
           vehiclePlate: driver.vehiclePlate,
@@ -201,18 +201,18 @@ export class DriverAuthController {
       });
 
       if (!driver) {
-        return res.status(200).json({ 
-          success: true, 
-          message: 'Se o número estiver cadastrado, o código SMS será enviado.' 
+        return res.status(200).json({
+          success: true,
+          message: 'Se o número estiver cadastrado, o código SMS será enviado.'
         });
       }
 
       if (driver.lastResetAttempt) {
         const diffInSeconds = (new Date().getTime() - new Date(driver.lastResetAttempt).getTime()) / 1000;
         if (diffInSeconds < 60) {
-          return res.status(429).json({ 
-            success: false, 
-            error: 'Aguarde 60 segundos antes de solicitar um novo código SMS.' 
+          return res.status(429).json({
+            success: false,
+            error: 'Aguarde 60 segundos antes de solicitar um novo código SMS.'
           });
         }
       }
@@ -233,15 +233,15 @@ export class DriverAuthController {
       const smsSent = await sendSmsOtp(driver.phone, otpCode);
 
       if (!smsSent) {
-        return res.status(500).json({ 
-          success: false, 
-          error: 'Falha ao enviar o SMS de verificação. Tente novamente em instantes.' 
+        return res.status(500).json({
+          success: false,
+          error: 'Falha ao enviar o SMS de verificação. Tente novamente em instantes.'
         });
       }
 
-      return res.status(200).json({ 
-        success: true, 
-        message: 'Código de verificação enviado por SMS com sucesso.' 
+      return res.status(200).json({
+        success: true,
+        message: 'Código de verificação enviado por SMS com sucesso.'
       });
     } catch (error: any) {
       console.error('❌ Erro em requestForgotPasswordOtp:', error?.message || error);
@@ -262,16 +262,16 @@ export class DriverAuthController {
       const effectiveOtp = String(otpCode || code || '').trim();
 
       if (!phone || !effectiveOtp || !newPassword) {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'Telefone, código OTP e nova senha são obrigatórios.' 
+        return res.status(400).json({
+          success: false,
+          error: 'Telefone, código OTP e nova senha são obrigatórios.'
         });
       }
 
       if (String(newPassword).length < 6) {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'A nova senha deve ter no mínimo 6 caracteres.' 
+        return res.status(400).json({
+          success: false,
+          error: 'A nova senha deve ter no mínimo 6 caracteres.'
         });
       }
 
@@ -287,26 +287,26 @@ export class DriverAuthController {
       });
 
       if (!driver || !driver.otpCodeHash || !driver.otpExpiresAt) {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'Solicitação de recuperação inválida ou expirada.' 
+        return res.status(400).json({
+          success: false,
+          error: 'Solicitação de recuperação inválida ou expirada.'
         });
       }
 
       if (new Date() > new Date(driver.otpExpiresAt)) {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'O código de verificação expirou. Solicite um novo código.' 
+        return res.status(400).json({
+          success: false,
+          error: 'O código de verificação expirou. Solicite um novo código.'
         });
       }
 
       // 🛡️ CORREÇÃO DE SEGURANÇA: Validar OTP corretamente usando bcrypt.compare
       const isOtpValid = await bcrypt.compare(effectiveOtp, driver.otpCodeHash);
-      
+
       if (!isOtpValid) {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'Código de verificação incorreto.' 
+        return res.status(400).json({
+          success: false,
+          error: 'Código de verificação incorreto.'
         });
       }
 
@@ -321,9 +321,9 @@ export class DriverAuthController {
         },
       });
 
-      return res.status(200).json({ 
-        success: true, 
-        message: 'Senha redefinida com sucesso! Você já pode fazer login.' 
+      return res.status(200).json({
+        success: true,
+        message: 'Senha redefinida com sucesso! Você já pode fazer login.'
       });
     } catch (error: any) {
       console.error('❌ Erro em resetPasswordWithOtp:', error?.message || error);
@@ -340,8 +340,8 @@ export class DriverAuthController {
   // ==========================================
   async register(req: Request, res: Response): Promise<Response> {
     try {
-      const { 
-        fullName, vehicleModel, vehicleBrand, password, vehicleColor, vehicleType, documentType 
+      const {
+        fullName, vehicleModel, vehicleBrand, password, vehicleColor, vehicleType, documentType
       } = req.body;
 
       const rawPhone = req.body.phone ? String(req.body.phone).trim() : '';
@@ -374,6 +374,23 @@ export class DriverAuthController {
         return res.status(409).json({ success: false, error: 'Este número de telefone já está cadastrado na plataforma.' });
       }
 
+      if (req.body.documentNumber) {
+        const [driverDoc, passengerDoc] = await Promise.all([
+          prisma.driver.findFirst({ where: { documentNumber } }),
+          prisma.passenger.findFirst({ where: { documentNumber } }),
+        ]);
+        if (driverDoc || passengerDoc) {
+          return res.status(409).json({ success: false, error: 'Este número de documento já está vinculado a outra conta na plataforma.' });
+        }
+      }
+
+      if (req.body.vehiclePlate) {
+        const existingPlate = await prisma.driver.findFirst({ where: { vehiclePlate } });
+        if (existingPlate) {
+          return res.status(409).json({ success: false, error: 'Esta matrícula/placa de veículo já está cadastrada na plataforma.' });
+        }
+      }
+
       const incomingOtpCode = String(req.body.otpCode || '').replace(/\D/g, '').trim();
       const incomingOtpToken = String(req.body.otpToken || '').trim();
 
@@ -403,7 +420,7 @@ export class DriverAuthController {
       }
 
       const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
-      
+
       const selfieFile = files?.['profilePicture']?.[0] || files?.['selfie']?.[0] || files?.['photo']?.[0] || (req as any).file;
       const licenseFrontFile = files?.['documentFront']?.[0] || files?.['licenseFront']?.[0] || files?.['cnhPhoto']?.[0] || files?.['document']?.[0];
       const licenseBackFile = files?.['documentBack']?.[0] || files?.['licenseBack']?.[0] || files?.['vehiclePhoto']?.[0];
@@ -418,15 +435,15 @@ export class DriverAuthController {
       const validVehicleSeats = Number.isFinite(parsedSeats) && parsedSeats > 0 && parsedSeats <= 50 ? parsedSeats : undefined;
 
       const driver = await prisma.driver.create({
-        data: { 
-          fullName: cleanFullName, 
-          phone: formattedPhone, 
+        data: {
+          fullName: cleanFullName,
+          phone: formattedPhone,
           passwordHash,
-          vehiclePlate, 
-          vehicleBrand: cleanVehicleBrand, 
-          vehicleType: vehicleType || 'TAXI', 
+          vehiclePlate,
+          vehicleBrand: cleanVehicleBrand,
+          vehicleType: vehicleType || 'TAXI',
           vehicleColor: cleanVehicleColor,
-          ...(validVehicleSeats !== undefined && { vehicleSeats: validVehicleSeats }), 
+          ...(validVehicleSeats !== undefined && { vehicleSeats: validVehicleSeats }),
           documentType: documentType || 'BI',
           documentNumber,
           profilePicture,
@@ -439,12 +456,12 @@ export class DriverAuthController {
       return res.status(201).json({
         success: true,
         message: 'Cadastro realizado com sucesso! Aguarde a aprovação do seu perfil.',
-        driver: { 
-          id: driver.id, 
-          fullName: driver.fullName, 
-          phone: driver.phone, 
-          status: driver.status, 
-          profilePicture: driver.profilePicture 
+        driver: {
+          id: driver.id,
+          fullName: driver.fullName,
+          phone: driver.phone,
+          status: driver.status,
+          profilePicture: driver.profilePicture
         },
       });
     } catch (error: any) {
@@ -542,8 +559,8 @@ export class DriverAuthController {
       }
 
       const accessToken = jwt.sign(
-        { id: driver.id, role: 'DRIVER', status: driver.status }, 
-        JWT_SECRET!, 
+        { id: driver.id, role: 'DRIVER', status: driver.status },
+        JWT_SECRET!,
         { expiresIn: '1h' }
       );
 
@@ -593,13 +610,13 @@ export class DriverAuthController {
         return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
       }
 
-      return res.status(200).json({ 
-        success: true, 
+      return res.status(200).json({
+        success: true,
         driver: {
           ...driver,
           walletBalance: Number(driver.walletBalance || 0),
           ratingAverage: Number(driver.ratingAverage || 5.0)
-        } 
+        }
       });
     } catch (error: any) {
       console.error('❌ [PERFIL MOTORISTA]:', error?.message || error);
@@ -617,14 +634,14 @@ export class DriverAuthController {
 
       const driver = await prisma.driver.findUnique({
         where: { id: driverId },
-        select: { 
+        select: {
           fullName: true,
           phone: true,
           walletBalance: true,
           orangeNumber: true,
           mtnNumber: true,
           paymentAccountNumber: true
-        } 
+        }
       });
 
       if (!driver) return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
@@ -815,38 +832,49 @@ export class DriverAuthController {
       const driverId = (req as any).user?.id;
       if (!driverId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
 
+      const activeRide = await prisma.ride.findFirst({
+        where: {
+          driverId,
+          status: { in: ['PENDING', 'SEARCHING', 'AWAITING_PAYMENT', 'ACCEPTED', 'QUEUED', 'ARRIVED', 'IN_PROGRESS'] as any },
+        },
+      });
+
+      if (activeRide) {
+        return res.status(400).json({
+          success: false,
+          error: 'Você possui uma corrida ativa ou em andamento. Finalize ou cancele a corrida antes de encerrar a conta.',
+        });
+      }
+
       const driver = await prisma.driver.findUnique({
         where: { id: driverId },
-        include: { rides: { take: 1 }, transactions: { take: 1 } },
       });
 
       if (!driver) return res.status(404).json({ success: false, error: 'Motorista não encontrado.' });
 
-      const hasHistory = driver.rides.length > 0 || driver.transactions.length > 0;
-
-      if (!hasHistory) {
-        await prisma.driver.delete({ where: { id: driverId } });
-      } else {
-        const stamp = Date.now().toString().slice(-8);
-        await prisma.driver.update({
-          where: { id: driverId },
-          data: {
-            phone: `d_${stamp}`,
-            vehiclePlate: `p_${stamp}`,
-            documentNumber: `doc_${stamp}`,
-            orangeNumber: null,
-            mtnNumber: null,
-            paymentAccountNumber: null,
-            status: 'SUSPENDED',
-            isOnline: false,
-            isAvailable: false,
-            currentRideId: null,
-            deletedAt: new Date(),
-            refreshTokenHash: null,
-            deviceToken: null,
-          },
-        });
-      }
+      // 🛡️ POLÍTICA ENTERPRISE DE ENCERRAMENTO DE CONTA:
+      // Libera EXCLUSIVAMENTE o número de celular para permitir novo cadastro,
+      // preservando e bloqueando documento (BI/Passaporte), matrícula/placa do veículo e histórico.
+      const stamp = Date.now().toString().slice(-8);
+      const rand = Math.floor(10 + Math.random() * 89);
+      await prisma.driver.update({
+        where: { id: driverId },
+        data: {
+          phone: `del_d_${stamp}_${rand}`,
+          orangeNumber: null,
+          mtnNumber: null,
+          paymentAccountNumber: null,
+          status: 'INACTIVE',
+          isOnline: false,
+          isAvailable: false,
+          currentRideId: null,
+          deletedAt: new Date(),
+          refreshTokenHash: null,
+          otpCodeHash: null,
+          otpExpiresAt: null,
+          deviceToken: null,
+        },
+      });
 
       return res.status(200).json({ success: true, message: 'Sua conta foi excluída e seus dados foram liberados com sucesso.' });
     } catch (error: any) {
@@ -863,14 +891,14 @@ export class DriverAuthController {
       const driverId = (req as any).user?.id;
       if (!driverId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
 
-      const { 
-        mobileMoneyProvider, 
-        paymentProvider, 
+      const {
+        mobileMoneyProvider,
+        paymentProvider,
         provider,
-        mobileMoneyNumber, 
-        paymentAccountNumber, 
-        orangeNumber, 
-        mtnNumber 
+        mobileMoneyNumber,
+        paymentAccountNumber,
+        orangeNumber,
+        mtnNumber
       } = req.body;
 
       const rawNumber = mobileMoneyNumber || paymentAccountNumber || orangeNumber || mtnNumber;
@@ -888,7 +916,7 @@ export class DriverAuthController {
       }
 
       const formattedPhone = `245${cleanDigits}`;
-      
+
       const activeProvider = String(mobileMoneyProvider || paymentProvider || provider || '').toUpperCase();
       const isMtn = activeProvider.includes('MTN') || activeProvider.includes('TELECEL');
 
@@ -900,8 +928,8 @@ export class DriverAuthController {
         }
       });
 
-      return res.status(200).json({ 
-        success: true, 
+      return res.status(200).json({
+        success: true,
         message: 'Informações de pagamento atualizadas com sucesso!',
         paymentAccountNumber: formattedPhone
       });
@@ -998,10 +1026,10 @@ export class DriverAuthController {
       if (!driverId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
 
       const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
-      const file = req.file || 
-                   files?.['profilePicture']?.[0] || 
-                   files?.['photo']?.[0] || 
-                   files?.['file']?.[0] || 
+      const file = req.file ||
+                   files?.['profilePicture']?.[0] ||
+                   files?.['photo']?.[0] ||
+                   files?.['file']?.[0] ||
                    files?.['image']?.[0];
 
       if (!file) {
@@ -1015,11 +1043,11 @@ export class DriverAuthController {
         data: { profilePicture: newProfilePicture }
       });
 
-      return res.status(200).json({ 
-        success: true, 
-        message: 'Foto atualizada com sucesso', 
-        profilePicture: newProfilePicture 
-      }); 
+      return res.status(200).json({
+        success: true,
+        message: 'Foto atualizada com sucesso',
+        profilePicture: newProfilePicture
+      });
     } catch (error: any) {
       console.error('❌ [FOTO PERFIL]:', error?.message || error);
       return res.status(500).json({ success: false, error: 'Erro ao processar imagem.' });

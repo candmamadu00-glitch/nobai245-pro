@@ -3,6 +3,9 @@ const { Expo } = require('expo-server-sdk');
 
 const expo = new Expo();
 
+const PUSH_DEDUP_WINDOW_MS = 8_000;
+const recentPushDispatches = new Map<string, number>();
+
 export const PUSH_CHANNELS = {
   NEW_RIDE_ALARM: 'new-ride-alarm',
   RIDE_UPDATE: 'ride-updates',
@@ -51,6 +54,18 @@ export async function sendPushNotification(
     console.error(`❌ [PUSH REJECTED] Token inválido: "${pushToken}"`);
     return;
   }
+
+  const now = Date.now();
+  for (const [k, exp] of recentPushDispatches.entries()) {
+    if (exp <= now) recentPushDispatches.delete(k);
+  }
+  const pushSig = `${pushToken}|${channelId}|${title || ''}|${body || ''}|${data?.rideId || ''}|${data?.type || ''}`;
+  const existingExp = recentPushDispatches.get(pushSig);
+  if (existingExp && existingExp > now) {
+    console.log(`🛡️ [PUSH DEDUP] Ignorando envio duplicado em janela de 8s para "${pushToken}"`);
+    return;
+  }
+  recentPushDispatches.set(pushSig, now + PUSH_DEDUP_WINDOW_MS);
 
   const message: any = {
     to: pushToken,

@@ -79,7 +79,7 @@ export class PassengerAuthController {
 
       const passengerPhoneExists = await prisma.passenger.findUnique({ where: { phone: formattedPhone } });
       const driverPhoneExists = await prisma.driver.findUnique({ where: { phone: formattedPhone } });
-      
+
       if (passengerPhoneExists || driverPhoneExists) {
         return res.status(409).json({ success: false, error: 'Este número de telefone já está registrado no sistema.' });
       }
@@ -136,9 +136,9 @@ export class PassengerAuthController {
       return res.status(201).json({
         success: true,
         message: 'Passageiro cadastrado com sucesso! Verifique seu telefone para ativar a conta.',
-        passenger: { 
-          id: passenger.id, 
-          fullName: passenger.fullName, 
+        passenger: {
+          id: passenger.id,
+          fullName: passenger.fullName,
           phone: passenger.phone,
           email: passenger.email
         },
@@ -174,14 +174,14 @@ export class PassengerAuthController {
       }
 
       const accessToken = jwt.sign(
-        { id: passenger.id, role: 'PASSENGER', status: passenger.status }, 
-        JWT_SECRET!, 
+        { id: passenger.id, role: 'PASSENGER', status: passenger.status },
+        JWT_SECRET!,
         { expiresIn: '1h' }
       );
-      
+
       const refreshToken = jwt.sign(
-        { id: passenger.id, role: 'PASSENGER' }, 
-        JWT_REFRESH_SECRET!, 
+        { id: passenger.id, role: 'PASSENGER' },
+        JWT_REFRESH_SECRET!,
         { expiresIn: '7d' }
       );
 
@@ -387,7 +387,7 @@ export class PassengerAuthController {
         }
       }
 
-  
+
   // 5. REFRESH TOKEN
   async refreshToken(req: Request, res: Response): Promise<Response> {
     try {
@@ -405,8 +405,8 @@ export class PassengerAuthController {
       }
 
       const accessToken = jwt.sign(
-        { id: passenger.id, role: 'PASSENGER', status: passenger.status }, 
-        JWT_SECRET!, 
+        { id: passenger.id, role: 'PASSENGER', status: passenger.status },
+        JWT_SECRET!,
         { expiresIn: '1h' }
       );
 
@@ -442,13 +442,13 @@ export class PassengerAuthController {
 
       if (!passenger) return res.status(404).json({ success: false, error: 'Passageiro não encontrado.' });
 
-      return res.status(200).json({ 
-        success: true, 
+      return res.status(200).json({
+        success: true,
         passenger: {
           ...passenger,
           walletBalance: Number(passenger.walletBalance || 0),
           ratingAverage: Number(passenger.ratingAverage || 5.0)
-        } 
+        }
       });
     } catch (error: any) {
       console.error('❌ [PERFIL PASSAGEIRO]:', error?.message || error);
@@ -466,7 +466,7 @@ export class PassengerAuthController {
       const dataToUpdate: any = {};
 
       if (fullName) dataToUpdate.fullName = sanitizeText(String(fullName), 120);
-      
+
       if (email !== undefined) {
         const cleanEmail = email ? sanitizeText(String(email).toLowerCase(), 150) : null;
         if (cleanEmail) {
@@ -570,7 +570,7 @@ if (uploadedFile) {
   async initiatePayment(req: Request, res: Response): Promise<Response> {
     try {
       const passengerId = (req as any).user?.id || (req as any).userId || (req as any).passenger?.id;
-      
+
       if (!passengerId) {
         return res.status(401).json({ success: false, error: 'Não autorizado. ID do passageiro ausente.' });
       }
@@ -621,8 +621,8 @@ if (uploadedFile) {
 
       return res.status(200).json({
         success: true,
-        message: String(selectedProvider).toUpperCase().includes('ORANGE') 
-          ? 'Confirme a transação digitando seu PIN no celular ou acessando o link.' 
+        message: String(selectedProvider).toUpperCase().includes('ORANGE')
+          ? 'Confirme a transação digitando seu PIN no celular ou acessando o link.'
           : 'Solicitação enviada ao seu telefone. Digite o seu PIN do Mobile Money.',
         paymentUrl: chargeResult.paymentUrl || null,
         providerRef: chargeResult.providerRef,
@@ -858,14 +858,14 @@ if (uploadedFile) {
       }
 
       const accessToken = jwt.sign(
-        { id: passenger.id, role: 'PASSENGER', status: passenger.status }, 
-        JWT_SECRET!, 
+        { id: passenger.id, role: 'PASSENGER', status: passenger.status },
+        JWT_SECRET!,
         { expiresIn: '1h' }
       );
-      
+
       const refreshToken = jwt.sign(
-        { id: passenger.id, role: 'PASSENGER' }, 
-        JWT_REFRESH_SECRET!, 
+        { id: passenger.id, role: 'PASSENGER' },
+        JWT_REFRESH_SECRET!,
         { expiresIn: '7d' }
       );
 
@@ -925,7 +925,7 @@ if (uploadedFile) {
 
       const passengerPhoneExists = await prisma.passenger.findUnique({ where: { phone: formattedPhone } });
       const driverPhoneExists = await prisma.driver.findUnique({ where: { phone: formattedPhone } });
-      
+
       if (passengerPhoneExists || driverPhoneExists) {
         return res.status(409).json({ success: false, error: 'Este número de telefone já está registrado em outra conta.' });
       }
@@ -957,13 +957,13 @@ if (uploadedFile) {
       });
 
       const accessToken = jwt.sign(
-        { id: passenger.id, role: 'PASSENGER', status: passenger.status }, 
-        JWT_SECRET!, 
+        { id: passenger.id, role: 'PASSENGER', status: passenger.status },
+        JWT_SECRET!,
         { expiresIn: '1h' }
       );
       const refreshToken = jwt.sign(
-        { id: passenger.id, role: 'PASSENGER' }, 
-        JWT_REFRESH_SECRET!, 
+        { id: passenger.id, role: 'PASSENGER' },
+        JWT_REFRESH_SECRET!,
         { expiresIn: '7d' }
       );
 
@@ -977,9 +977,9 @@ if (uploadedFile) {
         message: 'Cadastro concluído com sucesso!',
         accessToken,
         refreshToken,
-        passenger: { 
-          id: passenger.id, 
-          fullName: passenger.fullName, 
+        passenger: {
+          id: passenger.id,
+          fullName: passenger.fullName,
           phone: passenger.phone,
           email: passenger.email,
           profilePicture: passenger.profilePicture,
@@ -1117,9 +1117,9 @@ if (uploadedFile) {
       });
 
       if (activeRide) {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'Você possui uma corrida ativa ou em andamento. Finalize ou cancele a corrida antes de encerrar a conta.' 
+        return res.status(400).json({
+          success: false,
+          error: 'Você possui uma corrida ativa ou em andamento. Finalize ou cancele a corrida antes de encerrar a conta.'
         });
       }
 
@@ -1130,28 +1130,24 @@ if (uploadedFile) {
 
       if (!passenger) return res.status(404).json({ success: false, error: 'Passageiro não encontrado.' });
 
-      const hasHistory = passenger.rides.length > 0 || passenger.transactions.length > 0;
-
-      if (!hasHistory) {
-        await prisma.passenger.delete({ where: { id: passengerId } });
-      } else {
-        const stamp = Date.now().toString().slice(-8);
-        const rand = Math.floor(10 + Math.random() * 89);
-        await prisma.passenger.update({
-          where: { id: passengerId },
-          data: {
-            fullName: 'Passageiro Anônimo',
-            phone: `p_${stamp}_${rand}`,
-            email: `del_${stamp}_${rand}@anon.com`,
-            documentNumber: null,
-            paymentAccountNumber: null,
-            status: 'SUSPENDED',
-            deletedAt: new Date(),
-            refreshTokenHash: null,
-            deviceToken: null,
-          },
-        });
-      }
+      // 🛡️ POLÍTICA ENTERPRISE DE ENCERRAMENTO DE CONTA:
+      // Libera EXCLUSIVAMENTE o número de celular para permitir novo cadastro,
+      // preservando e bloqueando e-mail, documento (BI/Passaporte) e histórico para auditoria/antifraude.
+      const stamp = Date.now().toString().slice(-8);
+      const rand = Math.floor(10 + Math.random() * 89);
+      await prisma.passenger.update({
+        where: { id: passengerId },
+        data: {
+          phone: `del_p_${stamp}_${rand}`,
+          paymentAccountNumber: null,
+          status: 'INACTIVE',
+          deletedAt: new Date(),
+          refreshTokenHash: null,
+          otpCodeHash: null,
+          otpExpiresAt: null,
+          deviceToken: null,
+        },
+      });
 
       return res.status(200).json({ success: true, message: 'Conta e dados sensíveis desativados com sucesso.' });
     } catch (error: any) {
