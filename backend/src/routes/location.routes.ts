@@ -47,6 +47,7 @@ router.post('/landmarks', authenticate, async (req: Request, res: Response) => {
       include: { neighborhood: true }
     });
 
+    landmarksCache.expiresAt = 0;
     return res.status(201).json({ success: true, place });
   } catch (error) {
     console.error('❌ Erro ao cadastrar ponto:', error);
@@ -62,17 +63,25 @@ router.get('/landmarks', async (_req: Request, res: Response) => {
       orderBy: { createdAt: 'desc' }
     });
 
-    const formattedResults = places.map((p: any) => ({
-      id: p.id,
-      name: p.name,
-      popularName: p.popularName,
-      neighborhood: p.neighborhood?.name || '',
-      referenceNotes: p.referenceNotes,
-      latitude: p.latitude,
-      longitude: p.longitude,
-      isActive: p.isActive,
-      createdAt: p.createdAt
-    }));
+    const formattedResults = places.map((p: any) => {
+      const neighborhoodName = p.neighborhood?.name || '';
+      return {
+        id: p.id,
+        name: p.name,
+        popularName: p.popularName,
+        neighborhood: neighborhoodName,
+        referenceNotes: p.referenceNotes,
+        title: p.name,
+        subtitle: `${neighborhoodName}${p.referenceNotes ? ` • ${p.referenceNotes}` : ''}`,
+        displayText: p.popularName
+          ? `${p.name} (${p.popularName})${neighborhoodName ? ` - ${neighborhoodName}` : ''}`
+          : `${p.name}${neighborhoodName ? ` - ${neighborhoodName}` : ''}`,
+        latitude: p.latitude,
+        longitude: p.longitude,
+        isActive: p.isActive,
+        createdAt: p.createdAt
+      };
+    });
 
     return res.json(formattedResults);
   } catch (error) {
@@ -194,6 +203,7 @@ router.put('/landmarks/:id', authenticate, authorizeRole(['SUPER_ADMIN', 'OPERAT
       }
     });
 
+    landmarksCache.expiresAt = 0;
     return res.json({ success: true, place: updatedPlace });
   } catch (error) {
     console.error('❌ Erro ao atualizar ponto:', error);
@@ -206,6 +216,7 @@ router.delete('/landmarks/:id', authenticate, authorizeRole(['SUPER_ADMIN', 'OPE
   try {
     const id = String(req.params.id);
     await prisma.customPlace.delete({ where: { id } });
+    landmarksCache.expiresAt = 0;
     return res.json({ success: true, message: 'Ponto removido com sucesso.' });
   } catch (error) {
     console.error('❌ Erro ao apagar ponto:', error);

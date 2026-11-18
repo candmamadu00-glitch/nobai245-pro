@@ -1,10 +1,10 @@
 import { getVehicle3DIconAsset as resolveVehicleIcon, getVehicleColorHex, resolveVehicleColorKey, VEHICLE_COLOR_OPTIONS } from '../utils/vehicleAssets';
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { 
-  View, Text, StyleSheet, TouchableOpacity, Alert, 
+import {
+  View, Text, StyleSheet, TouchableOpacity, Alert,
   Platform, StatusBar, BackHandler, Linking, Vibration,
-  Share, AppState, KeyboardAvoidingView, Modal, TextInput, 
-  ActivityIndicator, Image, Animated, PanResponder, Dimensions, 
+  Share, AppState, KeyboardAvoidingView, Modal, TextInput,
+  ActivityIndicator, Image, Animated, PanResponder, Dimensions,
   ScrollView, TouchableWithoutFeedback, Keyboard, Easing
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -21,12 +21,12 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import * as Notifications from 'expo-notifications';
 
 import { useAuth } from '../contexts/AuthContext';
-import { 
-  socket, 
-  connectPassengerSocket, 
-  requestRide as emitRequestRide,  
-  cancelRideByPassenger, 
-  rateDriver 
+import {
+  socket,
+  connectPassengerSocket,
+  requestRide as emitRequestRide,
+  cancelRideByPassenger,
+  rateDriver
 } from '../services/passengerSocket';
 import { CancelModal } from '../components/CancelModal';
 import { RatingModal } from '../components/RatingModal';
@@ -70,26 +70,26 @@ interface FavoritePlace {
   longitude: number;
 }
 
-interface ChatMessage { 
-  id: string; 
-  sender: 'passenger' | 'driver'; 
-  text?: string; 
+interface ChatMessage {
+  id: string;
+  sender: 'passenger' | 'driver';
+  text?: string;
   audioUrl?: string | null;
   audioDuration?: number;
   senderPhoto?: string;
 }
 
-interface DriverInfo { 
-  id: string; 
-  name: string; 
-  photoUrl?: string; 
+interface DriverInfo {
+  id: string;
+  name: string;
+  photoUrl?: string;
   profilePicture?: string;
-  carModel?: string; 
+  carModel?: string;
   carColor?: string;
-  vehicleType?: string; 
-  licensePlate?: string; 
-  rating?: number; 
-  phone?: string; 
+  vehicleType?: string;
+  licensePlate?: string;
+  rating?: number;
+  phone?: string;
   startOtp?: string;
 }
 
@@ -203,16 +203,16 @@ export const getVehicle3DIconAsset = (type?: string, colorName?: string) => {
 
 const getHaversineDistance = (p1: any, p2: any) => {
   if (!p1?.latitude || !p1?.longitude || !p2?.latitude || !p2?.longitude) return 0;
-  const R = 6371; 
+  const R = 6371;
   const dLat = (p2.latitude - p1.latitude) * (Math.PI / 180);
   const dLon = (p2.longitude - p1.longitude) * (Math.PI / 180);
-  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + 
-    Math.cos(p1.latitude * (Math.PI / 180)) * Math.cos(p2.latitude * (Math.PI / 180)) * 
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(p1.latitude * (Math.PI / 180)) * Math.cos(p2.latitude * (Math.PI / 180)) *
     Math.sin(dLon / 2) * Math.sin(dLon / 2);
   const safeA = Math.min(1, Math.max(0, a));
   const c = 2 * Math.atan2(Math.sqrt(safeA), Math.sqrt(1 - safeA));
   const dist = R * c * 1.3;
-  return isNaN(dist) ? 0 : dist; 
+  return isNaN(dist) ? 0 : dist;
 };
 
 const findNearestLocalBairro = (lat: number, lng: number) => {
@@ -401,13 +401,13 @@ export function Home() {
   const [passengerLocation, setPassengerLocation] = useState<Location.LocationObject | null>(null);
   const [driverLocation, setDriverLocation] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
   const [driverInfo, setDriverInfo] = useState<DriverInfo | null>(null);
-  
+
   const [pickupCoords, setPickupCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [pickupAddress, setPickupAddress] = useState(t('pickup_location', 'Local de partida'));
-  
+
   const [dropoffCoords, setDropoffCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [dropoffAddress, setDropoffAddress] = useState('');
-  
+
   const [extraStopCoords, setExtraStopCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [extraStopAddress, setExtraStopAddress] = useState('');
   const [showExtraStop, setShowExtraStop] = useState(false);
@@ -425,12 +425,12 @@ export function Home() {
   const [vehicleType, setVehicleType] = useState<VehicleType>('particular');
   const [serviceType, setServiceType] = useState<ServiceType>('viagem');
   const [selectedRegion] = useState<RegionType>('BISSAU');
-  
+
   // 🟢 MÉTODOS DE PAGAMENTO SUPORTADOS (DINHEIRO, ORANGE MONEY, TELECEL/MTN)
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
   const [payerPhone, setPayerPhone] = useState<string>('');
   const [pendingPaymentInfo, setPendingPaymentInfo] = useState<any>(null);
-  
+
   const [estimatedPrice, setEstimatedPrice] = useState<number | null>(null);
   const [tariffRuleBadge, setTariffRuleBadge] = useState<string | null>(null);
   const [couponCodeInput, setCouponCodeInput] = useState<string>('');
@@ -476,16 +476,18 @@ export function Home() {
       setIsValidatingCoupon(false);
     }
   }, [couponCodeInput, estimatedPrice]);
-  
+
   const [isMenuVisible, setIsMenuVisible] = useState(false);
   const [isSearchModalVisible, setIsSearchModalVisible] = useState(false);
   const [searchType, setSearchType] = useState<'pickup' | 'dropoff' | 'extraStop'>('dropoff');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<MapboxGeocodingFeature[]>([]);
   const [isSearchingMapbox, setIsSearchingMapbox] = useState(false);
+  const [adminLandmarks, setAdminLandmarks] = useState<MapboxGeocodingFeature[]>([]);
+  const [pendingFavoriteType, setPendingFavoriteType] = useState<'home' | 'work' | null>(null);
   const [isVoiceAssistEnabled, setIsVoiceAssistEnabled] = useState<boolean>(true);
   const [isBorderGlowEnabled, setIsBorderGlowEnabled] = useState<boolean>(true);
-  
+
   const [showCancelModal, setShowCancelModal] = useState<boolean>(false);
   const handleCloseCancelModal = useCallback(() => setShowCancelModal(false), []);
   const [showRatingModal, setShowRatingModal] = useState(false);
@@ -554,7 +556,7 @@ useEffect(() => {
     setStartOtp('');
     setRouteGeometry(null);
     setIsSearchingRide(false);
-    
+
     setDropoffCoords(null);
     setDropoffAddress('');
     setPickupReferencePoint('');
@@ -612,35 +614,35 @@ const handleFullCancelAndReset = useCallback(() => {
 }, [passengerLocation]);
 // 🟢 VEHICLE_OPTIONS movido para dentro do componente com useMemo
   const VEHICLE_OPTIONS = useMemo(() => [
-    { 
-      id: 'moto' as VehicleType, 
-      title: 'Moto', 
-      subtitle: t('moto_subtitle', 'Rápido e econômico'), 
-      image: require('../../assets/images/vehicles/moto.png') 
+    {
+      id: 'moto' as VehicleType,
+      title: 'Moto',
+      subtitle: t('moto_subtitle', 'Rápido e econômico'),
+      image: require('../../assets/images/vehicles/moto.png')
     },
-    { 
-      id: 'particular' as VehicleType, 
-      title: t('standard_vehicle', 'Particular'), 
-      subtitle: t('particular_subtitle', 'Viagem exclusiva'), 
-      image: require('../../assets/images/vehicles/car_white.png') 
+    {
+      id: 'particular' as VehicleType,
+      title: t('standard_vehicle', 'Particular'),
+      subtitle: t('particular_subtitle', 'Viagem exclusiva'),
+      image: require('../../assets/images/vehicles/car_white.png')
     },
-    { 
-      id: 'taxi' as VehicleType, 
-      title: 'Táxi', 
-      subtitle: t('taxi_subtitle', 'Conforto e tradição'), 
-      image: require('../../assets/images/vehicles/car_yellow.png') 
+    {
+      id: 'taxi' as VehicleType,
+      title: 'Táxi',
+      subtitle: t('taxi_subtitle', 'Conforto e tradição'),
+      image: require('../../assets/images/vehicles/car_yellow.png')
     },
-    { 
-      id: 'moto-carro' as VehicleType, 
-      title: 'Moto-carro', 
-      subtitle: t('motocarro_subtitle', 'Ideal para bagagens leves'), 
-      image: require('../../assets/images/vehicles/motocarro.png') 
+    {
+      id: 'moto-carro' as VehicleType,
+      title: 'Moto-carro',
+      subtitle: t('motocarro_subtitle', 'Ideal para bagagens leves'),
+      image: require('../../assets/images/vehicles/motocarro.png')
     },
 
   ], [t]);
   const persistRideState = async (
-    rideId: string | null, 
-    status: RideStatus, 
+    rideId: string | null,
+    status: RideStatus,
     extraData?: {
       driverInfo?: DriverInfo | null;
       pickupCoords?: { latitude: number; longitude: number } | null;
@@ -675,7 +677,7 @@ const handleFullCancelAndReset = useCallback(() => {
           startOtp: extraData?.startOtp ?? startOtp,
           estimatedPrice: extraData?.estimatedPrice ?? estimatedPrice,
           estimatedDistance: extraData?.estimatedDistance ?? estimatedDistance,
-          
+
         };
         await AsyncStorage.setItem(STORAGE_RIDE_KEY, JSON.stringify(payload));
       } else {
@@ -914,21 +916,21 @@ const handleFullCancelAndReset = useCallback(() => {
 
   setMessages(prev => {
     const isDuplicate = prev.some(
-      m => m.id === messageId || 
+      m => m.id === messageId ||
       (text && m.text === text && m.sender === normalizedSender) ||
       (audioUrl && m.audioUrl === audioUrl)
     );
     if (isDuplicate) return prev;
 
     return [
-      ...prev, 
-      { 
-        id: messageId, 
-        sender: normalizedSender, 
-        text, 
-        audioUrl, 
-        audioDuration, 
-        senderPhoto: data.senderPhoto || data.driverPhoto 
+      ...prev,
+      {
+        id: messageId,
+        sender: normalizedSender,
+        text,
+        audioUrl,
+        audioDuration,
+        senderPhoto: data.senderPhoto || data.driverPhoto
       }
     ];
   });
@@ -939,7 +941,7 @@ const handleOpenChat = () => {
 };
   const fitMapBounds = useCallback((coordsArray: Array<{ latitude: number; longitude: number }>) => {
     if (!cameraRef.current || !coordsArray || coordsArray.length < 2) return;
-    
+
     const validCoords = coordsArray.filter(
       c => c && typeof c.latitude === 'number' && typeof c.longitude === 'number' && !isNaN(c.latitude) && !isNaN(c.longitude)
     );
@@ -947,7 +949,7 @@ const handleOpenChat = () => {
 
     const lats = validCoords.map(c => c.latitude);
     const lngs = validCoords.map(c => c.longitude);
-    
+
     const ne = [Math.max(...lngs), Math.max(...lats)];
     const sw = [Math.min(...lngs), Math.min(...lats)];
 
@@ -959,8 +961,8 @@ const handleOpenChat = () => {
   }, []);
 
   const fetchMapboxRoute = useCallback(async (
-    origin: { latitude: number; longitude: number }, 
-    destination: { latitude: number; longitude: number }, 
+    origin: { latitude: number; longitude: number },
+    destination: { latitude: number; longitude: number },
     extraStops?: Array<{ latitude: number; longitude: number }> | { latitude: number; longitude: number } | null
   ) => {
     if (!MAPBOX_ACCESS_TOKEN) return;
@@ -986,15 +988,15 @@ const handleOpenChat = () => {
 
       const coordinatesString = waypoints.join(';');
       const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${coordinatesString}?geometries=geojson&overview=full&access_token=${MAPBOX_ACCESS_TOKEN}`;
-      
+
       const res = await fetch(url);
       if (!res.ok) return;
 
       const data = await res.json();
-      
+
       if (data.routes && data.routes.length > 0 && isMountedRef.current) {
         const routeObj = data.routes[0];
-        
+
         setRouteGeometry({
           type: 'Feature',
           properties: {},
@@ -1224,23 +1226,40 @@ const handleOpenChat = () => {
   const handleMapboxSearch = async (text: string) => {
     setSearchQuery(text);
 
-    if (!text || text.trim().length < 2) {
+    const trimmed = text.trim();
+    if (!trimmed) {
       setSearchResults([]);
       return;
     }
 
+    const normQuery = trimmed.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const localPool = [...adminLandmarks, ...GUINEA_BISSAU_BAIRROS];
+    const seenDesc = new Set<string>();
+    const instantLocalMatches = localPool.filter((item) => {
+      const key = item.description.trim().toLowerCase();
+      if (seenDesc.has(key)) return false;
+      seenDesc.add(key);
+      return key.normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(normQuery);
+    });
+
+    if (trimmed.length < 2) {
+      setSearchResults(instantLocalMatches);
+      return;
+    }
+
+    setSearchResults(instantLocalMatches);
     setIsSearchingMapbox(true);
 
     try {
       const response = await api.get(`/landmarks/search?q=${encodeURIComponent(text)}`).catch(() => null);
-      
+
       let dbResults: MapboxGeocodingFeature[] = [];
 
       if (response?.data && Array.isArray(response.data)) {
         dbResults = response.data.map((item: any) => {
           const mainTitle = item.displayText || item.name || item.title || item.popularName || '';
           const subTitle = item.subtitle || item.neighborhood || item.referenceNotes || '';
-          
+
           let description = mainTitle;
           if (!item.displayText && subTitle && !mainTitle.toLowerCase().includes(subTitle.toLowerCase())) {
             description = `${mainTitle}, ${subTitle}`;
@@ -1294,9 +1313,21 @@ const handleOpenChat = () => {
           isLocalBairro: false,
         }));
 
-        setSearchResults([...dbResults, ...formattedMapbox]);
+        const merged = [...dbResults, ...instantLocalMatches, ...formattedMapbox];
+        const dedup = new Map<string, MapboxGeocodingFeature>();
+        merged.forEach((it) => {
+          const k = `${it.description.trim().toLowerCase()}_${Number(it.latitude).toFixed(4)}`;
+          if (!dedup.has(k)) dedup.set(k, it);
+        });
+        setSearchResults(Array.from(dedup.values()));
       } else {
-        setSearchResults(dbResults);
+        const merged = [...dbResults, ...instantLocalMatches];
+        const dedup = new Map<string, MapboxGeocodingFeature>();
+        merged.forEach((it) => {
+          const k = `${it.description.trim().toLowerCase()}_${Number(it.latitude).toFixed(4)}`;
+          if (!dedup.has(k)) dedup.set(k, it);
+        });
+        setSearchResults(Array.from(dedup.values()));
       }
     } catch (error) {
       console.error('❌ [SEARCH_DEBUG] Erro ao pesquisar local:', error);
@@ -1396,7 +1427,7 @@ const handleOpenChat = () => {
     isInaccessibleAlertShowingRef.current = true;
 
     Alert.alert(
-      data?.title || t('warning_title', 'Atenção ⚠️'), 
+      data?.title || t('warning_title', 'Atenção ⚠️'),
       data?.message || t('inaccessible_location_msg', 'O motorista pediu para você se aproximar, pois o local é de difícil acesso.'),
       [
         {
@@ -1431,16 +1462,63 @@ const handleOpenChat = () => {
     loadFavorites();
   }, []);
 
+  const loadAdminLandmarks = useCallback(async () => {
+    try {
+      const response = await api.get('/landmarks').catch(() => null);
+      if (response?.data && Array.isArray(response.data)) {
+        const mapped: MapboxGeocodingFeature[] = response.data
+          .filter((item: any) => item && item.isActive !== false && item.latitude != null && item.longitude != null)
+          .map((item: any) => {
+            const mainTitle = item.displayText || item.name || item.title || item.popularName || '';
+            const subTitle = item.subtitle || item.neighborhood || item.referenceNotes || '';
+            let description = mainTitle;
+            if (!item.displayText && subTitle && !mainTitle.toLowerCase().includes(subTitle.toLowerCase())) {
+              description = `${mainTitle}, ${subTitle}`;
+            }
+            return {
+              id: `admin_${item.id}`,
+              description: (description || 'Localização').replace(/undefined/g, '').trim(),
+              latitude: Number(item.latitude),
+              longitude: Number(item.longitude),
+              isLocalBairro: true,
+            };
+          });
+
+        if (isMountedRef.current) {
+          setAdminLandmarks(mapped);
+        }
+        if (mapped.length > 0) {
+          await AsyncStorage.setItem('@nobai245:cached_landmarks', JSON.stringify(mapped.slice(0, 200))).catch(() => {});
+        }
+        return;
+      }
+
+      const cachedRaw = await AsyncStorage.getItem('@nobai245:cached_landmarks').catch(() => null);
+      if (cachedRaw && isMountedRef.current) {
+        const parsed = JSON.parse(cachedRaw);
+        if (Array.isArray(parsed)) setAdminLandmarks(parsed);
+      }
+    } catch (e) {
+      console.error('Erro ao carregar locais administrativos:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAdminLandmarks();
+  }, [loadAdminLandmarks]);
+
   const handleFavoritePress = (type: 'home' | 'work') => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     const favorite = type === 'home' ? homeLocation : workLocation;
     if (favorite && typeof favorite.latitude === 'number' && typeof favorite.longitude === 'number') {
+      setPendingFavoriteType(null);
       setDropoffAddress(favorite.address);
       setDropoffCoords({ latitude: favorite.latitude, longitude: favorite.longitude });
+      setIsSearchModalVisible(false);
       setBookingStep('SERVICE_AND_PRICE');
     } else {
-      setSearchType('dropoff');
-      setIsSearchModalVisible(true);
+      setPendingFavoriteType(type);
+      openSearchModal('dropoff', true);
     }
   };
 
@@ -1641,13 +1719,10 @@ const handleOpenChat = () => {
 
     // 🛡️ PASSENGER_APPSTATE_SYNC: Fecha overlays transitórios no background e reconcilia estado ao voltar
     const appStateSub = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'background' || nextState === 'inactive') {
+      if (nextState === 'background') {
         setIsChatVisible(false);
         setShowCancelModal(false);
-        setIsSearchModalVisible(false);
-        setIsMenuVisible(false);
       } else if (nextState === 'active') {
-        setIsChatVisible(false);
         if (socket && !socket.connected) connectPassengerSocket();
         syncPassengerActiveRide(true);
       }
@@ -1752,7 +1827,7 @@ const handleOpenChat = () => {
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
       const otpCode = String(data.startOtp || data.otpPin || data.pin || '');
-      setStartOtp(otpCode); 
+      setStartOtp(otpCode);
       setActiveRideId(data.rideId || data.id);
       activeRideIdRef.current = data.rideId || data.id;
 
@@ -1810,7 +1885,7 @@ const handleOpenChat = () => {
       setRideStatus('arrived');
       if (data?.startOtp) setStartOtp(data.startOtp);
       if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'arrived');
-      
+
       speakRideStatusUpdate('arrived', {
         startOtp: data?.startOtp || startOtp,
         enabled: isVoiceAssistEnabledRef.current,
@@ -1827,10 +1902,10 @@ const handleOpenChat = () => {
       }).catch(() => {});
     };
 
-    const handleRideStarted = () => { 
+    const handleRideStarted = () => {
       if (!isMountedRef.current) return;
-      setRideStatus('in_progress'); 
-      setIsChatVisible(false); 
+      setRideStatus('in_progress');
+      setIsChatVisible(false);
       speakRideStatusUpdate('in_progress', {
         destination: dropoffAddress,
         enabled: isVoiceAssistEnabledRef.current,
@@ -1838,7 +1913,7 @@ const handleOpenChat = () => {
       if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'in_progress');
     };
 
-    const handleRideFinished = (data: any) => { 
+    const handleRideFinished = (data: any) => {
       if (!isMountedRef.current) return;
       const finishedId = String(data?.rideId || activeRideIdRef.current || '');
       if (finishedId) {
@@ -1862,7 +1937,7 @@ const handleOpenChat = () => {
         }
         return 'completed';
       });
-      setShowRatingModal(true); 
+      setShowRatingModal(true);
       persistRideState(null, 'idle');
     };
 
@@ -1871,7 +1946,7 @@ const handleOpenChat = () => {
 
       const isDriverCancel = data?.cancelledBy === 'DRIVER';
       const title = isDriverCancel ? t('warning_title', 'Aviso ⚠️') : t('cancelled_title', 'Cancelado');
-      const body = isDriverCancel 
+      const body = isDriverCancel
         ? t('driver_cancelled_msg', 'O motorista cancelou a corrida. Por favor, solicite um novo veículo.')
         : (data?.appliedPenalty ? `${t('cancellation_fee', 'Taxa de cancelamento:')} ${data.penaltyAmount} XOF.` : t('ride_cancelled_msg', 'Sua corrida foi cancelada.'));
 
@@ -2051,12 +2126,12 @@ const handleOpenChat = () => {
     socket.on('ride:finished', handleRideFinished);
     socket.on('ride:completed', handleRideFinished);
     socket.on('ride:cancelled', handleRideCancelled);
-    
+
     // 💬 OUVINTES DE CHAT GARANTIDOS (RECEIVE, MESSAGE E NEW_MESSAGE)
     socket.on('chat:receive_message', handleIncomingChatMessage);
     socket.on('chat:message', handleIncomingChatMessage);
     socket.on('chat:new_message', handleIncomingChatMessage);
-    
+
     socket.on('ride:price_calculated', handlePriceCalculated);
     socket.on('ride:inaccessible_location', handleInaccessibleLocationAlert);
 
@@ -2079,25 +2154,25 @@ const handleOpenChat = () => {
       socket.off('ride:finished', handleRideFinished);
       socket.off('ride:completed', handleRideFinished);
       socket.off('ride:cancelled', handleRideCancelled);
-      
+
       // 💬 LIMPEZA DOS OUVINTES DE CHAT
       socket.off('chat:receive_message', handleIncomingChatMessage);
       socket.off('chat:message', handleIncomingChatMessage);
       socket.off('chat:new_message', handleIncomingChatMessage);
-      
+
       socket.off('ride:no_drivers_found', handleNoDriversFound);
       socket.off('ride:price_calculated', handlePriceCalculated);
       socket.off('ride:inaccessible_location', handleInaccessibleLocationAlert);
-      
+
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     };
   }, [
-    user?.id, 
-    getCurrentLocationWithFallback, 
-    handleInaccessibleLocationAlert, 
-    handleIncomingChatMessage, 
-    resetRideState, 
-    syncPassengerActiveRide, 
+    user?.id,
+    getCurrentLocationWithFallback,
+    handleInaccessibleLocationAlert,
+    handleIncomingChatMessage,
+    resetRideState,
+    syncPassengerActiveRide,
     fitMapBounds,
     t
   ]);
@@ -2218,7 +2293,7 @@ const handleOpenChat = () => {
     const needsDropoff = serviceType !== 'aluguel';
     if (!pickupCoords || (needsDropoff && (!dropoffCoords || !dropoffAddress.trim())) || !user?.id) {
       Alert.alert(
-        t('warning_title', 'Aviso ⚠️'), 
+        t('warning_title', 'Aviso ⚠️'),
         t('select_origin_destination_msg', 'Preencha obrigatoriamente o local de partida e o destino final.')
       );
       return;
@@ -2283,10 +2358,10 @@ const handleOpenChat = () => {
       setRideStatus(isDigital ? 'awaiting_payment' : 'searching');
 
       const mappedServiceType = serviceType === 'viagem' ? 'RIDE' : serviceType === 'entrega' ? 'DELIVERY' : 'RENTAL';
-      const mappedVehicleType = 
+      const mappedVehicleType =
         serviceType === 'aluguel' ? 'TOCA_TOCA' :
-        vehicleType === 'particular' ? 'PARTICULAR' : 
-        vehicleType === 'moto-carro' ? 'MOTO_CARRO' : 
+        vehicleType === 'particular' ? 'PARTICULAR' :
+        vehicleType === 'moto-carro' ? 'MOTO_CARRO' :
         (vehicleType as string) === 'toca-toca' ? 'TOCA_TOCA' :
         vehicleType.toUpperCase();
 
@@ -2347,7 +2422,7 @@ const handleOpenChat = () => {
       searchTimeoutRef.current = setTimeout(() => {
         if (isMountedRef.current) {
           Alert.alert(
-            t('no_response_title', 'Sem resposta'), 
+            t('no_response_title', 'Sem resposta'),
             t('no_driver_accepted_msg', 'Nenhum motorista aceitou no momento. Tente novamente.')
           );
           resetRideState();
@@ -2356,7 +2431,7 @@ const handleOpenChat = () => {
 
     } catch (error) {
       Alert.alert(
-        t('error_title', 'Erro'), 
+        t('error_title', 'Erro'),
         t('server_error_msg', 'Ocorreu um problema ao comunicar com os servidores.')
       );
     }
@@ -2419,7 +2494,7 @@ const handleOpenChat = () => {
         if (!res.ok) return;
 
         const data = await res.json();
-        
+
         if (data?.features?.length > 0) {
           const placeName = data.features[0].place_name || '';
           const parts = placeName.split(',')
@@ -2437,14 +2512,14 @@ const handleOpenChat = () => {
   const handleSubmitRating = useCallback((stars: number, tags: string[], comment: string) => {
     const targetRideId = activeRideIdRef.current || activeRideId;
     if (targetRideId && driverInfo?.id && user?.id) {
-      const ratingPayload = { 
-        rideId: targetRideId, 
-        reviewerId: user.id, 
+      const ratingPayload = {
+        rideId: targetRideId,
+        reviewerId: user.id,
         reviewerType: 'PASSENGER',
-        receiverId: driverInfo.id, 
-        stars, 
+        receiverId: driverInfo.id,
+        stars,
         tags,
-        comment 
+        comment
       };
       rateDriver(ratingPayload);
       api.post('/passengers/rides/rate', ratingPayload)
@@ -2467,7 +2542,7 @@ const handleOpenChat = () => {
     try {
       if (!driverInfo || !dropoffAddress || !activeRideId) {
         Alert.alert(
-          t('warning_title', 'Aviso ⚠️'), 
+          t('warning_title', 'Aviso ⚠️'),
           t('wait_trip_data', 'Aguarde os dados da corrida carregarem para compartilhar.')
         );
         return;
@@ -2482,7 +2557,7 @@ const handleOpenChat = () => {
       const mapsPinLine = liveLat && liveLng ? `📌 *GPS Atual:* https://maps.google.com/?q=${liveLat},${liveLng}\n` : '';
       const otpShareLine = startOtp ? `🔐 *Código PIN de Embarque:* ${startOtp}\n` : '';
 
-      const mensagem = 
+      const mensagem =
         `🚕 *Acompanhe minha viagem no Nô Bai 245!*\n\n` +
         `👤 *Motorista:* ${driverInfo.name || 'Motorista'}\n` +
         `🚘 *Veículo:* ${driverInfo.carModel || 'Veículo'} (${driverInfo.carColor || 'N/A'}) — Placa: *${driverInfo.licensePlate || 'N/A'}*\n` +
@@ -2492,54 +2567,112 @@ const handleOpenChat = () => {
         mapsPinLine + `\n` +
         `🌐 *Acompanhe ao vivo no mapa pelo navegador:*\n${trackingUrl}`;
 
-      await Share.share({ 
-        message: mensagem, 
-        title: 'Acompanhar Minha Viagem - Nô Bai 245' 
+      await Share.share({
+        message: mensagem,
+        title: 'Acompanhar Minha Viagem - Nô Bai 245'
       });
     } catch (error) {
       Alert.alert(
-        t('error_title', 'Erro'), 
+        t('error_title', 'Erro'),
         t('share_error_msg', 'Não foi possível abrir o menu de compartilhamento.')
       );
     }
   };
 
-  function openSearchModal(type: 'pickup' | 'dropoff' | 'extraStop') {
+  function openSearchModal(type: 'pickup' | 'dropoff' | 'extraStop', preserveFavorite = false) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    if (!preserveFavorite) {
+      setPendingFavoriteType(null);
+    }
     translateY.setValue(0);
     setSearchType(type);
     setSearchQuery('');
     setSearchResults([]);
     setIsSearchModalVisible(true);
+    loadAdminLandmarks();
     setTimeout(() => {
       if (type === 'pickup') {
         pickupInputRef.current?.focus();
       } else if (type === 'dropoff') {
         dropoffInputRef.current?.focus();
       }
-    }, 180);
+    }, 220);
   }
+
+  const handleSelectSearchAddress = (item: MapboxGeocodingFeature, saveRecent = false) => {
+    if (pendingFavoriteType) {
+      const targetFav = pendingFavoriteType;
+      setPendingFavoriteType(null);
+      saveFavoritePlace(targetFav, {
+        address: item.description,
+        latitude: item.latitude,
+        longitude: item.longitude,
+      });
+      setIsSearchModalVisible(false);
+      return;
+    }
+
+    if (searchType === 'pickup') {
+      isManualPickupRef.current = true;
+      setPickupAddress(item.description);
+      setPickupCoords({ latitude: item.latitude, longitude: item.longitude });
+      if (cameraRef.current) {
+        cameraRef.current.setCamera({
+          centerCoordinate: [item.longitude, item.latitude],
+          zoomLevel: 15,
+          animationDuration: 800,
+        });
+      }
+      const nextStep = showExtraStop && !extraStopCoords ? 'extraStop' : 'dropoff';
+      setSearchType(nextStep);
+      setSearchQuery('');
+      setSearchResults([]);
+      if (nextStep === 'dropoff') {
+        setTimeout(() => dropoffInputRef.current?.focus(), 140);
+      }
+    } else if (searchType === 'extraStop') {
+      setExtraStopAddress(item.description);
+      setExtraStopCoords({ latitude: item.latitude, longitude: item.longitude });
+      setSearchType('dropoff');
+      setSearchQuery('');
+      setSearchResults([]);
+      setTimeout(() => dropoffInputRef.current?.focus(), 140);
+    } else {
+      if (saveRecent) {
+        saveToRecentSearches({
+          id: `recent_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          description: item.description,
+          latitude: item.latitude,
+          longitude: item.longitude,
+        });
+      }
+      setDropoffAddress(item.description);
+      setDropoffCoords({ latitude: item.latitude, longitude: item.longitude });
+      setIsSearchModalVisible(false);
+      setBookingStep('SERVICE_AND_PRICE');
+    }
+  };
 
   const handleSosPress = () => {
     Alert.alert(
       t('emergency_sos', 'SOS / Emergência 🚨'),
       t('choose_emergency_service', 'Selecione o serviço de emergência que deseja contactar:'),
       [
-        { 
-          text: '🚨 Central de Segurança (112)', 
-          onPress: () => Linking.openURL('tel:112').catch(() => {}) 
+        {
+          text: '🚨 Central de Segurança (112)',
+          onPress: () => Linking.openURL('tel:112').catch(() => {})
         },
-        { 
-          text: '🚒 Bombeiros (1313)', 
-          onPress: () => Linking.openURL('tel:1313').catch(() => {}) 
+        {
+          text: '🚒 Bombeiros (1313)',
+          onPress: () => Linking.openURL('tel:1313').catch(() => {})
         },
-        { 
-          text: '🚑 Saúde / Ambulância (1919)', 
-          onPress: () => Linking.openURL('tel:1919').catch(() => {}) 
+        {
+          text: '🚑 Saúde / Ambulância (1919)',
+          onPress: () => Linking.openURL('tel:1919').catch(() => {})
         },
-        { 
-          text: t('back_btn', 'Cancelar'), 
-          style: 'cancel' 
+        {
+          text: t('back_btn', 'Cancelar'),
+          style: 'cancel'
         },
       ],
       { cancelable: true }
@@ -2548,27 +2681,27 @@ const handleOpenChat = () => {
 
   const safeCenterCoordinate = useMemo(() => {
     if (
-      driverLocation?.latitude && 
-      driverLocation?.longitude && 
-      !isNaN(Number(driverLocation.latitude)) && 
+      driverLocation?.latitude &&
+      driverLocation?.longitude &&
+      !isNaN(Number(driverLocation.latitude)) &&
       Number(driverLocation.latitude) !== 0
     ) {
       return [Number(driverLocation.longitude), Number(driverLocation.latitude)];
     }
 
     if (
-      pickupCoords?.latitude && 
-      pickupCoords?.longitude && 
-      !isNaN(Number(pickupCoords.latitude)) && 
+      pickupCoords?.latitude &&
+      pickupCoords?.longitude &&
+      !isNaN(Number(pickupCoords.latitude)) &&
       Number(pickupCoords.latitude) !== 0
     ) {
       return [Number(pickupCoords.longitude), Number(pickupCoords.latitude)];
     }
 
     if (
-      passengerLocation?.coords?.latitude && 
-      passengerLocation?.coords?.longitude && 
-      !isNaN(Number(passengerLocation.coords.latitude)) && 
+      passengerLocation?.coords?.latitude &&
+      passengerLocation?.coords?.longitude &&
+      !isNaN(Number(passengerLocation.coords.latitude)) &&
       Number(passengerLocation.coords.latitude) !== 0
     ) {
       return [Number(passengerLocation.coords.longitude), Number(passengerLocation.coords.latitude)];
@@ -2587,8 +2720,8 @@ const handleOpenChat = () => {
         <StatusBar barStyle="light-content" backgroundColor="#0F172A" translucent />
         <MaterialCommunityIcons name="map-marker-radius" size={54} color="#EAB308" />
         <Text style={styles.loadingText}>{locationError || t('getting_location', 'Obtendo localização exata...')}</Text>
-        <TouchableOpacity 
-          style={styles.retryLocationBtn} 
+        <TouchableOpacity
+          style={styles.retryLocationBtn}
           onPress={getCurrentLocationWithFallback}
           activeOpacity={0.8}
         >
@@ -2609,11 +2742,11 @@ const handleOpenChat = () => {
       <View style={[styles.floatingHeader, { top: topHeaderInset }]}>
         <BlurView intensity={75} tint="dark" style={styles.headerBlurWrapper}>
           <View style={styles.headerContent}>
-            
+
             {/* 🟢 VOLTAR (SE ESTIVER ESCOLHENDO VEÍCULO OU PAGAMENTO) OU PERFIL DO PASSAGEIRO */}
             {(bookingStep === 'SERVICE_AND_PRICE' || bookingStep === 'PAYMENT') ? (
-              <TouchableOpacity 
-                style={styles.backButton} 
+              <TouchableOpacity
+                style={styles.backButton}
                 onPress={() => {
                   if (bookingStep === 'SERVICE_AND_PRICE' || bookingStep === 'PAYMENT') {
                     handleFullCancelAndReset();
@@ -2626,16 +2759,16 @@ const handleOpenChat = () => {
                 <Ionicons name="arrow-back" size={24} color="#FFF" />
               </TouchableOpacity>
             ) : (
-              <TouchableOpacity 
-                style={styles.headerUserInfo} 
+              <TouchableOpacity
+                style={styles.headerUserInfo}
                 activeOpacity={0.8}
                 onPress={() => navigation.navigate('Profile')}
               >
                 <View style={styles.avatarPlaceholder}>
                   {user?.profilePicture ? (
-                    <Image 
-                      source={{ uri: formatPhotoUrl(user.profilePicture) }} 
-                      style={{ width: '100%', height: '100%', borderRadius: 50 }} 
+                    <Image
+                      source={{ uri: formatPhotoUrl(user.profilePicture) }}
+                      style={{ width: '100%', height: '100%', borderRadius: 50 }}
                     />
                   ) : (
                     <Ionicons name="person" size={18} color="#0F172A" />
@@ -2647,23 +2780,23 @@ const handleOpenChat = () => {
               </TouchableOpacity>
             )}
 
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[
-                styles.voiceToggleHeaderBtn, 
+                styles.voiceToggleHeaderBtn,
                 { backgroundColor: isVoiceAssistEnabled ? '#EAB308' : 'rgba(30, 41, 59, 0.8)' }
-              ]} 
+              ]}
               onPress={toggleVoiceAssist}
               activeOpacity={0.8}
             >
-              <Ionicons 
-                name={isVoiceAssistEnabled ? "volume-high" : "volume-mute"} 
-                size={18} 
-                color={isVoiceAssistEnabled ? "#0F172A" : "#94A3B8"} 
+              <Ionicons
+                name={isVoiceAssistEnabled ? "volume-high" : "volume-mute"}
+                size={18}
+                color={isVoiceAssistEnabled ? "#0F172A" : "#94A3B8"}
               />
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={styles.langHeaderBtn} 
+            <TouchableOpacity
+              style={styles.langHeaderBtn}
               onPress={() => setLangModalVisible(true)}
               activeOpacity={0.8}
             >
@@ -2768,8 +2901,8 @@ const handleOpenChat = () => {
 
         {/* 📍 PONTO DE EMBARQUE */}
         {pickupCoords?.latitude != null && pickupCoords?.longitude != null && !isNaN(Number(pickupCoords.longitude)) && Number(pickupCoords.latitude) !== 0 && (
-          <Mapbox.PointAnnotation 
-            id="pickupPoint" 
+          <Mapbox.PointAnnotation
+            id="pickupPoint"
             coordinate={[Number(pickupCoords.longitude), Number(pickupCoords.latitude)]}
           >
             <View style={styles.pickupMarker}>
@@ -2855,8 +2988,8 @@ const handleOpenChat = () => {
       )}
 
       {/* BOTÃO RECENTRALIZAR */}
-      <TouchableOpacity 
-        style={[styles.recenterButton, { bottom: Math.max((insets?.bottom || 0) + 260, 270) }]} 
+      <TouchableOpacity
+        style={[styles.recenterButton, { bottom: Math.max((insets?.bottom || 0) + 260, 270) }]}
         activeOpacity={0.85}
         onPress={() => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -2910,18 +3043,18 @@ const handleOpenChat = () => {
       )}
 
       {/* 3. PAINEL SLIDING BOTTOM SHEET TRANSLÚCIDO */}
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
-        style={styles.bottomSheetWrapper} 
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.bottomSheetWrapper}
         pointerEvents="box-none"
       >
-        <Animated.View 
+        <Animated.View
           style={[
-            styles.bottomSheet, 
-            { 
-              transform: [{ translateY }], 
+            styles.bottomSheet,
+            {
+              transform: [{ translateY }],
               maxHeight: Dimensions.get('window').height * (['accepted', 'arrived', 'in_progress'].includes(rideStatus) ? 0.80 : 0.68),
-              paddingBottom: Math.max((insets?.bottom || 0) + 12, 20) 
+              paddingBottom: Math.max((insets?.bottom || 0) + 12, 20)
             }
           ]}
         >
@@ -2929,17 +3062,17 @@ const handleOpenChat = () => {
             <View style={styles.dragIndicator} />
           </View>
 
-          <ScrollView 
-            nestedScrollEnabled 
-            showsVerticalScrollIndicator={false} 
-            keyboardShouldPersistTaps="handled" 
+          <ScrollView
+            nestedScrollEnabled
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
             contentContainerStyle={{ flexGrow: 1, paddingBottom: Math.max((insets?.bottom || 0) + 28, 36) }}
           >
             {/* CONFIGURAÇÃO DE ROTA (APENAS QUANDO LIVRE) */}
             {rideStatus === 'idle' && bookingStep === 'ADDRESS' && (
               <View style={{ width: '100%', paddingTop: 4 }}>
                 <Text style={styles.sheetTitle}>{t('where_to', 'Para onde vamos?')}</Text>
-                
+
                 {/* EMBARQUE */}
                 <View style={{ marginBottom: 10 }}>
                   <TouchableOpacity style={styles.mainSearchInput} activeOpacity={0.8} onPress={() => openSearchModal('pickup')}>
@@ -2971,12 +3104,12 @@ const handleOpenChat = () => {
                         {extraStopAddress || 'Adicionar Parada Intermediária...'}
                       </Text>
                     </TouchableOpacity>
-                    <TouchableOpacity 
-                      style={{ padding: 10, marginLeft: 6, backgroundColor: 'rgba(239,68,68,0.15)', borderRadius: 12 }} 
-                      onPress={() => { 
-                        setShowExtraStop(false); 
-                        setExtraStopAddress(''); 
-                        setExtraStopCoords(null); 
+                    <TouchableOpacity
+                      style={{ padding: 10, marginLeft: 6, backgroundColor: 'rgba(239,68,68,0.15)', borderRadius: 12 }}
+                      onPress={() => {
+                        setShowExtraStop(false);
+                        setExtraStopAddress('');
+                        setExtraStopCoords(null);
                       }}
                     >
                       <Ionicons name="trash-outline" size={20} color="#EF4444" />
@@ -3009,11 +3142,11 @@ const handleOpenChat = () => {
                 </View>
 
                 {!showExtraStop && (
-                  <TouchableOpacity 
-                    style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 6, paddingHorizontal: 4 }} 
-                    onPress={() => { 
-                      setShowExtraStop(true); 
-                      openSearchModal('extraStop'); 
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 6, paddingHorizontal: 4 }}
+                    onPress={() => {
+                      setShowExtraStop(true);
+                      openSearchModal('extraStop');
                     }}
                   >
                     <Ionicons name="add-circle-outline" size={20} color="#3B82F6" style={{ marginRight: 6 }} />
@@ -3029,9 +3162,9 @@ const handleOpenChat = () => {
                     style={{ height: 48, marginTop: 8 }}
                   />
                 ) : (
-                  <TouchableOpacity 
-                    style={[styles.requestButton, { backgroundColor: 'rgba(30, 41, 59, 0.8)', borderWidth: 1, borderColor: '#334155' }]} 
-                    activeOpacity={0.8} 
+                  <TouchableOpacity
+                    style={[styles.requestButton, { backgroundColor: 'rgba(30, 41, 59, 0.8)', borderWidth: 1, borderColor: '#334155' }]}
+                    activeOpacity={0.8}
                     onPress={() => openSearchModal('dropoff')}
                   >
                     <Text style={[styles.requestButtonText, { color: '#EAB308' }]}>{t('where_do_you_want_to_go', 'Aonde você quer ir?')}</Text>
@@ -3044,10 +3177,10 @@ const handleOpenChat = () => {
             {rideStatus === 'idle' && bookingStep === 'PAYMENT' && (
               <View style={{ width: '100%' }}>
                 <Text style={styles.sectionLabel}>{t('payment_method', 'Escolha como deseja pagar')}</Text>
-                
+
                 <View style={[styles.paymentOptionsContainer, { flexDirection: 'column', gap: 10 }]}>
                   {/* OPÇÃO 1: DINHEIRO */}
-                  <TouchableOpacity 
+                  <TouchableOpacity
                     style={[
                       styles.paymentBtn,
                       {
@@ -3179,8 +3312,8 @@ const handleOpenChat = () => {
 
                 {/* 🔴 BOTÕES DE AÇÃO COM BOTÃO DE CANCELAR */}
                 <View style={styles.actionRow}>
-                  <TouchableOpacity 
-                    style={styles.cancelButtonOutline} 
+                  <TouchableOpacity
+                    style={styles.cancelButtonOutline}
                     onPress={handleFullCancelAndReset}
                     activeOpacity={0.8}
                   >
@@ -3279,9 +3412,9 @@ const handleOpenChat = () => {
 
                 <Text style={styles.statusTitle}>{t('searching_drivers_title', 'Procurando motoristas próximos...')}</Text>
                 <Text style={styles.statusSub}>{t('locating_nearest_vehicle', 'Conectando ao veículo mais rápido de Guiné-Bissau.')}</Text>
-                
-                <TouchableOpacity 
-                  style={[styles.cancelButtonOutline, { marginTop: 18 }]} 
+
+                <TouchableOpacity
+                  style={[styles.cancelButtonOutline, { marginTop: 18 }]}
                   onPress={() => setShowCancelModal(true)}
                   activeOpacity={0.8}
                 >
@@ -3293,16 +3426,16 @@ const handleOpenChat = () => {
             {/* 📊 ACOMPANHAMENTO DA CORRIDA */}
             {['accepted', 'arrived', 'in_progress'].includes(rideStatus) && driverInfo && (
               <View style={styles.activeRideContainer}>
-                
+
                 {/* HEADER DE STATUS E VALOR */}
                 <View style={styles.activeRideHeader}>
                   <View style={styles.statusPulseBox}>
                     <View style={styles.statusPulseDot} />
                     <Text style={styles.activeRideStatusTitle}>
-                      {rideStatus === 'accepted' 
+                      {rideStatus === 'accepted'
                         ? (driverEta ? `Motorista a caminho (${driverEta} min)` : 'Motorista a caminho') :
-                       rideStatus === 'arrived' 
-                        ? '📍 O motorista chegou ao local!' : 
+                       rideStatus === 'arrived'
+                        ? '📍 O motorista chegou ao local!' :
                        (driverEta ? `Em Viagem • Chegada em ${driverEta} min` : 'Viagem em Andamento')}
                     </Text>
 
@@ -3326,7 +3459,7 @@ const handleOpenChat = () => {
                 {/* ITINERÁRIO */}
                 <View style={styles.routeTimelineContainer}>
                   <Text style={styles.routeTimelineHeaderTitle}>ITINERÁRIO DA VIAGEM</Text>
-                  
+
                   <View style={styles.timelineItem}>
                     <View style={[styles.timelineIconBg, { backgroundColor: '#10B981' }]}>
                       <Ionicons name="location" size={14} color="#FFF" />
@@ -3369,9 +3502,9 @@ const handleOpenChat = () => {
 
                 {/* DADOS DO MOTORISTA */}
                 <View style={styles.driverCardCompact}>
-                  <Image 
-                    source={{ uri: driverInfo.photoUrl || driverInfo.profilePicture || 'https://via.placeholder.com/100' }} 
-                    style={styles.driverAvatarCompact} 
+                  <Image
+                    source={{ uri: driverInfo.photoUrl || driverInfo.profilePicture || 'https://via.placeholder.com/100' }}
+                    style={styles.driverAvatarCompact}
                   />
                   <View style={{ flex: 1, marginLeft: 12 }}>
                     <Text style={styles.driverNameCompact}>{driverInfo.name}</Text>
@@ -3402,10 +3535,10 @@ const handleOpenChat = () => {
                       <Text style={styles.plateTextCompact}>{driverInfo.licensePlate?.toUpperCase() || 'SEM PLACA'}</Text>
                     </View>
                   </View>
-                  <Image 
-                    source={getVehicle3DIconAsset(driverInfo.vehicleType, driverInfo.carColor)} 
-                    style={{ width: 48, height: 48 }} 
-                    resizeMode="contain" 
+                  <Image
+                    source={getVehicle3DIconAsset(driverInfo.vehicleType, driverInfo.carColor)}
+                    style={{ width: 48, height: 48 }}
+                    resizeMode="contain"
                   />
                 </View>
 
@@ -3426,12 +3559,12 @@ const handleOpenChat = () => {
                     <Text style={[styles.actionBtnText, { color: '#3B82F6' }]}>Partilhar</Text>
                   </TouchableOpacity>
 
-                  <TouchableOpacity 
-                    style={styles.actionBtnPrimary} 
+                  <TouchableOpacity
+                    style={styles.actionBtnPrimary}
                     onPress={() => {
                       setUnreadCount(0);
                       setIsChatVisible(true);
-                    }} 
+                    }}
                     activeOpacity={0.85}
                   >
                     <Ionicons name="chatbubble-ellipses" size={18} color="#0F172A" />
@@ -3447,8 +3580,8 @@ const handleOpenChat = () => {
                   </TouchableOpacity>
                 </View>
 
-                <TouchableOpacity 
-                       style={styles.cancelRideLink} 
+                <TouchableOpacity
+                       style={styles.cancelRideLink}
                         onPress={() => setShowCancelModal(true)}
                         >
                       <Text style={styles.cancelRideLinkText}>Cancelar Viagem</Text>
@@ -3507,7 +3640,7 @@ const handleOpenChat = () => {
             borderBottomColor: 'rgba(255,255,255,0.1)',
             backgroundColor: 'rgba(15, 23, 42, 0.92)'
           }}>
-            <TouchableOpacity 
+            <TouchableOpacity
               onPress={() => setBookingStep('ADDRESS')}
               style={{ padding: 8, borderRadius: 20, backgroundColor: 'rgba(30, 41, 59, 0.8)', marginRight: 12 }}
             >
@@ -3528,7 +3661,7 @@ const handleOpenChat = () => {
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16 }}>
             <Text style={styles.sectionLabel}>{t('service_type', 'Tipo de Serviço')}</Text>
             <View style={styles.serviceTypesContainer}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.serviceTypeButton, serviceType === 'viagem' && styles.serviceTypeActive]}
                 onPress={() => setServiceType('viagem')}
               >
@@ -3536,7 +3669,7 @@ const handleOpenChat = () => {
                 <Text style={[styles.serviceTypeText, serviceType === 'viagem' && styles.serviceTypeTextActive]}>Viagem</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.serviceTypeButton, serviceType === 'entrega' && styles.serviceTypeActive]}
                 onPress={() => setServiceType('entrega')}
               >
@@ -3544,7 +3677,7 @@ const handleOpenChat = () => {
                 <Text style={[styles.serviceTypeText, serviceType === 'entrega' && styles.serviceTypeTextActive]}>Entrega</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.serviceTypeButton, serviceType === 'aluguel' && styles.serviceTypeActive]}
                 onPress={() => setServiceType('aluguel')}
               >
@@ -3577,10 +3710,10 @@ const handleOpenChat = () => {
                     const isSelected = vehicleType === item.id;
                     const price = calculateVehiclePrice(item.id, estimatedDistance);
                     return (
-                      <TouchableOpacity 
-                        key={item.id} 
+                      <TouchableOpacity
+                        key={item.id}
                         style={[
-                          styles.categoryCard, 
+                          styles.categoryCard,
                           isSelected && styles.categoryCardActive,
                           { paddingVertical: 14, paddingHorizontal: 16, borderRadius: 16 }
                         ]}
@@ -3615,8 +3748,8 @@ const handleOpenChat = () => {
               flexDirection: 'row',
               gap: 10
             }}>
-              <TouchableOpacity 
-                style={styles.cancelButtonOutline} 
+              <TouchableOpacity
+                style={styles.cancelButtonOutline}
                 onPress={() => setBookingStep('ADDRESS')}
                 activeOpacity={0.8}
               >
@@ -3654,8 +3787,8 @@ const handleOpenChat = () => {
                       <Text style={styles.langOptionText}>{lang.label}</Text>
                     </TouchableOpacity>
                   ))}
-                  <TouchableOpacity 
-                    style={styles.closeButton} 
+                  <TouchableOpacity
+                    style={styles.closeButton}
                     onPress={() => setLangModalVisible(false)}
                     activeOpacity={0.8}
                   >
@@ -3682,17 +3815,17 @@ const handleOpenChat = () => {
                   <Text style={styles.locationModalText}>
                     {locationError || t('location_needed_desc', 'Para encontrar motoristas rapidamente e garantir sua segurança, precisamos que ative o GPS e permita o acesso no seu celular.')}
                   </Text>
-                  
-                  <TouchableOpacity 
-                    style={[styles.requestButton, { width: '100%', marginBottom: 12 }]} 
+
+                  <TouchableOpacity
+                    style={[styles.requestButton, { width: '100%', marginBottom: 12 }]}
                     onPress={() => Linking.openSettings()}
                     activeOpacity={0.85}
                   >
                     <Text style={styles.requestButtonText}>{t('open_settings', 'Abrir Configurações')}</Text>
                   </TouchableOpacity>
 
-                  <TouchableOpacity 
-                    style={styles.cancelButtonOutline} 
+                  <TouchableOpacity
+                    style={styles.cancelButtonOutline}
                     onPress={getCurrentLocationWithFallback}
                     activeOpacity={0.8}
                   >
@@ -3707,7 +3840,12 @@ const handleOpenChat = () => {
 
       {/* 📑 MENU LATERAL DRAWER TRANSLÚCIDO */}
       <Modal visible={isMenuVisible} animationType="fade" transparent onRequestClose={() => setIsMenuVisible(false)}>
-        <TouchableOpacity style={styles.menuOverlay} activeOpacity={1} onPress={() => setIsMenuVisible(false)}>
+        <View style={styles.menuOverlay}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setIsMenuVisible(false)}
+          />
           <View style={[styles.menuDrawer, { paddingTop: Math.max((insets?.top || 0) + 16, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 20), paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
             <View style={styles.menuHeader}>
               <View style={styles.avatarPlaceholderLarge}>
@@ -3722,15 +3860,15 @@ const handleOpenChat = () => {
             </View>
 
             <View style={styles.menuItems}>
-              <TouchableOpacity 
-                style={styles.menuItem} 
-                onPress={toggleBorderGlow} 
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={toggleBorderGlow}
                 activeOpacity={0.7}
               >
-                <Ionicons 
-                  name="flash-outline" 
-                  size={20} 
-                  color={isBorderGlowEnabled ? "#EAB308" : "#94A3B8"} 
+                <Ionicons
+                  name="flash-outline"
+                  size={20}
+                  color={isBorderGlowEnabled ? "#EAB308" : "#94A3B8"}
                 />
                 <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingRight: 8 }}>
                   <Text style={styles.menuItemText}>Efeito Raio Luminoso</Text>
@@ -3747,15 +3885,15 @@ const handleOpenChat = () => {
                 </View>
               </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={styles.menuItem} 
-                onPress={toggleVoiceAssist} 
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={toggleVoiceAssist}
                 activeOpacity={0.7}
               >
-                <Ionicons 
-                  name={isVoiceAssistEnabled ? "volume-high-outline" : "volume-mute-outline"} 
-                  size={20} 
-                  color={isVoiceAssistEnabled ? "#EAB308" : "#94A3B8"} 
+                <Ionicons
+                  name={isVoiceAssistEnabled ? "volume-high-outline" : "volume-mute-outline"}
+                  size={20}
+                  color={isVoiceAssistEnabled ? "#EAB308" : "#94A3B8"}
                 />
                 <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingRight: 8 }}>
                   <Text style={styles.menuItemText}>{t('voice_assist', 'Assistência por Voz')}</Text>
@@ -3772,60 +3910,60 @@ const handleOpenChat = () => {
                 </View>
               </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={styles.menuItem} 
-                onPress={() => { 
-                  setIsMenuVisible(false); 
-                  navigation.navigate('Profile'); 
-                }} 
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => {
+                  setIsMenuVisible(false);
+                  navigation.navigate('Profile');
+                }}
                 activeOpacity={0.7}
               >
                 <Ionicons name="person-outline" size={20} color="#F8FAFC" />
                 <Text style={styles.menuItemText}>{t('my_profile', 'Meu Perfil')}</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={styles.menuItem} 
-                onPress={() => { 
-                  setIsMenuVisible(false); 
-                  navigation.navigate('Wallet'); 
-                }} 
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => {
+                  setIsMenuVisible(false);
+                  navigation.navigate('Wallet');
+                }}
                 activeOpacity={0.7}
               >
                 <Ionicons name="wallet-outline" size={20} color="#EAB308" />
                 <Text style={styles.menuItemText}>Carteira & Pagamentos</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={styles.menuItem} 
-                onPress={() => { 
-                  setIsMenuVisible(false); 
-                  navigation.navigate('RideHistory'); 
-                }} 
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => {
+                  setIsMenuVisible(false);
+                  navigation.navigate('RideHistory');
+                }}
                 activeOpacity={0.7}
               >
                 <Ionicons name="time-outline" size={20} color="#F8FAFC" />
                 <Text style={styles.menuItemText}>{t('my_rides', 'Minhas Corridas')}</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={styles.menuItem} 
-                onPress={() => { 
-                  setIsMenuVisible(false); 
-                  navigation.navigate('EmergencyContacts'); 
-                }} 
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => {
+                  setIsMenuVisible(false);
+                  navigation.navigate('EmergencyContacts');
+                }}
                 activeOpacity={0.7}
               >
                 <Ionicons name="shield-checkmark-outline" size={20} color="#F8FAFC" />
                 <Text style={styles.menuItemText}>{t('emergency_contacts', 'Contatos de Emergência')}</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={styles.menuItem} 
-                onPress={() => { 
-                  setIsMenuVisible(false); 
-                  navigation.navigate('HelpCenter'); 
-                }} 
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => {
+                  setIsMenuVisible(false);
+                  navigation.navigate('HelpCenter');
+                }}
                 activeOpacity={0.7}
               >
                 <Ionicons name="help-buoy-outline" size={20} color="#F8FAFC" />
@@ -3834,12 +3972,12 @@ const handleOpenChat = () => {
 
               <View style={styles.menuDivider} />
 
-              <TouchableOpacity 
-                style={styles.menuItem} 
-                onPress={() => { 
-                  setIsMenuVisible(false); 
-                  signOut(); 
-                }} 
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => {
+                  setIsMenuVisible(false);
+                  signOut();
+                }}
                 activeOpacity={0.7}
               >
                 <Ionicons name="log-out-outline" size={20} color="#EF4444" />
@@ -3847,34 +3985,40 @@ const handleOpenChat = () => {
               </TouchableOpacity>
             </View>
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
 
       {/* 🔀 MODAL DE BUSCA TRANSLÚCIDO MAPBOX */}
-      <Modal 
-        visible={isSearchModalVisible} 
-        animationType="slide" 
+      <Modal
+        visible={isSearchModalVisible}
+        animationType="slide"
         transparent={false}
         statusBarTranslucent={true}
-        onRequestClose={() => setIsSearchModalVisible(false)}
+        onRequestClose={() => {
+          setPendingFavoriteType(null);
+          setIsSearchModalVisible(false);
+        }}
       >
         <SafeAreaView style={styles.searchModalContainer}>
-          <KeyboardAvoidingView 
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={{ flex: 1 }}
           >
             <View style={styles.searchHeader}>
-              <TouchableOpacity 
-                onPress={() => setIsSearchModalVisible(false)} 
-                style={styles.backButton} 
+              <TouchableOpacity
+                onPress={() => {
+                  setPendingFavoriteType(null);
+                  setIsSearchModalVisible(false);
+                }}
+                style={styles.backButton}
                 activeOpacity={0.7}
               >
                 <Ionicons name="arrow-back" size={24} color="#F8FAFC" />
               </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.passengerSelector} 
-                onPress={() => setIsGuestModalVisible(true)} 
+
+              <TouchableOpacity
+                style={styles.passengerSelector}
+                onPress={() => setIsGuestModalVisible(true)}
                 activeOpacity={0.8}
               >
                 <Ionicons name="person" size={13} color="#EAB308" style={{ marginRight: 6 }} />
@@ -3887,7 +4031,20 @@ const handleOpenChat = () => {
             </View>
 
             <View style={styles.modalBody}>
-              <ScrollView 
+              {pendingFavoriteType && (
+                <View style={{ backgroundColor: 'rgba(234, 179, 8, 0.16)', borderWidth: 1, borderColor: '#EAB308', borderRadius: 12, padding: 10, marginBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={{ color: '#FACC15', fontSize: 12, fontWeight: '800', flex: 1 }}>
+                    {pendingFavoriteType === 'home'
+                      ? '\U0001f3e0 Selecione abaixo o endereço para salvar como Casa'
+                      : '\U0001f4bc Selecione abaixo o endereço para salvar como Trabalho'}
+                  </Text>
+                  <TouchableOpacity onPress={() => setPendingFavoriteType(null)} style={{ paddingLeft: 10 }}>
+                    <Text style={{ color: '#94A3B8', fontSize: 12, fontWeight: '700' }}>Cancelar</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              <ScrollView
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={{ paddingBottom: 24 }}
@@ -3912,7 +4069,7 @@ const handleOpenChat = () => {
                         PONTO DE PARTIDA (EMBARQUE) *
                       </Text>
                       <View style={[
-                        styles.mapboxSearchInputWrapper, 
+                        styles.mapboxSearchInputWrapper,
                         searchType === 'pickup' ? { borderColor: '#EAB308', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
                       ]}>
                         <Ionicons name="location" size={18} color="#EAB308" style={{ marginRight: 8 }} />
@@ -3923,9 +4080,9 @@ const handleOpenChat = () => {
                           placeholderTextColor="#64748B"
                           value={searchType === 'pickup' ? searchQuery : pickupAddress}
                           autoCorrect={false}
-                          onFocus={() => { 
-                            setSearchType('pickup'); 
-                            setSearchQuery(pickupAddress); 
+                          onFocus={() => {
+                            setSearchType('pickup');
+                            setSearchQuery(pickupAddress);
                           }}
                           onChangeText={(text) => {
                             setSearchQuery(text);
@@ -3961,18 +4118,18 @@ const handleOpenChat = () => {
                           <Text style={{ color: '#3B82F6', fontSize: 11, fontWeight: '800' }}>
                             PARADA INTERMEDIÁRIA
                           </Text>
-                          <TouchableOpacity onPress={() => { 
-                            setShowExtraStop(false); 
-                            setExtraStopAddress(''); 
-                            setExtraStopCoords(null); 
-                            setExtraStopReferencePoint(''); 
+                          <TouchableOpacity onPress={() => {
+                            setShowExtraStop(false);
+                            setExtraStopAddress('');
+                            setExtraStopCoords(null);
+                            setExtraStopReferencePoint('');
                           }}>
                             <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: '600' }}>Remover</Text>
                           </TouchableOpacity>
                         </View>
-                        
+
                         <View style={[
-                          styles.mapboxSearchInputWrapper, 
+                          styles.mapboxSearchInputWrapper,
                           searchType === 'extraStop' ? { borderColor: '#3B82F6', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
                         ]}>
                           <Ionicons name="location-sharp" size={18} color="#3B82F6" style={{ marginRight: 8 }} />
@@ -3982,9 +4139,9 @@ const handleOpenChat = () => {
                             placeholderTextColor="#64748B"
                             value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
                             autoCorrect={false}
-                            onFocus={() => { 
-                              setSearchType('extraStop'); 
-                              setSearchQuery(extraStopAddress); 
+                            onFocus={() => {
+                              setSearchType('extraStop');
+                              setSearchQuery(extraStopAddress);
                             }}
                             onChangeText={(text) => {
                               setSearchQuery(text);
@@ -4013,7 +4170,7 @@ const handleOpenChat = () => {
                         DESTINO FINAL (DESEMBARQUE) *
                       </Text>
                       <View style={[
-                        styles.mapboxSearchInputWrapper, 
+                        styles.mapboxSearchInputWrapper,
                         searchType === 'dropoff' ? { borderColor: '#EF4444', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
                       ]}>
                         <Ionicons name="flag" size={18} color="#EF4444" style={{ marginRight: 8 }} />
@@ -4025,9 +4182,9 @@ const handleOpenChat = () => {
                           placeholderTextColor="#64748B"
                           value={searchType === 'dropoff' ? searchQuery : dropoffAddress}
                           autoCorrect={false}
-                          onFocus={() => { 
-                            setSearchType('dropoff'); 
-                            setSearchQuery(dropoffAddress); 
+                          onFocus={() => {
+                            setSearchType('dropoff');
+                            setSearchQuery(dropoffAddress);
                           }}
                           onChangeText={(text) => {
                             setSearchQuery(text);
@@ -4057,12 +4214,12 @@ const handleOpenChat = () => {
                     </View>
 
                     {!showExtraStop && (
-                      <TouchableOpacity 
-                        style={{ marginTop: 6, flexDirection: 'row', alignItems: 'center' }} 
-                        onPress={() => { 
-                          setShowExtraStop(true); 
-                          setSearchType('extraStop'); 
-                          setSearchQuery(''); 
+                      <TouchableOpacity
+                        style={{ marginTop: 6, flexDirection: 'row', alignItems: 'center' }}
+                        onPress={() => {
+                          setShowExtraStop(true);
+                          setSearchType('extraStop');
+                          setSearchQuery('');
                         }}
                       >
                         <Ionicons name="add-circle-outline" size={18} color="#3B82F6" />
@@ -4077,9 +4234,9 @@ const handleOpenChat = () => {
                 {searchQuery.trim().length === 0 ? (
                   <View>
                     <Text style={styles.sectionHeaderTitle}>Locais Salvos</Text>
-                    
-                    <TouchableOpacity 
-                      style={styles.savedPlaceRow} 
+
+                    <TouchableOpacity
+                      style={styles.savedPlaceRow}
                       onPress={() => handleFavoritePress('home')}
                       onLongPress={() => {
                         if (pickupCoords) {
@@ -4098,8 +4255,8 @@ const handleOpenChat = () => {
                       </View>
                     </TouchableOpacity>
 
-                    <TouchableOpacity 
-                      style={styles.savedPlaceRow} 
+                    <TouchableOpacity
+                      style={styles.savedPlaceRow}
                       onPress={() => handleFavoritePress('work')}
                       onLongPress={() => {
                         if (pickupCoords) {
@@ -4123,35 +4280,40 @@ const handleOpenChat = () => {
                         <Text style={styles.sectionHeaderTitle}>Pesquisas Recentes</Text>
                         {recentSearches.map((item) => (
                           <View key={item.id} style={styles.recentItemRow}>
-                            <TouchableOpacity 
+                            <TouchableOpacity
                               style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 }}
-                              onPress={() => {
-                                if (searchType === 'pickup') {
-                                  isManualPickupRef.current = true;
-                                  setPickupAddress(item.description);
-                                  setPickupCoords({ latitude: item.latitude, longitude: item.longitude });
-                                } else if (searchType === 'extraStop') {
-                                  setExtraStopAddress(item.description);
-                                  setExtraStopCoords({ latitude: item.latitude, longitude: item.longitude });
-                                } else {
-                                  setDropoffAddress(item.description);
-                                  setDropoffCoords({ latitude: item.latitude, longitude: item.longitude });
-                                  setIsSearchModalVisible(false);
-                                  setBookingStep('SERVICE_AND_PRICE');
-                                }
-                              }}
+                              onPress={() => handleSelectSearchAddress(item, false)}
                             >
                               <Ionicons name="time-outline" size={20} color="#64748B" />
                               <Text style={styles.recentText} numberOfLines={1}>{item.description}</Text>
                             </TouchableOpacity>
-                            
-                            <TouchableOpacity 
-                              onPress={() => removeRecentSearch(item.id)} 
+
+                            <TouchableOpacity
+                              onPress={() => removeRecentSearch(item.id)}
                               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                             >
                               <Ionicons name="close-circle" size={18} color="#94A3B8" />
                             </TouchableOpacity>
                           </View>
+                        ))}
+                      </View>
+                    )}
+
+                    {adminLandmarks.length > 0 && (
+                      <View style={{ marginTop: 20 }}>
+                        <Text style={styles.sectionHeaderTitle}>Locais & Pontos Cadastrados (Bissau)</Text>
+                        {adminLandmarks.map((place) => (
+                          <TouchableOpacity
+                            key={place.id}
+                            style={styles.searchResultItem}
+                            activeOpacity={0.7}
+                            onPress={() => handleSelectSearchAddress(place, true)}
+                          >
+                            <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(234, 179, 8, 0.16)', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
+                              <Ionicons name="business" size={17} color="#EAB308" />
+                            </View>
+                            <Text style={[styles.searchResultText, { color: '#F8FAFC' }]}>{place.description}</Text>
+                          </TouchableOpacity>
                         ))}
                       </View>
                     )}
@@ -4163,35 +4325,7 @@ const handleOpenChat = () => {
                           key={bairro.id}
                           style={styles.searchResultItem}
                           activeOpacity={0.7}
-                          onPress={() => {
-                            if (searchType === 'pickup') {
-                              isManualPickupRef.current = true;
-                              setPickupAddress(bairro.description);
-                              setPickupCoords({ latitude: bairro.latitude, longitude: bairro.longitude });
-                              if (cameraRef.current) {
-                                cameraRef.current.setCamera({
-                                  centerCoordinate: [bairro.longitude, bairro.latitude],
-                                  zoomLevel: 15,
-                                  animationDuration: 800,
-                                });
-                              }
-                              setSearchType(showExtraStop && !extraStopCoords ? 'extraStop' : 'dropoff');
-                              setSearchQuery('');
-                              setSearchResults([]);
-                              setTimeout(() => dropoffInputRef.current?.focus(), 120);
-                            } else if (searchType === 'extraStop') {
-                              setExtraStopAddress(bairro.description);
-                              setExtraStopCoords({ latitude: bairro.latitude, longitude: bairro.longitude });
-                              setSearchType('dropoff');
-                              setSearchQuery('');
-                              setSearchResults([]);
-                            } else {
-                              setDropoffAddress(bairro.description);
-                              setDropoffCoords({ latitude: bairro.latitude, longitude: bairro.longitude });
-                              setIsSearchModalVisible(false);
-                              setBookingStep('SERVICE_AND_PRICE');
-                            }
-                          }}
+                          onPress={() => handleSelectSearchAddress(bairro, false)}
                         >
                           <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#1E293B', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
                             <Ionicons name="location" size={18} color="#EAB308" />
@@ -4208,41 +4342,7 @@ const handleOpenChat = () => {
                         key={item.id}
                         style={styles.searchResultItem}
                         activeOpacity={0.7}
-                        onPress={() => {
-                          if (searchType === 'pickup') {
-                            isManualPickupRef.current = true;
-                            setPickupAddress(item.description);
-                            setPickupCoords({ latitude: item.latitude, longitude: item.longitude });
-                            if (cameraRef.current) {
-                              cameraRef.current.setCamera({
-                                centerCoordinate: [item.longitude, item.latitude],
-                                zoomLevel: 15,
-                                animationDuration: 800,
-                              });
-                            }
-                            setSearchType(showExtraStop && !extraStopCoords ? 'extraStop' : 'dropoff');
-                            setSearchQuery('');
-                            setSearchResults([]);
-                          } else if (searchType === 'extraStop') {
-                            setExtraStopAddress(item.description);
-                            setExtraStopCoords({ latitude: item.latitude, longitude: item.longitude });
-                            setSearchType('dropoff');
-                            setSearchQuery('');
-                            setSearchResults([]);
-                          } else {
-                            const selectedFeature = {
-                              id: `recent_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-                              description: item.description,
-                              latitude: item.latitude,
-                              longitude: item.longitude,
-                            };
-                            saveToRecentSearches(selectedFeature);
-                            setDropoffAddress(item.description);
-                            setDropoffCoords({ latitude: item.latitude, longitude: item.longitude });
-                            setIsSearchModalVisible(false);
-                            setBookingStep('SERVICE_AND_PRICE');
-                          }
-                        }}
+                        onPress={() => handleSelectSearchAddress(item, true)}
                       >
                         <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#1E293B', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
                           <Ionicons name="location" size={18} color="#EAB308" />
@@ -4265,7 +4365,7 @@ const handleOpenChat = () => {
         transparent
         onRequestClose={() => setIsGuestModalVisible(false)}
       >
-        <KeyboardAvoidingView 
+        <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={styles.modalOverlay}
         >
@@ -4345,18 +4445,18 @@ const handleOpenChat = () => {
       </Modal>
 
       {/* 💬 CHATMODAL DO PASSAGEIRO */}
-<ChatModal 
-  visible={isChatVisible} 
+<ChatModal
+  visible={isChatVisible}
   onClose={() => {
     setIsChatVisible(false);
     setUnreadCount(0); // 🟢 Zera o badge de não lidas ao fechar
-  }} 
-  socket={socket} 
-  rideId={activeRideId || ''} 
-  currentRole="passenger" 
-  currentUserPhoto={user?.profilePicture ? formatPhotoUrl(user.profilePicture) : null} 
-  otherUserName={driverInfo?.name || 'Motorista'} 
-  otherUserPhoto={driverInfo?.photoUrl || driverInfo?.profilePicture} 
+  }}
+  socket={socket}
+  rideId={activeRideId || ''}
+  currentRole="passenger"
+  currentUserPhoto={user?.profilePicture ? formatPhotoUrl(user.profilePicture) : null}
+  otherUserName={driverInfo?.name || 'Motorista'}
+  otherUserPhoto={driverInfo?.photoUrl || driverInfo?.profilePicture}
 />
 
       {/* 🛑 MODAL DE CANCELAMENTO */}
@@ -4364,15 +4464,15 @@ const handleOpenChat = () => {
         visible={showCancelModal}
         userType="PASSENGER"
         isPenaltyApplicable={checkPenaltyApplicable()}
-        onClose={handleCloseCancelModal} 
-        onConfirm={handleConfirmCancel} 
-      /> 
+        onClose={handleCloseCancelModal}
+        onConfirm={handleConfirmCancel}
+      />
 
       {/* ⭐ MODAL DE AVALIAÇÃO COM GORJETA */}
       <RatingModal
         visible={showRatingModal}
         targetName={driverInfo?.name || 'Motorista'}
-        onSubmit={handleSubmitRating} 
+        onSubmit={handleSubmitRating}
       />
     </View>
   );
