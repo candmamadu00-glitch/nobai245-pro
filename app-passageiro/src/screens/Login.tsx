@@ -316,6 +316,11 @@ export function Login() {
                     onChangeText={(text) => setRecoveryPhone(text.replace(/[^0-9]/g, ''))}
                     keyboardType="phone-pad"
                     maxLength={9}
+                    autoFocus
+                    returnKeyType="send"
+                    onSubmitEditing={() => {
+                      if (!recoveryLoading) handleRecoverPassword();
+                    }}
                   />
                 </View>
               </View>

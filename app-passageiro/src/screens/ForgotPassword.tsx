@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   ScrollView,
   Platform,
   StatusBar,
+  Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -33,6 +34,27 @@ export function ForgotPassword() {
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
   const [timer, setTimer] = useState(initialPhone.length === 9 ? 60 : 0);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  const scrollViewRef = useRef<ScrollView | null>(null);
+  const otpInputRef = useRef<TextInput | null>(null);
+  const newPasswordRef = useRef<TextInput | null>(null);
+  const confirmPasswordRef = useRef<TextInput | null>(null);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   useEffect(() => {
     if (timer <= 0) return;
@@ -96,13 +118,14 @@ export function ForgotPassword() {
   }
 
   const topPad = Math.max((insets?.top || 0) + 12, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 12 : 20);
-  const bottomPad = Math.max((insets?.bottom || 0) + 24, 32);
+  const bottomPad = Math.max((insets?.bottom || 0) + 24, 32) + (Platform.OS === 'android' ? keyboardHeight : 0);
 
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0F172A" translucent />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView
+          ref={scrollViewRef}
           contentContainerStyle={[styles.scroll, { paddingTop: topPad, paddingBottom: bottomPad }]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
@@ -127,6 +150,10 @@ export function ForgotPassword() {
                 placeholder="95 000 000"
                 placeholderTextColor="#64748B"
                 keyboardType="phone-pad"
+                returnKeyType="next"
+                blurOnSubmit={false}
+                autoFocus={initialPhone.length !== 9}
+                onSubmitEditing={() => otpInputRef.current?.focus()}
                 maxLength={9}
                 value={phone}
                 onChangeText={(txt) => setPhone(txt.replace(/\D/g, '').slice(0, 9))}
@@ -135,10 +162,14 @@ export function ForgotPassword() {
 
             <Text style={styles.label}>Código SMS (4 dígitos)</Text>
             <TextInput
+              ref={otpInputRef}
               style={styles.otpInput}
               placeholder="0000"
               placeholderTextColor="#64748B"
               keyboardType="number-pad"
+              returnKeyType="next"
+              blurOnSubmit={false}
+              onSubmitEditing={() => newPasswordRef.current?.focus()}
               maxLength={4}
               value={otp}
               onChangeText={(txt) => setOtp(txt.replace(/\D/g, '').slice(0, 4))}
@@ -162,10 +193,15 @@ export function ForgotPassword() {
             <Text style={styles.label}>Nova Senha</Text>
             <View style={styles.passwordBox}>
               <TextInput
+                ref={newPasswordRef}
                 style={styles.passwordInput}
                 placeholder="Mínimo 6 caracteres"
                 placeholderTextColor="#64748B"
                 secureTextEntry={!showPassword}
+                returnKeyType="next"
+                blurOnSubmit={false}
+                onFocus={() => setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 120)}
+                onSubmitEditing={() => confirmPasswordRef.current?.focus()}
                 value={newPassword}
                 onChangeText={setNewPassword}
               />
@@ -177,10 +213,16 @@ export function ForgotPassword() {
             <Text style={styles.label}>Confirmar Nova Senha</Text>
             <View style={styles.passwordBox}>
               <TextInput
+                ref={confirmPasswordRef}
                 style={styles.passwordInput}
                 placeholder="Repita a nova senha"
                 placeholderTextColor="#64748B"
                 secureTextEntry={!showConfirmPassword}
+                returnKeyType="done"
+                onFocus={() => setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 120)}
+                onSubmitEditing={() => {
+                  if (!loading) handleResetPassword();
+                }}
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
               />

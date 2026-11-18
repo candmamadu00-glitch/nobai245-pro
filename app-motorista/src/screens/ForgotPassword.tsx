@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   View,
@@ -12,6 +12,7 @@ import {
   ScrollView,
   Platform,
   StatusBar,
+  Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -37,6 +38,25 @@ export function ForgotPassword() {
   
   const [loading, setLoading] = useState(false);
   const [timer, setTimer] = useState(0);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  const scrollViewRef = useRef<ScrollView | null>(null);
+  const confirmPasswordRef = useRef<TextInput | null>(null);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   // Cronômetro para reenviar SMS
   useEffect(() => {
@@ -120,7 +140,7 @@ export function ForgotPassword() {
   }
 
   const dynamicTopPadding = Math.max((insets?.top || 0) + 10, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 12 : 20);
-  const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 20, Platform.OS === 'android' ? 32 : 20);
+  const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 20, Platform.OS === 'android' ? 32 : 20) + (Platform.OS === 'android' ? keyboardHeight : 0);
 
   return (
     <View style={styles.container}>
@@ -131,6 +151,7 @@ export function ForgotPassword() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView 
+          ref={scrollViewRef}
           contentContainerStyle={[
             styles.scrollContainer, 
             { paddingTop: dynamicTopPadding, paddingBottom: dynamicBottomPadding }
@@ -202,6 +223,10 @@ export function ForgotPassword() {
                     value={phone}
                     onChangeText={handlePhoneChange}
                     keyboardType="phone-pad"
+                    returnKeyType="send"
+                    onSubmitEditing={() => {
+                      if (!loading && phone.length === 9) handleSendCode();
+                    }}
                     maxLength={9}
                     autoFocus
                   />
@@ -233,6 +258,10 @@ export function ForgotPassword() {
                     value={code}
                     onChangeText={(t) => setCode(t.replace(/\D/g, '').slice(0, 6))}
                     keyboardType="number-pad"
+                    returnKeyType="next"
+                    onSubmitEditing={() => {
+                      if (!loading && code.length === 6) handleValidateCode();
+                    }}
                     maxLength={6}
                     autoFocus
                   />
@@ -275,6 +304,10 @@ export function ForgotPassword() {
                     value={newPassword}
                     onChangeText={setNewPassword}
                     secureTextEntry={!showPassword}
+                    returnKeyType="next"
+                    blurOnSubmit={false}
+                    onSubmitEditing={() => confirmPasswordRef.current?.focus()}
+                    onFocus={() => setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 120)}
                     autoFocus
                   />
                   <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeButton} activeOpacity={0.7}>
@@ -286,12 +319,20 @@ export function ForgotPassword() {
                 <View style={styles.inputContainer}>
                   <Feather name="shield" size={18} color={theme.colors.textSecondary} style={styles.inputIcon} />
                   <TextInput
+                    ref={confirmPasswordRef}
                     style={styles.inputFlex}
                     placeholder="Repita a nova senha"
                     placeholderTextColor={theme.colors.textLight}
                     value={confirmPassword}
                     onChangeText={setConfirmPassword}
                     secureTextEntry={!showConfirmPassword}
+                    returnKeyType="done"
+                    onFocus={() => setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 120)}
+                    onSubmitEditing={() => {
+                      if (!loading && newPassword.length >= 6 && newPassword === confirmPassword) {
+                        handleResetPassword();
+                      }
+                    }}
                   />
                   <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)} style={styles.eyeButton} activeOpacity={0.7}>
                     <Feather name={showConfirmPassword ? 'eye' : 'eye-off'} size={18} color={theme.colors.textSecondary} />
