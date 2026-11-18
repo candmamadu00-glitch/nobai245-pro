@@ -965,11 +965,18 @@ const handleOpenChat = () => {
     destination: { latitude: number; longitude: number },
     extraStops?: Array<{ latitude: number; longitude: number }> | { latitude: number; longitude: number } | null
   ) => {
-    if (!MAPBOX_ACCESS_TOKEN) return;
-
     if (isNaN(origin.latitude) || isNaN(origin.longitude) || isNaN(destination.latitude) || isNaN(destination.longitude)) {
       return;
     }
+
+    // Cálculo instantâneo local enquanto a rota detalhada carrega (evita "Calculando..." travado)
+    if (rideStatus === 'idle') {
+      const quickKm = Math.max(1.0, Number(getHaversineDistance(origin, destination).toFixed(2)));
+      setEstimatedDistance((prev) => prev ?? quickKm);
+      setEstimatedPrice((prev) => prev ?? calculateVehiclePrice(vehicleType, quickKm));
+    }
+
+    if (!MAPBOX_ACCESS_TOKEN) return;
 
     try {
       const waypoints: string[] = [`${origin.longitude},${origin.latitude}`];
@@ -989,7 +996,9 @@ const handleOpenChat = () => {
       const coordinatesString = waypoints.join(';');
       const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${coordinatesString}?geometries=geojson&overview=full&access_token=${MAPBOX_ACCESS_TOKEN}`;
 
-      const res = await fetch(url);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4500);
+      const res = await fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timeoutId));
       if (!res.ok) return;
 
       const data = await res.json();
@@ -1195,22 +1204,28 @@ const handleOpenChat = () => {
         setRideStatus('completed');
         setShowRatingModal(true);
         await persistRideState(null, 'idle');
-      } else if (finalStatus === 'CANCELLED' && lastNotifiedId !== String(staleRideId)) {
+      } else if (finalStatus === 'CANCELLED') {
+        const hadActiveLocalRide = Boolean(activeRideIdRef.current) && String(activeRideIdRef.current) === String(staleRideId);
         await AsyncStorage.setItem(terminalKey, String(staleRideId)).catch(() => {});
-        const cancelReason = String(resolvedRide?.cancelReason || resolvedRide?.cancellationReason || '');
-        const isDriverCancel =
-          String(resolvedRide?.cancelledBy || '').toUpperCase() === 'DRIVER' ||
-          cancelReason.toLowerCase().includes('motorista') ||
-          Boolean(resolvedRide?.driverId);
-
-        const title = isDriverCancel ? t('warning_title', 'Aviso ⚠️') : t('cancelled_title', 'Corrida Cancelada');
-        const body = isDriverCancel
-          ? t('driver_cancelled_msg', 'O motorista cancelou a corrida. Por favor, solicite um novo veículo.')
-          : t('ride_cancelled_msg', 'Sua corrida foi cancelada.');
-
+        AsyncStorage.removeItem(STORAGE_RIDE_KEY).catch(() => {});
         setIsChatVisible(false);
-        resetRideState();
-        Alert.alert(title, body, [{ text: 'OK' }]);
+        if (activeRideIdRef.current) {
+          resetRideState();
+        }
+        if (hadActiveLocalRide && lastNotifiedId !== String(staleRideId)) {
+          const cancelReason = String(resolvedRide?.cancelReason || resolvedRide?.cancellationReason || '');
+          const isDriverCancel =
+            String(resolvedRide?.cancelledBy || '').toUpperCase() === 'DRIVER' ||
+            cancelReason.toLowerCase().includes('motorista') ||
+            Boolean(resolvedRide?.driverId);
+
+          const title = isDriverCancel ? t('warning_title', 'Aviso ⚠️') : t('cancelled_title', 'Corrida Cancelada');
+          const body = isDriverCancel
+            ? t('driver_cancelled_msg', 'O motorista cancelou a corrida. Por favor, solicite um novo veículo.')
+            : t('ride_cancelled_msg', 'Sua corrida foi cancelada.');
+
+          Alert.alert(title, body, [{ text: 'OK' }]);
+        }
       } else {
         if (activeRideIdRef.current) {
           resetRideState();
@@ -1647,6 +1662,24 @@ const handleOpenChat = () => {
     return () => clearInterval(interval);
   }, [pickupCoords, passengerLocation]);
 
+  const getCurrentLocationRef = useRef(getCurrentLocationWithFallback);
+  const syncPassengerActiveRideRef = useRef(syncPassengerActiveRide);
+  const handleInaccessibleLocationRef = useRef(handleInaccessibleLocationAlert);
+  const handleIncomingChatMessageRef = useRef(handleIncomingChatMessage);
+  const resetRideStateRef = useRef(resetRideState);
+  const fitMapBoundsRef = useRef(fitMapBounds);
+  const tRef = useRef(t);
+
+  useEffect(() => {
+    getCurrentLocationRef.current = getCurrentLocationWithFallback;
+    syncPassengerActiveRideRef.current = syncPassengerActiveRide;
+    handleInaccessibleLocationRef.current = handleInaccessibleLocationAlert;
+    handleIncomingChatMessageRef.current = handleIncomingChatMessage;
+    resetRideStateRef.current = resetRideState;
+    fitMapBoundsRef.current = fitMapBounds;
+    tRef.current = t;
+  });
+
   useEffect(() => {
     async function initAppAndPermissions() {
       try {
@@ -1674,7 +1707,7 @@ const handleOpenChat = () => {
             if (parsed.estimatedDistance) setEstimatedDistance(parsed.estimatedDistance);
 
             if (parsed.pickupCoords && parsed.dropoffCoords) {
-              fitMapBounds([parsed.pickupCoords, parsed.dropoffCoords]);
+              fitMapBoundsRef.current([parsed.pickupCoords, parsed.dropoffCoords]);
             } else if (parsed.pickupCoords && cameraRef.current) {
               cameraRef.current.setCamera({
                 centerCoordinate: [parsed.pickupCoords.longitude, parsed.pickupCoords.latitude],
@@ -1688,8 +1721,8 @@ const handleOpenChat = () => {
         console.error('Erro ao recuperar corrida salva localmente:', err);
       }
 
-      await getCurrentLocationWithFallback();
-      await syncPassengerActiveRide(true);
+      await getCurrentLocationRef.current();
+      await syncPassengerActiveRideRef.current(true);
     }
 
     initAppAndPermissions();
@@ -1721,15 +1754,14 @@ const handleOpenChat = () => {
         setIsChatVisible(false);
         setShowCancelModal(false);
       } else if (nextState === 'active') {
-        getCurrentLocationWithFallback().catch(() => {});
-        registerAndSendPushToken().catch(() => {});
+        getCurrentLocationRef.current().catch(() => {});
         if (socket && !socket.connected) {
           connectPassengerSocket().catch(() => {});
         }
-        await syncPassengerActiveRide(true);
+        await syncPassengerActiveRideRef.current(true);
         setTimeout(() => {
           if (isMountedRef.current) {
-            syncPassengerActiveRide(true);
+            syncPassengerActiveRideRef.current(true);
             if (socket && socket.connected) {
               socket.emit('passenger:request_state');
               if (activeRideIdRef.current) {
@@ -1744,7 +1776,6 @@ const handleOpenChat = () => {
     if (!user?.id) return;
 
     connectPassengerSocket();
-    registerAndSendPushToken();
 
     if (activeRideIdRef.current) {
       socket.emit('passenger:rejoin_ride', { rideId: activeRideIdRef.current });
@@ -2091,15 +2122,19 @@ const handleOpenChat = () => {
     socket.on('ride:completed', handleRideFinished);
     socket.on('ride:cancelled', handleRideCancelled);
 
+    const onChatMsg = (payload: any) => handleIncomingChatMessageRef.current(payload);
+    const onInaccessibleLoc = (payload: any) => handleInaccessibleLocationRef.current(payload);
+
     // 💬 OUVINTES DE CHAT GARANTIDOS (RECEIVE, MESSAGE E NEW_MESSAGE)
-    socket.on('chat:receive_message', handleIncomingChatMessage);
-    socket.on('chat:message', handleIncomingChatMessage);
-    socket.on('chat:new_message', handleIncomingChatMessage);
+    socket.on('chat:receive_message', onChatMsg);
+    socket.on('chat:message', onChatMsg);
+    socket.on('chat:new_message', onChatMsg);
 
     socket.on('ride:price_calculated', handlePriceCalculated);
-    socket.on('ride:inaccessible_location', handleInaccessibleLocationAlert);
+    socket.on('ride:inaccessible_location', onInaccessibleLoc);
 
     return () => {
+      appStateSub.remove();
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       socket.off('passenger:state_recovered', handleStateRecovered);
@@ -2120,26 +2155,17 @@ const handleOpenChat = () => {
       socket.off('ride:cancelled', handleRideCancelled);
 
       // 💬 LIMPEZA DOS OUVINTES DE CHAT
-      socket.off('chat:receive_message', handleIncomingChatMessage);
-      socket.off('chat:message', handleIncomingChatMessage);
-      socket.off('chat:new_message', handleIncomingChatMessage);
+      socket.off('chat:receive_message', onChatMsg);
+      socket.off('chat:message', onChatMsg);
+      socket.off('chat:new_message', onChatMsg);
 
       socket.off('ride:no_drivers_found', handleNoDriversFound);
       socket.off('ride:price_calculated', handlePriceCalculated);
-      socket.off('ride:inaccessible_location', handleInaccessibleLocationAlert);
+      socket.off('ride:inaccessible_location', onInaccessibleLoc);
 
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     };
-  }, [
-    user?.id,
-    getCurrentLocationWithFallback,
-    handleInaccessibleLocationAlert,
-    handleIncomingChatMessage,
-    resetRideState,
-    syncPassengerActiveRide,
-    fitMapBounds,
-    t
-  ]);
+  }, [user?.id]);
 
   const lastPassengerRouteCacheRef = useRef<{
     key: string;
@@ -3695,7 +3721,12 @@ const handleOpenChat = () => {
                 <View style={{ gap: 10, marginBottom: 16 }}>
                   {VEHICLE_OPTIONS.map((item) => {
                     const isSelected = vehicleType === item.id;
-                    const price = calculateVehiclePrice(item.id, estimatedDistance);
+                    const effectiveDistanceKm =
+                      estimatedDistance ??
+                      (pickupCoords && dropoffCoords
+                        ? Math.max(1.0, Number(getHaversineDistance(pickupCoords, dropoffCoords).toFixed(2)))
+                        : null);
+                    const price = calculateVehiclePrice(item.id, effectiveDistanceKm);
                     return (
                       <TouchableOpacity
                         key={item.id}
@@ -3705,20 +3736,24 @@ const handleOpenChat = () => {
                           { paddingVertical: 14, paddingHorizontal: 16, borderRadius: 16 }
                         ]}
                         activeOpacity={0.85}
-                        onPress={() => setVehicleType(item.id)}
+                        onPress={() => {
+                          setVehicleType(item.id);
+                          if (effectiveDistanceKm && !estimatedDistance) {
+                            setEstimatedDistance(effectiveDistanceKm);
+                          }
+                          if (price) {
+                            setEstimatedPrice(price);
+                          }
+                        }}
                       >
                         <Image source={item.image} style={{ width: 55, height: 40 }} resizeMode="contain" />
                         <View style={[styles.categoryTextWrapper, { marginLeft: 12 }]}>
                           <Text style={[styles.categoryTitle, isSelected && styles.categoryTextActive, { fontSize: 15 }]}>{item.title}</Text>
                           <Text style={styles.categorySubtitle}>{item.subtitle}</Text>
                         </View>
-                        {isCalculatingPrice ? (
-                          <SkeletonLoader width={70} height={18} borderRadius={6} />
-                        ) : (
-                          <Text style={[styles.categoryPriceText, isSelected && styles.categoryPriceTextActive, { fontSize: 15, fontWeight: '900' }]}>
-                            {price ? `${price} XOF` : 'Calculando...'}
-                          </Text>
-                        )}
+                        <Text style={[styles.categoryPriceText, isSelected && styles.categoryPriceTextActive, { fontSize: 15, fontWeight: '900' }]}>
+                          {price ? `${formatXof(price)} XOF` : '500 XOF'}
+                        </Text>
                       </TouchableOpacity>
                     );
                   })}

@@ -21,11 +21,21 @@ Notifications.setNotificationHandler({
   }),
 });
 
+let lastSyncedPassengerPushToken = '';
+let lastSyncedPassengerPushAt = 0;
+let inFlightPassengerPushPromise: Promise<string | null> | null = null;
+const PUSH_SYNC_COOLDOWN_MS = 5 * 60 * 1000;
+
 export async function registerAndSendPushToken(accessToken?: string): Promise<string | null> {
   if (isExpoGo || !Device.isDevice) {
-    console.warn('⚠️ [PUSH] Notificações remotas requerem um dispositivo físico.');
     return null;
   }
+
+  if (inFlightPassengerPushPromise) {
+    return inFlightPassengerPushPromise;
+  }
+
+  inFlightPassengerPushPromise = (async () => {
 
   try {
     if (Platform.OS === 'android') {
@@ -73,32 +83,46 @@ export async function registerAndSendPushToken(accessToken?: string): Promise<st
     const pushToken = tokenData?.data || null;
 
     if (pushToken) {
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          await api.put(
-            '/passengers/device-token',
-            { deviceToken: pushToken },
-            accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : undefined
-          );
-          await AsyncStorage.setItem('@nobai245:last_passenger_push_token', pushToken).catch(() => {});
-          break;
-        } catch (err: any) {
-          if (attempt === 3) {
-            console.warn('⚠️ [PUSH] Falha ao salvar deviceToken HTTP após 3 tentativas:', err?.message);
-          } else {
-            await new Promise((r) => setTimeout(r, attempt * 1500));
+      const now = Date.now();
+      const alreadySyncedRecently =
+        lastSyncedPassengerPushToken === pushToken &&
+        now - lastSyncedPassengerPushAt < PUSH_SYNC_COOLDOWN_MS;
+
+      if (!alreadySyncedRecently) {
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            await api.put(
+              '/passengers/device-token',
+              { deviceToken: pushToken },
+              accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : undefined
+            );
+            lastSyncedPassengerPushToken = pushToken;
+            lastSyncedPassengerPushAt = Date.now();
+            await AsyncStorage.setItem('@nobai245:last_passenger_push_token', pushToken).catch(() => {});
+            if (socket && socket.connected) {
+              socket.emit('passenger:update_device_token', { deviceToken: pushToken });
+            }
+            break;
+          } catch (err: any) {
+            if (attempt === 2) {
+              console.warn('⚠️ [PUSH] Falha ao salvar deviceToken HTTP:', err?.message);
+            } else {
+              await new Promise((r) => setTimeout(r, 1500));
+            }
           }
         }
-      }
-      if (socket && socket.connected) {
-        socket.emit('passenger:update_device_token', { deviceToken: pushToken });
       }
     }
 
     return pushToken;
   } catch (error) {
     return null;
+  } finally {
+    inFlightPassengerPushPromise = null;
   }
+  })();
+
+  return inFlightPassengerPushPromise;
 }
 
 export const registerForPushNotifications = registerAndSendPushToken;
