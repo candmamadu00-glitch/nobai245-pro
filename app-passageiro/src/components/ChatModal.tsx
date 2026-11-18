@@ -9,7 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Socket } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
-import { AudioModule, RecordingPresets, useAudioRecorder, useAudioPlayer, useAudioPlayerStatus, setAudioModeAsync, setIsAudioActiveAsync } from 'expo-audio';
+import { AudioModule, RecordingPresets, useAudioRecorder, useAudioPlayer, useAudioPlayerStatus, setAudioModeAsync, setIsAudioActiveAsync, createAudioPlayer } from 'expo-audio';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystemLegacy from 'expo-file-system/legacy';
 const FileSystem: any = FileSystemLegacy;
@@ -430,6 +430,8 @@ export function ChatModal({
 
     try {
       await audioRecorder.stop();
+      // Aguarda 150ms para o sistema finalizar a gravacao do cabecalho M4A no disco
+      await new Promise((resolve) => setTimeout(resolve, 150));
     } catch {}
 
     try {
@@ -437,7 +439,7 @@ export function ChatModal({
           allowsRecording: false,
           playsInSilentMode: true,
           shouldRouteThroughEarpiece: false,
-          interruptionMode: 'mixWithOthers',
+          interruptionMode: 'doNotMix',
         }).catch(() => {});
     } catch {}
 
@@ -620,6 +622,7 @@ export function ChatModal({
 
       stopActivePlayer();
 
+      // Garante roteamento no alto-falante principal em volume maximo
       await setIsAudioActiveAsync(true).catch(() => {});
       await setAudioModeAsync({
         playsInSilentMode: true,
@@ -629,23 +632,48 @@ export function ChatModal({
         shouldPlayInBackground: false,
       }).catch(() => {});
 
-      const playableUri = await getPlayableAudioUri(msgId, audioUrl);
+      let playableUri = await getPlayableAudioUri(msgId, audioUrl);
       if (!playableUri) return;
 
       if (playableUri.startsWith('file://')) {
         const info = await FileSystem.getInfoAsync(playableUri).catch(() => null);
-        if (!info || !info.exists || (info.size ?? 0) === 0) {
-          console.warn('⚠️ Arquivo de áudio local vazio ou inexistente:', playableUri);
-          return;
+        if (!info || !info.exists || (info.size ?? 0) < 64) {
+          await FileSystem.deleteAsync(playableUri, { idempotent: true }).catch(() => {});
+          if (audioUrl.startsWith('http://') || audioUrl.startsWith('https://')) {
+            playableUri = audioUrl;
+          } else {
+            console.warn('⚠️ Arquivo de áudio local vazio ou corrompido:', playableUri);
+            return;
+          }
         }
       }
 
       setPlayingAudioId(msgId);
-      chatPlayer.replace({ uri: playableUri });
-      if ('muted' in chatPlayer) (chatPlayer as any).muted = false;
-      chatPlayer.volume = 1.0;
-      await chatPlayer.seekTo(0).catch(() => {});
-      chatPlayer.play();
+
+      if (typeof createAudioPlayer === 'function') {
+        const dedicatedPlayer = createAudioPlayer({ uri: playableUri });
+        activePlayerRef.current = dedicatedPlayer;
+        if ('muted' in dedicatedPlayer) (dedicatedPlayer as any).muted = false;
+        dedicatedPlayer.volume = 1.0;
+
+        dedicatedPlayer.addListener?.('playbackStatusUpdate', (status: any) => {
+          if (status?.didJustFinish || status?.error) {
+            stopActivePlayer();
+          }
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        if (activePlayerRef.current === dedicatedPlayer) {
+          dedicatedPlayer.play();
+        }
+      } else {
+        chatPlayer.replace({ uri: playableUri });
+        if ('muted' in chatPlayer) (chatPlayer as any).muted = false;
+        chatPlayer.volume = 1.0;
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        await chatPlayer.seekTo(0).catch(() => {});
+        chatPlayer.play();
+      }
     } catch (err) {
       console.warn('⚠️ Falha geral no player de áudio:', err);
       stopActivePlayer();
