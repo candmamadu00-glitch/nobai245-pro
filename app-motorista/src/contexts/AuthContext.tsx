@@ -44,6 +44,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUnauthorizedHandler(() => signOut());
 
     async function loadStorageData() {
+      let hasBooted = false;
+      const bootFailsafe = setTimeout(() => {
+        if (!hasBooted) {
+          hasBooted = true;
+          setLoading(false);
+        }
+      }, 3000);
+
       try {
         const storedDriver = await storage.getDriver();
         const storedToken = await storage.getAccessToken();
@@ -51,16 +59,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (storedDriver && storedToken) {
           api.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`;
           setDriver(storedDriver);
+          hasBooted = true;
+          setLoading(false);
 
-          await connectDriverSocket();
+          // Conecta socket e revalida perfil em segundo plano sem travar a abertura do app
+          connectDriverSocket().catch(console.warn);
           refreshDriverProfile().catch(console.warn);
-
           registerAndSendPushToken(deviceId).catch(console.warn);
         }
       } catch (e) {
         console.error('❌ [AUTH MOTORISTA] Erro ao carregar sessão:', e);
       } finally {
-        setLoading(false);
+        clearTimeout(bootFailsafe);
+        if (!hasBooted) {
+          hasBooted = true;
+          setLoading(false);
+        }
       }
     }
     loadStorageData();
@@ -74,7 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         headers: { 'x-device-id': deviceId },
       });
       const updatedDriver = response.data?.driver || response.data;
-      
+
       if (updatedDriver) {
         setDriver(updatedDriver);
         await storage.setDriver(updatedDriver);

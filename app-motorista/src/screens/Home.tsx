@@ -1,8 +1,8 @@
 import { getVehicle3DIconAsset } from '../utils/vehicleAssets';
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { 
-  View, Text, TouchableOpacity, StyleSheet, Alert, Modal, 
+import {
+  View, Text, TouchableOpacity, StyleSheet, Alert, Modal,
   KeyboardAvoidingView, Platform, StatusBar, Image, Vibration, Switch,
   Animated, PanResponder, ScrollView, AppState, AppStateStatus
 } from 'react-native';
@@ -92,7 +92,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) =>
       const storedUser = await AsyncStorage.getItem('@nobai245:driverUser');
       const driverId = storedUser ? JSON.parse(storedUser)?.id : null;
       const rideId = await AsyncStorage.getItem(STORAGE_ACTIVE_RIDE_ID);
-      
+
       let token = await SecureStore.getItemAsync('@nobai245:driverAccessToken');
       if (!token) {
         token = await AsyncStorage.getItem('@nobai245:driverAccessToken') || await AsyncStorage.getItem('@nobai245:driverToken');
@@ -178,7 +178,7 @@ export interface IncomingRideData {
   distanceKm?: number;
   durationMin?: number;
   transactionId?: string;
-  stops?: any[]; 
+  stops?: any[];
 }
 
 export interface CompletedRideInfo { fareXOF: number; distanceKm: number; transactionId: string; }
@@ -187,9 +187,9 @@ function calculateDirectDistance(lat1: number, lon1: number, lat2: number, lon2:
   const R = 6371;
   const dLat = (lat2 - lat1) * (Math.PI / 180);
   const dLon = (lon2 - lon1) * (Math.PI / 180);
-  const a = 
+  const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * 
+    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
     Math.sin(dLon / 2) * Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
@@ -376,12 +376,12 @@ export function Home() {
     isMountedRef.current = true;
     return () => { isMountedRef.current = false; };
   }, []);
-  
+
   const [isOnline, setIsOnline] = useState(false);
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isMapReady, setIsMapReady] = useState(false);
-  
+
   const [incomingRide, setIncomingRide] = useState<IncomingRideData | null>(null);
   const [queuedOfferData, setQueuedOfferData] = useState<IncomingRideData | null>(null);
   const [rideState, setRideState] = useState<RideState>('idle');
@@ -405,11 +405,11 @@ export function Home() {
   const [todayEarnings, setTodayEarnings] = useState<number>(0);
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [serviceFilters, setServiceFilters] = useState({ RIDE: true, DELIVERY: true, RENTAL: true });
-  
+
   const [routeSteps, setRouteSteps] = useState<any[]>([]);
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
   const [timeLeft, setTimeLeft] = useState(15);
-  
+
   const rideStateRef = useRef(rideState);
   const incomingRideRef = useRef(incomingRide);
   const queuedOfferDataRef = useRef(queuedOfferData);
@@ -495,9 +495,9 @@ export function Home() {
   const [unreadCount, setUnreadCount] = useState<number>(0);
 
   const fitMapBounds = useCallback((
-    driverLng: number, 
-    driverLat: number, 
-    targetLng: number, 
+    driverLng: number,
+    driverLat: number,
+    targetLng: number,
     targetLat: number
   ) => {
     if (!cameraRef.current || !isMapReady) return;
@@ -557,14 +557,14 @@ export function Home() {
     if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
     await AsyncStorage.multiRemove([STORAGE_ACTIVE_RIDE_ID, STORAGE_ACTIVE_RIDE_DATA, STORAGE_ACTIVE_RIDE_STATE]);
     if (!isMountedRef.current) return;
-    
+
     rideStateRef.current = 'idle';
     activeRideIdRef.current = null;
     incomingRideRef.current = null;
 
-    setRideState('idle'); 
+    setRideState('idle');
     setActiveRideId(null);
-    setIncomingRide(null); 
+    setIncomingRide(null);
     setQueuedOfferData(null);
     setCompletedInfo(null);
     setFinishedRideSummary(null);
@@ -764,9 +764,12 @@ export function Home() {
               socket.emit('join_room', `ride_${currentRideId}`);
             }
           }
-          if (activeRideIdRef.current) {
-            await syncActiveRideWithServer();
-          }
+          await syncActiveRideWithServer();
+          setTimeout(() => {
+            if (isMountedRef.current) {
+              syncActiveRideWithServer();
+            }
+          }, 1200);
         } catch (err) {}
       }
     });
@@ -782,6 +785,22 @@ export function Home() {
       persistActiveRideState(incomingRide, rideState, activeRideId);
     }
   }, [rideState, activeRideId, incomingRide]);
+
+  // 🛡️ WATCHDOG DE SINCRONIZAÇÃO CONTÍNUA DURANTE CORRIDA ATIVA (6s)
+  useEffect(() => {
+    if (!['accepted', 'arrived', 'in_progress'].includes(rideState)) return;
+
+    const rideWatchdog = setInterval(() => {
+      if (isMountedRef.current) {
+        if (socket && !socket.connected) {
+          connectDriverSocket().catch(() => {});
+        }
+        syncActiveRideWithServer();
+      }
+    }, 6000);
+
+    return () => clearInterval(rideWatchdog);
+  }, [rideState, syncActiveRideWithServer]);
   const handleRideCancelled = useCallback(async (data: { cancelledBy?: string; rideId?: string; reason?: string }) => {
     if (!isMountedRef.current) return;
     setIsLoading(false);
@@ -1126,7 +1145,7 @@ export function Home() {
     if (isRideActive && activeRideId) {
       syncInterval = setInterval(() => {
         if (socket && socket.connected) {
-          socket.timeout(5000).emit('driver:request_state', (err: any) => {}); 
+          socket.timeout(5000).emit('driver:request_state', (err: any) => {});
         } else if (socket) socket.connect();
       }, 10000);
     }
@@ -1139,11 +1158,11 @@ export function Home() {
     if (now - lastCameraUpdateRef.current > 2000) {
       lastCameraUpdateRef.current = now;
       try {
-        cameraRef.current.setCamera({ 
-          centerCoordinate: [lng, lat], 
+        cameraRef.current.setCamera({
+          centerCoordinate: [lng, lat],
           heading: lastDriverCoordsRef.current?.heading || 0,
-          zoomLevel: 17, 
-          animationDuration: 1000 
+          zoomLevel: 17,
+          animationDuration: 1000
         });
       } catch (e) {}
     }
@@ -1173,9 +1192,9 @@ export function Home() {
   }, [socket]);
 
   const fetchMapboxRoute = async (
-    startLng: number, 
-    startLat: number, 
-    endLng: number, 
+    startLng: number,
+    startLat: number,
+    endLng: number,
     endLat: number,
     waypoints: Array<any> = []
   ) => {
@@ -1191,7 +1210,7 @@ export function Home() {
       const waypointsString = validWaypoints.length > 0 ? `${validWaypoints.join(';')};` : '';
       const token = MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '';
       const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${startLng},${startLat};${waypointsString}${endLng},${endLat}?geometries=geojson&steps=true&voice_instructions=true&banner_instructions=true&language=pt&access_token=${token}`;
-      
+
       const response = await fetch(url);
       if (!response.ok) throw new Error(`Falha rota Mapbox: ${response.status}`);
       const data = await response.json();
@@ -1199,7 +1218,7 @@ export function Home() {
       if (data.routes && data.routes.length > 0 && isMountedRef.current) {
         const route = data.routes[0];
         setRouteCoordinates(route.geometry.coordinates);
-        
+
         const eta = Math.max(1, Math.ceil(route.duration / 60));
         setDriverEta(eta);
         if (route.distance && !activeRideIdRef.current && incomingRideRef.current && !incomingRideRef.current.distanceKm) {
@@ -1554,7 +1573,7 @@ export function Home() {
       setActiveRideId(null);
       setIncomingRide(null);
       setQueuedOfferData(null);
-      setRideState('idle'); 
+      setRideState('idle');
       setShowReceiptModal(true);
       setShowNavSheet(false);
       persistActiveRideState(null, 'idle', null);
@@ -1637,6 +1656,7 @@ export function Home() {
     socket.on('driver:accept_ride_success', handleRideAccepted);
     socket.on('ride:started', handleRideStarted);
     socket.on('ride:finished', handleRideFinished);
+    socket.on('ride:completed', handleRideFinished);
     socket.on('ride:queued_now_active', handleQueuedNowActive);
     socket.on('ride:cancelled', handleRideCancelled);
     socket.on('ride:cancelled_by_passenger', handleRideCancelled);
@@ -1651,6 +1671,7 @@ export function Home() {
       socket.off('driver:accept_ride_success', handleRideAccepted);
       socket.off('ride:started', handleRideStarted);
       socket.off('ride:finished', handleRideFinished);
+      socket.off('ride:completed', handleRideFinished);
       socket.off('ride:queued_now_active', handleQueuedNowActive);
       socket.off('ride:cancelled', handleRideCancelled);
       socket.off('ride:cancelled_by_passenger', handleRideCancelled);
@@ -1723,13 +1744,13 @@ export function Home() {
   }
 
   const startTrackingForState = async (currentState: RideState) => {
-    if (locationWatcherRef.current) { 
-      locationWatcherRef.current.remove(); 
-      locationWatcherRef.current = null; 
+    if (locationWatcherRef.current) {
+      locationWatcherRef.current.remove();
+      locationWatcherRef.current = null;
     }
 
     const isActive = ['accepted', 'arrived', 'in_progress'].includes(currentState);
-    
+
     let timeInterval = isActive ? 2000 : 6000;
     let distanceInterval = isActive ? 3 : 10;
 
@@ -1755,10 +1776,10 @@ export function Home() {
       }
 
       locationWatcherRef.current = await Location.watchPositionAsync(
-        { 
-          accuracy: isActive ? Location.Accuracy.BestForNavigation : Location.Accuracy.Balanced, 
-          timeInterval, 
-          distanceInterval 
+        {
+          accuracy: isActive ? Location.Accuracy.BestForNavigation : Location.Accuracy.Balanced,
+          timeInterval,
+          distanceInterval
         },
         (newLocation) => {
           if (!isMountedRef.current) return;
@@ -1858,7 +1879,7 @@ export function Home() {
     try {
       const currentLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
-      
+
       if (isMocked && !__DEV__) {
         if (isMountedRef.current) setIsOnline(false);
         return Alert.alert('GPS Simulado Detectado 🚨', 'Desative o aplicativo de GPS Falso para continuar.');
@@ -1870,9 +1891,9 @@ export function Home() {
       if (isMountedRef.current) {
         setLocation(currentLoc);
         if (cameraRef.current) {
-          cameraRef.current.setCamera({ 
-            centerCoordinate: [currentLoc.coords.longitude, currentLoc.coords.latitude], 
-            zoomLevel: 16 
+          cameraRef.current.setCamera({
+            centerCoordinate: [currentLoc.coords.longitude, currentLoc.coords.latitude],
+            zoomLevel: 16
           });
         }
       }
@@ -1905,9 +1926,9 @@ export function Home() {
       socket.timeout(2000).emit('driver:offline', { driverId: driver.id });
     }
     setIsOnline(false);
-    if (locationWatcherRef.current) { 
-      locationWatcherRef.current.remove(); 
-      locationWatcherRef.current = null; 
+    if (locationWatcherRef.current) {
+      locationWatcherRef.current.remove();
+      locationWatcherRef.current = null;
     }
     stopBackgroundLocation();
   }
@@ -1950,8 +1971,8 @@ export function Home() {
       return Alert.alert('Sem Conexão', 'Sinal de internet insuficiente.');
     }
 
-    socket.timeout(8000).emit('driver:accept_ride', { 
-      rideId, driverId, driverLat: currentLat, driverLng: currentLng 
+    socket.timeout(8000).emit('driver:accept_ride', {
+      rideId, driverId, driverLat: currentLat, driverLng: currentLng
     }, async (err: any, response: any) => {
       if (!isMountedRef.current) return;
 
@@ -2036,11 +2057,11 @@ export function Home() {
       .catch(() => api.post('/rides/cancel', { rideId: rideToCancel, reason }));
 
     if (socket && socket.connected) {
-      socket.timeout(4000).emit('ride:cancel', { 
-        rideId: rideToCancel, 
-        userId: driver?.id, 
-        userType: 'DRIVER', 
-        reason 
+      socket.timeout(4000).emit('ride:cancel', {
+        rideId: rideToCancel,
+        userId: driver?.id,
+        userType: 'DRIVER',
+        reason
       }, async (err: any) => {
         try {
           await httpCancelPromise;
@@ -2193,14 +2214,14 @@ export function Home() {
     const rideToRate = finishedRideId || activeRideId;
     const passengerTargetId = incomingRide?.passengerId || (incomingRide as any)?.passenger?.id;
     if (rideToRate && passengerTargetId && driver?.id) {
-      const ratingPayload = { 
-        rideId: rideToRate, 
-        reviewerId: driver.id, 
-        reviewerType: 'DRIVER', 
-        receiverId: passengerTargetId, 
-        stars, 
-        tags, 
-        comment 
+      const ratingPayload = {
+        rideId: rideToRate,
+        reviewerId: driver.id,
+        reviewerType: 'DRIVER',
+        receiverId: passengerTargetId,
+        stars,
+        tags,
+        comment
       };
       if (socket && socket.connected) {
         socket.emit('ride:rate', ratingPayload);
@@ -2246,8 +2267,8 @@ export function Home() {
   const topHeaderInset = Math.max((insets?.top || 0) + 10, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 16);
   const bottomInset = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 24 : 16);
 
-  const activeOffer = (queuedOfferData && queuedOfferData.rideId !== activeRideId) 
-    ? queuedOfferData 
+  const activeOffer = (queuedOfferData && queuedOfferData.rideId !== activeRideId)
+    ? queuedOfferData
     : (rideState === 'idle' ? incomingRide : null);
 
   const formattedStops = useMemo(() => {
@@ -2287,10 +2308,10 @@ export function Home() {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-      
+
       {/* 🗺️ MAPA DE NAVEGAÇÃO MAPBOX */}
-      <Mapbox.MapView 
-        style={StyleSheet.absoluteFill} 
+      <Mapbox.MapView
+        style={StyleSheet.absoluteFill}
         styleURL={mapStyle}
         logoEnabled={false}
         compassEnabled={false}
@@ -2309,7 +2330,7 @@ export function Home() {
           ref={cameraRef}
           defaultSettings={{
             centerCoordinate: [
-              Number(location?.coords.longitude || BISSAU_CENTER_LNG), 
+              Number(location?.coords.longitude || BISSAU_CENTER_LNG),
               Number(location?.coords.latitude || BISSAU_CENTER_LAT)
             ],
             zoomLevel: 16,
@@ -2321,14 +2342,14 @@ export function Home() {
         {/* 🔴 ZONAS DE ALTA DEMANDA */}
         {isOnline && !isRideActive && (
           <Mapbox.ShapeSource id="demandZonesSource" shape={demandZonesData as any}>
-            <Mapbox.CircleLayer 
-              id="demandZonesLayer" 
-              style={{ 
-                circleRadius: 40, 
-                circleColor: '#FF3300', 
-                circleOpacity: 0.2, 
-                circleBlur: 0.6 
-              }} 
+            <Mapbox.CircleLayer
+              id="demandZonesLayer"
+              style={{
+                circleRadius: 40,
+                circleColor: '#FF3300',
+                circleOpacity: 0.2,
+                circleBlur: 0.6
+              }}
             />
           </Mapbox.ShapeSource>
         )}
@@ -2341,17 +2362,17 @@ export function Home() {
           const screenRelativeRotation = Math.round((worldHeading - mapCameraHeading + 360) % 360);
 
           return (
-            <Mapbox.PointAnnotation 
+            <Mapbox.PointAnnotation
               key={`driver-car-${driver?.id || 'active'}`}
-              id="car-location" 
+              id="car-location"
               coordinate={[carLng, carLat]}
               anchor={{ x: 0.5, y: 0.5 }}
             >
               <View style={styles.vehicle3DContainer}>
-                <View 
+                <View
                   style={[
                     styles.vehicle3DRotator,
-                    { 
+                    {
                       transform: [
                         { rotate: `${screenRelativeRotation}deg` }
                       ]
@@ -2375,22 +2396,22 @@ export function Home() {
 
         {/* 🛣️ LINHA DA ROTA */}
         {displayedRouteCoordinates && displayedRouteCoordinates.length > 0 && (
-          <Mapbox.ShapeSource 
-            id="routeSource" 
-            shape={{ 
-              type: 'Feature', 
-              properties: {}, 
-              geometry: { type: 'LineString', coordinates: displayedRouteCoordinates } 
+          <Mapbox.ShapeSource
+            id="routeSource"
+            shape={{
+              type: 'Feature',
+              properties: {},
+              geometry: { type: 'LineString', coordinates: displayedRouteCoordinates }
             }}
           >
-            <Mapbox.LineLayer 
-              id="routeLine" 
-              style={{ 
-                lineColor: rideState === 'in_progress' ? '#3B82F6' : '#EAB308', 
-                lineWidth: 5, 
-                lineCap: 'round', 
-                lineJoin: 'round' 
-              }} 
+            <Mapbox.LineLayer
+              id="routeLine"
+              style={{
+                lineColor: rideState === 'in_progress' ? '#3B82F6' : '#EAB308',
+                lineWidth: 5,
+                lineCap: 'round',
+                lineJoin: 'round'
+              }}
             />
           </Mapbox.ShapeSource>
         )}
@@ -2421,9 +2442,9 @@ export function Home() {
       {/* 📊 HEADER SUPERIOR FLUTUANTE */}
       <View style={[styles.headerContainer, { top: topHeaderInset }]} pointerEvents="box-none">
         <View style={styles.headerRow}>
-          <TouchableOpacity 
-            style={[styles.statusPill, isOnline ? styles.pillOnline : styles.pillOffline]} 
-            onPress={isOnline ? stopTracking : startTracking} 
+          <TouchableOpacity
+            style={[styles.statusPill, isOnline ? styles.pillOnline : styles.pillOffline]}
+            onPress={isOnline ? stopTracking : startTracking}
             disabled={rideState !== 'idle' || isLoading}
             activeOpacity={0.85}
           >
@@ -2438,18 +2459,18 @@ export function Home() {
             <Text style={styles.earningsPillText}>{formatCurrency(todayEarnings)} XOF</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[
-              styles.voiceToggleHeaderBtn, 
+              styles.voiceToggleHeaderBtn,
               { backgroundColor: isVoiceAssistEnabled ? '#EAB308' : '#1E293B' }
-            ]} 
+            ]}
             onPress={toggleVoiceAssist}
             activeOpacity={0.85}
           >
-            <Ionicons 
-              name={isVoiceAssistEnabled ? "volume-high" : "volume-mute"} 
-              size={18} 
-              color={isVoiceAssistEnabled ? "#0F172A" : "#94A3B8"} 
+            <Ionicons
+              name={isVoiceAssistEnabled ? "volume-high" : "volume-mute"}
+              size={18}
+              color={isVoiceAssistEnabled ? "#0F172A" : "#94A3B8"}
             />
           </TouchableOpacity>
 
@@ -2489,8 +2510,8 @@ export function Home() {
         )}
 
         {rideState === 'in_progress' && (
-          <TouchableOpacity 
-            style={[styles.audioRecordButton, audioRecorder.isRecording && styles.audioRecordButtonActive]} 
+          <TouchableOpacity
+            style={[styles.audioRecordButton, audioRecorder.isRecording && styles.audioRecordButtonActive]}
             onPress={toggleAudioRecording}
             activeOpacity={0.85}
           >
@@ -2504,12 +2525,12 @@ export function Home() {
       <RatingModal visible={showRatingModal} targetName={finishedTargetName} isDriverEvaluating={true} onClose={() => setShowRatingModal(false)} onSubmit={handleSubmitRating} />
 
       {/* 📋 PAINEL INFERIOR (BOTTOM SHEET) */}
-      <KeyboardAvoidingView 
-        style={styles.bottomSheetWrapper} 
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
+      <KeyboardAvoidingView
+        style={styles.bottomSheetWrapper}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         pointerEvents="box-none"
       >
-        <Animated.View 
+        <Animated.View
           onLayout={(e) => {
             const h = e.nativeEvent.layout.height;
             if (h > 0 && Math.abs(h - sheetHeight) > 5) {
@@ -2517,17 +2538,17 @@ export function Home() {
             }
           }}
           style={[
-            styles.bottomSheet, 
-            { 
+            styles.bottomSheet,
+            {
               paddingBottom: bottomInset,
-              transform: [{ translateY: panY }] 
+              transform: [{ translateY: panY }]
             }
           ]}
         >
-          <TouchableOpacity 
+          <TouchableOpacity
             activeOpacity={0.8}
             onPress={() => snapToState(!isExpandedRef.current)}
-            style={styles.dragHandleArea} 
+            style={styles.dragHandleArea}
             {...panResponder.panHandlers}
           >
             <View style={styles.dragHandle} />
@@ -2548,6 +2569,18 @@ export function Home() {
                     <Text style={styles.goOnlineText}>{t('go_online', 'Ficar Online')}</Text>
                   </TouchableOpacity>
                 )}
+              </View>
+            )}
+
+            {isRideActive && !incomingRide && (
+              <View style={styles.idleContainer}>
+                <Text style={styles.idleTitle}>Sincronizando corrida ativa...</Text>
+                <Text style={styles.idleSub}>
+                  Recuperando os detalhes da viagem com o servidor.
+                </Text>
+                <TouchableOpacity style={styles.goOnlineBtn} onPress={() => syncActiveRideWithServer()} activeOpacity={0.85}>
+                  <Text style={styles.goOnlineText}>Atualizar Agora</Text>
+                </TouchableOpacity>
               </View>
             )}
 
@@ -2583,10 +2616,10 @@ export function Home() {
                 <View style={styles.etaHeader}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
                     <Text style={[styles.rideStateTitle, { flex: 1 }]}>
-                      {rideState === 'accepted' 
-                        ? (driverEta ? `Chegando em ${driverEta} min` : 'Indo ao local de embarque') 
-                        : rideState === 'arrived' 
-                        ? 'Aguardando Cliente' 
+                      {rideState === 'accepted'
+                        ? (driverEta ? `Chegando em ${driverEta} min` : 'Indo ao local de embarque')
+                        : rideState === 'arrived'
+                        ? 'Aguardando Cliente'
                         : (driverEta ? `Chegando ao destino em ${driverEta} min` : 'Viagem em Andamento')}
                     </Text>
                     {((rideState === 'in_progress' && incomingRide?.destinationLat) || (rideState !== 'in_progress' && incomingRide?.pickupLat)) ? (
@@ -2616,9 +2649,9 @@ export function Home() {
                           Number(incomingRide.distanceKm) > 0
                             ? Number(incomingRide.distanceKm)
                             : calculateDirectDistance(
-                                incomingRide.pickupLat, 
-                                incomingRide.pickupLng, 
-                                incomingRide.destinationLat, 
+                                incomingRide.pickupLat,
+                                incomingRide.pickupLng,
+                                incomingRide.destinationLat,
                                 incomingRide.destinationLng ?? 0
                               )
                         ).toFixed(1)} km
@@ -2726,7 +2759,7 @@ export function Home() {
                       </Text>
 
                       {Boolean(
-                        (incomingRide as any)?.dropoffReferencePoint || 
+                        (incomingRide as any)?.dropoffReferencePoint ||
                         (incomingRide as any)?.destinationReferencePoint ||
                         ((incomingRide as any)?.referencePoint && !((incomingRide as any)?.pickupReferencePoint))
                       ) && (
@@ -2734,8 +2767,8 @@ export function Home() {
                           <Ionicons name="flag" size={14} color="#EF4444" style={{ marginRight: 4 }} />
                           <Text style={styles.referenceBadgeRedText}>
                             Ref. Destino: {
-                              (incomingRide as any).dropoffReferencePoint || 
-                              (incomingRide as any).destinationReferencePoint || 
+                              (incomingRide as any).dropoffReferencePoint ||
+                              (incomingRide as any).destinationReferencePoint ||
                               (incomingRide as any).referencePoint
                             }
                           </Text>
@@ -2756,8 +2789,8 @@ export function Home() {
                 {/* BOTÕES DE AÇÃO DA CORRIDA */}
                 {rideState !== 'in_progress' && (
                   <View style={styles.actionRow}>
-                    <TouchableOpacity 
-                      style={styles.actionButtonSecondary} 
+                    <TouchableOpacity
+                      style={styles.actionButtonSecondary}
                       onPress={() => {
                         setUnreadCount(0);
                         setIsChatVisible(true);
@@ -2793,9 +2826,9 @@ export function Home() {
                 )}
 
                 {rideState === 'accepted' && (
-                  <TouchableOpacity 
-                    style={[styles.actionBtnPrimary, { backgroundColor: '#3B82F6' }, isLoading && { opacity: 0.75 }]} 
-                    onPress={handleArrived} 
+                  <TouchableOpacity
+                    style={[styles.actionBtnPrimary, { backgroundColor: '#3B82F6' }, isLoading && { opacity: 0.75 }]}
+                    onPress={handleArrived}
                     disabled={isLoading}
                     activeOpacity={0.85}
                   >
@@ -2804,8 +2837,8 @@ export function Home() {
                 )}
 
                 {rideState === 'arrived' && (
-                  <TouchableOpacity 
-                    style={[styles.actionBtnPrimary, { backgroundColor: '#10B981' }]} 
+                  <TouchableOpacity
+                    style={[styles.actionBtnPrimary, { backgroundColor: '#10B981' }]}
                     onPress={() => setShowOtpModal(true)}
                     activeOpacity={0.85}
                   >
@@ -2814,9 +2847,9 @@ export function Home() {
                 )}
 
                 {rideState === 'in_progress' && (
-                  <TouchableOpacity 
-                    style={[styles.actionBtnPrimary, { backgroundColor: '#EAB308' }, isLoading && { opacity: 0.75 }]} 
-                    onPress={handleFinishRide} 
+                  <TouchableOpacity
+                    style={[styles.actionBtnPrimary, { backgroundColor: '#EAB308' }, isLoading && { opacity: 0.75 }]}
+                    onPress={handleFinishRide}
                     disabled={isLoading}
                     activeOpacity={0.85}
                   >
@@ -2830,9 +2863,9 @@ export function Home() {
       </KeyboardAvoidingView>
 
       {/* 🧾 MODAL UNIFICADO DE RECIBO */}
-      <Modal 
-        visible={showReceiptModal} 
-        transparent 
+      <Modal
+        visible={showReceiptModal}
+        transparent
         animationType="slide"
         onRequestClose={() => {
           setShowReceiptModal(false);
@@ -2873,8 +2906,8 @@ export function Home() {
             <View style={styles.receiptValueContainer}>
               <Text style={styles.receiptValueLabel}>Total Ganho:</Text>
               <Text style={styles.receiptValueText}>
-                {finishedRideSummary?.totalAmount 
-                  ? `${Number(finishedRideSummary.totalAmount).toLocaleString('pt-GW')} XOF` 
+                {finishedRideSummary?.totalAmount
+                  ? `${Number(finishedRideSummary.totalAmount).toLocaleString('pt-GW')} XOF`
                   : '0 XOF'}
               </Text>
               {Number(finishedRideSummary?.distanceKm) > 0 && (
@@ -2886,8 +2919,8 @@ export function Home() {
             </View>
 
             <View style={styles.receiptActionButtons}>
-              <TouchableOpacity 
-                style={styles.ratePassengerBtn} 
+              <TouchableOpacity
+                style={styles.ratePassengerBtn}
                 activeOpacity={0.85}
                 onPress={() => {
                   setShowReceiptModal(false);
@@ -2898,8 +2931,8 @@ export function Home() {
                 <Text style={styles.ratePassengerBtnText}>Avaliar Cliente</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={styles.closeReceiptBtn} 
+              <TouchableOpacity
+                style={styles.closeReceiptBtn}
                 activeOpacity={0.8}
                 onPress={() => {
                   setShowReceiptModal(false);
@@ -2919,16 +2952,16 @@ export function Home() {
           <View style={[styles.filterModalCard, { paddingBottom: Math.max((insets?.bottom || 0) + 24, Platform.OS === 'android' ? 36 : 20) }]}>
             <Text style={styles.filterModalTitle}>Preferências de Chamada</Text>
             <Text style={styles.filterModalSub}>Selecione os serviços que deseja receber e opcionalidades:</Text>
-            
+
             <View style={styles.filterRow}>
               <View style={styles.filterLabelContainer}>
                 <Ionicons name="volume-high" size={18} color="#EAB308" />
                 <Text style={styles.filterLabelText}>Assistência por Voz</Text>
               </View>
-              <Switch 
-                value={isVoiceAssistEnabled} 
-                onValueChange={toggleVoiceAssist} 
-                trackColor={{ false: '#334155', true: '#EAB308' }} 
+              <Switch
+                value={isVoiceAssistEnabled}
+                onValueChange={toggleVoiceAssist}
+                trackColor={{ false: '#334155', true: '#EAB308' }}
               />
             </View>
 
@@ -2956,9 +2989,9 @@ export function Home() {
               <Switch value={serviceFilters.RENTAL} onValueChange={(val) => setServiceFilters(prev => ({ ...prev, RENTAL: val }))} trackColor={{ false: '#334155', true: '#7C3AED' }} />
             </View>
 
-            <TouchableOpacity 
-              style={styles.closeFilterBtn} 
-              onPress={() => setShowFilterModal(false)} 
+            <TouchableOpacity
+              style={styles.closeFilterBtn}
+              onPress={() => setShowFilterModal(false)}
               activeOpacity={0.85}
             >
               <Text style={styles.closeFilterText}>Salvar Preferências</Text>
@@ -2968,12 +3001,12 @@ export function Home() {
       </Modal>
 
       {/* 🧭 NAVEGAÇÃO TURBYTURN */}
-      <TurnByTurnSheet 
-        visible={showNavSheet} 
-        onClose={() => setShowNavSheet(false)} 
-        destination={navDestination} 
-        isIntermediateStop={isNavigatingToStop} 
-        onConfirmStop={() => setCurrentStopIndex(prev => prev + 1)} 
+      <TurnByTurnSheet
+        visible={showNavSheet}
+        onClose={() => setShowNavSheet(false)}
+        destination={navDestination}
+        isIntermediateStop={isNavigatingToStop}
+        onConfirmStop={() => setCurrentStopIndex(prev => prev + 1)}
       />
 
       {/* 🔔 MODAL DE OFERTA DE CORRIDA */}
@@ -3130,16 +3163,16 @@ export function Home() {
                     {activeOffer?.destinationAddress || 'Local de destino'}
                   </Text>
                   {Boolean(
-                    (activeOffer as any)?.dropoffReferencePoint || 
-                    (activeOffer as any)?.destinationReferencePoint || 
+                    (activeOffer as any)?.dropoffReferencePoint ||
+                    (activeOffer as any)?.destinationReferencePoint ||
                     ((activeOffer as any)?.referencePoint && !((activeOffer as any)?.pickupReferencePoint))
                   ) && (
                     <View style={styles.referenceBadgeRed}>
                       <Ionicons name="flag" size={14} color="#EF4444" style={{ marginRight: 4 }} />
                       <Text style={styles.referenceBadgeRedText}>
                         Ref. Destino: {
-                          (activeOffer as any).dropoffReferencePoint || 
-                          (activeOffer as any).destinationReferencePoint || 
+                          (activeOffer as any).dropoffReferencePoint ||
+                          (activeOffer as any).destinationReferencePoint ||
                           (activeOffer as any).referencePoint
                         }
                       </Text>
@@ -3151,23 +3184,23 @@ export function Home() {
 
             {/* Botões de Ação */}
             <View style={styles.newRequestActions}>
-              <TouchableOpacity 
-                style={styles.rejectBtn} 
-                onPress={() => { 
-                  Vibration.cancel(); 
-                  setQueuedOfferData(null); 
-                  if (rideState === 'idle') setIncomingRide(null); 
-                }} 
+              <TouchableOpacity
+                style={styles.rejectBtn}
+                onPress={() => {
+                  Vibration.cancel();
+                  setQueuedOfferData(null);
+                  if (rideState === 'idle') setIncomingRide(null);
+                }}
                 disabled={isLoading}
                 activeOpacity={0.8}
               >
                 <Text style={styles.rejectText}>{t('decline_ride', 'Recusar')}</Text>
               </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={[styles.acceptBtn, isLoading && { opacity: 0.7 }]} 
-                activeOpacity={0.85} 
-                disabled={isLoading} 
+
+              <TouchableOpacity
+                style={[styles.acceptBtn, isLoading && { opacity: 0.7 }]}
+                activeOpacity={0.85}
+                disabled={isLoading}
                 onPress={() => {
                   if (isLoading) return;
                   if (activeOffer?.rideId && driver?.id) {
@@ -3186,32 +3219,32 @@ export function Home() {
         </View>
       </Modal>
 
-      <ChatModal 
-        visible={isChatVisible} 
+      <ChatModal
+        visible={isChatVisible}
         onClose={() => {
           setIsChatVisible(false);
           setUnreadCount(0);
-        }} 
-        socket={socket} 
-        rideId={activeRideId || incomingRide?.rideId || ''} 
-        currentRole="driver" 
-        currentUserPhoto={profileImageUrl} 
-        otherUserName={displayPassengerName} 
-        otherUserPhoto={formatImageUrl(incomingRide?.passengerPhoto)} 
+        }}
+        socket={socket}
+        rideId={activeRideId || incomingRide?.rideId || ''}
+        currentRole="driver"
+        currentUserPhoto={profileImageUrl}
+        otherUserName={displayPassengerName}
+        otherUserPhoto={formatImageUrl(incomingRide?.passengerPhoto)}
       />
 
-      <StartRideOtpModal 
-        visible={showOtpModal} 
-        onCancel={() => setShowOtpModal(false)} 
-        onSubmitOtp={handleStartRideWithOtp} 
+      <StartRideOtpModal
+        visible={showOtpModal}
+        onCancel={() => setShowOtpModal(false)}
+        onSubmitOtp={handleStartRideWithOtp}
       />
 
-      <CancelModal 
-        visible={showCancelModal} 
+      <CancelModal
+        visible={showCancelModal}
         userType="DRIVER"
         isPenaltyApplicable={false}
-        onClose={() => setShowCancelModal(false)} 
-        onConfirm={handleConfirmCancel} 
+        onClose={() => setShowCancelModal(false)}
+        onConfirm={handleConfirmCancel}
       />
     </View>
   );

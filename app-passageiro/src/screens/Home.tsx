@@ -1607,29 +1607,6 @@ const handleOpenChat = () => {
   };
 
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', async (nextAppState) => {
-      if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
-        getCurrentLocationWithFallback();
-
-        if (socket && !socket.connected) {
-          connectPassengerSocket();
-        }
-
-        await syncPassengerActiveRide();
-
-        setTimeout(() => {
-          if (socket && socket.connected) {
-            socket.emit('passenger:request_state');
-          }
-        }, 800);
-      }
-      appStateRef.current = nextAppState;
-    });
-
-    return () => subscription.remove();
-  }, [getCurrentLocationWithFallback, syncPassengerActiveRide]);
-
-  useEffect(() => {
     const handleChatNotifResponse = (response: Notifications.NotificationResponse | null) => {
       const data = response?.notification?.request?.content?.data as any;
       if (data?.type === 'CHAT_MESSAGE') {
@@ -1718,13 +1695,28 @@ const handleOpenChat = () => {
     initAppAndPermissions();
 
     // 🛡️ PASSENGER_APPSTATE_SYNC: Fecha overlays transitórios no background e reconcilia estado ao voltar
-    const appStateSub = AppState.addEventListener('change', (nextState) => {
+    const appStateSub = AppState.addEventListener('change', async (nextState) => {
+      appStateRef.current = nextState;
       if (nextState === 'background') {
         setIsChatVisible(false);
         setShowCancelModal(false);
       } else if (nextState === 'active') {
-        if (socket && !socket.connected) connectPassengerSocket();
-        syncPassengerActiveRide(true);
+        getCurrentLocationWithFallback().catch(() => {});
+        if (socket && !socket.connected) {
+          connectPassengerSocket().catch(() => {});
+        }
+        await syncPassengerActiveRide(true);
+        setTimeout(() => {
+          if (isMountedRef.current) {
+            syncPassengerActiveRide(true);
+            if (socket && socket.connected) {
+              socket.emit('passenger:request_state');
+              if (activeRideIdRef.current) {
+                socket.emit('passenger:rejoin_ride', { rideId: activeRideIdRef.current });
+              }
+            }
+          }
+        }, 1200);
       }
     });
 
@@ -1764,58 +1756,9 @@ const handleOpenChat = () => {
         }
 
         if (data?.hasActiveRide && data?.ride) {
-      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-          const ride = data.ride;
-          setActiveRideId(ride.id);
-          activeRideIdRef.current = ride.id;
-
-          if (typeof ride.originLat === 'number' && typeof ride.originLng === 'number') {
-            const lat = Number(ride.originLat);
-            const lng = Number(ride.originLng);
-            if (!isNaN(lat) && !isNaN(lng)) setPickupCoords({ latitude: lat, longitude: lng });
-            if (ride.originAddress) setPickupAddress(ride.originAddress);
-          }
-
-          if (typeof ride.destinationLat === 'number' && typeof ride.destinationLng === 'number') {
-            const lat = Number(ride.destinationLat);
-            const lng = Number(ride.destinationLng);
-            if (!isNaN(lat) && !isNaN(lng)) setDropoffCoords({ latitude: lat, longitude: lng });
-            if (ride.destinationAddress) setDropoffAddress(ride.destinationAddress);
-          }
-
-          const otpCode = String(ride.startOtp || ride.otpPin || ride.pin || '');
-          if (otpCode) setStartOtp(otpCode);
-
-              const parsedDriver = extractDriverInfo(ride, otpCode);
-              if (parsedDriver) {
-                setDriverInfo(parsedDriver);
-              }
-
-              const recoveredPrice = Number(ride.priceXof ?? ride.fareXOF ?? 0);
-              if (recoveredPrice > 0) setEstimatedPrice(Math.round(recoveredPrice));
-              const recoveredDist = Number(ride.distanceKm ?? 0);
-              if (recoveredDist > 0) setEstimatedDistance(Number(recoveredDist.toFixed(2)));
-
-              const rawStatus = String(ride.status || '').toUpperCase();
-              const mappedRecoveredStatus =
-                rawStatus === 'AWAITING_PAYMENT' ? 'awaiting_payment' :
-                rawStatus === 'SEARCHING' || rawStatus === 'PENDING' ? 'searching' :
-                rawStatus === 'QUEUED' ? 'queued' :
-                rawStatus === 'ACCEPTED' ? 'accepted' :
-                rawStatus === 'ARRIVED' ? 'arrived' :
-                rawStatus === 'IN_PROGRESS' ? 'in_progress' : null;
-
-              if (mappedRecoveredStatus) {
-                setRideStatus(mappedRecoveredStatus);
-                socket.emit('passenger:rejoin_ride', { rideId: ride.id });
-                persistRideState(ride.id, mappedRecoveredStatus, {
-                  driverInfo: parsedDriver,
-                  startOtp: otpCode,
-                  estimatedPrice: recoveredPrice > 0 ? Math.round(recoveredPrice) : estimatedPrice,
-                  estimatedDistance: recoveredDist > 0 ? recoveredDist : estimatedDistance,
-                });
-              }
-            }
+          if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+          await syncPassengerActiveRide(true);
+        }
           } catch (err) {
 
         console.error('Erro ao processar estado recuperado:', err);
@@ -2709,6 +2652,29 @@ const handleOpenChat = () => {
 
     return [BISSAU_CENTER.longitude, BISSAU_CENTER.latitude];
   }, [driverLocation, pickupCoords, passengerLocation]);
+
+  useEffect(() => {
+    const activeStatuses: RideStatus[] = [
+      'awaiting_payment',
+      'searching',
+      'queued',
+      'accepted',
+      'arrived',
+      'in_progress',
+    ];
+    if (!activeStatuses.includes(rideStatus)) return;
+
+    const watchdogInterval = setInterval(() => {
+      if (isMountedRef.current) {
+        if (socket && !socket.connected) {
+          connectPassengerSocket().catch(() => {});
+        }
+        syncPassengerActiveRide(false);
+      }
+    }, 5000);
+
+    return () => clearInterval(watchdogInterval);
+  }, [rideStatus, syncPassengerActiveRide]);
 
   const hasActiveRestoredRide = rideStatus !== 'idle' && Boolean(activeRideId);
 

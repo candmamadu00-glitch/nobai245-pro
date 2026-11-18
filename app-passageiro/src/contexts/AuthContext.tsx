@@ -39,6 +39,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUnauthorizedHandler(() => signOut());
 
     async function loadStorageData() {
+      let hasBooted = false;
+      const bootFailsafe = setTimeout(() => {
+        if (!hasBooted) {
+          hasBooted = true;
+          setLoading(false);
+        }
+      }, 3000);
+
       try {
         const storedUser = await AsyncStorage.getItem('@bai245:user');
         const storedToken = await SecureStorage.getItem('@bai245:accessToken');
@@ -46,15 +54,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (storedUser && storedToken) {
           api.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`;
           setUser(JSON.parse(storedUser));
-          await connectPassengerSocket();
-          await refreshPassengerProfile();
-          
+          hasBooted = true;
+          setLoading(false);
+
+          // Conecta socket e revalida perfil em segundo plano sem travar a abertura do app
+          connectPassengerSocket().catch(() => {});
+          refreshPassengerProfile().catch(() => {});
           registerAndSendPushToken(storedToken).catch(() => {});
         }
       } catch (e) {
         console.error('❌ [AUTH PASSAGEIRO] Erro ao carregar sessão:', e);
       } finally {
-        setLoading(false);
+        clearTimeout(bootFailsafe);
+        if (!hasBooted) {
+          hasBooted = true;
+          setLoading(false);
+        }
       }
     }
 

@@ -17,20 +17,20 @@ import { navigationRef } from './src/utils/navigationHelper';
 import { registerAndSendPushToken, setupNotificationListeners } from './src/services/notifications';
 
 // Telas
-import { Home } from './src/screens/Home'; 
+import { Home } from './src/screens/Home';
 import { Login } from './src/screens/Login';
 import { Register } from './src/screens/Register';
 import { ForgotPassword } from './src/screens/ForgotPassword';
 
 import { Profile } from './src/screens/Profile';
-import { Wallet } from './src/screens/Wallet'; 
-import { RideHistory } from './src/screens/RideHistory'; 
+import { Wallet } from './src/screens/Wallet';
+import { RideHistory } from './src/screens/RideHistory';
 import { RideDetails } from './src/screens/RideDetails';
 import { Rewards } from './src/screens/Rewards';
 import { EmergencyContacts } from './src/screens/EmergencyContacts';
 import { Onboarding } from './src/components/Onboarding';
 import { HelpCenter } from './src/screens/HelpCenter';
-import { MapScreen } from './src/screens/MapScreen'; 
+import { MapScreen } from './src/screens/MapScreen';
 import './src/services/i18n';
 
 // Configuração do Mapbox
@@ -91,7 +91,7 @@ function Rotas() {
         const data = response.notification.request.content.data;
         if (data?.rideId) {
           console.log('👆 [PASSAGEIRO] Notificação clicada para corrida:', data.rideId);
-          
+
           if (data?.type === 'CHAT_MESSAGE') {
             if (navigationRef.isReady()) {
               // @ts-ignore
@@ -133,7 +133,7 @@ function Rotas() {
     <Onboarding {...props} onComplete={() => setIsOnboarded(true)} />
   ), []);
 
-  if (loading || isOnboarded === null) {
+  if (loading || (!user && isOnboarded === null)) {
     return (
       <View style={styles.splashContainer}>
         <ActivityIndicator size="large" color="#EAB308" />
@@ -143,8 +143,8 @@ function Rotas() {
   }
 
   return (
-    <Stack.Navigator 
-      screenOptions={{ 
+    <Stack.Navigator
+      screenOptions={{
         headerShown: false,
         animation: 'slide_from_right',
         gestureEnabled: true,
@@ -155,8 +155,8 @@ function Rotas() {
         <Stack.Group>
           <Stack.Screen name="Home" component={Home} />
           <Stack.Screen name="Profile" component={Profile} />
-          <Stack.Screen name="Wallet" component={Wallet} /> 
-          <Stack.Screen name="RideHistory" component={RideHistory} /> 
+          <Stack.Screen name="Wallet" component={Wallet} />
+          <Stack.Screen name="RideHistory" component={RideHistory} />
           <Stack.Screen name="RideDetails" component={RideDetails} />
           <Stack.Screen name="Rewards" component={Rewards} />
           <Stack.Screen name="Map" component={MapScreen} />
