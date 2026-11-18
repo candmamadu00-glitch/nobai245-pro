@@ -881,9 +881,22 @@ export const getPassengerActiveRide = async (req: any, res: any) => {
       vehicleBrand: true,
       vehicleColor: true,
       vehiclePlate: true,
-      currentLat: true,
-      currentLng: true,
-      heading: true,
+      lastLat: true,
+      lastLng: true,
+      currentHeading: true,
+    };
+
+    const mapDriverLoc = (r: any) => {
+      if (!r || !r.driver) return r;
+      return {
+        ...r,
+        driver: {
+          ...r.driver,
+          currentLat: r.driver.lastLat ?? null,
+          currentLng: r.driver.lastLng ?? null,
+          heading: r.driver.currentHeading ?? null,
+        },
+      };
     };
 
     const activeRide = await prisma.ride.findFirst({
@@ -900,7 +913,7 @@ export const getPassengerActiveRide = async (req: any, res: any) => {
     });
 
     if (activeRide) {
-      return res.json({ ride: activeRide, lastRide: null });
+      return res.json({ ride: mapDriverLoc(activeRide), lastRide: null });
     }
 
     // 🛡️ SEM JANELA DE EXPIRAÇÃO: Mesmo se a corrida durou dias/meses ou o passageiro saiu do app,
@@ -931,7 +944,7 @@ export const getPassengerActiveRide = async (req: any, res: any) => {
       };
     }
 
-    return res.json({ ride: null, lastRide: lastRidePayload });
+    return res.json({ ride: null, lastRide: mapDriverLoc(lastRidePayload) });
   } catch (error: any) {
     console.error('❌ [GET_PASSENGER_ACTIVE_RIDE_ERROR]:', error?.message);
     return res.status(500).json({ error: 'Erro ao buscar corrida ativa do passageiro.' });
