@@ -1135,11 +1135,12 @@ io.on('connection', (socket: any) => {
       return;
     }
 
-    // 🛑 TRAVA DE SEGURANÇA: Saldo mínimo na carteira digital para cobrir comissões
-    const MIN_REQUIRED_BALANCE = 0;
-const currentBalance = Number(driver.walletBalance || 0);
+    // 🛑 TRAVA DE SEGURANÇA: Saldo mínimo de 1.000 XOF na carteira digital para ficar online
+    const sysCfgOnline = await prisma.systemConfig.findFirst().catch(() => null);
+    const MIN_REQUIRED_BALANCE = Math.max(1000, Number((sysCfgOnline as any)?.minDriverBalanceXof ?? 0));
+    const currentBalance = Number(driver.walletBalance || 0);
 
-if (currentBalance < MIN_REQUIRED_BALANCE) {
+    if (currentBalance < MIN_REQUIRED_BALANCE) {
       console.warn(`🛑 [ONLINE_DEBUG] Recusado: Motorista ${driverId} possui saldo insuficiente (${currentBalance} XOF < ${MIN_REQUIRED_BALANCE} XOF)`);
 
       await prisma.driver.update({
@@ -2015,19 +2016,19 @@ handleSocketEvent(socket, 'chat:send_message', async (data) => {
       } else {
         try {
   const uploadDir = path.join(process.cwd(), 'uploads', 'chat');
-  
+
   // Usamos fs.promises para não bloquear a thread principal
-  await fs.promises.mkdir(uploadDir, { recursive: true }); 
-  
+  await fs.promises.mkdir(uploadDir, { recursive: true });
+
   const cleanBase64 = rawAudio.replace(/^data:audio\/[^;]+;base64,/, '');
   const fileName = `${rideId}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.m4a`;
-  
+
   // writeFile assíncrono
   await fs.promises.writeFile(
-    path.join(uploadDir, fileName), 
+    path.join(uploadDir, fileName),
     Buffer.from(cleanBase64, 'base64')
   );
-  
+
   const baseUrl = (process.env.APP_URL || 'https://api.nobai245.com').replace(/\/$/, '');
   finalAudioUrl = `${baseUrl}/uploads/chat/${fileName}`;
 } catch (fileErr: any) {

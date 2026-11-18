@@ -109,6 +109,10 @@ export function Profile() {
   const [mmProvider, setMmProvider] = useState<'ORANGE' | 'MTN'>('ORANGE');
 
   const [isUpdateModalVisible, setIsUpdateModalVisible] = useState<boolean>(false);
+  const plateInputRef = React.useRef<TextInput>(null);
+  const brandInputRef = React.useRef<TextInput>(null);
+  const colorInputRef = React.useRef<TextInput>(null);
+  const docInputRef = React.useRef<TextInput>(null);
   const [isPrivacyModalVisible, setIsPrivacyModalVisible] = useState<boolean>(false);
   const [isLanguageModalVisible, setIsLanguageModalVisible] = useState<boolean>(false);
 
@@ -867,87 +871,130 @@ export function Profile() {
         visible={isUpdateModalVisible}
         transparent
         animationType="slide"
-        onRequestClose={() => setIsUpdateModalVisible(false)}
+        statusBarTranslucent
+        onRequestClose={() => {
+          Keyboard.dismiss();
+          setIsUpdateModalVisible(false);
+        }}
       >
-        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-          <View style={styles.modalOverlay}>
-            <View style={styles.backdrop} />
-            <KeyboardAvoidingView
-              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-              style={styles.modalContainer}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
+          style={styles.modalOverlay}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={() => {
+              Keyboard.dismiss();
+              setIsUpdateModalVisible(false);
+            }}
+            style={styles.backdrop}
+          />
+          <View style={styles.modalContainer}>
+            <View style={styles.modalDragPill} />
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Solicitar Alteração</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setIsUpdateModalVisible(false);
+                }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={24} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modalSubtitle}>
+              Por segurança, alterações de nome, placa ou documento passam por validação rápida da central.
+            </Text>
+
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+              contentContainerStyle={{ paddingBottom: 28 }}
             >
-              <View style={styles.modalHeaderRow}>
-                <Text style={styles.modalTitle}>Solicitar Alteração</Text>
-                <TouchableOpacity onPress={() => setIsUpdateModalVisible(false)}>
-                  <Ionicons name="close" size={24} color="#64748B" />
-                </TouchableOpacity>
-              </View>
-              <Text style={styles.modalSubtitle}>
-                Por segurança, alterações de nome, placa ou documento passam por validação rápida da central.
-              </Text>
+              <Text style={styles.inputLabel}>Nome Completo</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={updateData.newFullName}
+                onChangeText={(v) => setUpdateData((p) => ({ ...p, newFullName: v }))}
+                placeholder="Nome completo"
+                placeholderTextColor="#94A3B8"
+                returnKeyType="next"
+                blurOnSubmit={false}
+                onSubmitEditing={() => plateInputRef.current?.focus()}
+              />
 
-              <ScrollView showsVerticalScrollIndicator={false}>
-                <Text style={styles.inputLabel}>Nome Completo</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  value={updateData.newFullName}
-                  onChangeText={(v) => setUpdateData((p) => ({ ...p, newFullName: v }))}
-                  placeholder="Nome completo"
-                  placeholderTextColor="#94A3B8"
-                />
+              <Text style={styles.inputLabel}>Placa / Matrícula do Veículo</Text>
+              <TextInput
+                ref={plateInputRef}
+                style={styles.modalInput}
+                value={updateData.newVehiclePlate}
+                onChangeText={(v) => setUpdateData((p) => ({ ...p, newVehiclePlate: v }))}
+                autoCapitalize="characters"
+                placeholder="Ex: GB-1234-AA"
+                placeholderTextColor="#94A3B8"
+                returnKeyType="next"
+                blurOnSubmit={false}
+                onSubmitEditing={() => brandInputRef.current?.focus()}
+              />
 
-                <Text style={styles.inputLabel}>Placa / Matrícula do Veículo</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  value={updateData.newVehiclePlate}
-                  onChangeText={(v) => setUpdateData((p) => ({ ...p, newVehiclePlate: v }))}
-                  autoCapitalize="characters"
-                  placeholder="Ex: GB-1234-AA"
-                  placeholderTextColor="#94A3B8"
-                />
+              <Text style={styles.inputLabel}>Marca / Modelo do Veículo</Text>
+              <TextInput
+                ref={brandInputRef}
+                style={styles.modalInput}
+                value={updateData.newVehicleBrand}
+                onChangeText={(v) => setUpdateData((p) => ({ ...p, newVehicleBrand: v }))}
+                placeholder="Ex: Toyota Corolla / Bajaj"
+                placeholderTextColor="#94A3B8"
+                returnKeyType="next"
+                blurOnSubmit={false}
+                onSubmitEditing={() => colorInputRef.current?.focus()}
+              />
 
-                <Text style={styles.inputLabel}>Marca / Modelo do Veículo</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  value={updateData.newVehicleBrand}
-                  onChangeText={(v) => setUpdateData((p) => ({ ...p, newVehicleBrand: v }))}
-                  placeholder="Ex: Toyota Corolla / Bajaj"
-                  placeholderTextColor="#94A3B8"
-                />
+              <Text style={styles.inputLabel}>Cor do Veículo</Text>
+              <TextInput
+                ref={colorInputRef}
+                style={styles.modalInput}
+                value={updateData.newVehicleColor}
+                onChangeText={(v) => setUpdateData((p) => ({ ...p, newVehicleColor: v }))}
+                placeholder="Ex: Branco / Azul"
+                placeholderTextColor="#94A3B8"
+                returnKeyType="next"
+                blurOnSubmit={false}
+                onSubmitEditing={() => docInputRef.current?.focus()}
+              />
 
-                <Text style={styles.inputLabel}>Cor do Veículo</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  value={updateData.newVehicleColor}
-                  onChangeText={(v) => setUpdateData((p) => ({ ...p, newVehicleColor: v }))}
-                  placeholder="Ex: Branco / Azul"
-                  placeholderTextColor="#94A3B8"
-                />
+              <Text style={styles.inputLabel}>Número do Documento (BI / Carta)</Text>
+              <TextInput
+                ref={docInputRef}
+                style={styles.modalInput}
+                value={updateData.newDocumentNumber}
+                onChangeText={(v) => setUpdateData((p) => ({ ...p, newDocumentNumber: v }))}
+                placeholder="Número do documento"
+                placeholderTextColor="#94A3B8"
+                returnKeyType="done"
+                onSubmitEditing={() => Keyboard.dismiss()}
+              />
 
-                <Text style={styles.inputLabel}>Número do Documento (BI / Carta)</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  value={updateData.newDocumentNumber}
-                  onChangeText={(v) => setUpdateData((p) => ({ ...p, newDocumentNumber: v }))}
-                  placeholder="Número do documento"
-                  placeholderTextColor="#94A3B8"
-                />
-
-                <TouchableOpacity
-                  style={[styles.saveBtn, { marginTop: 10 }, isSubmittingUpdate && { opacity: 0.7 }]}
-                  onPress={handleRequestUpdate}
-                  disabled={isSubmittingUpdate}
-                >
-                  {isSubmittingUpdate ? (
-                    <ActivityIndicator color="#FFF" />
-                  ) : (
-                    <Text style={styles.saveBtnText}>Enviar Solicitação</Text>
-                  )}
-                </TouchableOpacity>
-              </ScrollView>
-            </KeyboardAvoidingView>
+              <TouchableOpacity
+                style={[styles.saveBtn, { marginTop: 14 }, isSubmittingUpdate && { opacity: 0.7 }]}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  handleRequestUpdate();
+                }}
+                disabled={isSubmittingUpdate}
+              >
+                {isSubmittingUpdate ? (
+                  <ActivityIndicator color="#FFF" />
+                ) : (
+                  <Text style={styles.saveBtnText}>Enviar Solicitação</Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
           </View>
-        </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* MODAL DE IDIOMAS */}
@@ -1305,12 +1352,27 @@ const styles = StyleSheet.create({
   deleteAccountText: { color: '#94A3B8', fontWeight: '700', fontSize: 12 },
   modalOverlay: { flex: 1, justifyContent: 'flex-end' },
   backdrop: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(15, 23, 42, 0.6)' },
+  modalDragPill: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#CBD5E1',
+    alignSelf: 'center',
+    marginBottom: 12,
+  },
   modalContainer: {
     backgroundColor: '#FFF',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    padding: 20,
-    maxHeight: '88%',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 20,
+    maxHeight: '90%',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 16,
   },
   modalHeaderRow: {
     flexDirection: 'row',

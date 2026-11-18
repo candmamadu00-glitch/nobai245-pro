@@ -364,7 +364,7 @@ export function Home() {
   const { t, i18n } = useTranslation();
   useKeepAwake();
 
-  const { driver } = useAuth();
+  const { driver, refreshDriverProfile } = useAuth();
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const audioRecorder = useAudioRecorder();
@@ -1015,7 +1015,8 @@ export function Home() {
 
     const handleOnlineFailed = (data: { reason?: string; message?: string }) => {
       setIsOnline(false);
-      Alert.alert('Carteira com Saldo Insuficiente 💳', data.message || 'Você precisa de saldo suficiente para ficar online.', [
+      refreshDriverProfile().catch(() => {});
+      Alert.alert('Carteira com Saldo Insuficiente 💳', data.message || 'Você precisa de no mínimo 1.000 XOF na carteira para ficar online.', [
         { text: 'Agora Não', style: 'cancel' },
         { text: 'Recarregar Carteira', onPress: () => navigation.navigate('Wallet') }
       ]);
@@ -1023,7 +1024,8 @@ export function Home() {
 
     const handleForcedOffline = (data: { message?: string }) => {
       setIsOnline(false);
-      Alert.alert('Modo Offline Ativado ⚠️', data.message || 'Recarregue sua carteira para continuar trabalhando.', [
+      refreshDriverProfile().catch(() => {});
+      Alert.alert('Modo Offline Ativado ⚠️', data.message || 'Seu saldo ficou abaixo de 1.000 XOF. Recarregue sua carteira para continuar trabalhando.', [
         { text: 'Entendi', style: 'default' },
         { text: 'Ir para Carteira', onPress: () => navigation.navigate('Wallet') }
       ]);
@@ -1869,6 +1871,20 @@ export function Home() {
   async function startTracking() {
     if (driver?.status !== 'APPROVED') {
       return Alert.alert('Conta em Análise 📄', 'Aguarde a aprovação dos seus documentos para poder rodar.');
+    }
+
+    const currentWalletXof = Number(driver?.walletBalance ?? 0);
+    if (currentWalletXof < 1000) {
+      setIsOnline(false);
+      refreshDriverProfile().catch(() => {});
+      return Alert.alert(
+        'Saldo Mínimo Necessário 💳',
+        `Seu saldo atual é de ${currentWalletXof.toLocaleString('pt-GW')} XOF. É necessário ter no mínimo 1.000 XOF na carteira digital para ficar online e receber corridas.`,
+        [
+          { text: 'Agora Não', style: 'cancel' },
+          { text: 'Recarregar Carteira', onPress: () => navigation.navigate('Wallet') }
+        ]
+      );
     }
 
     const foreground = await Location.requestForegroundPermissionsAsync();

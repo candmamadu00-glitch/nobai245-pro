@@ -114,10 +114,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (lastWalletEventRef.current === sig) lastWalletEventRef.current = '';
       }, 3500);
 
-      if (typeof data?.walletBalance === 'number') {
+      const nextWalletBal = typeof data?.walletBalance === 'number'
+        ? data.walletBalance
+        : (typeof data?.balance === 'number' ? data.balance : null);
+
+      if (nextWalletBal !== null) {
         setDriver((prev) => {
           if (!prev) return prev;
-          const updated = { ...prev, walletBalance: Number(data.walletBalance) };
+          const updated = { ...prev, walletBalance: Number(nextWalletBal) };
           storage.setDriver(updated).catch(() => {});
           return updated;
         });

@@ -1,8 +1,8 @@
 import { Request, Response } from 'express';
 import { safeRedis, getIo } from '../server';
 import { prisma } from '../config/prisma';
-import {  
-  calculateRidePrice, 
+import {
+  calculateRidePrice,
   createRideAndInitiateEscrow,
   acceptRideLogic,
   driverArrivedLogic,
@@ -58,8 +58,8 @@ const ALLOWED_VEHICLES = ['PARTICULAR', 'TAXI', 'MOTO', 'MOTO_CARRO', 'TOCA_TOCA
 
 export const estimateRidePrice = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { 
-      pickupLat, pickupLng, dropoffLat, dropoffLng, 
+    const {
+      pickupLat, pickupLng, dropoffLat, dropoffLng,
       serviceType = 'RIDE', rentalRegion = 'BISSAU'
     } = req.body;
 
@@ -75,9 +75,9 @@ export const estimateRidePrice = async (req: Request, res: Response): Promise<vo
       const tariff = await prisma.tariffConfig.findFirst({
         where: { serviceType: 'RENTAL', isActive: true }
       });
-      
+
       const fixedPrice = tariff ? Math.max(0, Number(tariff.baseFare)) : 13000;
-      
+
       res.json({
         success: true,
         serviceType: 'RENTAL',
@@ -122,8 +122,8 @@ export const estimateRidePrice = async (req: Request, res: Response): Promise<vo
           { originLat: pLat, originLng: pLng, destinationLat: dLat, destinationLng: dLng }
         );
         if (calc?.appliedRuleLabel) appliedRuleLabel = calc.appliedRuleLabel;
-        return { 
-          vehicleType: tariff.vehicleType, 
+        return {
+          vehicleType: tariff.vehicleType,
           priceXOF: Math.max(0, Math.round(Number(calc?.totalPrice ?? calc))),
           appliedRuleLabel: calc?.appliedRuleLabel || null
         };
@@ -150,8 +150,8 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
-    const { 
-      pickupLat, pickupLng, dropoffLat, dropoffLng, 
+    const {
+      pickupLat, pickupLng, dropoffLat, dropoffLng,
       vehicleType, serviceType = 'RIDE', paymentMethod = 'CASH', payerPhone,
       originAddress, destinationAddress, rentalRegion = 'BISSAU',
       idempotencyKey, stops = []
@@ -173,12 +173,12 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
     }
 
     const ongoing = await prisma.ride.findFirst({
-      where: { 
-        passengerId, 
+      where: {
+        passengerId,
         status: { in: ['PENDING', 'SEARCHING', 'AWAITING_PAYMENT', 'ACCEPTED', 'QUEUED', 'ARRIVED', 'IN_PROGRESS'] as any[] }
       }
     });
-    
+
     if (ongoing) {
       res.status(409).json({ success: false, error: 'Você já possui uma corrida em andamento.', rideId: ongoing.id });
       return;
@@ -192,7 +192,7 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
     const pLat = Number(pickupLat);
     const pLng = Number(pickupLng);
     const isRental = serviceType === 'RENTAL';
-    
+
     const dLat = isRental ? pLat : Number(dropoffLat);
     const dLng = isRental ? pLng : Number(dropoffLng);
 
@@ -203,7 +203,7 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
 
     let finalVehicleType = String(isRental ? (vehicleType || 'PARTICULAR') : vehicleType).toUpperCase();
     if (finalVehicleType === 'MOTO_CAR') finalVehicleType = 'MOTO_CARRO';
-    
+
     if (!ALLOWED_VEHICLES.includes(finalVehicleType)) {
       res.status(400).json({ success: false, error: 'Tipo de veículo não suportado pelo sistema.' });
       return;
@@ -214,7 +214,7 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
-    const sanitizedStops = Array.isArray(stops) 
+    const sanitizedStops = Array.isArray(stops)
       ? stops.slice(0, 5).filter((s: any) => isValidCoordinate(s.lat, s.lng)).map((s: any) => ({
           address: sanitizeText(s.address, 150),
           lat: Number(s.lat),
@@ -224,20 +224,20 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
       : [];
 
     const cleanOriginAddress = sanitizeText(originAddress, 200);
-    const cleanDestinationAddress = isRental 
-      ? sanitizeText(destinationAddress || `Aluguel (${rentalRegion})`, 200) 
+    const cleanDestinationAddress = isRental
+      ? sanitizeText(destinationAddress || `Aluguel (${rentalRegion})`, 200)
       : sanitizeText(destinationAddress, 200);
 
     const result = await createRideAndInitiateEscrow(passengerId, {
-      originLat: pLat, 
-      originLng: pLng, 
-      destinationLat: dLat, 
+      originLat: pLat,
+      originLng: pLng,
+      destinationLat: dLat,
       destinationLng: dLng,
-      requestedVehicleType: finalVehicleType as any, 
-      serviceType, 
+      requestedVehicleType: finalVehicleType as any,
+      serviceType,
       paymentMethod,
       payerPhone: payerPhone ? sanitizeText(payerPhone, 30) : undefined,
-      originAddress: cleanOriginAddress, 
+      originAddress: cleanOriginAddress,
       destinationAddress: cleanDestinationAddress,
       stops: sanitizedStops,
       estimatedPrice: req.body.estimatedPrice ? Number(req.body.estimatedPrice) : undefined,
@@ -253,10 +253,10 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
       const lngDelta = 0.045;
 
       const availableDrivers = await prisma.driver.findMany({
-        where: { 
-          isOnline: true, 
-          isAvailable: true, 
-          vehicleType: finalVehicleType as any, 
+        where: {
+          isOnline: true,
+          isAvailable: true,
+          vehicleType: finalVehicleType as any,
           status: 'APPROVED',
           lastLat: { gte: pLat - latDelta, lte: pLat + latDelta },
           lastLng: { gte: pLng - lngDelta, lte: pLng + lngDelta }
@@ -264,16 +264,31 @@ export const requestRide = async (req: Request, res: Response): Promise<void> =>
         select: { id: true, lastLat: true, lastLng: true, deviceToken: true, walletBalance: true }
       });
 
-      // 🟢 VALIDAÇÃO DE SALDO MÍNIMO DO MOTORISTA (CASH ONLY)
-      // Bloqueia motoristas com carteira digital zero ou negativa (walletBalance <= 0)
+      // 🟢 VALIDAÇÃO DE SALDO MÍNIMO (1.000 XOF) E COBERTURA DE COMISSÃO ADMINISTRATIVA
+      const [ctrlSysCfg, ctrlTariff] = await Promise.all([
+        prisma.systemConfig.findFirst().catch(() => null),
+        prisma.tariffConfig.findFirst({
+          where: {
+            vehicleType: finalVehicleType as any,
+            ...((result.ride as any).serviceType ? { serviceType: (result.ride as any).serviceType } : {}),
+          },
+        }).catch(() => null),
+      ]);
+      const ctrlMinOnline = Math.max(1000, Number((ctrlSysCfg as any)?.minDriverBalanceXof ?? 0));
+      const ctrlCommRate = Number(ctrlTariff?.commissionRate ?? (ctrlSysCfg as any)?.defaultCommissionRate ?? 15);
+      const ctrlEstimatedFee = Math.round((Number(result.ride.priceXof || 0) * ctrlCommRate) / 100);
+      const ctrlMinRequired = result.ride.paymentMethod === 'CASH'
+        ? Math.max(ctrlMinOnline, ctrlEstimatedFee)
+        : ctrlMinOnline;
+
       const nearbyDrivers = availableDrivers.filter(d => {
         if (d.lastLat === null || d.lastLng === null) return false;
-        if (Number(d.walletBalance || 0) <= 0) return false;
+        if (Number(d.walletBalance || 0) < ctrlMinRequired) return false;
         return calculateDistance(pLat, pLng, Number(d.lastLat), Number(d.lastLng)) <= 5.0;
       });
 
-      const rideStops = (result.ride.stops as any[]) && (result.ride.stops as any[]).length > 0 
-        ? result.ride.stops 
+      const rideStops = (result.ride.stops as any[]) && (result.ride.stops as any[]).length > 0
+        ? result.ride.stops
         : (req.body.extraStopAddress ? [{ address: req.body.extraStopAddress, lat: req.body.extraStopLat, lng: req.body.extraStopLng }] : []);
 
       const passengerData = await prisma.passenger.findUnique({
@@ -370,11 +385,11 @@ export const acceptRide = async (req: Request, res: Response): Promise<void> => 
     res.json({ success: true, ride: sanitizedRide });
   } catch (error: any) {
     console.error(`❌ [ACEITAR_CORRIDA] Erro: ${error?.message || error}`);
-    
+
     if (error?.message?.includes('INSUFFICIENT_DRIVER_BALANCE')) {
-      res.status(402).json({ 
-        success: false, 
-        error: 'Seu saldo na carteira digital está zerado ou negativo. Recarregue para aceitar corridas.' 
+      res.status(402).json({
+        success: false,
+        error: 'Seu saldo na carteira digital está zerado ou negativo. Recarregue para aceitar corridas.'
       });
       return;
     }
@@ -394,7 +409,7 @@ export const driverArrived = async (req: Request, res: Response): Promise<void> 
     }
 
     const updatedRide = await driverArrivedLogic(String(rideId), driverId);
-    
+
     if (!updatedRide) {
       res.status(400).json({ success: false, error: 'Corrida não encontrada.' });
       return;
@@ -493,11 +508,11 @@ export const finishRide = async (req: Request, res: Response): Promise<void> => 
     }
 
     const otpInput = finishOtp || otp;
-    
+
     // Finaliza a corrida e deduz a comissão da plataforma da carteira digital do motorista
     const result: any = await (finalizeRideAndCharge as any)(
-      currentRide.id, 
-      Number(finalLat), 
+      currentRide.id,
+      Number(finalLat),
       Number(finalLng),
       otpInput
     );
@@ -549,7 +564,7 @@ export const cancelRide = async (req: Request, res: Response): Promise<void> => 
     const userId = (req as any).user?.id;
     const userRole = (req as any).user?.role === 'DRIVER' ? 'DRIVER' : 'PASSENGER';
     const { rideId, reason } = req.body;
-    
+
     if (!userId) {
       res.status(401).json({ success: false, error: 'Sessão expirada ou não autorizada.' });
       return;
@@ -562,10 +577,10 @@ export const cancelRide = async (req: Request, res: Response): Promise<void> => 
 
     const currentRide = await prisma.ride.findUnique({
       where: { id: String(rideId) },
-      select: { 
-        id: true, 
-        passengerId: true, 
-        driverId: true, 
+      select: {
+        id: true,
+        passengerId: true,
+        driverId: true,
         status: true
       }
     });
@@ -586,13 +601,13 @@ export const cancelRide = async (req: Request, res: Response): Promise<void> => 
     }
 
     const cleanReason = sanitizeText(reason || `Cancelado pelo ${userRole === 'DRIVER' ? 'motorista' : 'passageiro'}`, 200);
-    
+
     const cancelResult = await cancelRideLogic(currentRide.id, userId, userRole as any, cleanReason);
     const refundResult = { success: Boolean((cancelResult as any)?.refundTxId) };
-    
-    res.json({ 
-      success: true, 
-      message: 'Corrida cancelada com sucesso.', 
+
+    res.json({
+      success: true,
+      message: 'Corrida cancelada com sucesso.',
       penaltyApplied: cancelResult?.appliedPenalty || false,
       refundExecuted: refundResult?.success || false
     });
@@ -680,8 +695,8 @@ export const uploadChatAudio = async (req: Request, res: Response): Promise<void
 
     const ride = await prisma.ride.findUnique({
       where: { id: String(rideId) },
-      select: { 
-        passengerId: true, 
+      select: {
+        passengerId: true,
         driverId: true,
         passenger: { select: { deviceToken: true } },
         driver: { select: { deviceToken: true } }
@@ -744,8 +759,8 @@ export const uploadChatAudio = async (req: Request, res: Response): Promise<void
     }
 
     try {
-      const recipientToken = senderType === 'DRIVER' 
-        ? ride.passenger?.deviceToken 
+      const recipientToken = senderType === 'DRIVER'
+        ? ride.passenger?.deviceToken
         : ride.driver?.deviceToken;
 
       if (recipientToken) {
@@ -805,7 +820,7 @@ export const rateRide = async (req: Request, res: Response): Promise<void> => {
     console.error('❌ Erro ao enviar avaliação:', error?.message || error);
     res.status(400).json({ success: false, error: error?.message || 'Falha ao registrar avaliação.' });
   }
-}; 
+};
 
 // -----------------------------------------------------------------------------
 // 🔄 OBTER CORRIDA ATIVA DO MOTORISTA (SINCRONIZAÇÃO APÓS MINIMIZAR/REABRIR APP)

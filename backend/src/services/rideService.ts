@@ -1,10 +1,10 @@
-import { 
-  VehicleType, 
-  ServiceType, 
-  RideStatus, 
-  PaymentMethod, 
-  TransactionStatus, 
-  TransactionType, 
+import {
+  VehicleType,
+  ServiceType,
+  RideStatus,
+  PaymentMethod,
+  TransactionStatus,
+  TransactionType,
   UserType
 } from '@prisma/client';
 import axios from 'axios';
@@ -38,8 +38,8 @@ function detectProviderFromPhone(phone?: string | null): PaymentMethod | null {
 
 const MAPBOX_ACCESS_TOKEN = process.env.MAPBOX_ACCESS_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_TOKEN || 'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZTRyc3NmMDBzMTJ5cTA1anJvYjFsOSJ9.pUAoGXwZS8FtYNr85VD1TA';
 const CANCELLATION_PENALTY_XOF = 500;
-const MIN_DRIVER_BALANCE_FOR_CASH = 0; // 🟢 Exige saldo maior ou igual a 0 XOF para rodar em dinheiro
-const MIN_DRIVER_BALANCE_FOR_ONLINE = 0;
+const MIN_DRIVER_BALANCE_FOR_CASH = 1000; // 🟢 Exige saldo mínimo de 1.000 XOF para operar e cobrir comissões
+const MIN_DRIVER_BALANCE_FOR_ONLINE = 1000;
 const RideOfferStatus = { PENDING: 'PENDING', ACCEPTED: 'ACCEPTED' } as any;
 
 export interface FinalizeRideResult {
@@ -82,7 +82,7 @@ function safeSocketEmit(room: string, event: string, payload: any): void {
 export async function notifyDriversNewRide(rideId: string): Promise<void> {
   console.log(`\n🚨 [RIDE_DISPATCH] Buscando motoristas para notificar sobre a corrida ID: ${rideId}...`);
   try {
-    const ride = await prisma.ride.findUnique({ 
+    const ride = await prisma.ride.findUnique({
       where: { id: rideId },
       include: {
         passenger: {
@@ -122,8 +122,22 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
       },
     });
 
-    const sysCfg = await prisma.systemConfig.findFirst().catch(() => null);
-    const dynamicMinCashBalance = Number((sysCfg as any)?.minDriverBalanceXof ?? MIN_DRIVER_BALANCE_FOR_CASH);
+    const [sysCfg, dispatchTariff] = await Promise.all([
+      prisma.systemConfig.findFirst().catch(() => null),
+      prisma.tariffConfig.findFirst({
+        where: {
+          vehicleType: ride.requestedVehicleType,
+          ...((ride as any).serviceType ? { serviceType: (ride as any).serviceType } : {}),
+        },
+      }).catch(() => null),
+    ]);
+    const configuredMin = Number((sysCfg as any)?.minDriverBalanceXof ?? 0);
+    const dynamicMinCashBalance = Math.max(MIN_DRIVER_BALANCE_FOR_ONLINE, configuredMin);
+    const dispatchCommRate = Number(dispatchTariff?.commissionRate ?? (sysCfg as any)?.defaultCommissionRate ?? 15);
+    const estimatedPlatformFee = Math.round((Number(ride.priceXof || 0) * dispatchCommRate) / 100);
+    const minRequiredForThisRide = ride.paymentMethod === PaymentMethod.CASH
+      ? Math.max(dynamicMinCashBalance, estimatedPlatformFee)
+      : dynamicMinCashBalance;
     const blockExpiredDocs = Boolean((sysCfg as any)?.autoBlockExpiredDocs ?? false);
 
     const qualifiedDrivers = [];
@@ -133,8 +147,9 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
         continue;
       }
 
-      if (Number(driver.walletBalance || 0) < dynamicMinCashBalance) {
-        console.log(`⚠️ [RIDE_DISPATCH_SKIP] Motorista ${driver.fullName} (${driver.id}) abaixo do teto de saldo (${dynamicMinCashBalance} XOF): ${driver.walletBalance} XOF`);
+      const driverBal = Number(driver.walletBalance || 0);
+      if (driverBal < minRequiredForThisRide) {
+        console.log(`⚠️ [RIDE_DISPATCH_SKIP] Motorista ${driver.fullName} (${driver.id}) sem saldo suficiente (${driverBal} XOF < ${minRequiredForThisRide} XOF | comissão estimada: ${estimatedPlatformFee} XOF)`);
         continue;
       }
 
@@ -179,7 +194,7 @@ export async function notifyDriversNewRide(rideId: string): Promise<void> {
       destinationAddress: ride.destinationAddress,
       destinationLat: Number(ride.destinationLat),
       destinationLng: Number(ride.destinationLng),
-      
+
       pickupReferencePoint: (ride as any).pickupReferencePoint || ride.referencePoint || '',
       dropoffReferencePoint: (ride as any).dropoffReferencePoint || '',
       extraStopReferencePoint: (ride as any).extraStopReferencePoint || '',
@@ -243,7 +258,7 @@ export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2
   const dLat = (lat2 - lat1) * (Math.PI / 180);
   const dLon = (lon2 - lon1) * (Math.PI / 180);
   const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-            Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * 
+            Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
             Math.sin(dLon / 2) * Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return Math.max(0.1, Number((R * c * 1.35).toFixed(2)));
@@ -259,7 +274,7 @@ export function calculateHaversineFallback(lat1: number, lon1: number, lat2: num
 }
 
 export async function getRouteDistanceAndDuration(
-  lat1: number, lon1: number, 
+  lat1: number, lon1: number,
   lat2: number, lon2: number,
   waypoints: Array<{lat: number, lng: number}> = []
 ) {
@@ -395,7 +410,7 @@ export function isWithinGuineaBissau(lat: number, lng: number): boolean {
 export async function createRideAndInitiateEscrow(passengerId: string, data: {
   originLat: number; originLng: number; destinationLat: number; destinationLng: number;
   requestedVehicleType: VehicleType | string; serviceType: ServiceType | string;
-  originAddress?: string; destinationAddress?: string; 
+  originAddress?: string; destinationAddress?: string;
   referencePoint?: string;
   pickupReferencePoint?: string;
   dropoffReferencePoint?: string;
@@ -412,11 +427,11 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
   useCorporateAccount?: boolean;
 }) {
   console.log(`📡 [CREATE_RIDE] Iniciando criação de corrida para Passageiro ID: ${passengerId}`);
-  const { 
-    originLat, originLng, destinationLat, destinationLng, 
-    requestedVehicleType, serviceType, originAddress, destinationAddress, 
+  const {
+    originLat, originLng, destinationLat, destinationLng,
+    requestedVehicleType, serviceType, originAddress, destinationAddress,
     referencePoint, pickupReferencePoint, dropoffReferencePoint,
-    stops = [], estimatedPrice 
+    stops = [], estimatedPrice
   } = data;
 
   if (!isValidCoordinate(originLat, originLng) || !isValidCoordinate(destinationLat, destinationLng)) {
@@ -429,7 +444,7 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     throw new Error('OUT_OF_SERVICE_AREA: O serviço Nô Bai 245 está disponível apenas no território da Guiné-Bissau.');
   }
 
-  const passenger = await prisma.passenger.findUnique({ 
+  const passenger = await prisma.passenger.findUnique({
     where: { id: passengerId },
     select: { id: true, status: true, currentRideId: true, phone: true, paymentAccountNumber: true }
   });
@@ -462,7 +477,7 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     });
 
     const isFinished = !activeRide || ['CANCELLED', 'COMPLETED'].includes(activeRide.status);
-    const isStaleSearching = activeRide && ['SEARCHING', 'AWAITING_PAYMENT'].includes(activeRide.status) && 
+    const isStaleSearching = activeRide && ['SEARCHING', 'AWAITING_PAYMENT'].includes(activeRide.status) &&
       (Date.now() - new Date(activeRide.createdAt).getTime() > 3 * 60 * 1000);
 
     if (isFinished || isStaleSearching) {
@@ -501,7 +516,7 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
 
   const distanceKm = incomingDist > 0 ? Number(incomingDist.toFixed(2)) : fallbackRoute.distanceKm;
   const durationMin = incomingDur > 0 ? Math.max(1, Math.round(incomingDur)) : fallbackRoute.durationMin;
-  
+
   const { totalPrice: calculatedPrice } = await calculateRidePrice(
     distanceKm,
     durationMin,
@@ -509,9 +524,9 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     serviceType as ServiceType,
     { originLat, originLng, destinationLat, destinationLng }
   );
-  
-  const rawBasePriceXof = (estimatedPrice && Number(estimatedPrice) > 0) 
-    ? Math.round(Number(estimatedPrice)) 
+
+  const rawBasePriceXof = (estimatedPrice && Number(estimatedPrice) > 0)
+    ? Math.round(Number(estimatedPrice))
     : calculatedPrice;
 
   // 🎟️ Validação e Aplicação de Cupom Promocional (quando enviado pelo App)
@@ -571,12 +586,12 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
 
     corporateAccountToCharge = { id: emp.corporate.id, name: emp.corporate.name };
   }
-  
+
   const effectiveMethod = corporateAccountToCharge ? PaymentMethod.CASH : chosenMethod;
   const effectiveIsMobileMoney = !corporateAccountToCharge && isMobileMoney;
   const initialStatus = effectiveIsMobileMoney ? RideStatus.AWAITING_PAYMENT : RideStatus.SEARCHING;
   const initialTxStatus = TransactionStatus.PENDING;
-  
+
   const startOtp = Math.floor(1000 + Math.random() * 9000).toString();
   const finishOtp: string | null = null;
 
@@ -590,16 +605,16 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
   const { ride } = await prisma.$transaction(async (tx) => {
     const newRide = await tx.ride.create({
       data: {
-        passengerId, 
+        passengerId,
         serviceType: (serviceType || 'RIDE') as ServiceType,
         requestedVehicleType: (requestedVehicleType || 'PARTICULAR') as VehicleType,
-        paymentMethod: effectiveMethod, 
+        paymentMethod: effectiveMethod,
         originAddress: originAddress || '',
-        originLat, 
-        originLng, 
+        originLat,
+        originLng,
         destinationAddress: destinationAddress || '',
-        destinationLat, 
-        destinationLng, 
+        destinationLat,
+        destinationLng,
         referencePoint: corporateAccountToCharge
           ? `[B2B: ${corporateAccountToCharge.name}] ${referencePoint || pickupReferencePoint || ''}`.trim()
           : (referencePoint || pickupReferencePoint || null),
@@ -610,7 +625,7 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
         priceXof,
         promoCodeId: appliedPromoId,
         discountAmount: discountAmountXof,
-        status: initialStatus, 
+        status: initialStatus,
         startOtp,
         finishOtp
       }
@@ -640,12 +655,12 @@ export async function createRideAndInitiateEscrow(passengerId: string, data: {
     if (!isMobileMoney) {
       await tx.transaction.create({
         data: {
-          passengerId, 
-          rideId: newRide.id, 
+          passengerId,
+          rideId: newRide.id,
           type: TransactionType.RIDE_PAYMENT,
-          status: initialTxStatus, 
+          status: initialTxStatus,
           amount: priceXof,
-          reference: payRef, 
+          reference: payRef,
           paymentMethod: chosenMethod,
           idempotencyKey: data.idempotencyKey
         }
@@ -790,9 +805,31 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
   }
 
   const currentBalance = Number(driver.walletBalance || 0);
-  if (ride.paymentMethod === PaymentMethod.CASH && currentBalance < MIN_DRIVER_BALANCE_FOR_CASH) {
-    console.warn(`⚠️ [ACCEPT_RIDE_WARN] Motorista ${driverId} com saldo insuficiente na carteira: ${currentBalance} XOF`);
-    throw new Error('INSUFFICIENT_DRIVER_BALANCE: Seu saldo na carteira digital está negativo. Recarregue para aceitar corridas em dinheiro.');
+  const [acceptSysCfg, acceptTariff] = await Promise.all([
+    prisma.systemConfig.findFirst().catch(() => null),
+    prisma.tariffConfig.findFirst({
+      where: {
+        vehicleType: ride.requestedVehicleType,
+        ...((ride as any).serviceType ? { serviceType: (ride as any).serviceType } : {}),
+      },
+    }).catch(() => null),
+  ]);
+  const minOnlineReq = Math.max(MIN_DRIVER_BALANCE_FOR_ONLINE, Number((acceptSysCfg as any)?.minDriverBalanceXof ?? 0));
+  const acceptCommRate = Number(acceptTariff?.commissionRate ?? (acceptSysCfg as any)?.defaultCommissionRate ?? 15);
+  const requiredCommissionFee = Math.round((Number(ride.priceXof || 0) * acceptCommRate) / 100);
+
+  if (currentBalance < minOnlineReq) {
+    await prisma.driver.update({
+      where: { id: driverId },
+      data: { isOnline: false, isAvailable: false }
+    }).catch(() => null);
+    console.warn(`⚠️ [ACCEPT_RIDE_WARN] Motorista ${driverId} abaixo de ${minOnlineReq} XOF (${currentBalance} XOF) — desconectado automaticamente.`);
+    throw new Error(`INSUFFICIENT_DRIVER_BALANCE: Seu saldo (${currentBalance.toLocaleString('pt-GW')} XOF) está abaixo do mínimo de ${minOnlineReq.toLocaleString('pt-GW')} XOF para operar. Recarregue sua carteira.`);
+  }
+
+  if (ride.paymentMethod === PaymentMethod.CASH && currentBalance < requiredCommissionFee) {
+    console.warn(`⚠️ [ACCEPT_RIDE_WARN] Motorista ${driverId} sem saldo para cobrir a comissão (${currentBalance} XOF < ${requiredCommissionFee} XOF)`);
+    throw new Error(`INSUFFICIENT_DRIVER_BALANCE: Seu saldo (${currentBalance.toLocaleString('pt-GW')} XOF) não cobre a taxa administrativa desta corrida (${requiredCommissionFee.toLocaleString('pt-GW')} XOF). Recarregue sua carteira.`);
   }
 
   const targetStatus: RideStatus = RideStatus.ACCEPTED;
@@ -806,9 +843,9 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     const updatedRide = await tx.ride.updateMany({
       where: { id: rideId, status: RideStatus.SEARCHING },
       data: {
-        driverId, 
-        status: targetStatus, 
-        acceptedAt: new Date(), 
+        driverId,
+        status: targetStatus,
+        acceptedAt: new Date(),
         driverVehiclePlate: driver.vehiclePlate,
         driverVehicleType: driver.vehicleType,
         version: { increment: 1 }
@@ -833,16 +870,16 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
       }
     });
 
-    const res = await tx.ride.findUnique({ 
-      where: { id: rideId }, 
-      include: { 
-        passenger: { 
-          select: { id: true, fullName: true, profilePicture: true, ratingAverage: true, phone: true, deviceToken: true } 
-        }, 
-        driver: { 
-          select: { id: true, fullName: true, profilePicture: true, vehicleBrand: true, vehicleColor: true, vehiclePlate: true, vehicleType: true, ratingAverage: true, phone: true } 
-        } 
-      } 
+    const res = await tx.ride.findUnique({
+      where: { id: rideId },
+      include: {
+        passenger: {
+          select: { id: true, fullName: true, profilePicture: true, ratingAverage: true, phone: true, deviceToken: true }
+        },
+        driver: {
+          select: { id: true, fullName: true, profilePicture: true, vehicleBrand: true, vehicleColor: true, vehiclePlate: true, vehicleType: true, ratingAverage: true, phone: true }
+        }
+      }
     });
 
     if (!res) throw new Error('NOT_FOUND: Corrida não encontrada no banco de dados.');
@@ -879,7 +916,7 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     dropoffReferencePoint: (result as any).dropoffReferencePoint || '',
     isQueuedRide: false
   };
- 
+
   const passengerRooms = [
     result.id,
     result.passengerId,
@@ -942,10 +979,10 @@ export async function driverArrivedLogic(rideId: string, driverId: string) {
     const updatedRide = await tx.ride.update({
       where: { id: rideId },
       data: { status: RideStatus.ARRIVED, arrivedAt: new Date(), version: { increment: 1 } },
-      include: { 
-        passenger: { 
-          select: { id: true, fullName: true, profilePicture: true, ratingAverage: true, phone: true, deviceToken: true } 
-        } 
+      include: {
+        passenger: {
+          select: { id: true, fullName: true, profilePicture: true, ratingAverage: true, phone: true, deviceToken: true }
+        }
       }
     });
 
@@ -1003,7 +1040,7 @@ export async function driverArrivedLogic(rideId: string, driverId: string) {
 // -----------------------------------------------------------------------------
 export async function startRideLogic(rideId: string, driverId: string, otpInput: string) {
   console.log(`📡 [START_RIDE] Motorista ${driverId} solicitou início da corrida ${rideId} com OTP: "${otpInput}"`);
-  const ride = await prisma.ride.findUnique({ 
+  const ride = await prisma.ride.findUnique({
     where: { id: rideId },
     include: { passenger: { select: { id: true, deviceToken: true } } }
   });
@@ -1044,8 +1081,8 @@ export async function startRideLogic(rideId: string, driverId: string, otpInput:
 
   console.log(`🟢 [START_RIDE_SUCCESS] Corrida ${rideId} iniciada com sucesso!`);
 
-  const startPayload = { 
-    rideId: ride.id, 
+  const startPayload = {
+    rideId: ride.id,
     status: 'IN_PROGRESS',
     originAddress: ride.originAddress,
     destinationAddress: ride.destinationAddress,
@@ -1086,7 +1123,7 @@ export async function notifyDriverNearbyIfClose(rideId: string, distanceMeters: 
 
   console.log(`📍 [NEARBY_DEBUG] Motorista a ${Math.round(distanceMeters)}m do embarque na corrida ID: ${rideId}`);
 
-  const ride = await prisma.ride.findUnique({ 
+  const ride = await prisma.ride.findUnique({
     where: { id: rideId },
     include: { passenger: { select: { deviceToken: true } } }
   });
@@ -1120,8 +1157,8 @@ export async function notifyDriverNearbyIfClose(rideId: string, distanceMeters: 
 // 5. FINALIZAÇÃO DA CORRIDA E LIQUIDAÇÃO (COM DÉBITO AUTOMÁTICO DE COMISSÃO)
 // -----------------------------------------------------------------------------
 export async function finalizeRideAndCharge(
-  rideId: string, 
-  finalLat: number, 
+  rideId: string,
+  finalLat: number,
   finalLng: number,
   finishOtpInput?: string
 ): Promise<FinalizeRideResult> {
@@ -1133,7 +1170,7 @@ export async function finalizeRideAndCharge(
   }
 
   const ride = await prisma.ride.findUnique({
-    where: { id: rideId }, 
+    where: { id: rideId },
     include: { driver: true, passenger: true }
   });
 
@@ -1141,7 +1178,7 @@ export async function finalizeRideAndCharge(
     console.error(`❌ [FINALIZE_ERROR] Dados incompletos para a corrida ID ${rideId}`);
     throw new Error('NOT_FOUND: Dados completos da corrida não localizados.');
   }
-  
+
   if (ride.status === RideStatus.COMPLETED) {
     console.log(`ℹ️ [FINALIZE_IDEMPOTENT] Corrida ID ${rideId} já foi finalizada anteriormente. Retornando recibo consolidado.`);
     const existingDriver = await prisma.driver.findUnique({ where: { id: ride.driverId! }, select: { walletBalance: true, currentRideId: true } });
@@ -1192,7 +1229,7 @@ export async function finalizeRideAndCharge(
       distanceKm = maxPlausibleKm;
     }
   }
-  
+
   const tariff = await prisma.tariffConfig.findUnique({
     where: { vehicleType_serviceType: { vehicleType: ride.requestedVehicleType, serviceType: ride.serviceType } }
   }).catch(() => null);
@@ -1233,19 +1270,19 @@ export async function finalizeRideAndCharge(
 
   await prisma.$transaction(async (tx) => {
     const updatedRide = await tx.ride.updateMany({
-      where: { 
-        id: rideId, 
-        version: ride.version, 
-        status: { in: [RideStatus.ACCEPTED, RideStatus.ARRIVED, RideStatus.IN_PROGRESS] } 
+      where: {
+        id: rideId,
+        version: ride.version,
+        status: { in: [RideStatus.ACCEPTED, RideStatus.ARRIVED, RideStatus.IN_PROGRESS] }
       },
       data: {
-        status: RideStatus.COMPLETED, 
-        finishedAt: new Date(), 
-        destinationLat: finalLat, 
+        status: RideStatus.COMPLETED,
+        finishedAt: new Date(),
+        destinationLat: finalLat,
         destinationLng: finalLng,
-        distanceKm, 
-        platformFee, 
-        driverEarnings, 
+        distanceKm,
+        platformFee,
+        driverEarnings,
         version: { increment: 1 }
       }
     });
@@ -1266,7 +1303,7 @@ export async function finalizeRideAndCharge(
     });
 
     await tx.passenger.update({ where: { id: ride.passengerId }, data: { currentRideId: null } });
-  
+
     queuedRideToPromote = await tx.ride.findFirst({
       where: {
         driverId: ride.driverId!,
@@ -1288,17 +1325,17 @@ export async function finalizeRideAndCharge(
     const currentDriverBalance = Number(ride.driver?.walletBalance || 0);
     finalDriverBalance = isDigitalRide ? currentDriverBalance : (currentDriverBalance - platformFee);
 
-    const shouldStayOnline = true; 
-    wasForcedOfflineDueToBalance = false;
+    const shouldStayOnline = finalDriverBalance >= MIN_DRIVER_BALANCE_FOR_ONLINE;
+    wasForcedOfflineDueToBalance = !shouldStayOnline;
 
-    await tx.driver.update({ 
-      where: { id: ride.driverId! }, 
-      data: { 
+    await tx.driver.update({
+      where: { id: ride.driverId! },
+      data: {
         walletBalance: finalDriverBalance,
-        currentRideId: nextCurrentRideId, 
-        isAvailable: isDriverAvailable,
+        currentRideId: nextCurrentRideId,
+        isAvailable: isDriverAvailable && shouldStayOnline,
         isOnline: shouldStayOnline
-      } 
+      }
     });
 
     await tx.transaction.updateMany({
@@ -1342,18 +1379,18 @@ export async function finalizeRideAndCharge(
 
     await tx.companyWallet.upsert({
       where: { id: 'bai245-main-wallet' },
-      update: { 
-        balance: { increment: platformFee }, 
-        totalCollected: { increment: calculatedFare }, 
-        version: { increment: 1 } 
+      update: {
+        balance: { increment: platformFee },
+        totalCollected: { increment: calculatedFare },
+        version: { increment: 1 }
       },
-      create: { 
-        id: 'bai245-main-wallet', 
-        balance: platformFee, 
-        totalCollected: calculatedFare 
+      create: {
+        id: 'bai245-main-wallet',
+        balance: platformFee,
+        totalCollected: calculatedFare
       }
     });
-  }); 
+  });
 
   if (isDigitalRide && payoutTransactionId && driverPayoutPhone) {
     enqueuePayoutJob({
@@ -1401,9 +1438,11 @@ export async function finalizeRideAndCharge(
     safeSocketEmit(room, 'driver:ride_finished_confirm', completedPayload);
     safeSocketEmit(room, 'wallet:updated', { balance: finalDriverBalance });
     if (wasForcedOfflineDueToBalance) {
-      safeSocketEmit(room, 'driver:forced_offline', { 
-        reason: 'INSUFFICIENT_BALANCE', 
-        message: 'Seu saldo na carteira digital ficou zerado ou negativo. Recarregue enviando dinheiro para a conta administrativa para voltar a rodar.' 
+      safeSocketEmit(room, 'driver:forced_offline', {
+        reason: 'INSUFFICIENT_BALANCE',
+        currentBalance: finalDriverBalance,
+        minRequired: MIN_DRIVER_BALANCE_FOR_ONLINE,
+        message: `Seu saldo atual (${finalDriverBalance.toLocaleString('pt-GW')} XOF) ficou abaixo do mínimo obrigatório de 1.000 XOF. Recarregue sua carteira para voltar a ficar online.`
       });
     }
   });
@@ -1421,16 +1460,16 @@ export async function finalizeRideAndCharge(
     ).catch(err => console.error('❌ Erro no Push de finalização:', err));
   }
 
-  return { 
-    success: true, 
-    fareXOF: calculatedFare, 
-    driverEarnings, 
-    platformFee, 
-    distanceKm, 
+  return {
+    success: true,
+    fareXOF: calculatedFare,
+    driverEarnings,
+    platformFee,
+    distanceKm,
     transactionId: commissionTransactionId || `TRX-${ride.id.slice(0, 6).toUpperCase()}`,
-    paymentMethod: ride.paymentMethod, 
-    hasQueuedRide: !!queuedRideToPromote, 
-    nextRideId: queuedRideToPromote?.id || null 
+    paymentMethod: ride.paymentMethod,
+    hasQueuedRide: !!queuedRideToPromote,
+    nextRideId: queuedRideToPromote?.id || null
   };
 }
 
@@ -1438,9 +1477,9 @@ export async function finalizeRideAndCharge(
 // 6. CANCELAMENTO DE CORRIDA
 // -----------------------------------------------------------------------------
 export async function cancelRideLogic(
-  rideId: string, 
-  userId: string, 
-  userType: 'PASSENGER' | 'DRIVER', 
+  rideId: string,
+  userId: string,
+  userType: 'PASSENGER' | 'DRIVER',
   reason?: string,
   isReportedProblem: boolean = false
 ) {
@@ -1463,10 +1502,10 @@ export async function cancelRideLogic(
   }
 
   const originalPayment = await prisma.transaction.findFirst({
-    where: { 
-      rideId, 
-      type: TransactionType.RIDE_PAYMENT, 
-      status: { in: [TransactionStatus.HELD_IN_ESCROW, TransactionStatus.COMPLETED, TransactionStatus.PENDING] } 
+    where: {
+      rideId,
+      type: TransactionType.RIDE_PAYMENT,
+      status: { in: [TransactionStatus.HELD_IN_ESCROW, TransactionStatus.COMPLETED, TransactionStatus.PENDING] }
     }
   });
 
@@ -1699,7 +1738,7 @@ export async function notifyNewChatMessage(data: {
 }) {
   try {
     const { rideId, senderId, senderType, senderName, message, audioUrl, audioDuration } = data;
-    
+
     console.log(`💬 [CHAT_DEBUG] Nova mensagem na corrida ${rideId} de ${senderName} (${senderType})`);
 
     const ride = await prisma.ride.findUnique({
@@ -1718,7 +1757,7 @@ export async function notifyNewChatMessage(data: {
     const isPassenger = senderType === 'PASSENGER';
     const targetUserId = isPassenger ? ride.driverId : ride.passengerId;
 
-    const targetToken = isPassenger 
+    const targetToken = isPassenger
       ? (ride.driver?.deviceToken || (ride.driver as any)?.pushToken)
       : (ride.passenger?.deviceToken || (ride.passenger as any)?.pushToken);
 
@@ -1759,9 +1798,9 @@ export async function notifyNewChatMessage(data: {
         targetToken,
         `💬 ${senderName}`,
         pushBodyText,
-        { 
-          type: 'CHAT_MESSAGE', 
-          rideId, 
+        {
+          type: 'CHAT_MESSAGE',
+          rideId,
           sender: isPassenger ? 'passenger' : 'driver',
           channelId: PUSH_CHANNELS.CHAT
         },
