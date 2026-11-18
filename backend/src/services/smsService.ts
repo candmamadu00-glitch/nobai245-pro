@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const TERMII_API_KEY = (process.env.TERMII_API_KEY || '').trim();
-const TERMII_SENDER_ID = (process.env.TERMII_SENDER_ID || 'N-Alert').trim();
+const TERMII_SENDER_ID = (process.env.TERMII_SENDER_ID || 'NOBAI245').trim();
 const TERMII_CHANNEL = (process.env.TERMII_CHANNEL || 'generic').trim();
 const TERMII_BASE_URL = (process.env.TERMII_BASE_URL || 'https://v3.api.termii.com').trim().replace(/\/+$/, '');
 
@@ -83,9 +83,10 @@ export async function sendSmsOtp(
   console.warn(`⚠️ [SMS Termii] Falha com Sender '${TERMII_SENDER_ID}':`, primaryAttempt.error || primaryAttempt.data);
 
   // Fallback automático para 'N-Alert' se o Sender ID customizado não estiver aprovado pela operadora
-  if (TERMII_SENDER_ID !== 'N-Alert' && (rawErrMsg.includes('sender') || rawErrMsg.includes('from') || rawErrMsg.includes('not approved') || rawErrMsg.includes('invalid'))) {
-    console.log(`🔄 [SMS Termii] Tentando fallback com Sender 'N-Alert' para +${cleanPhone}...`);
-    const fallbackAttempt = await dispatchTermiiRequest(cleanPhone, 'N-Alert', smsText);
+  const fallbackSender = TERMII_SENDER_ID !== 'NOBAI245' ? 'NOBAI245' : 'N-Alert';
+  if (TERMII_SENDER_ID !== fallbackSender && (rawErrMsg.includes('sender') || rawErrMsg.includes('from') || rawErrMsg.includes('not approved') || rawErrMsg.includes('invalid'))) {
+    console.log(`🔄 [SMS Termii] Tentando fallback com Sender '${fallbackSender}' para +${cleanPhone}...`);
+    const fallbackAttempt = await dispatchTermiiRequest(cleanPhone, fallbackSender, smsText);
     if (fallbackAttempt.ok) {
       console.log(`✅ [SMS Termii] OTP enviado via fallback 'N-Alert' para +${cleanPhone}:`, fallbackAttempt.data);
       return true;

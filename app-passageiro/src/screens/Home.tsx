@@ -746,19 +746,21 @@ const handleFullCancelAndReset = useCallback(() => {
     speakText(next ? 'Assistente de voz ativado' : 'Assistente de voz desativado');
   };
 
+  const pickupInputRef = useRef<TextInput | null>(null);
+  const dropoffInputRef = useRef<TextInput | null>(null);
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dy) > 6,
       onPanResponderMove: (_, gestureState) => {
-        if (gestureState.dy > 0) {
-          translateY.setValue(gestureState.dy);
-        }
+        const clampedY = Math.max(0, Math.min(180, gestureState.dy));
+        translateY.setValue(clampedY);
       },
       onPanResponderRelease: (_, gestureState) => {
         if (gestureState.dy > 80) {
           Animated.timing(translateY, {
-            toValue: 200,
+            toValue: 160,
             duration: 200,
             useNativeDriver: true,
           }).start();
@@ -2504,10 +2506,18 @@ const handleOpenChat = () => {
 
   function openSearchModal(type: 'pickup' | 'dropoff' | 'extraStop') {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    translateY.setValue(0);
     setSearchType(type);
     setSearchQuery('');
     setSearchResults([]);
     setIsSearchModalVisible(true);
+    setTimeout(() => {
+      if (type === 'pickup') {
+        pickupInputRef.current?.focus();
+      } else if (type === 'dropoff') {
+        dropoffInputRef.current?.focus();
+      }
+    }, 180);
   }
 
   const handleSosPress = () => {
@@ -3844,7 +3854,8 @@ const handleOpenChat = () => {
       <Modal 
         visible={isSearchModalVisible} 
         animationType="slide" 
-        transparent={true} 
+        transparent={false}
+        statusBarTranslucent={true}
         onRequestClose={() => setIsSearchModalVisible(false)}
       >
         <SafeAreaView style={styles.searchModalContainer}>
@@ -3906,6 +3917,7 @@ const handleOpenChat = () => {
                       ]}>
                         <Ionicons name="location" size={18} color="#EAB308" style={{ marginRight: 8 }} />
                         <TextInput
+                          ref={pickupInputRef}
                           style={styles.mapboxSearchInput}
                           placeholder={t('pickup_location', 'Local de Partida')}
                           placeholderTextColor="#64748B"
@@ -4006,6 +4018,8 @@ const handleOpenChat = () => {
                       ]}>
                         <Ionicons name="flag" size={18} color="#EF4444" style={{ marginRight: 8 }} />
                         <TextInput
+                          ref={dropoffInputRef}
+                          autoFocus={searchType === 'dropoff'}
                           style={styles.mapboxSearchInput}
                           placeholder={t('where_to', 'Para onde vamos?')}
                           placeholderTextColor="#64748B"
@@ -4141,6 +4155,51 @@ const handleOpenChat = () => {
                         ))}
                       </View>
                     )}
+
+                    <View style={{ marginTop: 20 }}>
+                      <Text style={styles.sectionHeaderTitle}>Bairros & Pontos de Bissau</Text>
+                      {GUINEA_BISSAU_BAIRROS.slice(0, 14).map((bairro) => (
+                        <TouchableOpacity
+                          key={bairro.id}
+                          style={styles.searchResultItem}
+                          activeOpacity={0.7}
+                          onPress={() => {
+                            if (searchType === 'pickup') {
+                              isManualPickupRef.current = true;
+                              setPickupAddress(bairro.description);
+                              setPickupCoords({ latitude: bairro.latitude, longitude: bairro.longitude });
+                              if (cameraRef.current) {
+                                cameraRef.current.setCamera({
+                                  centerCoordinate: [bairro.longitude, bairro.latitude],
+                                  zoomLevel: 15,
+                                  animationDuration: 800,
+                                });
+                              }
+                              setSearchType(showExtraStop && !extraStopCoords ? 'extraStop' : 'dropoff');
+                              setSearchQuery('');
+                              setSearchResults([]);
+                              setTimeout(() => dropoffInputRef.current?.focus(), 120);
+                            } else if (searchType === 'extraStop') {
+                              setExtraStopAddress(bairro.description);
+                              setExtraStopCoords({ latitude: bairro.latitude, longitude: bairro.longitude });
+                              setSearchType('dropoff');
+                              setSearchQuery('');
+                              setSearchResults([]);
+                            } else {
+                              setDropoffAddress(bairro.description);
+                              setDropoffCoords({ latitude: bairro.latitude, longitude: bairro.longitude });
+                              setIsSearchModalVisible(false);
+                              setBookingStep('SERVICE_AND_PRICE');
+                            }
+                          }}
+                        >
+                          <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#1E293B', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
+                            <Ionicons name="location" size={18} color="#EAB308" />
+                          </View>
+                          <Text style={[styles.searchResultText, { color: '#F8FAFC' }]}>{bairro.description}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
                   </View>
                 ) : (
                   <View style={{ marginTop: 8 }}>

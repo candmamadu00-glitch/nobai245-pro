@@ -1405,6 +1405,19 @@ if (currentBalance < MIN_REQUIRED_BALANCE) {
         }
       }
 
+      if (candidateDrivers.length === 0 && process.env.ALLOW_REMOTE_TEST_DISPATCH === 'true') {
+        console.warn(`🧪 [REMOTE_TEST_DISPATCH] Nenhum motorista em 12km de Bissau. Buscando motoristas aprovados online para teste remoto (${normalizedVehicleType})...`);
+        candidateDrivers = await prisma.driver.findMany({
+          where: {
+            vehicleType: normalizedVehicleType as any,
+            isOnline: true,
+            status: 'APPROVED',
+            walletBalance: { gte: 0 }
+          },
+          select: driverSelectFields
+        });
+      }
+
       const matchingDrivers: any[] = candidateDrivers.filter((driver: any) => {
         if (driver.isAvailable || !driver.currentRideId) return true;
         const activeRidesCount = Array.isArray(driver.rides) ? driver.rides.length : 0;

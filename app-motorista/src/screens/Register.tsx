@@ -513,6 +513,7 @@ export function Register() {
                 <Text style={styles.inputLabel}>Código de 6 dígitos</Text>
                 <TextInput 
                   style={styles.otpInput} 
+                  autoFocus
                   placeholder="000000" 
                   placeholderTextColor={theme.colors.textLight} 
                   value={otpCode} 
