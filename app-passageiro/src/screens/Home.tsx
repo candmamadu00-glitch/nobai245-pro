@@ -1,10 +1,10 @@
 import { getVehicle3DIconAsset as resolveVehicleIcon, getVehicleColorHex, resolveVehicleColorKey, VEHICLE_COLOR_OPTIONS } from '../utils/vehicleAssets';
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { 
-  View, Text, StyleSheet, TouchableOpacity, Alert, 
+import {
+  View, Text, StyleSheet, TouchableOpacity, Alert,
   Platform, StatusBar, BackHandler, Linking, Vibration,
-  Share, AppState, KeyboardAvoidingView, Modal, TextInput, 
-  ActivityIndicator, Image, Animated, PanResponder, Dimensions, 
+  Share, AppState, KeyboardAvoidingView, Modal, TextInput,
+  ActivityIndicator, Image, Animated, PanResponder, Dimensions,
   ScrollView, TouchableWithoutFeedback, Keyboard, Easing
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -21,12 +21,12 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import * as Notifications from 'expo-notifications';
 
 import { useAuth } from '../contexts/AuthContext';
-import { 
-  socket, 
-  connectPassengerSocket, 
-  requestRide as emitRequestRide,  
-  cancelRideByPassenger, 
-  rateDriver 
+import {
+  socket,
+  connectPassengerSocket,
+  requestRide as emitRequestRide,
+  cancelRideByPassenger,
+  rateDriver
 } from '../services/passengerSocket';
 import { CancelModal } from '../components/CancelModal';
 import { RatingModal } from '../components/RatingModal';
@@ -70,26 +70,26 @@ interface FavoritePlace {
   longitude: number;
 }
 
-interface ChatMessage { 
-  id: string; 
-  sender: 'passenger' | 'driver'; 
-  text?: string; 
+interface ChatMessage {
+  id: string;
+  sender: 'passenger' | 'driver';
+  text?: string;
   audioUrl?: string | null;
   audioDuration?: number;
   senderPhoto?: string;
 }
 
-interface DriverInfo { 
-  id: string; 
-  name: string; 
-  photoUrl?: string; 
+interface DriverInfo {
+  id: string;
+  name: string;
+  photoUrl?: string;
   profilePicture?: string;
-  carModel?: string; 
+  carModel?: string;
   carColor?: string;
-  vehicleType?: string; 
-  licensePlate?: string; 
-  rating?: number; 
-  phone?: string; 
+  vehicleType?: string;
+  licensePlate?: string;
+  rating?: number;
+  phone?: string;
   startOtp?: string;
 }
 
@@ -203,16 +203,16 @@ export const getVehicle3DIconAsset = (type?: string, colorName?: string) => {
 
 const getHaversineDistance = (p1: any, p2: any) => {
   if (!p1?.latitude || !p1?.longitude || !p2?.latitude || !p2?.longitude) return 0;
-  const R = 6371; 
+  const R = 6371;
   const dLat = (p2.latitude - p1.latitude) * (Math.PI / 180);
   const dLon = (p2.longitude - p1.longitude) * (Math.PI / 180);
-  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + 
-    Math.cos(p1.latitude * (Math.PI / 180)) * Math.cos(p2.latitude * (Math.PI / 180)) * 
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(p1.latitude * (Math.PI / 180)) * Math.cos(p2.latitude * (Math.PI / 180)) *
     Math.sin(dLon / 2) * Math.sin(dLon / 2);
   const safeA = Math.min(1, Math.max(0, a));
   const c = 2 * Math.atan2(Math.sqrt(safeA), Math.sqrt(1 - safeA));
   const dist = R * c * 1.3;
-  return isNaN(dist) ? 0 : dist; 
+  return isNaN(dist) ? 0 : dist;
 };
 
 const findNearestLocalBairro = (lat: number, lng: number) => {
@@ -401,13 +401,13 @@ export function Home() {
   const [passengerLocation, setPassengerLocation] = useState<Location.LocationObject | null>(null);
   const [driverLocation, setDriverLocation] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
   const [driverInfo, setDriverInfo] = useState<DriverInfo | null>(null);
-  
+
   const [pickupCoords, setPickupCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [pickupAddress, setPickupAddress] = useState(t('pickup_location', 'Local de partida'));
-  
+
   const [dropoffCoords, setDropoffCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [dropoffAddress, setDropoffAddress] = useState('');
-  
+
   const [extraStopCoords, setExtraStopCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [extraStopAddress, setExtraStopAddress] = useState('');
   const [showExtraStop, setShowExtraStop] = useState(false);
@@ -425,12 +425,12 @@ export function Home() {
   const [vehicleType, setVehicleType] = useState<VehicleType>('particular');
   const [serviceType, setServiceType] = useState<ServiceType>('viagem');
   const [selectedRegion] = useState<RegionType>('BISSAU');
-  
+
   // 🟢 MÉTODOS DE PAGAMENTO SUPORTADOS (DINHEIRO, ORANGE MONEY, TELECEL/MTN)
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
   const [payerPhone, setPayerPhone] = useState<string>('');
   const [pendingPaymentInfo, setPendingPaymentInfo] = useState<any>(null);
-  
+
   const [estimatedPrice, setEstimatedPrice] = useState<number | null>(null);
   const [tariffRuleBadge, setTariffRuleBadge] = useState<string | null>(null);
   const [couponCodeInput, setCouponCodeInput] = useState<string>('');
@@ -476,7 +476,7 @@ export function Home() {
       setIsValidatingCoupon(false);
     }
   }, [couponCodeInput, estimatedPrice]);
-  
+
   const [isMenuVisible, setIsMenuVisible] = useState(false);
   const [isSearchModalVisible, setIsSearchModalVisible] = useState(false);
   const [searchType, setSearchType] = useState<'pickup' | 'dropoff' | 'extraStop'>('dropoff');
@@ -485,7 +485,7 @@ export function Home() {
   const [isSearchingMapbox, setIsSearchingMapbox] = useState(false);
   const [isVoiceAssistEnabled, setIsVoiceAssistEnabled] = useState<boolean>(true);
   const [isBorderGlowEnabled, setIsBorderGlowEnabled] = useState<boolean>(true);
-  
+
   const [showCancelModal, setShowCancelModal] = useState<boolean>(false);
   const handleCloseCancelModal = useCallback(() => setShowCancelModal(false), []);
   const [showRatingModal, setShowRatingModal] = useState(false);
@@ -554,7 +554,7 @@ useEffect(() => {
     setStartOtp('');
     setRouteGeometry(null);
     setIsSearchingRide(false);
-    
+
     setDropoffCoords(null);
     setDropoffAddress('');
     setPickupReferencePoint('');
@@ -612,35 +612,35 @@ const handleFullCancelAndReset = useCallback(() => {
 }, [passengerLocation]);
 // 🟢 VEHICLE_OPTIONS movido para dentro do componente com useMemo
   const VEHICLE_OPTIONS = useMemo(() => [
-    { 
-      id: 'moto' as VehicleType, 
-      title: 'Moto', 
-      subtitle: t('moto_subtitle', 'Rápido e econômico'), 
-      image: require('../../assets/images/vehicles/moto.png') 
+    {
+      id: 'moto' as VehicleType,
+      title: 'Moto',
+      subtitle: t('moto_subtitle', 'Rápido e econômico'),
+      image: require('../../assets/images/vehicles/moto.png')
     },
-    { 
-      id: 'particular' as VehicleType, 
-      title: t('standard_vehicle', 'Particular'), 
-      subtitle: t('particular_subtitle', 'Viagem exclusiva'), 
-      image: require('../../assets/images/vehicles/car_white.png') 
+    {
+      id: 'particular' as VehicleType,
+      title: t('standard_vehicle', 'Particular'),
+      subtitle: t('particular_subtitle', 'Viagem exclusiva'),
+      image: require('../../assets/images/vehicles/car_white.png')
     },
-    { 
-      id: 'taxi' as VehicleType, 
-      title: 'Táxi', 
-      subtitle: t('taxi_subtitle', 'Conforto e tradição'), 
-      image: require('../../assets/images/vehicles/car_yellow.png') 
+    {
+      id: 'taxi' as VehicleType,
+      title: 'Táxi',
+      subtitle: t('taxi_subtitle', 'Conforto e tradição'),
+      image: require('../../assets/images/vehicles/car_yellow.png')
     },
-    { 
-      id: 'moto-carro' as VehicleType, 
-      title: 'Moto-carro', 
-      subtitle: t('motocarro_subtitle', 'Ideal para bagagens leves'), 
-      image: require('../../assets/images/vehicles/motocarro.png') 
+    {
+      id: 'moto-carro' as VehicleType,
+      title: 'Moto-carro',
+      subtitle: t('motocarro_subtitle', 'Ideal para bagagens leves'),
+      image: require('../../assets/images/vehicles/motocarro.png')
     },
 
   ], [t]);
   const persistRideState = async (
-    rideId: string | null, 
-    status: RideStatus, 
+    rideId: string | null,
+    status: RideStatus,
     extraData?: {
       driverInfo?: DriverInfo | null;
       pickupCoords?: { latitude: number; longitude: number } | null;
@@ -675,7 +675,7 @@ const handleFullCancelAndReset = useCallback(() => {
           startOtp: extraData?.startOtp ?? startOtp,
           estimatedPrice: extraData?.estimatedPrice ?? estimatedPrice,
           estimatedDistance: extraData?.estimatedDistance ?? estimatedDistance,
-          
+
         };
         await AsyncStorage.setItem(STORAGE_RIDE_KEY, JSON.stringify(payload));
       } else {
@@ -914,21 +914,21 @@ const handleFullCancelAndReset = useCallback(() => {
 
   setMessages(prev => {
     const isDuplicate = prev.some(
-      m => m.id === messageId || 
+      m => m.id === messageId ||
       (text && m.text === text && m.sender === normalizedSender) ||
       (audioUrl && m.audioUrl === audioUrl)
     );
     if (isDuplicate) return prev;
 
     return [
-      ...prev, 
-      { 
-        id: messageId, 
-        sender: normalizedSender, 
-        text, 
-        audioUrl, 
-        audioDuration, 
-        senderPhoto: data.senderPhoto || data.driverPhoto 
+      ...prev,
+      {
+        id: messageId,
+        sender: normalizedSender,
+        text,
+        audioUrl,
+        audioDuration,
+        senderPhoto: data.senderPhoto || data.driverPhoto
       }
     ];
   });
@@ -939,7 +939,7 @@ const handleOpenChat = () => {
 };
   const fitMapBounds = useCallback((coordsArray: Array<{ latitude: number; longitude: number }>) => {
     if (!cameraRef.current || !coordsArray || coordsArray.length < 2) return;
-    
+
     const validCoords = coordsArray.filter(
       c => c && typeof c.latitude === 'number' && typeof c.longitude === 'number' && !isNaN(c.latitude) && !isNaN(c.longitude)
     );
@@ -947,7 +947,7 @@ const handleOpenChat = () => {
 
     const lats = validCoords.map(c => c.latitude);
     const lngs = validCoords.map(c => c.longitude);
-    
+
     const ne = [Math.max(...lngs), Math.max(...lats)];
     const sw = [Math.min(...lngs), Math.min(...lats)];
 
@@ -959,8 +959,8 @@ const handleOpenChat = () => {
   }, []);
 
   const fetchMapboxRoute = useCallback(async (
-    origin: { latitude: number; longitude: number }, 
-    destination: { latitude: number; longitude: number }, 
+    origin: { latitude: number; longitude: number },
+    destination: { latitude: number; longitude: number },
     extraStops?: Array<{ latitude: number; longitude: number }> | { latitude: number; longitude: number } | null
   ) => {
     if (!MAPBOX_ACCESS_TOKEN) return;
@@ -986,15 +986,15 @@ const handleOpenChat = () => {
 
       const coordinatesString = waypoints.join(';');
       const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${coordinatesString}?geometries=geojson&overview=full&access_token=${MAPBOX_ACCESS_TOKEN}`;
-      
+
       const res = await fetch(url);
       if (!res.ok) return;
 
       const data = await res.json();
-      
+
       if (data.routes && data.routes.length > 0 && isMountedRef.current) {
         const routeObj = data.routes[0];
-        
+
         setRouteGeometry({
           type: 'Feature',
           properties: {},
@@ -1233,14 +1233,14 @@ const handleOpenChat = () => {
 
     try {
       const response = await api.get(`/landmarks/search?q=${encodeURIComponent(text)}`).catch(() => null);
-      
+
       let dbResults: MapboxGeocodingFeature[] = [];
 
       if (response?.data && Array.isArray(response.data)) {
         dbResults = response.data.map((item: any) => {
           const mainTitle = item.displayText || item.name || item.title || item.popularName || '';
           const subTitle = item.subtitle || item.neighborhood || item.referenceNotes || '';
-          
+
           let description = mainTitle;
           if (!item.displayText && subTitle && !mainTitle.toLowerCase().includes(subTitle.toLowerCase())) {
             description = `${mainTitle}, ${subTitle}`;
@@ -1396,7 +1396,7 @@ const handleOpenChat = () => {
     isInaccessibleAlertShowingRef.current = true;
 
     Alert.alert(
-      data?.title || t('warning_title', 'Atenção ⚠️'), 
+      data?.title || t('warning_title', 'Atenção ⚠️'),
       data?.message || t('inaccessible_location_msg', 'O motorista pediu para você se aproximar, pois o local é de difícil acesso.'),
       [
         {
@@ -1752,7 +1752,7 @@ const handleOpenChat = () => {
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
       const otpCode = String(data.startOtp || data.otpPin || data.pin || '');
-      setStartOtp(otpCode); 
+      setStartOtp(otpCode);
       setActiveRideId(data.rideId || data.id);
       activeRideIdRef.current = data.rideId || data.id;
 
@@ -1810,7 +1810,7 @@ const handleOpenChat = () => {
       setRideStatus('arrived');
       if (data?.startOtp) setStartOtp(data.startOtp);
       if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'arrived');
-      
+
       speakRideStatusUpdate('arrived', {
         startOtp: data?.startOtp || startOtp,
         enabled: isVoiceAssistEnabledRef.current,
@@ -1827,10 +1827,10 @@ const handleOpenChat = () => {
       }).catch(() => {});
     };
 
-    const handleRideStarted = () => { 
+    const handleRideStarted = () => {
       if (!isMountedRef.current) return;
-      setRideStatus('in_progress'); 
-      setIsChatVisible(false); 
+      setRideStatus('in_progress');
+      setIsChatVisible(false);
       speakRideStatusUpdate('in_progress', {
         destination: dropoffAddress,
         enabled: isVoiceAssistEnabledRef.current,
@@ -1838,7 +1838,7 @@ const handleOpenChat = () => {
       if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'in_progress');
     };
 
-    const handleRideFinished = (data: any) => { 
+    const handleRideFinished = (data: any) => {
       if (!isMountedRef.current) return;
       const finishedId = String(data?.rideId || activeRideIdRef.current || '');
       if (finishedId) {
@@ -1862,7 +1862,7 @@ const handleOpenChat = () => {
         }
         return 'completed';
       });
-      setShowRatingModal(true); 
+      setShowRatingModal(true);
       persistRideState(null, 'idle');
     };
 
@@ -1871,7 +1871,7 @@ const handleOpenChat = () => {
 
       const isDriverCancel = data?.cancelledBy === 'DRIVER';
       const title = isDriverCancel ? t('warning_title', 'Aviso ⚠️') : t('cancelled_title', 'Cancelado');
-      const body = isDriverCancel 
+      const body = isDriverCancel
         ? t('driver_cancelled_msg', 'O motorista cancelou a corrida. Por favor, solicite um novo veículo.')
         : (data?.appliedPenalty ? `${t('cancellation_fee', 'Taxa de cancelamento:')} ${data.penaltyAmount} XOF.` : t('ride_cancelled_msg', 'Sua corrida foi cancelada.'));
 
@@ -2051,12 +2051,12 @@ const handleOpenChat = () => {
     socket.on('ride:finished', handleRideFinished);
     socket.on('ride:completed', handleRideFinished);
     socket.on('ride:cancelled', handleRideCancelled);
-    
+
     // 💬 OUVINTES DE CHAT GARANTIDOS (RECEIVE, MESSAGE E NEW_MESSAGE)
     socket.on('chat:receive_message', handleIncomingChatMessage);
     socket.on('chat:message', handleIncomingChatMessage);
     socket.on('chat:new_message', handleIncomingChatMessage);
-    
+
     socket.on('ride:price_calculated', handlePriceCalculated);
     socket.on('ride:inaccessible_location', handleInaccessibleLocationAlert);
 
@@ -2079,25 +2079,25 @@ const handleOpenChat = () => {
       socket.off('ride:finished', handleRideFinished);
       socket.off('ride:completed', handleRideFinished);
       socket.off('ride:cancelled', handleRideCancelled);
-      
+
       // 💬 LIMPEZA DOS OUVINTES DE CHAT
       socket.off('chat:receive_message', handleIncomingChatMessage);
       socket.off('chat:message', handleIncomingChatMessage);
       socket.off('chat:new_message', handleIncomingChatMessage);
-      
+
       socket.off('ride:no_drivers_found', handleNoDriversFound);
       socket.off('ride:price_calculated', handlePriceCalculated);
       socket.off('ride:inaccessible_location', handleInaccessibleLocationAlert);
-      
+
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     };
   }, [
-    user?.id, 
-    getCurrentLocationWithFallback, 
-    handleInaccessibleLocationAlert, 
-    handleIncomingChatMessage, 
-    resetRideState, 
-    syncPassengerActiveRide, 
+    user?.id,
+    getCurrentLocationWithFallback,
+    handleInaccessibleLocationAlert,
+    handleIncomingChatMessage,
+    resetRideState,
+    syncPassengerActiveRide,
     fitMapBounds,
     t
   ]);
@@ -2218,7 +2218,7 @@ const handleOpenChat = () => {
     const needsDropoff = serviceType !== 'aluguel';
     if (!pickupCoords || (needsDropoff && (!dropoffCoords || !dropoffAddress.trim())) || !user?.id) {
       Alert.alert(
-        t('warning_title', 'Aviso ⚠️'), 
+        t('warning_title', 'Aviso ⚠️'),
         t('select_origin_destination_msg', 'Preencha obrigatoriamente o local de partida e o destino final.')
       );
       return;
@@ -2283,10 +2283,10 @@ const handleOpenChat = () => {
       setRideStatus(isDigital ? 'awaiting_payment' : 'searching');
 
       const mappedServiceType = serviceType === 'viagem' ? 'RIDE' : serviceType === 'entrega' ? 'DELIVERY' : 'RENTAL';
-      const mappedVehicleType = 
+      const mappedVehicleType =
         serviceType === 'aluguel' ? 'TOCA_TOCA' :
-        vehicleType === 'particular' ? 'PARTICULAR' : 
-        vehicleType === 'moto-carro' ? 'MOTO_CARRO' : 
+        vehicleType === 'particular' ? 'PARTICULAR' :
+        vehicleType === 'moto-carro' ? 'MOTO_CARRO' :
         (vehicleType as string) === 'toca-toca' ? 'TOCA_TOCA' :
         vehicleType.toUpperCase();
 
@@ -2347,7 +2347,7 @@ const handleOpenChat = () => {
       searchTimeoutRef.current = setTimeout(() => {
         if (isMountedRef.current) {
           Alert.alert(
-            t('no_response_title', 'Sem resposta'), 
+            t('no_response_title', 'Sem resposta'),
             t('no_driver_accepted_msg', 'Nenhum motorista aceitou no momento. Tente novamente.')
           );
           resetRideState();
@@ -2356,7 +2356,7 @@ const handleOpenChat = () => {
 
     } catch (error) {
       Alert.alert(
-        t('error_title', 'Erro'), 
+        t('error_title', 'Erro'),
         t('server_error_msg', 'Ocorreu um problema ao comunicar com os servidores.')
       );
     }
@@ -2419,7 +2419,7 @@ const handleOpenChat = () => {
         if (!res.ok) return;
 
         const data = await res.json();
-        
+
         if (data?.features?.length > 0) {
           const placeName = data.features[0].place_name || '';
           const parts = placeName.split(',')
@@ -2437,14 +2437,14 @@ const handleOpenChat = () => {
   const handleSubmitRating = useCallback((stars: number, tags: string[], comment: string) => {
     const targetRideId = activeRideIdRef.current || activeRideId;
     if (targetRideId && driverInfo?.id && user?.id) {
-      const ratingPayload = { 
-        rideId: targetRideId, 
-        reviewerId: user.id, 
+      const ratingPayload = {
+        rideId: targetRideId,
+        reviewerId: user.id,
         reviewerType: 'PASSENGER',
-        receiverId: driverInfo.id, 
-        stars, 
+        receiverId: driverInfo.id,
+        stars,
         tags,
-        comment 
+        comment
       };
       rateDriver(ratingPayload);
       api.post('/passengers/rides/rate', ratingPayload)
@@ -2467,7 +2467,7 @@ const handleOpenChat = () => {
     try {
       if (!driverInfo || !dropoffAddress || !activeRideId) {
         Alert.alert(
-          t('warning_title', 'Aviso ⚠️'), 
+          t('warning_title', 'Aviso ⚠️'),
           t('wait_trip_data', 'Aguarde os dados da corrida carregarem para compartilhar.')
         );
         return;
@@ -2482,7 +2482,7 @@ const handleOpenChat = () => {
       const mapsPinLine = liveLat && liveLng ? `📌 *GPS Atual:* https://maps.google.com/?q=${liveLat},${liveLng}\n` : '';
       const otpShareLine = startOtp ? `🔐 *Código PIN de Embarque:* ${startOtp}\n` : '';
 
-      const mensagem = 
+      const mensagem =
         `🚕 *Acompanhe minha viagem no Nô Bai 245!*\n\n` +
         `👤 *Motorista:* ${driverInfo.name || 'Motorista'}\n` +
         `🚘 *Veículo:* ${driverInfo.carModel || 'Veículo'} (${driverInfo.carColor || 'N/A'}) — Placa: *${driverInfo.licensePlate || 'N/A'}*\n` +
@@ -2492,13 +2492,13 @@ const handleOpenChat = () => {
         mapsPinLine + `\n` +
         `🌐 *Acompanhe ao vivo no mapa pelo navegador:*\n${trackingUrl}`;
 
-      await Share.share({ 
-        message: mensagem, 
-        title: 'Acompanhar Minha Viagem - Nô Bai 245' 
+      await Share.share({
+        message: mensagem,
+        title: 'Acompanhar Minha Viagem - Nô Bai 245'
       });
     } catch (error) {
       Alert.alert(
-        t('error_title', 'Erro'), 
+        t('error_title', 'Erro'),
         t('share_error_msg', 'Não foi possível abrir o menu de compartilhamento.')
       );
     }
@@ -2525,21 +2525,21 @@ const handleOpenChat = () => {
       t('emergency_sos', 'SOS / Emergência 🚨'),
       t('choose_emergency_service', 'Selecione o serviço de emergência que deseja contactar:'),
       [
-        { 
-          text: '🚨 Central de Segurança (112)', 
-          onPress: () => Linking.openURL('tel:112').catch(() => {}) 
+        {
+          text: '🚨 Central de Segurança (112)',
+          onPress: () => Linking.openURL('tel:112').catch(() => {})
         },
-        { 
-          text: '🚒 Bombeiros (1313)', 
-          onPress: () => Linking.openURL('tel:1313').catch(() => {}) 
+        {
+          text: '🚒 Bombeiros (1313)',
+          onPress: () => Linking.openURL('tel:1313').catch(() => {})
         },
-        { 
-          text: '🚑 Saúde / Ambulância (1919)', 
-          onPress: () => Linking.openURL('tel:1919').catch(() => {}) 
+        {
+          text: '🚑 Saúde / Ambulância (1919)',
+          onPress: () => Linking.openURL('tel:1919').catch(() => {})
         },
-        { 
-          text: t('back_btn', 'Cancelar'), 
-          style: 'cancel' 
+        {
+          text: t('back_btn', 'Cancelar'),
+          style: 'cancel'
         },
       ],
       { cancelable: true }
@@ -2548,27 +2548,27 @@ const handleOpenChat = () => {
 
   const safeCenterCoordinate = useMemo(() => {
     if (
-      driverLocation?.latitude && 
-      driverLocation?.longitude && 
-      !isNaN(Number(driverLocation.latitude)) && 
+      driverLocation?.latitude &&
+      driverLocation?.longitude &&
+      !isNaN(Number(driverLocation.latitude)) &&
       Number(driverLocation.latitude) !== 0
     ) {
       return [Number(driverLocation.longitude), Number(driverLocation.latitude)];
     }
 
     if (
-      pickupCoords?.latitude && 
-      pickupCoords?.longitude && 
-      !isNaN(Number(pickupCoords.latitude)) && 
+      pickupCoords?.latitude &&
+      pickupCoords?.longitude &&
+      !isNaN(Number(pickupCoords.latitude)) &&
       Number(pickupCoords.latitude) !== 0
     ) {
       return [Number(pickupCoords.longitude), Number(pickupCoords.latitude)];
     }
 
     if (
-      passengerLocation?.coords?.latitude && 
-      passengerLocation?.coords?.longitude && 
-      !isNaN(Number(passengerLocation.coords.latitude)) && 
+      passengerLocation?.coords?.latitude &&
+      passengerLocation?.coords?.longitude &&
+      !isNaN(Number(passengerLocation.coords.latitude)) &&
       Number(passengerLocation.coords.latitude) !== 0
     ) {
       return [Number(passengerLocation.coords.longitude), Number(passengerLocation.coords.latitude)];
@@ -2587,8 +2587,8 @@ const handleOpenChat = () => {
         <StatusBar barStyle="light-content" backgroundColor="#0F172A" translucent />
         <MaterialCommunityIcons name="map-marker-radius" size={54} color="#EAB308" />
         <Text style={styles.loadingText}>{locationError || t('getting_location', 'Obtendo localização exata...')}</Text>
-        <TouchableOpacity 
-          style={styles.retryLocationBtn} 
+        <TouchableOpacity
+          style={styles.retryLocationBtn}
           onPress={getCurrentLocationWithFallback}
           activeOpacity={0.8}
         >
@@ -2609,11 +2609,11 @@ const handleOpenChat = () => {
       <View style={[styles.floatingHeader, { top: topHeaderInset }]}>
         <BlurView intensity={75} tint="dark" style={styles.headerBlurWrapper}>
           <View style={styles.headerContent}>
-            
+
             {/* 🟢 VOLTAR (SE ESTIVER ESCOLHENDO VEÍCULO OU PAGAMENTO) OU PERFIL DO PASSAGEIRO */}
             {(bookingStep === 'SERVICE_AND_PRICE' || bookingStep === 'PAYMENT') ? (
-              <TouchableOpacity 
-                style={styles.backButton} 
+              <TouchableOpacity
+                style={styles.backButton}
                 onPress={() => {
                   if (bookingStep === 'SERVICE_AND_PRICE' || bookingStep === 'PAYMENT') {
                     handleFullCancelAndReset();
@@ -2626,16 +2626,16 @@ const handleOpenChat = () => {
                 <Ionicons name="arrow-back" size={24} color="#FFF" />
               </TouchableOpacity>
             ) : (
-              <TouchableOpacity 
-                style={styles.headerUserInfo} 
+              <TouchableOpacity
+                style={styles.headerUserInfo}
                 activeOpacity={0.8}
                 onPress={() => navigation.navigate('Profile')}
               >
                 <View style={styles.avatarPlaceholder}>
                   {user?.profilePicture ? (
-                    <Image 
-                      source={{ uri: formatPhotoUrl(user.profilePicture) }} 
-                      style={{ width: '100%', height: '100%', borderRadius: 50 }} 
+                    <Image
+                      source={{ uri: formatPhotoUrl(user.profilePicture) }}
+                      style={{ width: '100%', height: '100%', borderRadius: 50 }}
                     />
                   ) : (
                     <Ionicons name="person" size={18} color="#0F172A" />
@@ -2647,23 +2647,23 @@ const handleOpenChat = () => {
               </TouchableOpacity>
             )}
 
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[
-                styles.voiceToggleHeaderBtn, 
+                styles.voiceToggleHeaderBtn,
                 { backgroundColor: isVoiceAssistEnabled ? '#EAB308' : 'rgba(30, 41, 59, 0.8)' }
-              ]} 
+              ]}
               onPress={toggleVoiceAssist}
               activeOpacity={0.8}
             >
-              <Ionicons 
-                name={isVoiceAssistEnabled ? "volume-high" : "volume-mute"} 
-                size={18} 
-                color={isVoiceAssistEnabled ? "#0F172A" : "#94A3B8"} 
+              <Ionicons
+                name={isVoiceAssistEnabled ? "volume-high" : "volume-mute"}
+                size={18}
+                color={isVoiceAssistEnabled ? "#0F172A" : "#94A3B8"}
               />
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={styles.langHeaderBtn} 
+            <TouchableOpacity
+              style={styles.langHeaderBtn}
               onPress={() => setLangModalVisible(true)}
               activeOpacity={0.8}
             >
@@ -2768,8 +2768,8 @@ const handleOpenChat = () => {
 
         {/* 📍 PONTO DE EMBARQUE */}
         {pickupCoords?.latitude != null && pickupCoords?.longitude != null && !isNaN(Number(pickupCoords.longitude)) && Number(pickupCoords.latitude) !== 0 && (
-          <Mapbox.PointAnnotation 
-            id="pickupPoint" 
+          <Mapbox.PointAnnotation
+            id="pickupPoint"
             coordinate={[Number(pickupCoords.longitude), Number(pickupCoords.latitude)]}
           >
             <View style={styles.pickupMarker}>
@@ -2855,8 +2855,8 @@ const handleOpenChat = () => {
       )}
 
       {/* BOTÃO RECENTRALIZAR */}
-      <TouchableOpacity 
-        style={[styles.recenterButton, { bottom: Math.max((insets?.bottom || 0) + 260, 270) }]} 
+      <TouchableOpacity
+        style={[styles.recenterButton, { bottom: Math.max((insets?.bottom || 0) + 260, 270) }]}
         activeOpacity={0.85}
         onPress={() => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -2910,18 +2910,18 @@ const handleOpenChat = () => {
       )}
 
       {/* 3. PAINEL SLIDING BOTTOM SHEET TRANSLÚCIDO */}
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
-        style={styles.bottomSheetWrapper} 
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.bottomSheetWrapper}
         pointerEvents="box-none"
       >
-        <Animated.View 
+        <Animated.View
           style={[
-            styles.bottomSheet, 
-            { 
-              transform: [{ translateY }], 
+            styles.bottomSheet,
+            {
+              transform: [{ translateY }],
               maxHeight: Dimensions.get('window').height * (['accepted', 'arrived', 'in_progress'].includes(rideStatus) ? 0.80 : 0.68),
-              paddingBottom: Math.max((insets?.bottom || 0) + 12, 20) 
+              paddingBottom: Math.max((insets?.bottom || 0) + 12, 20)
             }
           ]}
         >
@@ -2929,17 +2929,17 @@ const handleOpenChat = () => {
             <View style={styles.dragIndicator} />
           </View>
 
-          <ScrollView 
-            nestedScrollEnabled 
-            showsVerticalScrollIndicator={false} 
-            keyboardShouldPersistTaps="handled" 
+          <ScrollView
+            nestedScrollEnabled
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
             contentContainerStyle={{ flexGrow: 1, paddingBottom: Math.max((insets?.bottom || 0) + 28, 36) }}
           >
             {/* CONFIGURAÇÃO DE ROTA (APENAS QUANDO LIVRE) */}
             {rideStatus === 'idle' && bookingStep === 'ADDRESS' && (
               <View style={{ width: '100%', paddingTop: 4 }}>
                 <Text style={styles.sheetTitle}>{t('where_to', 'Para onde vamos?')}</Text>
-                
+
                 {/* EMBARQUE */}
                 <View style={{ marginBottom: 10 }}>
                   <TouchableOpacity style={styles.mainSearchInput} activeOpacity={0.8} onPress={() => openSearchModal('pickup')}>
@@ -2971,12 +2971,12 @@ const handleOpenChat = () => {
                         {extraStopAddress || 'Adicionar Parada Intermediária...'}
                       </Text>
                     </TouchableOpacity>
-                    <TouchableOpacity 
-                      style={{ padding: 10, marginLeft: 6, backgroundColor: 'rgba(239,68,68,0.15)', borderRadius: 12 }} 
-                      onPress={() => { 
-                        setShowExtraStop(false); 
-                        setExtraStopAddress(''); 
-                        setExtraStopCoords(null); 
+                    <TouchableOpacity
+                      style={{ padding: 10, marginLeft: 6, backgroundColor: 'rgba(239,68,68,0.15)', borderRadius: 12 }}
+                      onPress={() => {
+                        setShowExtraStop(false);
+                        setExtraStopAddress('');
+                        setExtraStopCoords(null);
                       }}
                     >
                       <Ionicons name="trash-outline" size={20} color="#EF4444" />
@@ -3009,11 +3009,11 @@ const handleOpenChat = () => {
                 </View>
 
                 {!showExtraStop && (
-                  <TouchableOpacity 
-                    style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 6, paddingHorizontal: 4 }} 
-                    onPress={() => { 
-                      setShowExtraStop(true); 
-                      openSearchModal('extraStop'); 
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 6, paddingHorizontal: 4 }}
+                    onPress={() => {
+                      setShowExtraStop(true);
+                      openSearchModal('extraStop');
                     }}
                   >
                     <Ionicons name="add-circle-outline" size={20} color="#3B82F6" style={{ marginRight: 6 }} />
@@ -3029,9 +3029,9 @@ const handleOpenChat = () => {
                     style={{ height: 48, marginTop: 8 }}
                   />
                 ) : (
-                  <TouchableOpacity 
-                    style={[styles.requestButton, { backgroundColor: 'rgba(30, 41, 59, 0.8)', borderWidth: 1, borderColor: '#334155' }]} 
-                    activeOpacity={0.8} 
+                  <TouchableOpacity
+                    style={[styles.requestButton, { backgroundColor: 'rgba(30, 41, 59, 0.8)', borderWidth: 1, borderColor: '#334155' }]}
+                    activeOpacity={0.8}
                     onPress={() => openSearchModal('dropoff')}
                   >
                     <Text style={[styles.requestButtonText, { color: '#EAB308' }]}>{t('where_do_you_want_to_go', 'Aonde você quer ir?')}</Text>
@@ -3044,10 +3044,10 @@ const handleOpenChat = () => {
             {rideStatus === 'idle' && bookingStep === 'PAYMENT' && (
               <View style={{ width: '100%' }}>
                 <Text style={styles.sectionLabel}>{t('payment_method', 'Escolha como deseja pagar')}</Text>
-                
+
                 <View style={[styles.paymentOptionsContainer, { flexDirection: 'column', gap: 10 }]}>
                   {/* OPÇÃO 1: DINHEIRO */}
-                  <TouchableOpacity 
+                  <TouchableOpacity
                     style={[
                       styles.paymentBtn,
                       {
@@ -3179,8 +3179,8 @@ const handleOpenChat = () => {
 
                 {/* 🔴 BOTÕES DE AÇÃO COM BOTÃO DE CANCELAR */}
                 <View style={styles.actionRow}>
-                  <TouchableOpacity 
-                    style={styles.cancelButtonOutline} 
+                  <TouchableOpacity
+                    style={styles.cancelButtonOutline}
                     onPress={handleFullCancelAndReset}
                     activeOpacity={0.8}
                   >
@@ -3279,9 +3279,9 @@ const handleOpenChat = () => {
 
                 <Text style={styles.statusTitle}>{t('searching_drivers_title', 'Procurando motoristas próximos...')}</Text>
                 <Text style={styles.statusSub}>{t('locating_nearest_vehicle', 'Conectando ao veículo mais rápido de Guiné-Bissau.')}</Text>
-                
-                <TouchableOpacity 
-                  style={[styles.cancelButtonOutline, { marginTop: 18 }]} 
+
+                <TouchableOpacity
+                  style={[styles.cancelButtonOutline, { marginTop: 18 }]}
                   onPress={() => setShowCancelModal(true)}
                   activeOpacity={0.8}
                 >
@@ -3293,16 +3293,16 @@ const handleOpenChat = () => {
             {/* 📊 ACOMPANHAMENTO DA CORRIDA */}
             {['accepted', 'arrived', 'in_progress'].includes(rideStatus) && driverInfo && (
               <View style={styles.activeRideContainer}>
-                
+
                 {/* HEADER DE STATUS E VALOR */}
                 <View style={styles.activeRideHeader}>
                   <View style={styles.statusPulseBox}>
                     <View style={styles.statusPulseDot} />
                     <Text style={styles.activeRideStatusTitle}>
-                      {rideStatus === 'accepted' 
+                      {rideStatus === 'accepted'
                         ? (driverEta ? `Motorista a caminho (${driverEta} min)` : 'Motorista a caminho') :
-                       rideStatus === 'arrived' 
-                        ? '📍 O motorista chegou ao local!' : 
+                       rideStatus === 'arrived'
+                        ? '📍 O motorista chegou ao local!' :
                        (driverEta ? `Em Viagem • Chegada em ${driverEta} min` : 'Viagem em Andamento')}
                     </Text>
 
@@ -3326,7 +3326,7 @@ const handleOpenChat = () => {
                 {/* ITINERÁRIO */}
                 <View style={styles.routeTimelineContainer}>
                   <Text style={styles.routeTimelineHeaderTitle}>ITINERÁRIO DA VIAGEM</Text>
-                  
+
                   <View style={styles.timelineItem}>
                     <View style={[styles.timelineIconBg, { backgroundColor: '#10B981' }]}>
                       <Ionicons name="location" size={14} color="#FFF" />
@@ -3369,9 +3369,9 @@ const handleOpenChat = () => {
 
                 {/* DADOS DO MOTORISTA */}
                 <View style={styles.driverCardCompact}>
-                  <Image 
-                    source={{ uri: driverInfo.photoUrl || driverInfo.profilePicture || 'https://via.placeholder.com/100' }} 
-                    style={styles.driverAvatarCompact} 
+                  <Image
+                    source={{ uri: driverInfo.photoUrl || driverInfo.profilePicture || 'https://via.placeholder.com/100' }}
+                    style={styles.driverAvatarCompact}
                   />
                   <View style={{ flex: 1, marginLeft: 12 }}>
                     <Text style={styles.driverNameCompact}>{driverInfo.name}</Text>
@@ -3402,10 +3402,10 @@ const handleOpenChat = () => {
                       <Text style={styles.plateTextCompact}>{driverInfo.licensePlate?.toUpperCase() || 'SEM PLACA'}</Text>
                     </View>
                   </View>
-                  <Image 
-                    source={getVehicle3DIconAsset(driverInfo.vehicleType, driverInfo.carColor)} 
-                    style={{ width: 48, height: 48 }} 
-                    resizeMode="contain" 
+                  <Image
+                    source={getVehicle3DIconAsset(driverInfo.vehicleType, driverInfo.carColor)}
+                    style={{ width: 48, height: 48 }}
+                    resizeMode="contain"
                   />
                 </View>
 
@@ -3426,12 +3426,12 @@ const handleOpenChat = () => {
                     <Text style={[styles.actionBtnText, { color: '#3B82F6' }]}>Partilhar</Text>
                   </TouchableOpacity>
 
-                  <TouchableOpacity 
-                    style={styles.actionBtnPrimary} 
+                  <TouchableOpacity
+                    style={styles.actionBtnPrimary}
                     onPress={() => {
                       setUnreadCount(0);
                       setIsChatVisible(true);
-                    }} 
+                    }}
                     activeOpacity={0.85}
                   >
                     <Ionicons name="chatbubble-ellipses" size={18} color="#0F172A" />
@@ -3447,8 +3447,8 @@ const handleOpenChat = () => {
                   </TouchableOpacity>
                 </View>
 
-                <TouchableOpacity 
-                       style={styles.cancelRideLink} 
+                <TouchableOpacity
+                       style={styles.cancelRideLink}
                         onPress={() => setShowCancelModal(true)}
                         >
                       <Text style={styles.cancelRideLinkText}>Cancelar Viagem</Text>
@@ -3507,7 +3507,7 @@ const handleOpenChat = () => {
             borderBottomColor: 'rgba(255,255,255,0.1)',
             backgroundColor: 'rgba(15, 23, 42, 0.92)'
           }}>
-            <TouchableOpacity 
+            <TouchableOpacity
               onPress={() => setBookingStep('ADDRESS')}
               style={{ padding: 8, borderRadius: 20, backgroundColor: 'rgba(30, 41, 59, 0.8)', marginRight: 12 }}
             >
@@ -3528,7 +3528,7 @@ const handleOpenChat = () => {
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16 }}>
             <Text style={styles.sectionLabel}>{t('service_type', 'Tipo de Serviço')}</Text>
             <View style={styles.serviceTypesContainer}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.serviceTypeButton, serviceType === 'viagem' && styles.serviceTypeActive]}
                 onPress={() => setServiceType('viagem')}
               >
@@ -3536,7 +3536,7 @@ const handleOpenChat = () => {
                 <Text style={[styles.serviceTypeText, serviceType === 'viagem' && styles.serviceTypeTextActive]}>Viagem</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.serviceTypeButton, serviceType === 'entrega' && styles.serviceTypeActive]}
                 onPress={() => setServiceType('entrega')}
               >
@@ -3544,7 +3544,7 @@ const handleOpenChat = () => {
                 <Text style={[styles.serviceTypeText, serviceType === 'entrega' && styles.serviceTypeTextActive]}>Entrega</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.serviceTypeButton, serviceType === 'aluguel' && styles.serviceTypeActive]}
                 onPress={() => setServiceType('aluguel')}
               >
@@ -3577,10 +3577,10 @@ const handleOpenChat = () => {
                     const isSelected = vehicleType === item.id;
                     const price = calculateVehiclePrice(item.id, estimatedDistance);
                     return (
-                      <TouchableOpacity 
-                        key={item.id} 
+                      <TouchableOpacity
+                        key={item.id}
                         style={[
-                          styles.categoryCard, 
+                          styles.categoryCard,
                           isSelected && styles.categoryCardActive,
                           { paddingVertical: 14, paddingHorizontal: 16, borderRadius: 16 }
                         ]}
@@ -3615,8 +3615,8 @@ const handleOpenChat = () => {
               flexDirection: 'row',
               gap: 10
             }}>
-              <TouchableOpacity 
-                style={styles.cancelButtonOutline} 
+              <TouchableOpacity
+                style={styles.cancelButtonOutline}
                 onPress={() => setBookingStep('ADDRESS')}
                 activeOpacity={0.8}
               >
@@ -3654,8 +3654,8 @@ const handleOpenChat = () => {
                       <Text style={styles.langOptionText}>{lang.label}</Text>
                     </TouchableOpacity>
                   ))}
-                  <TouchableOpacity 
-                    style={styles.closeButton} 
+                  <TouchableOpacity
+                    style={styles.closeButton}
                     onPress={() => setLangModalVisible(false)}
                     activeOpacity={0.8}
                   >
@@ -3682,17 +3682,17 @@ const handleOpenChat = () => {
                   <Text style={styles.locationModalText}>
                     {locationError || t('location_needed_desc', 'Para encontrar motoristas rapidamente e garantir sua segurança, precisamos que ative o GPS e permita o acesso no seu celular.')}
                   </Text>
-                  
-                  <TouchableOpacity 
-                    style={[styles.requestButton, { width: '100%', marginBottom: 12 }]} 
+
+                  <TouchableOpacity
+                    style={[styles.requestButton, { width: '100%', marginBottom: 12 }]}
                     onPress={() => Linking.openSettings()}
                     activeOpacity={0.85}
                   >
                     <Text style={styles.requestButtonText}>{t('open_settings', 'Abrir Configurações')}</Text>
                   </TouchableOpacity>
 
-                  <TouchableOpacity 
-                    style={styles.cancelButtonOutline} 
+                  <TouchableOpacity
+                    style={styles.cancelButtonOutline}
                     onPress={getCurrentLocationWithFallback}
                     activeOpacity={0.8}
                   >
@@ -3722,15 +3722,15 @@ const handleOpenChat = () => {
             </View>
 
             <View style={styles.menuItems}>
-              <TouchableOpacity 
-                style={styles.menuItem} 
-                onPress={toggleBorderGlow} 
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={toggleBorderGlow}
                 activeOpacity={0.7}
               >
-                <Ionicons 
-                  name="flash-outline" 
-                  size={20} 
-                  color={isBorderGlowEnabled ? "#EAB308" : "#94A3B8"} 
+                <Ionicons
+                  name="flash-outline"
+                  size={20}
+                  color={isBorderGlowEnabled ? "#EAB308" : "#94A3B8"}
                 />
                 <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingRight: 8 }}>
                   <Text style={styles.menuItemText}>Efeito Raio Luminoso</Text>
@@ -3747,15 +3747,15 @@ const handleOpenChat = () => {
                 </View>
               </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={styles.menuItem} 
-                onPress={toggleVoiceAssist} 
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={toggleVoiceAssist}
                 activeOpacity={0.7}
               >
-                <Ionicons 
-                  name={isVoiceAssistEnabled ? "volume-high-outline" : "volume-mute-outline"} 
-                  size={20} 
-                  color={isVoiceAssistEnabled ? "#EAB308" : "#94A3B8"} 
+                <Ionicons
+                  name={isVoiceAssistEnabled ? "volume-high-outline" : "volume-mute-outline"}
+                  size={20}
+                  color={isVoiceAssistEnabled ? "#EAB308" : "#94A3B8"}
                 />
                 <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingRight: 8 }}>
                   <Text style={styles.menuItemText}>{t('voice_assist', 'Assistência por Voz')}</Text>
@@ -3772,60 +3772,60 @@ const handleOpenChat = () => {
                 </View>
               </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={styles.menuItem} 
-                onPress={() => { 
-                  setIsMenuVisible(false); 
-                  navigation.navigate('Profile'); 
-                }} 
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => {
+                  setIsMenuVisible(false);
+                  navigation.navigate('Profile');
+                }}
                 activeOpacity={0.7}
               >
                 <Ionicons name="person-outline" size={20} color="#F8FAFC" />
                 <Text style={styles.menuItemText}>{t('my_profile', 'Meu Perfil')}</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={styles.menuItem} 
-                onPress={() => { 
-                  setIsMenuVisible(false); 
-                  navigation.navigate('Wallet'); 
-                }} 
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => {
+                  setIsMenuVisible(false);
+                  navigation.navigate('Wallet');
+                }}
                 activeOpacity={0.7}
               >
                 <Ionicons name="wallet-outline" size={20} color="#EAB308" />
                 <Text style={styles.menuItemText}>Carteira & Pagamentos</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={styles.menuItem} 
-                onPress={() => { 
-                  setIsMenuVisible(false); 
-                  navigation.navigate('RideHistory'); 
-                }} 
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => {
+                  setIsMenuVisible(false);
+                  navigation.navigate('RideHistory');
+                }}
                 activeOpacity={0.7}
               >
                 <Ionicons name="time-outline" size={20} color="#F8FAFC" />
                 <Text style={styles.menuItemText}>{t('my_rides', 'Minhas Corridas')}</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={styles.menuItem} 
-                onPress={() => { 
-                  setIsMenuVisible(false); 
-                  navigation.navigate('EmergencyContacts'); 
-                }} 
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => {
+                  setIsMenuVisible(false);
+                  navigation.navigate('EmergencyContacts');
+                }}
                 activeOpacity={0.7}
               >
                 <Ionicons name="shield-checkmark-outline" size={20} color="#F8FAFC" />
                 <Text style={styles.menuItemText}>{t('emergency_contacts', 'Contatos de Emergência')}</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity 
-                style={styles.menuItem} 
-                onPress={() => { 
-                  setIsMenuVisible(false); 
-                  navigation.navigate('HelpCenter'); 
-                }} 
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => {
+                  setIsMenuVisible(false);
+                  navigation.navigate('HelpCenter');
+                }}
                 activeOpacity={0.7}
               >
                 <Ionicons name="help-buoy-outline" size={20} color="#F8FAFC" />
@@ -3834,12 +3834,12 @@ const handleOpenChat = () => {
 
               <View style={styles.menuDivider} />
 
-              <TouchableOpacity 
-                style={styles.menuItem} 
-                onPress={() => { 
-                  setIsMenuVisible(false); 
-                  signOut(); 
-                }} 
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => {
+                  setIsMenuVisible(false);
+                  signOut();
+                }}
                 activeOpacity={0.7}
               >
                 <Ionicons name="log-out-outline" size={20} color="#EF4444" />
@@ -3850,225 +3850,295 @@ const handleOpenChat = () => {
         </TouchableOpacity>
       </Modal>
 
-      {/* 🔀 MODAL DE BUSCA TRANSLÚCIDO MAPBOX */}
-      <Modal 
-        visible={isSearchModalVisible} 
-        animationType="slide" 
+      {/* 🔀 MODAL DE BUSCA PROFISSIONAL DE ENDEREÇOS */}
+      <Modal
+        visible={isSearchModalVisible}
+        animationType="slide"
         transparent={false}
         statusBarTranslucent={true}
         onRequestClose={() => setIsSearchModalVisible(false)}
       >
         <SafeAreaView style={styles.searchModalContainer}>
-          <KeyboardAvoidingView 
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={{ flex: 1 }}
           >
+            {/* CABEÇALHO EXECUTIVO */}
             <View style={styles.searchHeader}>
-              <TouchableOpacity 
-                onPress={() => setIsSearchModalVisible(false)} 
-                style={styles.backButton} 
-                activeOpacity={0.7}
+              <TouchableOpacity
+                onPress={() => setIsSearchModalVisible(false)}
+                style={styles.backButton}
+                activeOpacity={0.75}
               >
-                <Ionicons name="arrow-back" size={24} color="#F8FAFC" />
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.passengerSelector} 
-                onPress={() => setIsGuestModalVisible(true)} 
-                activeOpacity={0.8}
-              >
-                <Ionicons name="person" size={13} color="#EAB308" style={{ marginRight: 6 }} />
-                <Text style={styles.passengerSelectorText}>
-                  {isForAnotherPerson ? (guestName || 'Outra Pessoa') : t('for_me', 'Para mim')}
-                </Text>
+                <Ionicons name="arrow-back" size={20} color="#F8FAFC" />
               </TouchableOpacity>
 
-              <View style={{ width: 40 }} />
+              <View style={styles.searchHeaderCenter}>
+                <Text style={styles.searchHeaderTitle}>Definir Trajeto</Text>
+                <Text style={styles.searchHeaderSubtitle}>Escolha partida e destino</Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.passengerSelector}
+                onPress={() => setIsGuestModalVisible(true)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="person" size={12} color="#EAB308" style={{ marginRight: 5 }} />
+                <Text style={styles.passengerSelectorText} numberOfLines={1}>
+                  {isForAnotherPerson ? (guestName || 'Outra Pessoa') : t('for_me', 'Para mim')}
+                </Text>
+                <Ionicons name="chevron-down" size={12} color="#EAB308" style={{ marginLeft: 4 }} />
+              </TouchableOpacity>
             </View>
 
             <View style={styles.modalBody}>
-              <ScrollView 
+              <ScrollView
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingBottom: 24 }}
+                contentContainerStyle={{ paddingBottom: 32 }}
               >
-                <View style={{ flexDirection: 'row', marginBottom: 15, paddingHorizontal: 4 }}>
-                  <View style={{ alignItems: 'center', marginRight: 12, paddingTop: 14 }}>
-                    <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#EAB308' }} />
-                    <View style={{ width: 2, height: showExtraStop ? 110 : 70, backgroundColor: '#334155', marginVertical: 4 }} />
-                    {showExtraStop && (
-                      <>
-                        <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#3B82F6' }} />
-                        <View style={{ width: 2, height: 70, backgroundColor: '#334155', marginVertical: 4 }} />
-                      </>
-                    )}
-                    <View style={{ width: 12, height: 12, backgroundColor: '#EF4444', borderRadius: 2 }} />
-                  </View>
-
-                  <View style={{ flex: 1 }}>
-                    {/* EMBARQUE */}
-                    <View style={{ marginBottom: 12 }}>
-                      <Text style={{ color: '#EAB308', fontSize: 11, fontWeight: '800', marginBottom: 4 }}>
-                        PONTO DE PARTIDA (EMBARQUE) *
-                      </Text>
-                      <View style={[
-                        styles.mapboxSearchInputWrapper, 
-                        searchType === 'pickup' ? { borderColor: '#EAB308', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
-                      ]}>
-                        <Ionicons name="location" size={18} color="#EAB308" style={{ marginRight: 8 }} />
-                        <TextInput
-                          ref={pickupInputRef}
-                          style={styles.mapboxSearchInput}
-                          placeholder={t('pickup_location', 'Local de Partida')}
-                          placeholderTextColor="#64748B"
-                          value={searchType === 'pickup' ? searchQuery : pickupAddress}
-                          autoCorrect={false}
-                          onFocus={() => { 
-                            setSearchType('pickup'); 
-                            setSearchQuery(pickupAddress); 
-                          }}
-                          onChangeText={(text) => {
-                            setSearchQuery(text);
-                            handleMapboxSearch(text);
-                          }}
-                        />
-                        {isSearchingMapbox && searchType === 'pickup' ? (
-                          <ActivityIndicator size="small" color="#EAB308" style={{ marginRight: 6 }} />
-                        ) : (searchType === 'pickup' ? searchQuery : pickupAddress) ? (
-                          <TouchableOpacity onPress={() => { setSearchQuery(''); setPickupAddress(''); setPickupCoords(null); }}>
-                            <Ionicons name="close-circle" size={18} color="#64748B" />
-                          </TouchableOpacity>
-                        ) : null}
+                {/* CARTÃO UNIFICADO DE ROTA */}
+                <View style={styles.routePlannerCard}>
+                  <View style={styles.routePlannerBody}>
+                    {/* COLUNA DA LINHA DO TRAJETO */}
+                    <View style={styles.routeTimelineCol}>
+                      <View style={styles.routeDotPickupOuter}>
+                        <View style={styles.routeDotPickupInner} />
                       </View>
-
-                      <View style={styles.referenceInputContainer}>
-                        <Ionicons name="compass" size={15} color="#EAB308" style={{ marginRight: 8 }} />
-                        <TextInput
-                          style={styles.referenceTextInput}
-                          placeholder="Ref. Partida (opcional: ex: Perto da Farmácia Central)"
-                          placeholderTextColor="#64748B"
-                          value={pickupReferencePoint}
-                          onChangeText={setPickupReferencePoint}
-                          maxLength={80}
-                        />
+                      <View style={[styles.routeConnectorLine, { height: showExtraStop ? 114 : 96 }]} />
+                      {showExtraStop && (
+                        <>
+                          <View style={styles.routeDotStopOuter}>
+                            <View style={styles.routeDotStopInner} />
+                          </View>
+                          <View style={[styles.routeConnectorLine, { height: 96 }]} />
+                        </>
+                      )}
+                      <View style={styles.routeDotDropoffOuter}>
+                        <View style={styles.routeDotDropoffInner} />
                       </View>
                     </View>
 
-                    {/* PARADA EXTRA */}
-                    {showExtraStop && (
-                      <View style={{ marginBottom: 12 }}>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                          <Text style={{ color: '#3B82F6', fontSize: 11, fontWeight: '800' }}>
-                            PARADA INTERMEDIÁRIA
+                    {/* COLUNA DOS CAMPOS */}
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      {/* EMBARQUE */}
+                      <View style={styles.routeStepBlock}>
+                        <View style={styles.routeStepLabelRow}>
+                          <Text style={[styles.routeStepLabel, { color: '#FACC15' }]}>
+                            PONTO DE PARTIDA
                           </Text>
-                          <TouchableOpacity onPress={() => { 
-                            setShowExtraStop(false); 
-                            setExtraStopAddress(''); 
-                            setExtraStopCoords(null); 
-                            setExtraStopReferencePoint(''); 
-                          }}>
-                            <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: '600' }}>Remover</Text>
-                          </TouchableOpacity>
+                          {searchType === 'pickup' && (
+                            <View style={[styles.activeFieldBadge, { backgroundColor: 'rgba(234, 179, 8, 0.16)' }]}>
+                              <Text style={[styles.activeFieldBadgeText, { color: '#FACC15' }]}>Editando</Text>
+                            </View>
+                          )}
                         </View>
-                        
+
                         <View style={[
-                          styles.mapboxSearchInputWrapper, 
-                          searchType === 'extraStop' ? { borderColor: '#3B82F6', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
+                          styles.mapboxSearchInputWrapper,
+                          searchType === 'pickup' ? styles.mapboxInputFocusedPickup : styles.mapboxInputIdle
                         ]}>
-                          <Ionicons name="location-sharp" size={18} color="#3B82F6" style={{ marginRight: 8 }} />
+                          <Ionicons name="radio-button-on" size={16} color="#EAB308" style={{ marginRight: 9 }} />
                           <TextInput
+                            ref={pickupInputRef}
                             style={styles.mapboxSearchInput}
-                            placeholder="Adicionar Parada..."
+                            placeholder={t('pickup_location', 'Local de Partida')}
                             placeholderTextColor="#64748B"
-                            value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
+                            value={searchType === 'pickup' ? searchQuery : pickupAddress}
                             autoCorrect={false}
-                            onFocus={() => { 
-                              setSearchType('extraStop'); 
-                              setSearchQuery(extraStopAddress); 
+                            onFocus={() => {
+                              setSearchType('pickup');
+                              setSearchQuery(pickupAddress);
                             }}
                             onChangeText={(text) => {
                               setSearchQuery(text);
                               handleMapboxSearch(text);
                             }}
                           />
+                          {isSearchingMapbox && searchType === 'pickup' ? (
+                            <ActivityIndicator size="small" color="#EAB308" style={{ marginLeft: 6 }} />
+                          ) : (searchType === 'pickup' ? searchQuery : pickupAddress) ? (
+                            <TouchableOpacity
+                              onPress={() => { setSearchQuery(''); setPickupAddress(''); setPickupCoords(null); }}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
+                              <Ionicons name="close-circle" size={18} color="#64748B" />
+                            </TouchableOpacity>
+                          ) : null}
                         </View>
 
                         <View style={styles.referenceInputContainer}>
-                          <Ionicons name="compass-outline" size={15} color="#3B82F6" style={{ marginRight: 8 }} />
+                          <Ionicons name="compass-outline" size={14} color="#EAB308" style={{ marginRight: 7 }} />
                           <TextInput
                             style={styles.referenceTextInput}
-                            placeholder="Ref. Parada (opcional)"
+                            placeholder="Ponto de ref. da partida (opcional)"
                             placeholderTextColor="#64748B"
-                            value={extraStopReferencePoint}
-                            onChangeText={setExtraStopReferencePoint}
+                            value={pickupReferencePoint}
+                            onChangeText={setPickupReferencePoint}
                             maxLength={80}
                           />
                         </View>
                       </View>
-                    )}
 
-                    {/* DESTINO FINAL */}
-                    <View style={{ marginBottom: 8 }}>
-                      <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: '800', marginBottom: 4 }}>
-                        DESTINO FINAL (DESEMBARQUE) *
-                      </Text>
-                      <View style={[
-                        styles.mapboxSearchInputWrapper, 
-                        searchType === 'dropoff' ? { borderColor: '#EF4444', borderWidth: 1 } : { borderWidth: 1, borderColor: '#334155' }
-                      ]}>
-                        <Ionicons name="flag" size={18} color="#EF4444" style={{ marginRight: 8 }} />
-                        <TextInput
-                          ref={dropoffInputRef}
-                          autoFocus={searchType === 'dropoff'}
-                          style={styles.mapboxSearchInput}
-                          placeholder={t('where_to', 'Para onde vamos?')}
-                          placeholderTextColor="#64748B"
-                          value={searchType === 'dropoff' ? searchQuery : dropoffAddress}
-                          autoCorrect={false}
-                          onFocus={() => { 
-                            setSearchType('dropoff'); 
-                            setSearchQuery(dropoffAddress); 
-                          }}
-                          onChangeText={(text) => {
-                            setSearchQuery(text);
-                            handleMapboxSearch(text);
-                          }}
-                        />
-                        {isSearchingMapbox && searchType === 'dropoff' ? (
-                          <ActivityIndicator size="small" color="#EF4444" style={{ marginRight: 6 }} />
-                        ) : (searchType === 'dropoff' ? searchQuery : dropoffAddress) ? (
-                          <TouchableOpacity onPress={() => { setSearchQuery(''); setDropoffAddress(''); setDropoffCoords(null); }}>
-                            <Ionicons name="close-circle" size={18} color="#64748B" />
-                          </TouchableOpacity>
-                        ) : null}
-                      </View>
+                      {/* PARADA EXTRA */}
+                      {showExtraStop && (
+                        <View style={styles.routeStepBlock}>
+                          <View style={styles.routeStepLabelRow}>
+                            <Text style={[styles.routeStepLabel, { color: '#60A5FA' }]}>
+                              PARADA INTERMEDIÁRIA
+                            </Text>
+                            <TouchableOpacity
+                              style={styles.removeStopPill}
+                              onPress={() => {
+                                setShowExtraStop(false);
+                                setExtraStopAddress('');
+                                setExtraStopCoords(null);
+                                setExtraStopReferencePoint('');
+                              }}
+                            >
+                              <Ionicons name="trash-outline" size={11} color="#F87171" />
+                              <Text style={styles.removeStopPillText}>Remover</Text>
+                            </TouchableOpacity>
+                          </View>
 
-                      <View style={styles.referenceInputContainer}>
-                        <Ionicons name="compass" size={15} color="#EF4444" style={{ marginRight: 8 }} />
-                        <TextInput
-                          style={styles.referenceTextInput}
-                          placeholder="Ref. Destino (opcional: ex: Em frente ao Mercado)"
-                          placeholderTextColor="#64748B"
-                          value={dropoffReferencePoint}
-                          onChangeText={setDropoffReferencePoint}
-                          maxLength={80}
-                        />
+                          <View style={[
+                            styles.mapboxSearchInputWrapper,
+                            searchType === 'extraStop' ? styles.mapboxInputFocusedStop : styles.mapboxInputIdle
+                          ]}>
+                            <Ionicons name="navigate-circle" size={17} color="#3B82F6" style={{ marginRight: 9 }} />
+                            <TextInput
+                              style={styles.mapboxSearchInput}
+                              placeholder="Digite o local da parada..."
+                              placeholderTextColor="#64748B"
+                              value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
+                              autoCorrect={false}
+                              onFocus={() => {
+                                setSearchType('extraStop');
+                                setSearchQuery(extraStopAddress);
+                              }}
+                              onChangeText={(text) => {
+                                setSearchQuery(text);
+                                handleMapboxSearch(text);
+                              }}
+                            />
+                            {isSearchingMapbox && searchType === 'extraStop' ? (
+                              <ActivityIndicator size="small" color="#3B82F6" style={{ marginLeft: 6 }} />
+                            ) : (searchType === 'extraStop' ? searchQuery : extraStopAddress) ? (
+                              <TouchableOpacity
+                                onPress={() => { setSearchQuery(''); setExtraStopAddress(''); setExtraStopCoords(null); }}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                              >
+                                <Ionicons name="close-circle" size={18} color="#64748B" />
+                              </TouchableOpacity>
+                            ) : null}
+                          </View>
+
+                          <View style={styles.referenceInputContainer}>
+                            <Ionicons name="compass-outline" size={14} color="#3B82F6" style={{ marginRight: 7 }} />
+                            <TextInput
+                              style={styles.referenceTextInput}
+                              placeholder="Ponto de ref. da parada (opcional)"
+                              placeholderTextColor="#64748B"
+                              value={extraStopReferencePoint}
+                              onChangeText={setExtraStopReferencePoint}
+                              maxLength={80}
+                            />
+                          </View>
+                        </View>
+                      )}
+
+                      {/* DESTINO FINAL */}
+                      <View style={{ marginBottom: 2 }}>
+                        <View style={styles.routeStepLabelRow}>
+                          <Text style={[styles.routeStepLabel, { color: '#F87171' }]}>
+                            DESTINO FINAL
+                          </Text>
+                          {searchType === 'dropoff' && (
+                            <View style={[styles.activeFieldBadge, { backgroundColor: 'rgba(239, 68, 68, 0.16)' }]}>
+                              <Text style={[styles.activeFieldBadgeText, { color: '#F87171' }]}>Editando</Text>
+                            </View>
+                          )}
+                        </View>
+
+                        <View style={[
+                          styles.mapboxSearchInputWrapper,
+                          searchType === 'dropoff' ? styles.mapboxInputFocusedDropoff : styles.mapboxInputIdle
+                        ]}>
+                          <Ionicons name="flag" size={16} color="#EF4444" style={{ marginRight: 9 }} />
+                          <TextInput
+                            ref={dropoffInputRef}
+                            autoFocus={searchType === 'dropoff'}
+                            style={styles.mapboxSearchInput}
+                            placeholder={t('where_to', 'Para onde vamos?')}
+                            placeholderTextColor="#64748B"
+                            value={searchType === 'dropoff' ? searchQuery : dropoffAddress}
+                            autoCorrect={false}
+                            onFocus={() => {
+                              setSearchType('dropoff');
+                              setSearchQuery(dropoffAddress);
+                            }}
+                            onChangeText={(text) => {
+                              setSearchQuery(text);
+                              handleMapboxSearch(text);
+                            }}
+                          />
+                          {isSearchingMapbox && searchType === 'dropoff' ? (
+                            <ActivityIndicator size="small" color="#EF4444" style={{ marginLeft: 6 }} />
+                          ) : (searchType === 'dropoff' ? searchQuery : dropoffAddress) ? (
+                            <TouchableOpacity
+                              onPress={() => { setSearchQuery(''); setDropoffAddress(''); setDropoffCoords(null); }}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
+                              <Ionicons name="close-circle" size={18} color="#64748B" />
+                            </TouchableOpacity>
+                          ) : null}
+                        </View>
+
+                        <View style={styles.referenceInputContainer}>
+                          <Ionicons name="compass-outline" size={14} color="#EF4444" style={{ marginRight: 7 }} />
+                          <TextInput
+                            style={styles.referenceTextInput}
+                            placeholder="Ponto de ref. do destino (opcional)"
+                            placeholderTextColor="#64748B"
+                            value={dropoffReferencePoint}
+                            onChangeText={setDropoffReferencePoint}
+                            maxLength={80}
+                          />
+                        </View>
                       </View>
                     </View>
+                  </View>
 
-                    {!showExtraStop && (
-                      <TouchableOpacity 
-                        style={{ marginTop: 6, flexDirection: 'row', alignItems: 'center' }} 
-                        onPress={() => { 
-                          setShowExtraStop(true); 
-                          setSearchType('extraStop'); 
-                          setSearchQuery(''); 
+                  {/* RODAPÉ DO CARTÃO DE ROTA */}
+                  <View style={styles.routeCardFooter}>
+                    {!showExtraStop ? (
+                      <TouchableOpacity
+                        style={styles.addStopPillBtn}
+                        activeOpacity={0.8}
+                        onPress={() => {
+                          setShowExtraStop(true);
+                          setSearchType('extraStop');
+                          setSearchQuery('');
                         }}
                       >
-                        <Ionicons name="add-circle-outline" size={18} color="#3B82F6" />
-                        <Text style={{ color: '#3B82F6', fontWeight: '700', marginLeft: 6, fontSize: 13 }}>
-                          + Adicionar Parada Intermediária
-                        </Text>
+                        <Ionicons name="add-circle" size={16} color="#60A5FA" />
+                        <Text style={styles.addStopPillText}>Adicionar parada</Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <View />
+                    )}
+
+                    {Boolean(pickupCoords && dropoffAddress.trim()) && (
+                      <TouchableOpacity
+                        style={styles.confirmRouteMiniBtn}
+                        activeOpacity={0.85}
+                        onPress={() => {
+                          setIsSearchModalVisible(false);
+                          setBookingStep('SERVICE_AND_PRICE');
+                        }}
+                      >
+                        <Text style={styles.confirmRouteMiniBtnText}>Confirmar rota</Text>
+                        <Ionicons name="arrow-forward" size={14} color="#0F172A" />
                       </TouchableOpacity>
                     )}
                   </View>
@@ -4076,101 +4146,188 @@ const handleOpenChat = () => {
 
                 {searchQuery.trim().length === 0 ? (
                   <View>
-                    <Text style={styles.sectionHeaderTitle}>Locais Salvos</Text>
-                    
-                    <TouchableOpacity 
-                      style={styles.savedPlaceRow} 
-                      onPress={() => handleFavoritePress('home')}
-                      onLongPress={() => {
-                        if (pickupCoords) {
-                          saveFavoritePlace('home', { address: pickupAddress, ...pickupCoords });
-                        }
-                      }}
-                    >
-                      <View style={[styles.savedIconCircle, { backgroundColor: '#FEF3C7' }]}>
-                        <Ionicons name="home" size={20} color="#D97706" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.savedPlaceTitle}>Casa</Text>
-                        <Text style={styles.savedPlaceSub} numberOfLines={1}>
-                          {homeLocation ? homeLocation.address : 'Segure para definir a localização atual como Casa'}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
+                    <View style={styles.sectionHeaderRow}>
+                      <Text style={styles.sectionHeaderTitle}>Locais Salvos</Text>
+                      <Text style={styles.sectionHeaderHint}>Segure para salvar o atual</Text>
+                    </View>
 
-                    <TouchableOpacity 
-                      style={styles.savedPlaceRow} 
-                      onPress={() => handleFavoritePress('work')}
-                      onLongPress={() => {
-                        if (pickupCoords) {
-                          saveFavoritePlace('work', { address: pickupAddress, ...pickupCoords });
-                        }
-                      }}
-                    >
-                      <View style={[styles.savedIconCircle, { backgroundColor: '#E0F2FE' }]}>
-                        <Ionicons name="briefcase" size={20} color="#0284C7" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.savedPlaceTitle}>Trabalho</Text>
-                        <Text style={styles.savedPlaceSub} numberOfLines={1}>
-                          {workLocation ? workLocation.address : 'Segure para definir a localização atual como Trabalho'}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
+                    <View style={styles.savedPlacesCard}>
+                      <TouchableOpacity
+                        style={[styles.savedPlaceRow, styles.savedPlaceRowDivider]}
+                        activeOpacity={0.75}
+                        onPress={() => handleFavoritePress('home')}
+                        onLongPress={() => {
+                          if (pickupCoords) {
+                            saveFavoritePlace('home', { address: pickupAddress, ...pickupCoords });
+                          }
+                        }}
+                      >
+                        <View style={[styles.savedIconCircle, { backgroundColor: 'rgba(234, 179, 8, 0.16)' }]}>
+                          <Ionicons name="home" size={18} color="#FACC15" />
+                        </View>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={styles.savedPlaceTitle}>Casa</Text>
+                          <Text style={styles.savedPlaceSub} numberOfLines={1}>
+                            {homeLocation ? homeLocation.address : 'Segure para salvar sua partida atual'}
+                          </Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={16} color="#64748B" />
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.savedPlaceRow}
+                        activeOpacity={0.75}
+                        onPress={() => handleFavoritePress('work')}
+                        onLongPress={() => {
+                          if (pickupCoords) {
+                            saveFavoritePlace('work', { address: pickupAddress, ...pickupCoords });
+                          }
+                        }}
+                      >
+                        <View style={[styles.savedIconCircle, { backgroundColor: 'rgba(56, 189, 248, 0.16)' }]}>
+                          <Ionicons name="briefcase" size={18} color="#38BDF8" />
+                        </View>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={styles.savedPlaceTitle}>Trabalho</Text>
+                          <Text style={styles.savedPlaceSub} numberOfLines={1}>
+                            {workLocation ? workLocation.address : 'Segure para salvar sua partida atual'}
+                          </Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={16} color="#64748B" />
+                      </TouchableOpacity>
+                    </View>
 
                     {recentSearches.length > 0 && (
-                      <View style={{ marginTop: 20 }}>
-                        <Text style={styles.sectionHeaderTitle}>Pesquisas Recentes</Text>
-                        {recentSearches.map((item) => (
-                          <View key={item.id} style={styles.recentItemRow}>
-                            <TouchableOpacity 
-                              style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 }}
-                              onPress={() => {
-                                if (searchType === 'pickup') {
-                                  isManualPickupRef.current = true;
-                                  setPickupAddress(item.description);
-                                  setPickupCoords({ latitude: item.latitude, longitude: item.longitude });
-                                } else if (searchType === 'extraStop') {
-                                  setExtraStopAddress(item.description);
-                                  setExtraStopCoords({ latitude: item.latitude, longitude: item.longitude });
-                                } else {
-                                  setDropoffAddress(item.description);
-                                  setDropoffCoords({ latitude: item.latitude, longitude: item.longitude });
-                                  setIsSearchModalVisible(false);
-                                  setBookingStep('SERVICE_AND_PRICE');
-                                }
-                              }}
+                      <View style={{ marginTop: 18 }}>
+                        <View style={styles.sectionHeaderRow}>
+                          <Text style={styles.sectionHeaderTitle}>Pesquisas Recentes</Text>
+                        </View>
+                        <View style={styles.resultsListCard}>
+                          {recentSearches.map((item, idx) => (
+                            <View
+                              key={item.id}
+                              style={[
+                                styles.recentItemRow,
+                                idx < recentSearches.length - 1 && styles.listRowDivider
+                              ]}
                             >
-                              <Ionicons name="time-outline" size={20} color="#64748B" />
-                              <Text style={styles.recentText} numberOfLines={1}>{item.description}</Text>
-                            </TouchableOpacity>
-                            
-                            <TouchableOpacity 
-                              onPress={() => removeRecentSearch(item.id)} 
-                              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                            >
-                              <Ionicons name="close-circle" size={18} color="#94A3B8" />
-                            </TouchableOpacity>
-                          </View>
-                        ))}
+                              <TouchableOpacity
+                                style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, minWidth: 0 }}
+                                activeOpacity={0.75}
+                                onPress={() => {
+                                  if (searchType === 'pickup') {
+                                    isManualPickupRef.current = true;
+                                    setPickupAddress(item.description);
+                                    setPickupCoords({ latitude: item.latitude, longitude: item.longitude });
+                                  } else if (searchType === 'extraStop') {
+                                    setExtraStopAddress(item.description);
+                                    setExtraStopCoords({ latitude: item.latitude, longitude: item.longitude });
+                                  } else {
+                                    setDropoffAddress(item.description);
+                                    setDropoffCoords({ latitude: item.latitude, longitude: item.longitude });
+                                    setIsSearchModalVisible(false);
+                                    setBookingStep('SERVICE_AND_PRICE');
+                                  }
+                                }}
+                              >
+                                <View style={styles.resultIconBadgeMuted}>
+                                  <Ionicons name="time-outline" size={17} color="#94A3B8" />
+                                </View>
+                                <Text style={styles.recentText} numberOfLines={1}>{item.description}</Text>
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                onPress={() => removeRecentSearch(item.id)}
+                                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                style={{ paddingLeft: 8 }}
+                              >
+                                <Ionicons name="close-circle" size={18} color="#64748B" />
+                              </TouchableOpacity>
+                            </View>
+                          ))}
+                        </View>
                       </View>
                     )}
 
-                    <View style={{ marginTop: 20 }}>
-                      <Text style={styles.sectionHeaderTitle}>Bairros & Pontos de Bissau</Text>
-                      {GUINEA_BISSAU_BAIRROS.slice(0, 14).map((bairro) => (
+                    <View style={{ marginTop: 18 }}>
+                      <View style={styles.sectionHeaderRow}>
+                        <Text style={styles.sectionHeaderTitle}>Bairros & Pontos de Bissau</Text>
+                      </View>
+                      <View style={styles.resultsListCard}>
+                        {GUINEA_BISSAU_BAIRROS.slice(0, 14).map((bairro, idx) => (
+                          <TouchableOpacity
+                            key={bairro.id}
+                            style={[
+                              styles.searchResultItem,
+                              idx < 13 && styles.listRowDivider
+                            ]}
+                            activeOpacity={0.75}
+                            onPress={() => {
+                              if (searchType === 'pickup') {
+                                isManualPickupRef.current = true;
+                                setPickupAddress(bairro.description);
+                                setPickupCoords({ latitude: bairro.latitude, longitude: bairro.longitude });
+                                if (cameraRef.current) {
+                                  cameraRef.current.setCamera({
+                                    centerCoordinate: [bairro.longitude, bairro.latitude],
+                                    zoomLevel: 15,
+                                    animationDuration: 800,
+                                  });
+                                }
+                                setSearchType(showExtraStop && !extraStopCoords ? 'extraStop' : 'dropoff');
+                                setSearchQuery('');
+                                setSearchResults([]);
+                                setTimeout(() => dropoffInputRef.current?.focus(), 120);
+                              } else if (searchType === 'extraStop') {
+                                setExtraStopAddress(bairro.description);
+                                setExtraStopCoords({ latitude: bairro.latitude, longitude: bairro.longitude });
+                                setSearchType('dropoff');
+                                setSearchQuery('');
+                                setSearchResults([]);
+                              } else {
+                                setDropoffAddress(bairro.description);
+                                setDropoffCoords({ latitude: bairro.latitude, longitude: bairro.longitude });
+                                setIsSearchModalVisible(false);
+                                setBookingStep('SERVICE_AND_PRICE');
+                              }
+                            }}
+                          >
+                            <View style={styles.resultIconBadgeGold}>
+                              <Ionicons name="location" size={16} color="#EAB308" />
+                            </View>
+                            <View style={{ flex: 1, minWidth: 0 }}>
+                              <Text style={styles.searchResultText} numberOfLines={1}>{bairro.description}</Text>
+                              <Text style={styles.searchResultSub}>Bissau • Guiné-Bissau</Text>
+                            </View>
+                            <Ionicons name="chevron-forward" size={16} color="#475569" />
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </View>
+                  </View>
+                ) : (
+                  <View style={{ marginTop: 4 }}>
+                    <View style={styles.sectionHeaderRow}>
+                      <Text style={styles.sectionHeaderTitle}>Resultados da Busca</Text>
+                      {isSearchingMapbox && <Text style={styles.sectionHeaderHint}>Buscando...</Text>}
+                    </View>
+                    <View style={styles.resultsListCard}>
+                      {searchResults.map((item, idx) => (
                         <TouchableOpacity
-                          key={bairro.id}
-                          style={styles.searchResultItem}
-                          activeOpacity={0.7}
+                          key={item.id}
+                          style={[
+                            styles.searchResultItem,
+                            idx < searchResults.length - 1 && styles.listRowDivider
+                          ]}
+                          activeOpacity={0.75}
                           onPress={() => {
                             if (searchType === 'pickup') {
                               isManualPickupRef.current = true;
-                              setPickupAddress(bairro.description);
-                              setPickupCoords({ latitude: bairro.latitude, longitude: bairro.longitude });
+                              setPickupAddress(item.description);
+                              setPickupCoords({ latitude: item.latitude, longitude: item.longitude });
                               if (cameraRef.current) {
                                 cameraRef.current.setCamera({
-                                  centerCoordinate: [bairro.longitude, bairro.latitude],
+                                  centerCoordinate: [item.longitude, item.latitude],
                                   zoomLevel: 15,
                                   animationDuration: 800,
                                 });
@@ -4178,78 +4335,37 @@ const handleOpenChat = () => {
                               setSearchType(showExtraStop && !extraStopCoords ? 'extraStop' : 'dropoff');
                               setSearchQuery('');
                               setSearchResults([]);
-                              setTimeout(() => dropoffInputRef.current?.focus(), 120);
                             } else if (searchType === 'extraStop') {
-                              setExtraStopAddress(bairro.description);
-                              setExtraStopCoords({ latitude: bairro.latitude, longitude: bairro.longitude });
+                              setExtraStopAddress(item.description);
+                              setExtraStopCoords({ latitude: item.latitude, longitude: item.longitude });
                               setSearchType('dropoff');
                               setSearchQuery('');
                               setSearchResults([]);
                             } else {
-                              setDropoffAddress(bairro.description);
-                              setDropoffCoords({ latitude: bairro.latitude, longitude: bairro.longitude });
+                              const selectedFeature = {
+                                id: `recent_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                                description: item.description,
+                                latitude: item.latitude,
+                                longitude: item.longitude,
+                              };
+                              saveToRecentSearches(selectedFeature);
+                              setDropoffAddress(item.description);
+                              setDropoffCoords({ latitude: item.latitude, longitude: item.longitude });
                               setIsSearchModalVisible(false);
                               setBookingStep('SERVICE_AND_PRICE');
                             }
                           }}
                         >
-                          <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#1E293B', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
-                            <Ionicons name="location" size={18} color="#EAB308" />
+                          <View style={styles.resultIconBadgeGold}>
+                            <Ionicons name="location" size={16} color="#EAB308" />
                           </View>
-                          <Text style={[styles.searchResultText, { color: '#F8FAFC' }]}>{bairro.description}</Text>
+                          <View style={{ flex: 1, minWidth: 0 }}>
+                            <Text style={styles.searchResultText} numberOfLines={2}>{item.description}</Text>
+                          </View>
+                          <Ionicons name="chevron-forward" size={16} color="#475569" />
                         </TouchableOpacity>
                       ))}
                     </View>
-                  </View>
-                ) : (
-                  <View style={{ marginTop: 8 }}>
-                    {searchResults.map((item) => (
-                      <TouchableOpacity
-                        key={item.id}
-                        style={styles.searchResultItem}
-                        activeOpacity={0.7}
-                        onPress={() => {
-                          if (searchType === 'pickup') {
-                            isManualPickupRef.current = true;
-                            setPickupAddress(item.description);
-                            setPickupCoords({ latitude: item.latitude, longitude: item.longitude });
-                            if (cameraRef.current) {
-                              cameraRef.current.setCamera({
-                                centerCoordinate: [item.longitude, item.latitude],
-                                zoomLevel: 15,
-                                animationDuration: 800,
-                              });
-                            }
-                            setSearchType(showExtraStop && !extraStopCoords ? 'extraStop' : 'dropoff');
-                            setSearchQuery('');
-                            setSearchResults([]);
-                          } else if (searchType === 'extraStop') {
-                            setExtraStopAddress(item.description);
-                            setExtraStopCoords({ latitude: item.latitude, longitude: item.longitude });
-                            setSearchType('dropoff');
-                            setSearchQuery('');
-                            setSearchResults([]);
-                          } else {
-                            const selectedFeature = {
-                              id: `recent_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-                              description: item.description,
-                              latitude: item.latitude,
-                              longitude: item.longitude,
-                            };
-                            saveToRecentSearches(selectedFeature);
-                            setDropoffAddress(item.description);
-                            setDropoffCoords({ latitude: item.latitude, longitude: item.longitude });
-                            setIsSearchModalVisible(false);
-                            setBookingStep('SERVICE_AND_PRICE');
-                          }
-                        }}
-                      >
-                        <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#1E293B', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
-                          <Ionicons name="location" size={18} color="#EAB308" />
-                        </View>
-                        <Text style={[styles.searchResultText, { color: '#F8FAFC' }]}>{item.description}</Text>
-                      </TouchableOpacity>
-                    ))}
                   </View>
                 )}
               </ScrollView>
@@ -4265,7 +4381,7 @@ const handleOpenChat = () => {
         transparent
         onRequestClose={() => setIsGuestModalVisible(false)}
       >
-        <KeyboardAvoidingView 
+        <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={styles.modalOverlay}
         >
@@ -4345,18 +4461,18 @@ const handleOpenChat = () => {
       </Modal>
 
       {/* 💬 CHATMODAL DO PASSAGEIRO */}
-<ChatModal 
-  visible={isChatVisible} 
+<ChatModal
+  visible={isChatVisible}
   onClose={() => {
     setIsChatVisible(false);
     setUnreadCount(0); // 🟢 Zera o badge de não lidas ao fechar
-  }} 
-  socket={socket} 
-  rideId={activeRideId || ''} 
-  currentRole="passenger" 
-  currentUserPhoto={user?.profilePicture ? formatPhotoUrl(user.profilePicture) : null} 
-  otherUserName={driverInfo?.name || 'Motorista'} 
-  otherUserPhoto={driverInfo?.photoUrl || driverInfo?.profilePicture} 
+  }}
+  socket={socket}
+  rideId={activeRideId || ''}
+  currentRole="passenger"
+  currentUserPhoto={user?.profilePicture ? formatPhotoUrl(user.profilePicture) : null}
+  otherUserName={driverInfo?.name || 'Motorista'}
+  otherUserPhoto={driverInfo?.photoUrl || driverInfo?.profilePicture}
 />
 
       {/* 🛑 MODAL DE CANCELAMENTO */}
@@ -4364,15 +4480,15 @@ const handleOpenChat = () => {
         visible={showCancelModal}
         userType="PASSENGER"
         isPenaltyApplicable={checkPenaltyApplicable()}
-        onClose={handleCloseCancelModal} 
-        onConfirm={handleConfirmCancel} 
-      /> 
+        onClose={handleCloseCancelModal}
+        onConfirm={handleConfirmCancel}
+      />
 
       {/* ⭐ MODAL DE AVALIAÇÃO COM GORJETA */}
       <RatingModal
         visible={showRatingModal}
         targetName={driverInfo?.name || 'Motorista'}
-        onSubmit={handleSubmitRating} 
+        onSubmit={handleSubmitRating}
       />
     </View>
   );
@@ -4713,16 +4829,16 @@ const styles = StyleSheet.create({
   referenceInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderColor: 'rgba(148, 163, 184, 0.14)',
     borderRadius: 10,
     paddingHorizontal: 10,
     marginTop: 6,
   },
   referenceTextInput: {
     flex: 1,
-    color: '#F8FAFC',
+    color: '#CBD5E1',
     fontSize: 12,
     paddingVertical: 6,
   },
@@ -5219,7 +5335,7 @@ const styles = StyleSheet.create({
   },
   searchModalContainer: {
     flex: 1,
-    backgroundColor: '#0F172A',
+    backgroundColor: '#0B1120',
   },
   searchHeader: {
     flexDirection: 'row',
@@ -5227,64 +5343,274 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
+    backgroundColor: '#0F172A',
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.12)',
+    borderBottomColor: 'rgba(148, 163, 184, 0.12)',
   },
   backButton: {
-    padding: 6,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.16)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchHeaderCenter: {
+    alignItems: 'center',
+  },
+  searchHeaderTitle: {
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  searchHeaderSubtitle: {
+    color: '#64748B',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 1,
   },
   passengerSelector: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(30, 41, 59, 0.85)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
+    backgroundColor: 'rgba(234, 179, 8, 0.12)',
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 999,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: 'rgba(234, 179, 8, 0.35)',
+    maxWidth: 124,
   },
   passengerSelectorText: {
-    color: '#EAB308',
+    color: '#FACC15',
     fontSize: 12,
     fontWeight: '700',
   },
   modalBody: {
     flex: 1,
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: 14,
+  },
+  routePlannerCard: {
+    backgroundColor: '#131C31',
+    borderRadius: 20,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.16)',
+    marginBottom: 18,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  routePlannerBody: {
+    flexDirection: 'row',
+  },
+  routeTimelineCol: {
+    alignItems: 'center',
+    marginRight: 12,
+    paddingTop: 28,
+  },
+  routeDotPickupOuter: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: 'rgba(234, 179, 8, 0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  routeDotPickupInner: {
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    backgroundColor: '#EAB308',
+  },
+  routeDotStopOuter: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: 'rgba(59, 130, 246, 0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  routeDotStopInner: {
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    backgroundColor: '#3B82F6',
+  },
+  routeDotDropoffOuter: {
+    width: 18,
+    height: 18,
+    borderRadius: 6,
+    backgroundColor: 'rgba(239, 68, 68, 0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  routeDotDropoffInner: {
+    width: 9,
+    height: 9,
+    borderRadius: 2,
+    backgroundColor: '#EF4444',
+  },
+  routeConnectorLine: {
+    width: 2,
+    backgroundColor: '#334155',
+    marginVertical: 4,
+  },
+  routeStepBlock: {
+    marginBottom: 14,
+  },
+  routeStepLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 5,
+  },
+  routeStepLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.7,
+  },
+  activeFieldBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  activeFieldBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  removeStopPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(239, 68, 68, 0.14)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+  removeStopPillText: {
+    color: '#F87171',
+    fontSize: 10,
+    fontWeight: '700',
   },
   mapboxSearchInputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(30, 41, 59, 0.85)',
     borderRadius: 12,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 10,
+  },
+  mapboxInputIdle: {
+    backgroundColor: '#0F172A',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.16)',
+  },
+  mapboxInputFocusedPickup: {
+    backgroundColor: '#0F172A',
+    borderWidth: 1.5,
+    borderColor: '#EAB308',
+  },
+  mapboxInputFocusedStop: {
+    backgroundColor: '#0F172A',
+    borderWidth: 1.5,
+    borderColor: '#3B82F6',
+  },
+  mapboxInputFocusedDropoff: {
+    backgroundColor: '#0F172A',
+    borderWidth: 1.5,
+    borderColor: '#EF4444',
   },
   mapboxSearchInput: {
     flex: 1,
     color: '#F8FAFC',
     fontSize: 14,
+    fontWeight: '600',
+    paddingVertical: 0,
+  },
+  routeCardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(148, 163, 184, 0.12)',
+  },
+  addStopPillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(59, 130, 246, 0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(96, 165, 250, 0.3)',
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderRadius: 999,
+    gap: 5,
+  },
+  addStopPillText: {
+    color: '#93C5FD',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  confirmRouteMiniBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EAB308',
+    paddingHorizontal: 13,
+    paddingVertical: 7,
+    borderRadius: 999,
+    gap: 5,
+  },
+  confirmRouteMiniBtnText: {
+    color: '#0F172A',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    paddingHorizontal: 2,
   },
   sectionHeaderTitle: {
     color: '#94A3B8',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '800',
-    marginBottom: 8,
+    letterSpacing: 0.7,
     textTransform: 'uppercase',
+  },
+  sectionHeaderHint: {
+    color: '#64748B',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  savedPlacesCard: {
+    backgroundColor: '#131C31',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.14)',
+    paddingHorizontal: 14,
   },
   savedPlaceRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.1)',
     gap: 12,
   },
+  savedPlaceRowDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(148, 163, 184, 0.1)',
+  },
   savedIconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -5296,29 +5622,62 @@ const styles = StyleSheet.create({
   savedPlaceSub: {
     color: '#94A3B8',
     fontSize: 12,
+    marginTop: 1,
+  },
+  resultsListCard: {
+    backgroundColor: '#131C31',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.14)',
+    paddingHorizontal: 14,
+  },
+  listRowDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(148, 163, 184, 0.1)',
   },
   recentItemRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.1)',
+    paddingVertical: 11,
   },
   recentText: {
-    color: '#CBD5E1',
+    color: '#E2E8F0',
     fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
   },
   searchResultItem: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.1)',
+    gap: 12,
+  },
+  resultIconBadgeMuted: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  resultIconBadgeGold: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(234, 179, 8, 0.14)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   searchResultText: {
+    color: '#F8FAFC',
     fontSize: 14,
+    fontWeight: '600',
+  },
+  searchResultSub: {
+    color: '#64748B',
+    fontSize: 11,
     fontWeight: '500',
-    flex: 1,
+    marginTop: 1,
   },
   phoneInputContainer: {
     flexDirection: 'row',
