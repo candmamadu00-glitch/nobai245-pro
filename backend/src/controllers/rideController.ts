@@ -865,12 +865,16 @@ export const getDriverActiveRide = async (req: any, res: any) => {
         id: true,
         status: true,
         cancelledBy: true,
-        cancelReason: true,
+        cancellationReason: true,
         updatedAt: true,
       },
     });
 
-    return res.json({ ride: null, lastRide: lastRide || null });
+    const formattedLastRide = lastRide
+      ? { ...lastRide, cancelReason: lastRide.cancellationReason }
+      : null;
+
+    return res.json({ ride: null, lastRide: formattedLastRide });
   } catch (error: any) {
     console.error('❌ [GET_DRIVER_ACTIVE_RIDE_ERROR]:', error?.message);
     return res.status(500).json({ error: 'Erro ao buscar corrida ativa do motorista.' });
