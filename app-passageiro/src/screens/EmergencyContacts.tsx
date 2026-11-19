@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { 
-  View, Text, StyleSheet, TouchableOpacity, StatusBar, Platform, 
+import {
+  View, Text, StyleSheet, TouchableOpacity, StatusBar, Platform,
   FlatList, TextInput, Alert, ActivityIndicator, Modal,
   KeyboardAvoidingView, Keyboard, ScrollView, Pressable
 } from 'react-native';
@@ -10,11 +10,11 @@ import { useNavigation } from '@react-navigation/native';
 import { useTranslation } from 'react-i18next';
 import { api } from '../services/api';
 
-interface Contact { 
-  id: string; 
-  name: string; 
-  phone: string; 
-  relationship?: string; 
+interface Contact {
+  id: string;
+  name: string;
+  phone: string;
+  relationship?: string;
 }
 
 export function EmergencyContacts() {
@@ -42,14 +42,19 @@ export function EmergencyContacts() {
   const fetchContacts = useCallback(async () => {
     if (isMountedRef.current) setLoading(true);
     try {
-      const response = await api.get('/passengers/emergency-contacts');
+      const response = await api.get('/passengers/emergency-contacts', { timeout: 8000 });
       if (isMountedRef.current) {
-        setContacts(response.data || []);
+        const list = Array.isArray(response.data)
+          ? response.data
+          : Array.isArray(response.data?.contacts)
+            ? response.data.contacts
+            : [];
+        setContacts(list);
       }
     } catch (error: any) {
       if (isMountedRef.current) {
         Alert.alert(
-          t('error_title', 'Erro de Conexão'), 
+          t('error_title', 'Erro de Conexão'),
           t('error_fetch_contacts', 'Verifique sua internet. Não foi possível carregar os contatos.')
         );
       }
@@ -58,8 +63,8 @@ export function EmergencyContacts() {
     }
   }, [t]);
 
-  useEffect(() => { 
-    fetchContacts(); 
+  useEffect(() => {
+    fetchContacts();
   }, [fetchContacts]);
 
   function validateBissauPhone(inputPhone: string) {
@@ -74,28 +79,33 @@ export function EmergencyContacts() {
     if (cleanName.length < 3) {
       return Alert.alert(t('invalid_name_title', 'Nome inválido'), t('invalid_name_msg', 'Informe um nome real.'));
     }
-    
+
     const formattedPhone = validateBissauPhone(phone);
     if (!formattedPhone) {
       return Alert.alert(
-        t('invalid_phone_title', 'Telefone inválido'), 
+        t('invalid_phone_title', 'Telefone inválido'),
         t('invalid_phone_msg', 'Informe um número válido da Guiné-Bissau (ex: 955123456).')
       );
     }
 
     Keyboard.dismiss();
     setIsSaving(true);
-    
+
     try {
-      const payload = { 
-        name: cleanName.substring(0, 50), 
-        phone: formattedPhone, 
-        relationship: relationship.trim().substring(0, 30) || t('family_friend', 'Familiar / Amigo') 
+      const payload = {
+        name: cleanName.substring(0, 50),
+        phone: formattedPhone,
+        relationship: relationship.trim().substring(0, 30) || t('family_friend', 'Familiar / Amigo')
       };
-      
-      const response = await api.post('/passengers/emergency-contacts', payload);
+
+      const response = await api.post('/passengers/emergency-contacts', payload, { timeout: 8000 });
       if (isMountedRef.current) {
-        setContacts((prev) => [response.data, ...prev]);
+        const createdContact = response.data?.contact || response.data;
+        if (createdContact?.id) {
+          setContacts((prev) => [createdContact, ...prev]);
+        } else {
+          fetchContacts();
+        }
         Alert.alert(t('success', 'Sucesso'), t('contact_added', 'Contato de emergência adicionado e sincronizado!'));
         resetForm();
         setIsModalOpen(false);
@@ -103,7 +113,7 @@ export function EmergencyContacts() {
     } catch (error: any) {
       if (isMountedRef.current) {
         Alert.alert(
-          t('error_title', 'Erro'), 
+          t('error_title', 'Erro'),
           error?.response?.data?.error || error?.response?.data?.message || t('contact_add_error', 'Falha ao salvar. Tente novamente.')
         );
       }
@@ -112,30 +122,30 @@ export function EmergencyContacts() {
     }
   }
 
-  function resetForm() { 
-    setName(''); 
-    setPhone(''); 
-    setRelationship(''); 
+  function resetForm() {
+    setName('');
+    setPhone('');
+    setRelationship('');
   }
 
   const handleDeleteContact = useCallback((id: string) => {
     Alert.alert(
-      t('remove_contact_title', 'Remover Contato'), 
-      t('remove_contact_msg', 'Deseja remover este contato?'), 
+      t('remove_contact_title', 'Remover Contato'),
+      t('remove_contact_msg', 'Deseja remover este contato?'),
       [
         { text: t('back_btn', 'Cancelar'), style: 'cancel' },
-        { 
-          text: t('remove_btn', 'Remover'), 
-          style: 'destructive', 
+        {
+          text: t('remove_btn', 'Remover'),
+          style: 'destructive',
           onPress: async () => {
             try {
               await api.delete(`/passengers/emergency-contacts/${id}`);
               if (isMountedRef.current) {
                 setContacts((prev) => prev.filter((c) => c.id !== id));
               }
-            } catch (error) { 
+            } catch (error) {
               if (isMountedRef.current) {
-                Alert.alert(t('error_title', 'Erro'), t('contact_add_error', 'Não foi possível remover.')); 
+                Alert.alert(t('error_title', 'Erro'), t('contact_add_error', 'Não foi possível remover.'));
               }
             }
           }
@@ -151,11 +161,11 @@ export function EmergencyContacts() {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" translucent />
-      
+
       {/* HEADER */}
       <View style={[styles.header, { paddingTop: dynamicTopPadding }]}>
-        <TouchableOpacity 
-          onPress={() => navigation.goBack()} 
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
           style={styles.iconButton}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           activeOpacity={0.7}
@@ -163,8 +173,8 @@ export function EmergencyContacts() {
           <Ionicons name="arrow-back" size={24} color="#0F172A" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{t('emergency_contacts', 'Contatos de Emergência')}</Text>
-        <TouchableOpacity 
-          onPress={() => setIsModalOpen(true)} 
+        <TouchableOpacity
+          onPress={() => setIsModalOpen(true)}
           style={styles.iconButton}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           activeOpacity={0.7}
@@ -215,9 +225,9 @@ export function EmergencyContacts() {
                   </View>
                 )}
               </View>
-              <TouchableOpacity 
-                onPress={() => handleDeleteContact(item.id)} 
-                style={styles.deleteButton} 
+              <TouchableOpacity
+                onPress={() => handleDeleteContact(item.id)}
+                style={styles.deleteButton}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 activeOpacity={0.7}
               >
@@ -228,27 +238,27 @@ export function EmergencyContacts() {
         />
       )}
 
-      <Modal 
-        visible={isModalOpen} 
-        animationType="slide" 
-        transparent 
+      <Modal
+        visible={isModalOpen}
+        animationType="slide"
+        transparent
         onRequestClose={() => { if (!isSaving) { resetForm(); setIsModalOpen(false); } }}
       >
-        <KeyboardAvoidingView 
-          style={styles.modalOverlay} 
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
           <Pressable style={styles.backdrop} onPress={Keyboard.dismiss} />
           <View style={styles.modalContent}>
-            <ScrollView 
-              showsVerticalScrollIndicator={false} 
-              keyboardShouldPersistTaps="handled" 
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
               contentContainerStyle={{ paddingBottom: dynamicBottomPadding + 10 }}
             >
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>{t('new_emergency_contact', 'Novo Contato')}</Text>
-                <TouchableOpacity 
-                  onPress={() => { resetForm(); setIsModalOpen(false); }} 
+                <TouchableOpacity
+                  onPress={() => { resetForm(); setIsModalOpen(false); }}
                   disabled={isSaving}
                   hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 >
@@ -257,40 +267,40 @@ export function EmergencyContacts() {
               </View>
 
               <Text style={styles.inputLabel}>{t('full_name', 'Nome Completo')}</Text>
-              <TextInput 
-                style={styles.input} 
-                placeholder="Ex: Bacar Camará" 
+              <TextInput
+                style={styles.input}
+                placeholder="Ex: Bacar Camará"
                 placeholderTextColor="#94A3B8"
-                value={name} 
-                onChangeText={setName} 
-                editable={!isSaving} 
+                value={name}
+                onChangeText={setName}
+                editable={!isSaving}
               />
-              
+
               <Text style={styles.inputLabel}>{t('phone_whatsapp', 'Telefone (Guiné-Bissau)')}</Text>
-              <TextInput 
-                style={styles.input} 
-                placeholder="Ex: 955123456" 
+              <TextInput
+                style={styles.input}
+                placeholder="Ex: 955123456"
                 placeholderTextColor="#94A3B8"
-                keyboardType="phone-pad" 
-                value={phone} 
-                onChangeText={setPhone} 
-                editable={!isSaving} 
+                keyboardType="phone-pad"
+                value={phone}
+                onChangeText={setPhone}
+                editable={!isSaving}
               />
-              
+
               <Text style={styles.inputLabel}>{t('relationship_optional', 'Parentesco (Opcional)')}</Text>
-              <TextInput 
-                style={styles.input} 
-                placeholder="Ex: Irmão, Mãe" 
+              <TextInput
+                style={styles.input}
+                placeholder="Ex: Irmão, Mãe"
                 placeholderTextColor="#94A3B8"
-                value={relationship} 
-                onChangeText={setRelationship} 
-                editable={!isSaving} 
+                value={relationship}
+                onChangeText={setRelationship}
+                editable={!isSaving}
               />
-              
-              <TouchableOpacity 
-                style={[styles.stunningButton, isSaving && styles.stunningButtonDisabled, { marginTop: 20 }]} 
-                onPress={handleAddContact} 
-                disabled={isSaving} 
+
+              <TouchableOpacity
+                style={[styles.stunningButton, isSaving && styles.stunningButtonDisabled, { marginTop: 20 }]}
+                onPress={handleAddContact}
+                disabled={isSaving}
                 activeOpacity={0.85}
               >
                 {isSaving ? <ActivityIndicator color="#0F172A" /> : <Text style={styles.stunningButtonText}>{t('save_contact', 'Salvar Contato')}</Text>}
@@ -305,12 +315,12 @@ export function EmergencyContacts() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC' },
-  header: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    justifyContent: 'space-between', 
-    paddingHorizontal: 20, 
-    paddingBottom: 14, 
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingBottom: 14,
     backgroundColor: '#F8FAFC',
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0'
@@ -338,12 +348,12 @@ const styles = StyleSheet.create({
   deleteButton: { padding: 8, backgroundColor: '#FEF2F2', borderRadius: 10 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.6)', justifyContent: 'flex-end' },
   backdrop: { ...StyleSheet.absoluteFill },
-  modalContent: { 
-    backgroundColor: '#FFF', 
-    borderTopLeftRadius: 28, 
-    borderTopRightRadius: 28, 
-    paddingHorizontal: 24, 
-    paddingTop: 24, 
+  modalContent: {
+    backgroundColor: '#FFF',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 24,
+    paddingTop: 24,
     maxHeight: '90%',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -4 },

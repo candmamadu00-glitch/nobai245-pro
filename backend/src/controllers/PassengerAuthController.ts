@@ -743,6 +743,63 @@ if (uploadedFile) {
     }
   }
 
+  // 12B. CLUBE BAI 245 - PONTOS E RECOMPENSAS DO PASSAGEIRO
+  async getRewards(req: Request, res: Response): Promise<Response> {
+    try {
+      const passengerId = (req as any).user?.id;
+      if (!passengerId) return res.status(401).json({ success: false, error: 'Não autorizado.' });
+
+      const completedRides = await prisma.ride.count({
+        where: { passengerId, status: 'COMPLETED' as any },
+      });
+
+      const points = completedRides * 50;
+      let tierName = 'Bronze';
+      let nextTierPoints = 500;
+      const benefits: Array<{ id: string; title: string; icon: string }> = [
+        { id: 'b1', title: 'Suporte prioritário 24h em Bissau', icon: 'headset' },
+      ];
+
+      if (points >= 2500) {
+        tierName = 'Diamante';
+        nextTierPoints = 2500;
+        benefits.push(
+          { id: 'b2', title: 'Prioridade máxima no despacho de motoristas', icon: 'flash' },
+          { id: 'b3', title: 'Acesso antecipado a cupons exclusivos', icon: 'pricetag' }
+        );
+      } else if (points >= 1200) {
+        tierName = 'Ouro';
+        nextTierPoints = 2500;
+        benefits.push(
+          { id: 'b2', title: 'Prioridade no atendimento de corridas', icon: 'star' },
+          { id: 'b3', title: 'Cupons promocionais semanais', icon: 'pricetag' }
+        );
+      } else if (points >= 500) {
+        tierName = 'Prata';
+        nextTierPoints = 1200;
+        benefits.push({ id: 'b2', title: 'Cupons promocionais ativos no app', icon: 'pricetag' });
+      }
+
+      return res.status(200).json({
+        success: true,
+        points,
+        nextTierPoints,
+        tierName,
+        completedRides,
+        benefits,
+      });
+    } catch (error: any) {
+      console.error('❌ [REWARDS]:', error?.message || error);
+      return res.status(200).json({
+        success: true,
+        points: 0,
+        nextTierPoints: 500,
+        tierName: 'Bronze',
+        benefits: [],
+      });
+    }
+  }
+
   // 13. CONTATOS DE EMERGÊNCIA - BUSCAR
   async getEmergencyContacts(req: Request, res: Response): Promise<Response> {
     try {

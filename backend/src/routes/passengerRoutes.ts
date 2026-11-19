@@ -66,6 +66,7 @@ passengerRoutes.put('/payment-method', validate(updatePassengerPaymentSchema), (
 passengerRoutes.put('/device-token', validate(updateDeviceTokenSchema), (req, res) => authController.updateDeviceToken(req, res));
 passengerRoutes.post('/estimate', validate(estimateRideSchema), (req, res) => estimateRidePrice(req, res));
 passengerRoutes.post('/coupons/validate', (req, res) => mobileSyncController.validateCoupon(req, res));
+passengerRoutes.get('/rewards', (req, res) => authController.getRewards(req, res));
 passengerRoutes.get('/promotions', (req, res) => mobileSyncController.getActivePromotions(req, res));
 passengerRoutes.get('/corporate-status', (req, res) => mobileSyncController.getCorporateStatus(req, res));
 passengerRoutes.post('/rides/rate', (req, res) => rateRide(req, res));

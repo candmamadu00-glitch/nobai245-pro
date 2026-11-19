@@ -1,13 +1,13 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  ScrollView, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
   ActivityIndicator,
   RefreshControl,
-  Alert 
+  Alert
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -54,8 +54,8 @@ export function Rewards() {
   const fetchRewards = useCallback(async () => {
     try {
       const [response, promoRes] = await Promise.all([
-        api.get('/passengers/rewards'),
-        api.get('/passengers/promotions').catch(() => ({ data: { coupons: [] } }))
+        api.get('/passengers/rewards', { timeout: 8000 }).catch(() => ({ data: null })),
+        api.get('/passengers/promotions', { timeout: 8000 }).catch(() => ({ data: { coupons: [] } }))
       ]);
       if (promoRes?.data?.coupons && isMountedRef.current) {
         setActiveCoupons(promoRes.data.coupons);
@@ -71,7 +71,7 @@ export function Rewards() {
     } catch (error: any) {
       if (!isMountedRef.current) return;
       Alert.alert(
-        t('error_title', 'Erro'), 
+        t('error_title', 'Erro'),
         t('error_fetch_rewards', 'Não foi possível carregar suas recompensas atualizadas.')
       );
     } finally {
@@ -91,8 +91,8 @@ export function Rewards() {
     fetchRewards();
   };
 
-  const progressPercentage = rewards.nextTierPoints > 0 
-    ? Math.min((rewards.points / rewards.nextTierPoints) * 100, 100) 
+  const progressPercentage = rewards.nextTierPoints > 0
+    ? Math.min((rewards.points / rewards.nextTierPoints) * 100, 100)
     : 100;
 
   const pointsRemaining = Math.max(rewards.nextTierPoints - rewards.points, 0);
@@ -112,7 +112,7 @@ export function Rewards() {
           <ActivityIndicator size="large" color="#FDE047" />
         </View>
       ) : (
-        <ScrollView 
+        <ScrollView
           style={styles.content}
           showsVerticalScrollIndicator={false}
           refreshControl={
@@ -123,14 +123,14 @@ export function Rewards() {
             <Ionicons name="trophy" size={40} color="#854D0E" />
             <Text style={styles.nivelText}>{t('level_label', 'Nível')} {rewards.tierName}</Text>
             <Text style={styles.pontosText}>{rewards.points} {t('points_label', 'Pontos')}</Text>
-            
+
             <View style={styles.progressContainer}>
               <View style={styles.trackBar}>
                 <View style={[styles.fillBar, { width: `${progressPercentage}%` }]} />
               </View>
 
               <Text style={styles.progressText}>
-                {pointsRemaining > 0 
+                {pointsRemaining > 0
                   ? t('points_remaining_msg', 'Faltam {{points}} pts para o próximo nível', { points: pointsRemaining })
                   : t('max_level_reached', 'Você atingiu o nível máximo!')}
               </Text>
@@ -164,7 +164,7 @@ export function Rewards() {
           )}
 
           <Text style={styles.sectionTitle}>{t('unlocked_benefits', 'Benefícios Desbloqueados')}</Text>
-          
+
           {rewards.benefits.length === 0 ? (
             <View style={styles.emptyCard}>
               <Text style={styles.emptyText}>
