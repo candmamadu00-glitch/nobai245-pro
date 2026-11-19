@@ -4558,84 +4558,108 @@ const handleOpenChat = () => {
         visible={isGuestModalVisible}
         animationType="slide"
         transparent
-        onRequestClose={() => setIsGuestModalVisible(false)}
+        statusBarTranslucent
+        onRequestClose={() => {
+          Keyboard.dismiss();
+          setIsGuestModalVisible(false);
+        }}
       >
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.modalOverlay}
         >
-          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-            <View style={styles.modalOverlayInner}>
-              <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
-                <View style={[styles.modalContainer, { paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                    <Text style={styles.modalTitle}>{t('ride_for_another_person', 'Viagem para Outra Pessoa')}</Text>
-                    <TouchableOpacity onPress={() => setIsGuestModalVisible(false)}>
-                      <Ionicons name="close-circle" size={24} color="#94A3B8" />
-                    </TouchableOpacity>
-                  </View>
+          <ScrollView
+            contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end' }}
+            keyboardShouldPersistTaps="handled"
+            bounces={false}
+            showsVerticalScrollIndicator={false}
+          >
+            <TouchableOpacity
+              style={{ flex: 1, minHeight: 80 }}
+              activeOpacity={1}
+              onPress={() => {
+                Keyboard.dismiss();
+                setIsGuestModalVisible(false);
+              }}
+            />
+            <View style={[styles.modalContainer, { paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <Text style={styles.modalTitle}>{t('ride_for_another_person', 'Viagem para Outra Pessoa')}</Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setIsGuestModalVisible(false);
+                  }}
+                >
+                  <Ionicons name="close-circle" size={24} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
 
-                  <Text style={{ color: '#94A3B8', fontSize: 13, marginBottom: 16 }}>
-                    O motorista receberá o nome e o número de telefone do passageiro para facilitá-lo no momento do embarque.
-                  </Text>
+              <Text style={{ color: '#94A3B8', fontSize: 13, marginBottom: 16 }}>
+                O motorista receberá o nome e o número de telefone do passageiro para facilitá-lo no momento do embarque.
+              </Text>
 
-                  <Text style={styles.inputLabel}>Nome do Passageiro</Text>
-                  <View style={[styles.phoneInputContainer, { marginBottom: 12 }]}>
-                    <Ionicons name="person-outline" size={18} color="#94A3B8" style={{ marginLeft: 12 }} />
-                    <TextInput
-                      style={styles.phoneInput}
-                      placeholder="Ex: Mamadou Djalo"
-                      placeholderTextColor="#64748B"
-                      value={guestName}
-                      onChangeText={setGuestName}
-                    />
-                  </View>
+              <Text style={styles.inputLabel}>Nome do Passageiro</Text>
+              <View style={[styles.phoneInputContainer, { marginBottom: 12 }]}>
+                <Ionicons name="person-outline" size={18} color="#94A3B8" style={{ marginLeft: 12 }} />
+                <TextInput
+                  style={styles.phoneInput}
+                  placeholder="Ex: Mamadou Djalo"
+                  placeholderTextColor="#64748B"
+                  returnKeyType="next"
+                  autoCapitalize="words"
+                  value={guestName}
+                  onChangeText={setGuestName}
+                />
+              </View>
 
-                  <Text style={styles.inputLabel}>Telefone do Passageiro (Guiné-Bissau)</Text>
-                  <View style={[styles.phoneInputContainer, { marginBottom: 20 }]}>
-                    <Ionicons name="call-outline" size={18} color="#94A3B8" style={{ marginLeft: 12 }} />
-                    <TextInput
-                      style={styles.phoneInput}
-                      placeholder="Ex: 955000000"
-                      placeholderTextColor="#64748B"
-                      keyboardType="phone-pad"
-                      value={guestPhone}
-                      onChangeText={(tVal) => setGuestPhone(tVal.replace(/[^0-9]/g, ''))}
-                      maxLength={12}
-                    />
-                  </View>
+              <Text style={styles.inputLabel}>Telefone do Passageiro (Guiné-Bissau)</Text>
+              <View style={[styles.phoneInputContainer, { marginBottom: 20 }]}>
+                <Ionicons name="call-outline" size={18} color="#94A3B8" style={{ marginLeft: 12 }} />
+                <TextInput
+                  style={styles.phoneInput}
+                  placeholder="Ex: 955000000"
+                  placeholderTextColor="#64748B"
+                  keyboardType="phone-pad"
+                  returnKeyType="done"
+                  onSubmitEditing={() => Keyboard.dismiss()}
+                  value={guestPhone}
+                  onChangeText={(tVal) => setGuestPhone(tVal.replace(/[^0-9]/g, ''))}
+                  maxLength={12}
+                />
+              </View>
 
-                  <View style={{ flexDirection: 'row', gap: 10 }}>
-                    <TouchableOpacity
-                      style={[styles.cancelButtonOutline, { flex: 1 }]}
-                      onPress={() => {
-                        setIsForAnotherPerson(false);
-                        setGuestName('');
-                        setGuestPhone('');
-                        setIsGuestModalVisible(false);
-                      }}
-                    >
-                      <Text style={styles.cancelButtonOutlineText}>Remover</Text>
-                    </TouchableOpacity>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <TouchableOpacity
+                  style={[styles.cancelButtonOutline, { flex: 1 }]}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setIsForAnotherPerson(false);
+                    setGuestName('');
+                    setGuestPhone('');
+                    setIsGuestModalVisible(false);
+                  }}
+                >
+                  <Text style={styles.cancelButtonOutlineText}>Remover</Text>
+                </TouchableOpacity>
 
-                    <TouchableOpacity
-                      style={[styles.requestButton, { flex: 1 }]}
-                      onPress={() => {
-                        if (guestName.trim() && guestPhone.trim()) {
-                          setIsForAnotherPerson(true);
-                          setIsGuestModalVisible(false);
-                        } else {
-                          Alert.alert('Preencha os dados', 'Informe o nome e número do passageiro.');
-                        }
-                      }}
-                    >
-                      <Text style={styles.requestButtonText}>Salvar</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </TouchableWithoutFeedback>
+                <TouchableOpacity
+                  style={[styles.requestButton, { flex: 1 }]}
+                  onPress={() => {
+                    if (guestName.trim() && guestPhone.trim()) {
+                      Keyboard.dismiss();
+                      setIsForAnotherPerson(true);
+                      setIsGuestModalVisible(false);
+                    } else {
+                      Alert.alert('Preencha os dados', 'Informe o nome e número do passageiro.');
+                    }
+                  }}
+                >
+                  <Text style={styles.requestButtonText}>Salvar</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          </TouchableWithoutFeedback>
+          </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
 
