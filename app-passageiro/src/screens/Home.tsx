@@ -215,6 +215,18 @@ const getHaversineDistance = (p1: any, p2: any) => {
   return isNaN(dist) ? 0 : dist;
 };
 
+const calculateGeoBearing = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+  const phi1 = (lat1 * Math.PI) / 180;
+  const phi2 = (lat2 * Math.PI) / 180;
+  const dLambda = ((lng2 - lng1) * Math.PI) / 180;
+  const y = Math.sin(dLambda) * Math.cos(phi2);
+  const x =
+    Math.cos(phi1) * Math.sin(phi2) -
+    Math.sin(phi1) * Math.cos(phi2) * Math.cos(dLambda);
+  const theta = Math.atan2(y, x);
+  return ((theta * 180) / Math.PI + 360) % 360;
+};
+
 const findNearestLocalBairro = (lat: number, lng: number) => {
   let minDistance = Infinity;
   let nearest: MapboxGeocodingFeature | null = null;
@@ -891,8 +903,22 @@ const handleFullCancelAndReset = useCallback(() => {
 
     lastDriverFixRef.current = { lat: nextLat, lng: nextLng, time: now };
 
-    if (typeof driverLocation?.heading === 'number' && !isNaN(driverLocation.heading)) {
-      const targetHeading = (driverLocation.heading + 360) % 360;
+    let resolvedHeading: number | null =
+      typeof driverLocation?.heading === 'number' &&
+      !isNaN(driverLocation.heading) &&
+      driverLocation.heading > 0
+        ? (driverLocation.heading + 360) % 360
+        : null;
+
+    if (jumpMeters > 2.5) {
+      const movementBearing = calculateGeoBearing(prevFix.lat, prevFix.lng, nextLat, nextLng);
+      if (resolvedHeading === null) {
+        resolvedHeading = movementBearing;
+      }
+    }
+
+    if (resolvedHeading !== null) {
+      const targetHeading = resolvedHeading;
       setSmoothDriverHeading((prevH) => {
         const shortestDelta = ((targetHeading - prevH + 540) % 360) - 180;
         return Math.round((prevH + shortestDelta * 0.65 + 360) % 360);
@@ -2172,6 +2198,27 @@ const handleOpenChat = () => {
           heading: typeof data.heading === 'number' ? data.heading : 0,
         });
       }
+
+      const liveMinutes = Number(data.durationMinutes ?? data.durationMin ?? 0);
+      if (Number.isFinite(liveMinutes) && liveMinutes > 0) {
+        setDriverEta(Math.max(1, Math.round(liveMinutes)));
+      }
+
+      const liveKm = Number(data.distanceKm ?? 0);
+      if (Number.isFinite(liveKm) && liveKm > 0) {
+        setEstimatedDistance(Number(liveKm.toFixed(2)));
+      }
+
+      if (Array.isArray(data.routeCoordinates) && data.routeCoordinates.length >= 2) {
+        setRouteGeometry({
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'LineString',
+            coordinates: data.routeCoordinates,
+          },
+        });
+      }
     };
 
     // 🟢 OUVINTES DE SOCKET (COM SUPORTE MULTI-EVENTO PARA CHAT)
@@ -2913,7 +2960,7 @@ const handleOpenChat = () => {
               anchor={{ x: 0.5, y: 0.5 }}
             >
               <View style={styles.driverMarkerWrapper}>
-                <View style={{ transform: [{ rotate: `${driver.heading || 0}deg` }] }}>
+                <View style={{ transform: [{ rotate: `${Math.round(((Number(driver.heading) || 0) + 180) % 360)}deg` }] }}>
                   <Image
                     source={getVehicle3DIconAsset(driver.vehicleType, driver.carColor || (driver as any).vehicleColor)}
                     style={styles.driverMarkerImage}
@@ -2968,7 +3015,7 @@ const handleOpenChat = () => {
             key="driverMarker"
             id="driverMarker"
             coordinate={interpolatedCoords}
-            anchor={{ x: 0.5, y: 0.8 }}
+            anchor={{ x: 0.5, y: 0.5 }}
           >
             <View style={{ alignItems: 'center', justifyContent: 'center' }}>
               {driverEta !== null && driverEta > 0 && ['accepted', 'arrived', 'in_progress'].includes(rideStatus) && (
@@ -2977,7 +3024,7 @@ const handleOpenChat = () => {
                   <Text style={styles.driverEtaText}>{driverEta} min</Text>
                 </View>
               )}
-              <View style={{ transform: [{ rotate: `${smoothDriverHeading}deg` }] }}>
+              <View style={{ transform: [{ rotate: `${Math.round((smoothDriverHeading + 180) % 360)}deg` }] }}>
                 <Image
                   source={getVehicle3DIconAsset(
                     driverInfo?.vehicleType || vehicleType,

@@ -39,6 +39,53 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) =>
       await refreshCache();
       if (!cachedDriverId) return;
 
+      let bgDurationMinutes: number | undefined = undefined;
+      let bgDistanceKm: number | undefined = undefined;
+      let bgPhase: string | undefined = undefined;
+      try {
+        const rawMetrics = await AsyncStorage.getItem('@nobai245:activeRouteMetrics');
+        if (rawMetrics) {
+          const m = JSON.parse(rawMetrics);
+          if (m && m.rideId === cachedRideId) {
+            if (typeof m.durationMinutes === 'number' && m.durationMinutes > 0) {
+              bgDurationMinutes = m.durationMinutes;
+            }
+            if (typeof m.distanceKm === 'number' && m.distanceKm >= 0) {
+              bgDistanceKm = m.distanceKm;
+            }
+            if (typeof m.phase === 'string') {
+              bgPhase = m.phase;
+            }
+            // Se o motorista se moveu enquanto usa Google Maps/Waze em primeiro plano, ajusta proporcionalmente
+            if (
+              typeof m.targetLat === 'number' &&
+              typeof m.targetLng === 'number' &&
+              m.targetLat !== 0 &&
+              m.targetLng !== 0
+            ) {
+              const R = 6371;
+              const dLat = ((m.targetLat - location.coords.latitude) * Math.PI) / 180;
+              const dLng = ((m.targetLng - location.coords.longitude) * Math.PI) / 180;
+              const a =
+                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos((location.coords.latitude * Math.PI) / 180) *
+                  Math.cos((m.targetLat * Math.PI) / 180) *
+                  Math.sin(dLng / 2) *
+                  Math.sin(dLng / 2);
+              const straightKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 1.25;
+              if (Number.isFinite(straightKm) && straightKm > 0) {
+                bgDistanceKm = Number(straightKm.toFixed(2));
+                const speedKmh =
+                  location.coords.speed && location.coords.speed > 2
+                    ? Math.max(18, Math.min(70, location.coords.speed * 3.6))
+                    : 28;
+                bgDurationMinutes = Math.max(1, Math.ceil((straightKm / speedKmh) * 60));
+              }
+            }
+          }
+        }
+      } catch (_) {}
+
       const payload = {
         driverId: cachedDriverId,
         rideId: cachedRideId,
@@ -46,6 +93,9 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) =>
         longitude: location.coords.longitude,
         speed: location.coords.speed || 0,
         heading: location.coords.heading || 0,
+        durationMinutes: bgDurationMinutes,
+        distanceKm: bgDistanceKm,
+        phase: bgPhase,
       };
 
       const sendFallbackHttp = async () => {

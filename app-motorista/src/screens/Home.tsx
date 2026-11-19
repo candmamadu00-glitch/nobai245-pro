@@ -335,6 +335,42 @@ function trimRouteFromPosition(
   return [[carLng, carLat], ...remaining];
 }
 
+function computeRemainingRouteMetrics(
+  routeCoords: number[][] | null,
+  carLng: number,
+  carLat: number,
+  totalDurationSec?: number | null,
+  totalDistanceMeters?: number | null
+): { remainingKm: number; remainingMin: number } | null {
+  if (!routeCoords || routeCoords.length < 2) return null;
+  if (!Number.isFinite(carLng) || !Number.isFinite(carLat)) return null;
+
+  const trimmed = trimRouteFromPosition(routeCoords, carLng, carLat);
+  const coords = trimmed && trimmed.length >= 2 ? trimmed : routeCoords;
+
+  let remMeters = 0;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const [lng1, lat1] = coords[i];
+    const [lng2, lat2] = coords[i + 1];
+    remMeters += calculateDirectDistance(lat1, lng1, lat2, lng2) * 1000;
+  }
+
+  const remainingKm = Number(Math.max(0.1, remMeters / 1000).toFixed(2));
+  let remainingMin = Math.max(1, Math.ceil((remainingKm / 28) * 60));
+
+  if (
+    totalDistanceMeters &&
+    totalDistanceMeters > 20 &&
+    totalDurationSec &&
+    totalDurationSec > 0
+  ) {
+    const ratio = Math.min(1, Math.max(0.03, remMeters / totalDistanceMeters));
+    remainingMin = Math.max(1, Math.ceil((totalDurationSec * ratio) / 60));
+  }
+
+  return { remainingKm, remainingMin };
+}
+
 
 
 const formatCurrency = (val?: number | string | null): string => {
@@ -388,7 +424,13 @@ export function Home() {
   const [activeRideId, setActiveRideId] = useState<string | null>(null);
   const [completedInfo, setCompletedInfo] = useState<CompletedRideInfo | null>(null);
   const [driverEta, setDriverEta] = useState<number | null>(null);
+  const [remainingDistanceKm, setRemainingDistanceKm] = useState<number | null>(null);
   const [routeCoordinates, setRouteCoordinates] = useState<number[][] | null>(null);
+  const driverEtaRef = useRef<number | null>(null);
+  const remainingDistanceKmRef = useRef<number | null>(null);
+  const routeTotalDurationSecRef = useRef<number | null>(null);
+  const routeTotalDistanceMetersRef = useRef<number | null>(null);
+  const lastRoutePolylineBroadcastAtRef = useRef<number>(0);
 
   const [isChatVisible, setIsChatVisible] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -569,6 +611,11 @@ export function Home() {
     setCompletedInfo(null);
     setFinishedRideSummary(null);
     setDriverEta(null);
+    setRemainingDistanceKm(null);
+    driverEtaRef.current = null;
+    remainingDistanceKmRef.current = null;
+    routeTotalDurationSecRef.current = null;
+    routeTotalDistanceMetersRef.current = null;
     setRouteCoordinates(null);
     setIsChatVisible(false);
     setShowCancelModal(false);
@@ -1219,13 +1266,39 @@ export function Home() {
 
       if (data.routes && data.routes.length > 0 && isMountedRef.current) {
         const route = data.routes[0];
-        setRouteCoordinates(route.geometry.coordinates);
+        const coordsList = route.geometry.coordinates;
+        setRouteCoordinates(coordsList);
+        routeCoordinatesRef.current = coordsList;
 
         const eta = Math.max(1, Math.ceil(route.duration / 60));
+        const km = Number(Math.max(0.1, (route.distance || 0) / 1000).toFixed(2));
+
+        routeTotalDurationSecRef.current = Number(route.duration || 0);
+        routeTotalDistanceMetersRef.current = Number(route.distance || 0);
+        driverEtaRef.current = eta;
+        remainingDistanceKmRef.current = km;
+
         setDriverEta(eta);
+        setRemainingDistanceKm(km);
+
         if (route.distance && !activeRideIdRef.current && incomingRideRef.current && !incomingRideRef.current.distanceKm) {
-          const km = Number((route.distance / 1000).toFixed(2));
-          setIncomingRide((prev: any) => prev ? { ...prev, distanceKm: km } : prev);
+          setIncomingRide((prev: any) => prev ? { ...prev, distanceKm: km, durationMin: eta } : prev);
+        }
+
+        const currentRideId = activeRideIdRef.current || activeRideId || incomingRide?.rideId;
+        if (currentRideId) {
+          AsyncStorage.setItem(
+            '@nobai245:activeRouteMetrics',
+            JSON.stringify({
+              rideId: currentRideId,
+              durationMinutes: eta,
+              distanceKm: km,
+              phase: rideStateRef.current,
+              targetLat: endLat,
+              targetLng: endLng,
+              updatedAt: Date.now(),
+            })
+          ).catch(() => {});
         }
 
         if (route.legs && route.legs.length > 0) {
@@ -1234,20 +1307,21 @@ export function Home() {
           setCurrentStepIndex(0);
         }
 
-        if ((activeRideId || incomingRide?.rideId) && driver?.id && location?.coords && socket?.connected) {
-          const nowRouteEmit = Date.now();
-          if (nowRouteEmit - lastSocketLocationEmitAt >= 3000) {
-            lastSocketLocationEmitAt = nowRouteEmit;
-            socket.emit('driver:location_update', {
-              rideId: activeRideId || incomingRide?.rideId,
-              driverId: driver.id,
-              latitude: location.coords.latitude,
-              longitude: location.coords.longitude,
-              speed: location.coords.speed || 0,
-              heading: location.coords.heading || 0,
-              durationMinutes: eta
-            });
-          }
+        if (currentRideId && driver?.id && location?.coords && socket?.connected) {
+          lastSocketLocationEmitAt = Date.now();
+          lastRoutePolylineBroadcastAtRef.current = Date.now();
+          socket.emit('driver:location_update', {
+            rideId: currentRideId,
+            driverId: driver.id,
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+            speed: location.coords.speed || 0,
+            heading: lastDriverCoordsRef.current?.heading ?? location.coords.heading ?? 0,
+            durationMinutes: eta,
+            distanceKm: km,
+            phase: rideStateRef.current,
+            routeCoordinates: coordsList,
+          });
         }
       }
     } catch (err) {
@@ -1367,7 +1441,7 @@ export function Home() {
       isOffRoute = !check.isOnRoute;
     }
 
-    const canRefetchOffRoute = isOffRoute && (now - prevFetch.time > 12000);
+    const canRefetchOffRoute = isOffRoute && (now - prevFetch.time > 5000);
 
     if (!stateOrRideChanged && !canRefetchOffRoute && currentRoute && currentRoute.length > 0) {
       persistActiveRideState(incomingRide, rideState, activeRideId);
@@ -1422,6 +1496,31 @@ export function Home() {
     incomingRide,
     fitMapBounds,
   ]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'active' && activeRideIdRef.current && incomingRideRef.current) {
+        lastRouteFetchRef.current = {
+          time: 0,
+          state: '',
+          rideId: null,
+          stopIdx: -1,
+        };
+        const curLoc = location?.coords;
+        const rState = rideStateRef.current;
+        const rideData = incomingRideRef.current;
+        if (curLoc && rideData) {
+          const isTrip = rState === 'in_progress';
+          const tLat = Number(isTrip ? rideData.destinationLat : rideData.pickupLat);
+          const tLng = Number(isTrip ? rideData.destinationLng : rideData.pickupLng);
+          if (!isNaN(tLat) && !isNaN(tLng) && tLat !== 0 && tLng !== 0) {
+            fetchMapboxRoute(curLoc.longitude, curLoc.latitude, tLng, tLat);
+          }
+        }
+      }
+    });
+    return () => sub.remove();
+  }, [location?.coords?.latitude, location?.coords?.longitude]);
 
   const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean; rideId?: string }) => {
     if (!isMountedRef.current) return;
@@ -1849,10 +1948,38 @@ export function Home() {
           }
           updateCameraThrottled(smoothLng, smoothLat);
 
+          let liveDurationMin = driverEtaRef.current;
+          let liveDistanceKm = remainingDistanceKmRef.current;
+          if (activeRideIdRef.current && routeCoordinatesRef.current && routeCoordinatesRef.current.length >= 2) {
+            const liveMetrics = computeRemainingRouteMetrics(
+              routeCoordinatesRef.current,
+              smoothLng,
+              smoothLat,
+              routeTotalDurationSecRef.current,
+              routeTotalDistanceMetersRef.current
+            );
+            if (liveMetrics) {
+              liveDurationMin = liveMetrics.remainingMin;
+              liveDistanceKm = liveMetrics.remainingKm;
+              driverEtaRef.current = liveMetrics.remainingMin;
+              remainingDistanceKmRef.current = liveMetrics.remainingKm;
+              setDriverEta((prev) => (prev !== liveMetrics.remainingMin ? liveMetrics.remainingMin : prev));
+              setRemainingDistanceKm((prev) => (prev !== liveMetrics.remainingKm ? liveMetrics.remainingKm : prev));
+            }
+          }
+
           if (driver?.id && socket?.connected) {
             const nowGps = Date.now();
             if (nowGps - lastSocketLocationEmitAt >= 3000) {
               lastSocketLocationEmitAt = nowGps;
+              const shouldIncludePolyline =
+                Boolean(activeRideIdRef.current) &&
+                Array.isArray(routeCoordinatesRef.current) &&
+                routeCoordinatesRef.current.length >= 2 &&
+                nowGps - lastRoutePolylineBroadcastAtRef.current >= 12000;
+              if (shouldIncludePolyline) {
+                lastRoutePolylineBroadcastAtRef.current = nowGps;
+              }
               socket.emit('driver:location_update', {
                 driverId: driver.id,
                 rideId: activeRideIdRef.current || undefined,
@@ -1860,6 +1987,10 @@ export function Home() {
                 longitude: smoothLng,
                 speed: Math.max(0, newLocation.coords.speed || 0),
                 heading: smoothHeading,
+                durationMinutes: liveDurationMin ?? undefined,
+                distanceKm: liveDistanceKm ?? undefined,
+                phase: rideStateRef.current,
+                ...(shouldIncludePolyline ? { routeCoordinates: routeCoordinatesRef.current } : {}),
               });
             }
           }
@@ -2655,19 +2786,11 @@ export function Home() {
                     {((rideState === 'in_progress' && incomingRide?.destinationLat) || (rideState !== 'in_progress' && incomingRide?.pickupLat)) ? (
                       <TouchableOpacity
                         activeOpacity={0.8}
-                        onPress={() => {
-                          const isTrip = rideState === 'in_progress';
-                          const lat = Number(isTrip ? incomingRide?.destinationLat : incomingRide?.pickupLat);
-                          const lng = Number(isTrip ? incomingRide?.destinationLng : incomingRide?.pickupLng);
-                          const label = isTrip ? incomingRide?.destinationAddress : incomingRide?.originAddress;
-                          if (!isNaN(lat) && !isNaN(lng)) {
-                            openExternalNavigation({ latitude: lat, longitude: lng, label });
-                          }
-                        }}
+                        onPress={() => setShowNavSheet(true)}
                         style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#EAB308', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12, gap: 4, marginLeft: 8 }}
                       >
                         <Ionicons name="navigate" size={13} color="#0F172A" />
-                        <Text style={{ color: '#0F172A', fontSize: 11, fontWeight: '800' }}>Rota Externa</Text>
+                        <Text style={{ color: '#0F172A', fontSize: 11, fontWeight: '800' }}>Google Maps / Waze</Text>
                       </TouchableOpacity>
                     ) : null}
                   </View>
@@ -2675,8 +2798,10 @@ export function Home() {
                   {incomingRide?.pickupLat && incomingRide?.destinationLat ? (
                     <View style={styles.distanceBadge}>
                       <Text style={styles.distanceBadgeText}>
-                        📏 Distância: {(
-                          Number(incomingRide.distanceKm) > 0
+                        📏 {(
+                          remainingDistanceKm != null && remainingDistanceKm > 0
+                            ? remainingDistanceKm
+                            : Number(incomingRide.distanceKm) > 0
                             ? Number(incomingRide.distanceKm)
                             : calculateDirectDistance(
                                 incomingRide.pickupLat,
@@ -2684,7 +2809,7 @@ export function Home() {
                                 incomingRide.destinationLat,
                                 incomingRide.destinationLng ?? 0
                               )
-                        ).toFixed(1)} km
+                        ).toFixed(1)} km {driverEta ? `• ~${driverEta} min` : ''}
                       </Text>
                     </View>
                   ) : null}
@@ -3037,6 +3162,23 @@ export function Home() {
         destination={navDestination}
         isIntermediateStop={isNavigatingToStop}
         onConfirmStop={() => setCurrentStopIndex(prev => prev + 1)}
+        onSelectExternalApp={() => {
+          const rId = activeRideIdRef.current || activeRideId;
+          if (rId && navDestination) {
+            AsyncStorage.setItem(
+              '@nobai245:activeRouteMetrics',
+              JSON.stringify({
+                rideId: rId,
+                durationMinutes: driverEtaRef.current ?? driverEta ?? undefined,
+                distanceKm: remainingDistanceKmRef.current ?? remainingDistanceKm ?? undefined,
+                phase: rideStateRef.current,
+                targetLat: navDestination.latitude,
+                targetLng: navDestination.longitude,
+                updatedAt: Date.now(),
+              })
+            ).catch(() => {});
+          }
+        }}
       />
 
       {/* 🔔 MODAL DE OFERTA DE CORRIDA */}

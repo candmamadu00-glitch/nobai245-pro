@@ -1713,14 +1713,44 @@ io.on('connection', (socket: any) => {
     if (isSocketRateLimited(socket, 'driver:location_update', 1000, 1)) return;
     if (!isDriver(socket)) return;
 
-    const { rideId, latitude, longitude, speed, heading, durationMinutes } = coords || {};
+    const {
+      rideId,
+      latitude,
+      longitude,
+      speed,
+      heading,
+      durationMinutes,
+      distanceKm,
+      routeCoordinates,
+      phase
+    } = coords || {};
     const driverId = socket.data.user?.id;
 
     if (!isValidCoordinate(Number(latitude), Number(longitude))) return;
 
     const safeSpeed = speed != null ? Number(speed) : null;
     const safeHeading = heading != null ? Number(heading) : 0;
-    const safeDuration = durationMinutes != null ? Number(durationMinutes) : null;
+    const safeDuration =
+      durationMinutes != null && Number.isFinite(Number(durationMinutes)) && Number(durationMinutes) > 0
+        ? Math.max(1, Math.round(Number(durationMinutes)))
+        : null;
+    const safeDistanceKm =
+      distanceKm != null && Number.isFinite(Number(distanceKm)) && Number(distanceKm) >= 0
+        ? Number(Number(distanceKm).toFixed(2))
+        : null;
+    const safeRouteCoordinates =
+      Array.isArray(routeCoordinates) &&
+      routeCoordinates.length >= 2 &&
+      routeCoordinates.length <= 450 &&
+      routeCoordinates.every(
+        (pt: any) =>
+          Array.isArray(pt) &&
+          pt.length >= 2 &&
+          Number.isFinite(Number(pt[0])) &&
+          Number.isFinite(Number(pt[1]))
+      )
+        ? routeCoordinates.map((pt: any) => [Number(pt[0]), Number(pt[1])])
+        : undefined;
 
     await safeRedis.geoAdd('drivers:locations', {
       longitude: Number(longitude),
@@ -1730,13 +1760,18 @@ io.on('connection', (socket: any) => {
     await safeRedis.set(`driver:last_seen:${driverId}`, String(Date.now()), { EX: 300 });
 
     if (rideId && isUuid(rideId)) {
-      const posPayload = {
+      const posPayload: Record<string, any> = {
         rideId,
         latitude: Number(latitude),
         longitude: Number(longitude),
         heading: safeHeading,
-        durationMinutes: safeDuration
+        durationMinutes: safeDuration,
+        distanceKm: safeDistanceKm,
+        phase: typeof phase === 'string' ? phase : null,
       };
+      if (safeRouteCoordinates) {
+        posPayload.routeCoordinates = safeRouteCoordinates;
+      }
       io.to(rideId).emit('driver:position', posPayload);
       io.to(`ride_${rideId}`).emit('driver:position', posPayload);
     }
