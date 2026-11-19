@@ -754,8 +754,10 @@ const handleFullCancelAndReset = useCallback(() => {
 
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dy) > 6,
+      onStartShouldSetPanResponder: () => false,
+      onStartShouldSetPanResponderCapture: () => false,
+      onMoveShouldSetPanResponder: (_, gestureState) =>
+        Math.abs(gestureState.dy) > 10 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx),
       onPanResponderMove: (_, gestureState) => {
         const clampedY = Math.max(0, Math.min(180, gestureState.dy));
         translateY.setValue(clampedY);
@@ -1336,92 +1338,130 @@ const handleOpenChat = () => {
     }
   }, [fetchMapboxRoute, fitMapBounds, extraStopCoords, resetRideState]);
 
+  const searchRequestIdRef = useRef(0);
+  const isFetchingGpsRef = useRef(false);
+  const lastGpsFetchTimeRef = useRef(0);
+
+  const normalizeSearchText = (val: string) =>
+    String(val || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+
   const handleMapboxSearch = async (text: string) => {
     setSearchQuery(text);
+    const reqId = ++searchRequestIdRef.current;
+    const cleanText = text.trim();
 
-    if (!text || text.trim().length < 2) {
+    if (!cleanText) {
       setSearchResults([]);
+      setIsSearchingMapbox(false);
+      return;
+    }
+
+    const normQuery = normalizeSearchText(cleanText);
+    const tokens = normQuery.split(/\s+/).filter(Boolean);
+
+    // 1. Filtro local instantâneo (0 ms) sem acentos em todos os pontos do Admin + Bairros
+    const instantLocalMatches = allBissauPlaces.filter((place) => {
+      const normDesc = normalizeSearchText(place.description);
+      return tokens.every((tk) => normDesc.includes(tk));
+    });
+
+    setSearchResults(instantLocalMatches);
+
+    if (cleanText.length < 2) {
+      setIsSearchingMapbox(false);
       return;
     }
 
     setIsSearchingMapbox(true);
 
     try {
-      const response = await api.get(`/landmarks/search?q=${encodeURIComponent(text)}`).catch(() => null);
+      const [response, mapboxRes] = await Promise.all([
+        api.get(`/landmarks/search?q=${encodeURIComponent(cleanText)}`, { timeout: 6000 }).catch(() => null),
+        MAPBOX_ACCESS_TOKEN
+          ? fetch(
+              `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(cleanText)}.json?country=gw&proximity=${BISSAU_CENTER.longitude},${BISSAU_CENTER.latitude}&language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`
+            ).catch(() => null)
+          : Promise.resolve(null),
+      ]);
+
+      if (reqId !== searchRequestIdRef.current) return;
 
       let dbResults: MapboxGeocodingFeature[] = [];
 
       if (response?.data && Array.isArray(response.data)) {
-        dbResults = response.data.map((item: any) => {
-          const mainTitle = item.displayText || item.name || item.title || item.popularName || '';
-          const subTitle = item.subtitle || item.neighborhood || item.referenceNotes || '';
+        dbResults = response.data
+          .map((item: any) => {
+            const mainTitle = item.displayText || item.name || item.title || item.popularName || '';
+            const subTitle = item.subtitle || item.neighborhood || item.referenceNotes || '';
 
-          let description = mainTitle;
-          if (!item.displayText && subTitle && !mainTitle.toLowerCase().includes(subTitle.toLowerCase())) {
-            description = `${mainTitle}, ${subTitle}`;
-          }
+            let description = mainTitle;
+            if (!item.displayText && subTitle && !mainTitle.toLowerCase().includes(subTitle.toLowerCase())) {
+              description = `${mainTitle}, ${subTitle}`;
+            }
 
-          if (!description || description.includes('undefined')) {
-            description = item.description || item.formatted_address || 'Localização';
-          }
+            if (!description || description.includes('undefined')) {
+              description = item.description || item.formatted_address || 'Localização';
+            }
 
-          return {
-            id: `db_${item.id || Math.random()}`,
-            description: description.replace(/undefined/g, '').trim(),
-            latitude: Number(item.latitude),
-            longitude: Number(item.longitude),
-            isLocalBairro: true,
-          };
-        });
-      }
+            const lat = Number(item.latitude);
+            const lng = Number(item.longitude);
+            if (isNaN(lat) || isNaN(lng) || lat === 0 || lng === 0) return null;
 
-      if (dbResults.length > 0) {
-        AsyncStorage.getItem('@nobai245:cached_landmarks')
-          .then((raw) => {
-            const existing: MapboxGeocodingFeature[] = raw ? JSON.parse(raw) : [];
-            const map = new Map<string, MapboxGeocodingFeature>();
-            [...existing, ...dbResults].forEach((item) => map.set(item.id, item));
-            return AsyncStorage.setItem('@nobai245:cached_landmarks', JSON.stringify(Array.from(map.values()).slice(0, 200)));
+            return {
+              id: `db_${item.id || `${lat}_${lng}`}`,
+              description: description.replace(/undefined/g, '').trim(),
+              latitude: lat,
+              longitude: lng,
+              isLocalBairro: true,
+            };
           })
-          .catch(() => {});
-      } else if (!response) {
-        const cachedRaw = await AsyncStorage.getItem('@nobai245:cached_landmarks').catch(() => null);
-        if (cachedRaw) {
-          const cachedList: MapboxGeocodingFeature[] = JSON.parse(cachedRaw);
-          const normText = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-          dbResults = cachedList.filter((item) =>
-            item.description.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().includes(normText)
-          );
-        }
+          .filter((x): x is MapboxGeocodingFeature => x !== null);
       }
 
-      const mapboxRes = await fetch(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(text)}.json?country=gw&proximity=${BISSAU_CENTER.longitude},${BISSAU_CENTER.latitude}&language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`
-      ).catch(() => null);
-
+      let formattedMapbox: MapboxGeocodingFeature[] = [];
       if (mapboxRes && mapboxRes.ok) {
         const mapboxData = await mapboxRes.json();
-        const formattedMapbox: MapboxGeocodingFeature[] = (mapboxData.features || []).map((item: any) => ({
+        if (reqId !== searchRequestIdRef.current) return;
+        formattedMapbox = (mapboxData.features || []).map((item: any) => ({
           id: item.id,
-          description: (item.place_name || item.text || 'Localização').replace(/, Guiné-Bissau/gi, ''),
+          description: (item.place_name || item.text || 'Localização').replace(/, Guiné-Bissau/gi, '').trim(),
           latitude: item.geometry.coordinates[1],
           longitude: item.geometry.coordinates[0],
           isLocalBairro: false,
         }));
-
-        setSearchResults([...dbResults, ...formattedMapbox]);
-      } else {
-        setSearchResults(dbResults);
       }
+
+      const merged = new Map<string, MapboxGeocodingFeature>();
+      [...dbResults, ...instantLocalMatches, ...formattedMapbox].forEach((item) => {
+        const key = normalizeSearchText(item.description);
+        if (key && !merged.has(key)) {
+          merged.set(key, item);
+        }
+      });
+
+      setSearchResults(Array.from(merged.values()));
     } catch (error) {
-      console.error('❌ [SEARCH_DEBUG] Erro ao pesquisar local:', error);
-      setSearchResults([]);
+      if (reqId === searchRequestIdRef.current) {
+        setSearchResults(instantLocalMatches);
+      }
     } finally {
-      setIsSearchingMapbox(false);
+      if (reqId === searchRequestIdRef.current) {
+        setIsSearchingMapbox(false);
+      }
     }
   };
 
   const getCurrentLocationWithFallback = useCallback(async () => {
+    const now = Date.now();
+    if (isFetchingGpsRef.current || now - lastGpsFetchTimeRef.current < 15000) {
+      return;
+    }
+    isFetchingGpsRef.current = true;
+    lastGpsFetchTimeRef.current = now;
     try {
       const isEnabled = await Location.hasServicesEnabledAsync();
       if (!isEnabled) {
@@ -1446,11 +1486,15 @@ const handleOpenChat = () => {
         setLocationError(null);
       }
 
-      let location: Location.LocationObject | null = null;
-      try {
-        location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      } catch (err) {
-        location = await Location.getLastKnownPositionAsync();
+      let location: Location.LocationObject | null = await Location.getLastKnownPositionAsync({ maxAge: 30000 }).catch(() => null);
+      if (!location) {
+        try {
+          location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        } catch (err) {
+          location = await Location.getLastKnownPositionAsync().catch(() => null);
+        }
+      }
+      if (!location) {
         if (!location) {
           location = {
             coords: {
@@ -1503,6 +1547,8 @@ const handleOpenChat = () => {
         setIsLocationSettingsVisible(true);
         setLocationError(t('getting_location_error', 'Não foi possível obter a localização exata.'));
       }
+    } finally {
+      isFetchingGpsRef.current = false;
     }
   }, [t]);
 
@@ -2621,7 +2667,7 @@ const handleOpenChat = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     translateY.setValue(0);
     setSearchType(type);
-    setSearchQuery(type === 'pickup' ? (pickupAddress || '') : type === 'extraStop' ? (extraStopAddress || '') : '');
+    setSearchQuery('');
     setSearchResults([]);
     setIsSearchModalVisible(true);
     setTimeout(() => {
@@ -2631,7 +2677,7 @@ const handleOpenChat = () => {
       } else if (type === 'dropoff') {
         dropoffInputRef.current?.focus();
       }
-    }, 320);
+    }, 160);
   }
 
   const handleSosPress = () => {
@@ -3975,14 +4021,23 @@ const handleOpenChat = () => {
       {/* 🔀 MODAL DE BUSCA PROFISSIONAL DE ENDEREÇOS */}
       <Modal
         visible={isSearchModalVisible}
-        animationType="slide"
+        animationType="fade"
         transparent={false}
-        statusBarTranslucent={true}
-        onRequestClose={() => setIsSearchModalVisible(false)}
+        onRequestClose={() => {
+          Keyboard.dismiss();
+          setIsSearchModalVisible(false);
+        }}
       >
-        <SafeAreaView style={styles.searchModalContainer}>
+        <View
+          style={[
+            styles.searchModalContainer,
+            {
+              paddingTop: Platform.OS === 'ios' ? Math.max(insets?.top || 0, 12) : 4,
+            },
+          ]}
+        >
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={{ flex: 1 }}
           >
             {/* CABEÇALHO EXECUTIVO */}
@@ -4014,13 +4069,8 @@ const handleOpenChat = () => {
             </View>
 
             <View style={styles.modalBody}>
-              <ScrollView
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingBottom: 32 }}
-              >
-                {/* CARTÃO UNIFICADO DE ROTA */}
-                <View style={styles.routePlannerCard}>
+              {/* CARTÃO UNIFICADO DE ROTA FIXO NO TOPO (NÃO DESLIZA COM A LISTA) */}
+              <View style={styles.routePlannerCard}>
                   <View style={styles.routePlannerBody}>
                     {/* COLUNA DA LINHA DO TRAJETO */}
                     <View style={styles.routeTimelineCol}>
@@ -4189,7 +4239,6 @@ const handleOpenChat = () => {
                           <Ionicons name="flag" size={16} color="#EF4444" style={{ marginRight: 9 }} />
                           <TextInput
                             ref={dropoffInputRef}
-                            autoFocus={searchType === 'dropoff'}
                             style={styles.mapboxSearchInput}
                             placeholder={t('where_to', 'Para onde vamos?')}
                             placeholderTextColor="#64748B"
@@ -4266,6 +4315,13 @@ const handleOpenChat = () => {
                   </View>
                 </View>
 
+              <ScrollView
+                style={{ flex: 1 }}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: Math.max((insets?.bottom || 0) + 32, 48) }}
+              >
                 {searchQuery.trim().length === 0 ? (
                   <View>
                     <View style={styles.sectionHeaderRow}>
@@ -4355,7 +4411,7 @@ const handleOpenChat = () => {
                                 <View style={styles.resultIconBadgeMuted}>
                                   <Ionicons name="time-outline" size={17} color="#94A3B8" />
                                 </View>
-                                <Text style={styles.recentText} numberOfLines={1}>{item.description}</Text>
+                                <Text style={styles.recentText} numberOfLines={3}>{item.description}</Text>
                               </TouchableOpacity>
 
                               <TouchableOpacity
@@ -4373,15 +4429,16 @@ const handleOpenChat = () => {
 
                     <View style={{ marginTop: 18 }}>
                       <View style={styles.sectionHeaderRow}>
-                        <Text style={styles.sectionHeaderTitle}>Bairros & Pontos de Bissau</Text>
+                        <Text style={styles.sectionHeaderTitle}>Bairros & Pontos Sugeridos</Text>
+                        <Text style={styles.sectionHeaderHint}>Digite acima para ver todos</Text>
                       </View>
                       <View style={styles.resultsListCard}>
-                        {allBissauPlaces.map((bairro, idx) => (
+                        {allBissauPlaces.slice(0, 6).map((bairro, idx, arr) => (
                           <TouchableOpacity
                             key={bairro.id}
                             style={[
                               styles.searchResultItem,
-                              idx < allBissauPlaces.length - 1 && styles.listRowDivider
+                              idx < arr.length - 1 && styles.listRowDivider
                             ]}
                             activeOpacity={0.75}
                             onPress={() => {
@@ -4418,7 +4475,7 @@ const handleOpenChat = () => {
                               <Ionicons name="location" size={16} color="#EAB308" />
                             </View>
                             <View style={{ flex: 1, minWidth: 0 }}>
-                              <Text style={styles.searchResultText} numberOfLines={2}>{bairro.description}</Text>
+                              <Text style={styles.searchResultText} numberOfLines={3}>{bairro.description}</Text>
                               <Text style={styles.searchResultSub}>Bissau • Guiné-Bissau</Text>
                             </View>
                             <Ionicons name="chevron-forward" size={16} color="#475569" />
@@ -4482,7 +4539,7 @@ const handleOpenChat = () => {
                             <Ionicons name="location" size={16} color="#EAB308" />
                           </View>
                           <View style={{ flex: 1, minWidth: 0 }}>
-                            <Text style={styles.searchResultText} numberOfLines={2}>{item.description}</Text>
+                            <Text style={styles.searchResultText} numberOfLines={3}>{item.description}</Text>
                           </View>
                           <Ionicons name="chevron-forward" size={16} color="#475569" />
                         </TouchableOpacity>
@@ -4493,7 +4550,7 @@ const handleOpenChat = () => {
               </ScrollView>
             </View>
           </KeyboardAvoidingView>
-        </SafeAreaView>
+        </View>
       </Modal>
 
       {/* 👤 MODAL: VIAGEM PARA OUTRA PESSOA TRANSLÚCIDO */}
