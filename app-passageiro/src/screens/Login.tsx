@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { 
-  View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, 
+import {
+  View, Text, TextInput, TouchableOpacity, StyleSheet, Alert,
   ActivityIndicator, ScrollView, Platform, StatusBar,
-  Animated, TouchableWithoutFeedback, Keyboard
+  Animated, TouchableWithoutFeedback, Keyboard,
+  KeyboardAvoidingView, BackHandler
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
@@ -14,7 +16,7 @@ export function Login() {
   // 🛡️ Estados de Autenticação (Apenas Telefone)
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
-  
+
   // 🛡️ Estados de UI & Modal
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -30,6 +32,7 @@ export function Login() {
   const slideAnim = useRef(new Animated.Value(40)).current;
 
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
   const { signIn } = useAuth();
   const { t, i18n } = useTranslation();
   const cycleLoginLanguage = () => {
@@ -64,18 +67,28 @@ export function Login() {
       })
     ]).start();
 
+    const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (isForgotModalVisible) {
+        Keyboard.dismiss();
+        setForgotModalVisible(false);
+        return true;
+      }
+      return false;
+    });
+
     return () => {
       showSub.remove();
       hideSub.remove();
+      backSub.remove();
     };
-  }, []);
+  }, [isForgotModalVisible]);
 
   // ==========================================
   // 🚀 FUNÇÃO DE LOGIN PADRÃO (POR TELEFONE)
   // ==========================================
   async function handleLogin() {
     const cleanPhone = phone.replace(/[^0-9]/g, '');
-    
+
     if (!cleanPhone) {
       return Alert.alert(t('warning_title', 'Atenção ⚠️'), t('login_fill_phone', 'Digite seu número de telefone.'));
     }
@@ -86,10 +99,10 @@ export function Login() {
     setLoading(true);
     try {
       const payload = { phone: `+245${cleanPhone}`, password };
-      
+
       const response = await api.post('/passengers/login', payload);
       const { accessToken, refreshToken, passenger } = response.data;
-      
+
       await signIn(passenger, accessToken, refreshToken);
       navigation.replace('Home');
     } catch (error: any) {
@@ -115,9 +128,9 @@ export function Login() {
       const payload = { phone: `+245${cleanRecoveryPhone}` };
 
       await api.post('/passengers/forgot-password', payload);
-      
+
       Alert.alert(
-        t('success_title', 'Código Enviado! ✉️'), 
+        t('success_title', 'Código Enviado! ✉️'),
         'Enviamos o código de verificação por SMS para o seu telefone.',
         [
           {
@@ -164,11 +177,11 @@ export function Login() {
           🌐 {(i18n.language === 'gnb' ? 'CRI' : (i18n.language || 'pt')).toUpperCase()}
         </Text>
       </TouchableOpacity>
-      
+
       <View style={styles.backgroundBlob1} />
       <View style={styles.backgroundBlob2} />
 
-      <ScrollView  
+      <ScrollView
         contentContainerStyle={[
           styles.scrollContainer,
           { paddingBottom: keyboardHeight > 0 ? keyboardHeight + 20 : 40 }
@@ -178,7 +191,7 @@ export function Login() {
         bounces={false}
       >
         <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
-          
+
           {/* HEADER BRANDING */}
           <View style={styles.headerDecoration}>
             <View style={styles.brandBadge}>
@@ -232,8 +245,8 @@ export function Login() {
             </View>
 
             {/* ESQUECEU A SENHA */}
-            <TouchableOpacity 
-              style={styles.forgotPasswordContainer} 
+            <TouchableOpacity
+              style={styles.forgotPasswordContainer}
               onPress={() => setForgotModalVisible(true)}
               activeOpacity={0.7}
             >
@@ -241,9 +254,9 @@ export function Login() {
             </TouchableOpacity>
 
             {/* BOTÃO LOGIN */}
-            <TouchableOpacity 
-              style={[styles.button, loading && styles.buttonDisabled]} 
-              onPress={handleLogin} 
+            <TouchableOpacity
+              style={[styles.button, loading && styles.buttonDisabled]}
+              onPress={handleLogin}
               disabled={loading}
               activeOpacity={0.8}
             >
@@ -260,8 +273,8 @@ export function Login() {
           </View>
 
           {/* REGISTRO */}
-          <TouchableOpacity 
-            style={styles.linkButton} 
+          <TouchableOpacity
+            style={styles.linkButton}
             onPress={() => navigation.navigate('Register')}
             activeOpacity={0.7}
           >
@@ -272,24 +285,38 @@ export function Login() {
         </Animated.View>
       </ScrollView>
 
-      {/* 🔐 OVERLAY INLINE DE RECUPERAÇÃO */}
+      {/* 🔐 OVERLAY INLINE DE RECUPERAÇÃO COM SUPORTE COMPLETO A TECLADO */}
       {isForgotModalVisible && (
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 12}
+        >
           <TouchableWithoutFeedback onPress={() => { Keyboard.dismiss(); setForgotModalVisible(false); }}>
             <View style={styles.backdrop} />
           </TouchableWithoutFeedback>
-          <View style={[styles.modalContent, { marginBottom: keyboardHeight }]}>
-            <ScrollView 
+          <View
+            style={[
+              styles.modalContent,
+              {
+                maxHeight: '88%',
+                paddingBottom: Math.max((insets?.bottom || 0) + 20, 28),
+              },
+            ]}
+          >
+            <ScrollView
               keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
               showsVerticalScrollIndicator={false}
               bounces={false}
+              contentContainerStyle={{ paddingBottom: 8 }}
             >
               <View style={styles.modalHeader}>
                 <View style={styles.modalIconContainer}>
                   <MaterialCommunityIcons name="lock-reset" size={32} color="#EAB308" />
                 </View>
-                <TouchableOpacity 
-                  onPress={() => { Keyboard.dismiss(); setForgotModalVisible(false); }} 
+                <TouchableOpacity
+                  onPress={() => { Keyboard.dismiss(); setForgotModalVisible(false); }}
                   style={styles.closeModalButton}
                 >
                   <Ionicons name="close" size={24} color="#64748B" />
@@ -325,9 +352,9 @@ export function Login() {
                 </View>
               </View>
 
-              <TouchableOpacity 
-                style={[styles.button, recoveryLoading && styles.buttonDisabled, { marginTop: 16, marginBottom: 12 }]} 
-                onPress={handleRecoverPassword} 
+              <TouchableOpacity
+                style={[styles.button, recoveryLoading && styles.buttonDisabled, { marginTop: 16, marginBottom: 8 }]}
+                onPress={handleRecoverPassword}
                 disabled={recoveryLoading}
                 activeOpacity={0.8}
               >
@@ -339,7 +366,7 @@ export function Login() {
               </TouchableOpacity>
             </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       )}
 
     </View>
@@ -375,7 +402,7 @@ const styles = StyleSheet.create({
   linkButton: { marginTop: 20, alignItems: 'center' },
   linkText: { color: '#94A3B8', fontSize: 15 },
   linkTextBold: { color: '#EAB308', fontWeight: '700' },
-  
+
   modalOverlay: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(15, 23, 42, 0.85)', justifyContent: 'flex-end', zIndex: 999 },
   backdrop: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 },
   modalContent: { backgroundColor: '#1E293B', borderTopLeftRadius: 32, borderTopRightRadius: 32, padding: 24, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)' },

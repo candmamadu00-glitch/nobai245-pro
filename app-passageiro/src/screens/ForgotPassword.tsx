@@ -40,12 +40,24 @@ export function ForgotPassword() {
   const otpInputRef = useRef<TextInput | null>(null);
   const newPasswordRef = useRef<TextInput | null>(null);
   const confirmPasswordRef = useRef<TextInput | null>(null);
+  const isPasswordFocusedRef = useRef<boolean>(false);
+
+  const scrollToFormBottom = () => {
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 260);
+  };
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
     const showSub = Keyboard.addListener(showEvent, (e) => {
       setKeyboardHeight(e.endCoordinates.height);
+      if (isPasswordFocusedRef.current) {
+        setTimeout(() => {
+          scrollViewRef.current?.scrollToEnd({ animated: true });
+        }, 120);
+      }
     });
     const hideSub = Keyboard.addListener(hideEvent, () => {
       setKeyboardHeight(0);
@@ -118,16 +130,21 @@ export function ForgotPassword() {
   }
 
   const topPad = Math.max((insets?.top || 0) + 12, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 12 : 20);
-  const bottomPad = Math.max((insets?.bottom || 0) + 24, 32) + (Platform.OS === 'android' ? keyboardHeight : 0);
+  const bottomPad = Math.max((insets?.bottom || 0) + 32, 48) + (keyboardHeight > 0 ? 24 : 0);
 
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0F172A" translucent />
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 12}
+      >
         <ScrollView
           ref={scrollViewRef}
           contentContainerStyle={[styles.scroll, { paddingTop: topPad, paddingBottom: bottomPad }]}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
         >
           <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.8}>
@@ -200,7 +217,13 @@ export function ForgotPassword() {
                 secureTextEntry={!showPassword}
                 returnKeyType="next"
                 blurOnSubmit={false}
-                onFocus={() => setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 120)}
+                onFocus={() => {
+                  isPasswordFocusedRef.current = true;
+                  scrollToFormBottom();
+                }}
+                onBlur={() => {
+                  isPasswordFocusedRef.current = false;
+                }}
                 onSubmitEditing={() => confirmPasswordRef.current?.focus()}
                 value={newPassword}
                 onChangeText={setNewPassword}
@@ -219,7 +242,13 @@ export function ForgotPassword() {
                 placeholderTextColor="#64748B"
                 secureTextEntry={!showConfirmPassword}
                 returnKeyType="done"
-                onFocus={() => setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 120)}
+                onFocus={() => {
+                  isPasswordFocusedRef.current = true;
+                  scrollToFormBottom();
+                }}
+                onBlur={() => {
+                  isPasswordFocusedRef.current = false;
+                }}
                 onSubmitEditing={() => {
                   if (!loading) handleResetPassword();
                 }}
