@@ -2413,8 +2413,8 @@ export function Home() {
           );
         })()}
 
-        {/* 🛣️ LINHA DA ROTA */}
-        {displayedRouteCoordinates && displayedRouteCoordinates.length > 0 && (
+        {/* 🛣️ LINHA DA ROTA COM BORDA DE ALTO CONTRASTE */}
+        {displayedRouteCoordinates && displayedRouteCoordinates.length >= 2 && (
           <Mapbox.ShapeSource
             id="routeSource"
             shape={{
@@ -2424,10 +2424,21 @@ export function Home() {
             }}
           >
             <Mapbox.LineLayer
+              id="routeLineCasing"
+              style={{
+                lineColor: '#0F172A',
+                lineWidth: 9,
+                lineOpacity: 0.85,
+                lineCap: 'round',
+                lineJoin: 'round'
+              }}
+            />
+            <Mapbox.LineLayer
               id="routeLine"
+              aboveLayerID="routeLineCasing"
               style={{
                 lineColor: rideState === 'in_progress' ? '#3B82F6' : '#EAB308',
-                lineWidth: 5,
+                lineWidth: 5.5,
                 lineCap: 'round',
                 lineJoin: 'round'
               }}

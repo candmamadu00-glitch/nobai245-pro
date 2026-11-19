@@ -518,6 +518,9 @@ export function Home() {
     driverLocation?.longitude || BISSAU_CENTER.longitude,
     driverLocation?.latitude || BISSAU_CENTER.latitude,
   ]);
+  const [smoothDriverHeading, setSmoothDriverHeading] = useState<number>(0);
+  const lastDriverFixRef = useRef<{ lat: number; lng: number; time: number } | null>(null);
+  const [adminLandmarks, setAdminLandmarks] = useState<MapboxGeocodingFeature[]>([]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -791,32 +794,142 @@ const handleFullCancelAndReset = useCallback(() => {
   }, [rideStatus, radarAnim]);
 
   useEffect(() => {
-    if (driverLocation?.latitude && driverLocation?.longitude) {
-      Animated.parallel([
-        Animated.timing(animatedLat, {
-          toValue: driverLocation.latitude,
-          duration: 2000,
-          useNativeDriver: false,
-        }),
-        Animated.timing(animatedLng, {
-          toValue: driverLocation.longitude,
-          duration: 2000,
-          useNativeDriver: false,
-        }),
-      ]).start();
-
-      const listenerIdLat = animatedLat.addListener(({ value }) => {
-        setInterpolatedCoords(prev => [prev[0], value]);
-      });
-      const listenerIdLng = animatedLng.addListener(({ value }) => {
-        setInterpolatedCoords(prev => [value, prev[1]]);
-      });
-
-      return () => {
-        animatedLat.removeListener(listenerIdLat);
-        animatedLng.removeListener(listenerIdLng);
+    let active = true;
+    const formatLandmark = (item: any): MapboxGeocodingFeature | null => {
+      const lat = Number(item?.latitude);
+      const lng = Number(item?.longitude);
+      if (isNaN(lat) || isNaN(lng) || lat === 0 || lng === 0) return null;
+      const mainTitle = item.displayText || item.name || item.title || item.popularName || '';
+      const subTitle = item.subtitle || item.neighborhood || item.referenceNotes || '';
+      let description = mainTitle;
+      if (!item.displayText && subTitle && !mainTitle.toLowerCase().includes(subTitle.toLowerCase())) {
+        description = `${mainTitle}, ${subTitle}`;
+      }
+      description = String(description || item.description || '').replace(/undefined/g, '').trim();
+      if (!description) return null;
+      return {
+        id: `db_${item.id || `${lat}_${lng}`}`,
+        description,
+        latitude: lat,
+        longitude: lng,
+        isLocalBairro: true,
       };
+    };
+
+    const loadAdminLandmarks = async () => {
+      try {
+        const res = await api.get('/landmarks').catch(() => null);
+        const list = Array.isArray(res?.data) ? res.data : [];
+        const formatted = list.map(formatLandmark).filter((x): x is MapboxGeocodingFeature => x !== null);
+        if (formatted.length > 0 && active) {
+          setAdminLandmarks(formatted);
+          AsyncStorage.setItem('@nobai245:cached_landmarks', JSON.stringify(formatted)).catch(() => {});
+          return;
+        }
+      } catch {}
+
+      try {
+        const cachedRaw = await AsyncStorage.getItem('@nobai245:cached_landmarks');
+        if (cachedRaw && active) {
+          const parsed = JSON.parse(cachedRaw);
+          if (Array.isArray(parsed)) setAdminLandmarks(parsed);
+        }
+      } catch {}
+    };
+
+    loadAdminLandmarks();
+    return () => { active = false; };
+  }, []);
+
+  const allBissauPlaces = useMemo(() => {
+    const merged = new Map<string, MapboxGeocodingFeature>();
+    [...adminLandmarks, ...GUINEA_BISSAU_BAIRROS].forEach((place) => {
+      const key = place.description.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+      if (key && !merged.has(key)) {
+        merged.set(key, place);
+      }
+    });
+    return Array.from(merged.values());
+  }, [adminLandmarks]);
+
+  useEffect(() => {
+    const nextLat = Number(driverLocation?.latitude);
+    const nextLng = Number(driverLocation?.longitude);
+    if (!nextLat || !nextLng || isNaN(nextLat) || isNaN(nextLng)) return;
+
+    const now = Date.now();
+    const prevFix = lastDriverFixRef.current;
+
+    if (!prevFix) {
+      lastDriverFixRef.current = { lat: nextLat, lng: nextLng, time: now };
+      animatedLat.setValue(nextLat);
+      animatedLng.setValue(nextLng);
+      setInterpolatedCoords([nextLng, nextLat]);
+      if (typeof driverLocation?.heading === 'number' && !isNaN(driverLocation.heading)) {
+        setSmoothDriverHeading(Math.round((driverLocation.heading + 360) % 360));
+      }
+      return;
     }
+
+    const dLatRad = ((nextLat - prevFix.lat) * Math.PI) / 180;
+    const dLngRad = ((nextLng - prevFix.lng) * Math.PI) / 180;
+    const a =
+      Math.sin(dLatRad / 2) * Math.sin(dLatRad / 2) +
+      Math.cos((prevFix.lat * Math.PI) / 180) *
+        Math.cos((nextLat * Math.PI) / 180) *
+        Math.sin(dLngRad / 2) *
+        Math.sin(dLngRad / 2);
+    const jumpMeters = 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const dtSec = Math.max(0.5, (now - prevFix.time) / 1000);
+
+    // Filtra salto espúrio de GPS (> 600m em menos de 3s)
+    if (jumpMeters > 600 && dtSec < 3) {
+      return;
+    }
+
+    lastDriverFixRef.current = { lat: nextLat, lng: nextLng, time: now };
+
+    if (typeof driverLocation?.heading === 'number' && !isNaN(driverLocation.heading)) {
+      const targetHeading = (driverLocation.heading + 360) % 360;
+      setSmoothDriverHeading((prevH) => {
+        const shortestDelta = ((targetHeading - prevH + 540) % 360) - 180;
+        return Math.round((prevH + shortestDelta * 0.65 + 360) % 360);
+      });
+    }
+
+    if (jumpMeters > 1200) {
+      animatedLat.setValue(nextLat);
+      animatedLng.setValue(nextLng);
+      setInterpolatedCoords([nextLng, nextLat]);
+      return;
+    }
+
+    Animated.parallel([
+      Animated.timing(animatedLat, {
+        toValue: nextLat,
+        duration: 1400,
+        easing: Easing.linear,
+        useNativeDriver: false,
+      }),
+      Animated.timing(animatedLng, {
+        toValue: nextLng,
+        duration: 1400,
+        easing: Easing.linear,
+        useNativeDriver: false,
+      }),
+    ]).start();
+
+    const listenerIdLat = animatedLat.addListener(({ value }) => {
+      setInterpolatedCoords((prev) => [prev[0], value]);
+    });
+    const listenerIdLng = animatedLng.addListener(({ value }) => {
+      setInterpolatedCoords((prev) => [value, prev[1]]);
+    });
+
+    return () => {
+      animatedLat.removeListener(listenerIdLat);
+      animatedLng.removeListener(listenerIdLng);
+    };
   }, [driverLocation, animatedLat, animatedLng]);
 
   useEffect(() => {
@@ -1892,6 +2005,7 @@ const handleOpenChat = () => {
         AsyncStorage.setItem('@bai245:last_notified_terminal_ride', String(cancelledId)).catch(() => {});
       }
       setIsChatVisible(false);
+      speakRideStatusUpdate('cancelled', { enabled: isVoiceAssistEnabledRef.current });
       Alert.alert(title, body, [{ text: 'OK' }]);
       resetRideState();
     };
@@ -2746,7 +2860,7 @@ const handleOpenChat = () => {
 
         {/* 🚗 MOTORISTAS ONLINE PRÓXIMOS */}
         {nearbyDrivers && nearbyDrivers
-          .filter((driver: any) => driver.lat && driver.lng && Number(driver.lat) !== 0 && Number(driver.lng) !== 0)
+          .filter((driver: any) => driver.lat && driver.lng && Number(driver.lat) !== 0 && Number(driver.lng) !== 0 && String(driver.id) !== String(driverInfo?.id || ''))
           .map((driver: any) => (
             <Mapbox.PointAnnotation
               key={`online-driver-${driver.id}`}
@@ -2819,7 +2933,7 @@ const handleOpenChat = () => {
                   <Text style={styles.driverEtaText}>{driverEta} min</Text>
                 </View>
               )}
-              <View style={{ transform: [{ rotate: `${driverLocation.heading || 0}deg` }] }}>
+              <View style={{ transform: [{ rotate: `${smoothDriverHeading}deg` }] }}>
                 <Image
                   source={getVehicle3DIconAsset(
                     driverInfo?.vehicleType || vehicleType,
@@ -4256,12 +4370,12 @@ const handleOpenChat = () => {
                         <Text style={styles.sectionHeaderTitle}>Bairros & Pontos de Bissau</Text>
                       </View>
                       <View style={styles.resultsListCard}>
-                        {GUINEA_BISSAU_BAIRROS.slice(0, 14).map((bairro, idx) => (
+                        {allBissauPlaces.map((bairro, idx) => (
                           <TouchableOpacity
                             key={bairro.id}
                             style={[
                               styles.searchResultItem,
-                              idx < 13 && styles.listRowDivider
+                              idx < allBissauPlaces.length - 1 && styles.listRowDivider
                             ]}
                             activeOpacity={0.75}
                             onPress={() => {
@@ -4298,7 +4412,7 @@ const handleOpenChat = () => {
                               <Ionicons name="location" size={16} color="#EAB308" />
                             </View>
                             <View style={{ flex: 1, minWidth: 0 }}>
-                              <Text style={styles.searchResultText} numberOfLines={1}>{bairro.description}</Text>
+                              <Text style={styles.searchResultText} numberOfLines={2}>{bairro.description}</Text>
                               <Text style={styles.searchResultSub}>Bissau • Guiné-Bissau</Text>
                             </View>
                             <Ionicons name="chevron-forward" size={16} color="#475569" />

@@ -56,9 +56,11 @@ router.post('/landmarks', authenticate, async (req: Request, res: Response) => {
 });
 
 // 🟢 2. LISTAR TODOS OS PONTOS (PAINEL DE ADMINISTRAÇÃO)
-router.get('/landmarks', async (_req: Request, res: Response) => {
+router.get('/landmarks', async (req: Request, res: Response) => {
   try {
+    const includeInactive = String(req.query.all || '') === 'true';
     const places = await prisma.customPlace.findMany({
+      where: includeInactive ? undefined : { isActive: true },
       include: { neighborhood: true },
       orderBy: { createdAt: 'desc' }
     });
@@ -156,7 +158,7 @@ router.get('/landmarks/search', async (req: Request, res: Response) => {
         const bExact = b.normName.includes(normQuery) || b.normNeighborhood.includes(normQuery) ? 0 : 1;
         return aExact - bExact;
       })
-      .slice(0, 15)
+      .slice(0, 40)
       .map((item) => item.formatted);
 
     return res.json(matched);
