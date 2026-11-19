@@ -1394,7 +1394,7 @@ const handleOpenChat = () => {
 
       if (response?.data && Array.isArray(response.data)) {
         dbResults = response.data
-          .map((item: any) => {
+          .map((item: any): MapboxGeocodingFeature | null => {
             const mainTitle = item.displayText || item.name || item.title || item.popularName || '';
             const subTitle = item.subtitle || item.neighborhood || item.referenceNotes || '';
 
