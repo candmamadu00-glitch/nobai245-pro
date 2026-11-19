@@ -5,7 +5,7 @@ import {
   Platform, StatusBar, BackHandler, Linking, Vibration,
   Share, AppState, KeyboardAvoidingView, Modal, TextInput,
   ActivityIndicator, Image, Animated, PanResponder, Dimensions,
-  ScrollView, TouchableWithoutFeedback, Keyboard, Easing
+  ScrollView, TouchableWithoutFeedback, Keyboard, Easing, Pressable
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Mapbox from '@rnmapbox/maps';
@@ -1754,15 +1754,12 @@ const handleOpenChat = () => {
 
     initAppAndPermissions();
 
-    // 🛡️ PASSENGER_APPSTATE_SYNC: Fecha overlays transitórios no background e reconcilia estado ao voltar
+    // 🛡️ PASSENGER_APPSTATE_SYNC: Reconcilia estado ao voltar do segundo plano sem fechar modais ativos por 'inactive'
     const appStateSub = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'background' || nextState === 'inactive') {
+      if (nextState === 'background') {
         setIsChatVisible(false);
         setShowCancelModal(false);
-        setIsSearchModalVisible(false);
-        setIsMenuVisible(false);
       } else if (nextState === 'active') {
-        setIsChatVisible(false);
         if (socket && !socket.connected) connectPassengerSocket();
         syncPassengerActiveRide(true);
       }
@@ -2624,16 +2621,17 @@ const handleOpenChat = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     translateY.setValue(0);
     setSearchType(type);
-    setSearchQuery('');
+    setSearchQuery(type === 'pickup' ? (pickupAddress || '') : type === 'extraStop' ? (extraStopAddress || '') : '');
     setSearchResults([]);
     setIsSearchModalVisible(true);
     setTimeout(() => {
+      if (!isMountedRef.current) return;
       if (type === 'pickup') {
         pickupInputRef.current?.focus();
       } else if (type === 'dropoff') {
         dropoffInputRef.current?.focus();
       }
-    }, 180);
+    }, 320);
   }
 
   const handleSosPress = () => {
@@ -3822,10 +3820,18 @@ const handleOpenChat = () => {
       </Modal>
 
       {/* 📑 MENU LATERAL DRAWER TRANSLÚCIDO */}
-      <Modal visible={isMenuVisible} animationType="fade" transparent onRequestClose={() => setIsMenuVisible(false)}>
-        <TouchableOpacity style={styles.menuOverlay} activeOpacity={1} onPress={() => setIsMenuVisible(false)}>
+      <Modal visible={isMenuVisible} animationType="fade" transparent statusBarTranslucent onRequestClose={() => setIsMenuVisible(false)}>
+        <View style={styles.menuOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setIsMenuVisible(false)} />
           <View style={[styles.menuDrawer, { paddingTop: Math.max((insets?.top || 0) + 16, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 20), paddingBottom: Math.max((insets?.bottom || 0) + 16, 20) }]}>
             <View style={styles.menuHeader}>
+              <TouchableOpacity
+                onPress={() => setIsMenuVisible(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                style={{ position: 'absolute', top: 12, right: 0, width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}
+              >
+                <Ionicons name="close" size={20} color="#F8FAFC" />
+              </TouchableOpacity>
               <View style={styles.avatarPlaceholderLarge}>
                 {user?.profilePicture ? (
                   <Image source={{ uri: formatPhotoUrl(user.profilePicture) }} style={{ width: '100%', height: '100%', borderRadius: 30 }} />
@@ -3963,7 +3969,7 @@ const handleOpenChat = () => {
               </TouchableOpacity>
             </View>
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
 
       {/* 🔀 MODAL DE BUSCA PROFISSIONAL DE ENDEREÇOS */}
