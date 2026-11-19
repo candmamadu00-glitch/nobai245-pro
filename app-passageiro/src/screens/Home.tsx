@@ -1098,6 +1098,7 @@ const handleOpenChat = () => {
 
         let pCoords = null;
         let dCoords = null;
+        let sCoords = null;
 
         if (ride.originLat && ride.originLng) {
           pCoords = { latitude: Number(ride.originLat), longitude: Number(ride.originLng) };
@@ -1116,7 +1117,8 @@ const handleOpenChat = () => {
           const stopLat = Number(firstStop.lat || firstStop.latitude);
           const stopLng = Number(firstStop.lng || firstStop.longitude);
           if (!isNaN(stopLat) && !isNaN(stopLng)) {
-            setExtraStopCoords({ latitude: stopLat, longitude: stopLng });
+            sCoords = { latitude: stopLat, longitude: stopLng };
+            setExtraStopCoords(sCoords);
             setExtraStopAddress(firstStop.address || 'Parada Intermediária');
             setShowExtraStop(true);
           }
@@ -1126,8 +1128,8 @@ const handleOpenChat = () => {
         if (srvP > 0) setEstimatedPrice(Math.round(srvP));
         if (ride.distanceKm) setEstimatedDistance(Number(ride.distanceKm));
         if (pCoords && dCoords) {
-          fetchMapboxRoute(pCoords, dCoords, extraStopCoords);
-          fitMapBounds([pCoords, dCoords]);
+          fetchMapboxRoute(pCoords, dCoords, sCoords);
+          fitMapBounds(sCoords ? [pCoords, sCoords, dCoords] : [pCoords, dCoords]);
         }
 
         activateKeepAwakeAsync('PASSENGER_RIDE_KEEP_AWAKE').catch(() => {});

@@ -1976,8 +1976,11 @@ export function Home() {
       setQueuedOfferData(null);
     };
 
-    activeRideIdRef.current = rideId;
-    rideStateRef.current = 'accepted';
+    const hasOngoingRide = Boolean(prevActiveRideId && prevActiveRideId !== rideId && ['accepted', 'arrived', 'in_progress'].includes(prevRideState));
+    if (!hasOngoingRide) {
+      activeRideIdRef.current = rideId;
+      rideStateRef.current = 'accepted';
+    }
     setQueuedOfferData(null);
 
     if (!socket || !socket.connected) {

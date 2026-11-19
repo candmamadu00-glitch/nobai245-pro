@@ -50,15 +50,15 @@ export function RideDetails() {
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
-    return isNaN(date.getTime()) 
-      ? t('date_not_available', 'Data não disponível') 
+    return isNaN(date.getTime())
+      ? t('date_not_available', 'Data não disponível')
       : `${date.toLocaleDateString('pt-BR')} ${t('at_time', 'às')} ${date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
   };
 
   const handleSupportRequest = () => {
     Alert.alert(
-      t('support_and_help_title', 'Atendimento e Suporte'), 
-      t('support_prompt_msg', 'Como deseja falar com a equipe de suporte do BAI 245?'), 
+      t('support_and_help_title', 'Atendimento e Suporte'),
+      t('support_prompt_msg', 'Como deseja falar com a equipe de suporte do BAI 245?'),
       [
         {
           text: t('send_app_ticket', 'Enviar chamado pelo App'),
@@ -99,7 +99,10 @@ export function RideDetails() {
   };
 
   const driverPhoto = ride.driver?.profilePicture;
-  const photoUri = driverPhoto?.startsWith('http') ? driverPhoto : `${api.defaults.baseURL}/uploads/${driverPhoto}`;
+  const cleanAssetBase = (api.defaults.baseURL || 'https://api.nobai245.com').replace(/\/api\/?$/, '');
+  const photoUri = driverPhoto?.startsWith('http')
+    ? driverPhoto
+    : `${cleanAssetBase}${driverPhoto?.startsWith('/') ? '' : '/uploads/'}${driverPhoto}`;
 
   return (
     <SafeAreaView style={styles.container}>
