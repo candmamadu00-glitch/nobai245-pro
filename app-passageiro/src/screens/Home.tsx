@@ -395,6 +395,10 @@ export function Home() {
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRideIdRef = useRef<string | null>(null);
   const translateY = useRef(new Animated.Value(0)).current;
+  const sheetHeightRef = useRef<number>(460);
+  const sheetOffsetRef = useRef<number>(0);
+  const [isSheetCollapsed, setIsSheetCollapsed] = useState(false);
+  const isSheetCollapsedRef = useRef(false);
   const isInaccessibleAlertShowingRef = useRef(false);
   const isManualPickupRef = useRef(false);
   const isChatVisibleRef = useRef(false);
@@ -764,30 +768,74 @@ const handleFullCancelAndReset = useCallback(() => {
   const pickupInputRef = useRef<TextInput | null>(null);
   const dropoffInputRef = useRef<TextInput | null>(null);
 
+  const getMaxSheetCollapse = useCallback(() => {
+    const isActiveRide = ['accepted', 'arrived', 'in_progress'].includes(rideStatusRef.current);
+    const peekHeight = (isActiveRide ? 124 : 150) + (insets?.bottom || 0);
+    const measured = sheetHeightRef.current || 450;
+    return Math.max(200, measured - peekHeight);
+  }, [insets?.bottom]);
+
+  const animateSheetTo = useCallback((collapsed: boolean) => {
+    const target = collapsed ? getMaxSheetCollapse() : 0;
+    sheetOffsetRef.current = target;
+    isSheetCollapsedRef.current = collapsed;
+    setIsSheetCollapsed(collapsed);
+    Animated.spring(translateY, {
+      toValue: target,
+      damping: 22,
+      stiffness: 220,
+      mass: 0.9,
+      useNativeDriver: true,
+    }).start();
+  }, [getMaxSheetCollapse, translateY]);
+
+  useEffect(() => {
+    if (rideStatus === 'idle' || rideStatus === 'completed') {
+      sheetOffsetRef.current = 0;
+      isSheetCollapsedRef.current = false;
+      setIsSheetCollapsed(false);
+      sheetOffsetRef.current = 0;
+    isSheetCollapsedRef.current = false;
+    setIsSheetCollapsed(false);
+    translateY.setValue(0);
+    }
+  }, [rideStatus, translateY]);
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
       onStartShouldSetPanResponderCapture: () => false,
       onMoveShouldSetPanResponder: (_, gestureState) =>
-        Math.abs(gestureState.dy) > 10 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx),
+        Math.abs(gestureState.dy) > 8 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 1.2,
       onPanResponderMove: (_, gestureState) => {
-        const clampedY = Math.max(0, Math.min(180, gestureState.dy));
-        translateY.setValue(clampedY);
+        const isActiveRide = ['accepted', 'arrived', 'in_progress'].includes(rideStatusRef.current);
+        const peekHeight = (isActiveRide ? 124 : 150) + (insets?.bottom || 0);
+        const maxY = Math.max(200, (sheetHeightRef.current || 450) - peekHeight);
+        const nextY = Math.max(0, Math.min(maxY, sheetOffsetRef.current + gestureState.dy));
+        translateY.setValue(nextY);
       },
       onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dy > 80) {
-          Animated.timing(translateY, {
-            toValue: 160,
-            duration: 200,
-            useNativeDriver: true,
-          }).start();
-        } else {
-          Animated.spring(translateY, {
-            toValue: 0,
-            bounciness: 4,
-            useNativeDriver: true,
-          }).start();
-        }
+        const isActiveRide = ['accepted', 'arrived', 'in_progress'].includes(rideStatusRef.current);
+        const peekHeight = (isActiveRide ? 124 : 150) + (insets?.bottom || 0);
+        const maxY = Math.max(200, (sheetHeightRef.current || 450) - peekHeight);
+        const currentPos = Math.max(0, Math.min(maxY, sheetOffsetRef.current + gestureState.dy));
+        const shouldCollapse =
+          gestureState.vy > 0.35
+            ? true
+            : gestureState.vy < -0.35
+            ? false
+            : currentPos > maxY * 0.35;
+        const target = shouldCollapse ? maxY : 0;
+        sheetOffsetRef.current = target;
+        isSheetCollapsedRef.current = shouldCollapse;
+        setIsSheetCollapsed(shouldCollapse);
+        Animated.spring(translateY, {
+          toValue: target,
+          damping: 22,
+          stiffness: 220,
+          mass: 0.9,
+          useNativeDriver: true,
+        }).start();
       },
     })
   ).current;
@@ -1415,7 +1463,7 @@ const handleOpenChat = () => {
         api.get(`/landmarks/search?q=${encodeURIComponent(cleanText)}`, { timeout: 6000 }).catch(() => null),
         MAPBOX_ACCESS_TOKEN
           ? fetch(
-              `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(cleanText)}.json?country=gw&proximity=${BISSAU_CENTER.longitude},${BISSAU_CENTER.latitude}&language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`
+              `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(cleanText)}.json?country=gw&autocomplete=true&fuzzyMatch=true&limit=10&types=poi,address,neighborhood,locality,place&proximity=${passengerLocation?.coords?.longitude || BISSAU_CENTER.longitude},${passengerLocation?.coords?.latitude || BISSAU_CENTER.latitude}&language=pt,fr&access_token=${MAPBOX_ACCESS_TOKEN}`
             ).catch(() => null)
           : Promise.resolve(null),
       ]);
@@ -1487,9 +1535,10 @@ const handleOpenChat = () => {
     }
   };
 
-  const getCurrentLocationWithFallback = useCallback(async () => {
+  const getCurrentLocationWithFallback = useCallback(async (forceFresh?: unknown) => {
+    const isForceFresh = forceFresh === true;
     const now = Date.now();
-    if (isFetchingGpsRef.current || now - lastGpsFetchTimeRef.current < 15000) {
+    if (isFetchingGpsRef.current || (!isForceFresh && now - lastGpsFetchTimeRef.current < 15000)) {
       return;
     }
     isFetchingGpsRef.current = true;
@@ -1518,7 +1567,19 @@ const handleOpenChat = () => {
         setLocationError(null);
       }
 
-      let location: Location.LocationObject | null = await Location.getLastKnownPositionAsync({ maxAge: 30000 }).catch(() => null);
+      let location: Location.LocationObject | null = null;
+      try {
+        location = await Promise.race([
+          Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+        ]);
+      } catch (err) {
+        location = null;
+      }
+
+      if (!location) {
+        location = await Location.getLastKnownPositionAsync({ maxAge: 60000 }).catch(() => null);
+      }
       if (!location) {
         try {
           location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
@@ -1527,16 +1588,14 @@ const handleOpenChat = () => {
         }
       }
       if (!location) {
-        if (!location) {
-          location = {
-            coords: {
-              latitude: BISSAU_CENTER.latitude,
-              longitude: BISSAU_CENTER.longitude,
-              altitude: 0, accuracy: 0, altitudeAccuracy: 0, heading: 0, speed: 0
-            },
-            timestamp: Date.now()
-          } as Location.LocationObject;
-        }
+        location = {
+          coords: {
+            latitude: BISSAU_CENTER.latitude,
+            longitude: BISSAU_CENTER.longitude,
+            altitude: 0, accuracy: 0, altitudeAccuracy: 0, heading: 0, speed: 0
+          },
+          timestamp: Date.now()
+        } as Location.LocationObject;
       }
 
       if (!isMountedRef.current || !location) return;
@@ -1544,34 +1603,70 @@ const handleOpenChat = () => {
       setPassengerLocation(location);
 
       const isRideLocked = rideStatusRef.current !== 'idle' || Boolean(activeRideIdRef.current);
-      if (!isManualPickupRef.current && !isRideLocked) {
+      if ((!isManualPickupRef.current || isForceFresh) && !isRideLocked) {
         const { latitude, longitude } = location.coords;
         setPickupCoords({ latitude, longitude });
 
-        const localName = findNearestLocalBairro(latitude, longitude);
+        // 1. Verifica se o passageiro está exatamente em cima de um ponto conhecido (< 350m)
+        let exactNearbyPlace: string | null = null;
+        let minPlaceDist = Infinity;
+        for (const p of allBissauPlaces) {
+          const d = getHaversineDistance({ latitude, longitude }, { latitude: p.latitude, longitude: p.longitude });
+          if (d < minPlaceDist) {
+            minPlaceDist = d;
+            exactNearbyPlace = p.description;
+          }
+        }
 
-        if (localName) {
-          setPickupAddress(localName);
-        } else if (MAPBOX_ACCESS_TOKEN && isMountedRef.current) {
+        const localBairro = findNearestLocalBairro(latitude, longitude);
+        if (exactNearbyPlace && minPlaceDist <= 0.35) {
+          setPickupAddress(exactNearbyPlace);
+        } else if (localBairro && !pickupAddress) {
+          setPickupAddress(localBairro);
+        }
+
+        // 2. Busca o endereço exato (rua/avenida/ponto + bairro) via Mapbox Reverse Geocoding
+        if (MAPBOX_ACCESS_TOKEN && isMountedRef.current) {
           try {
-            const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${longitude},${latitude}.json?country=gw&proximity=${longitude},${latitude}&types=neighborhood,locality,place,address,poi&language=pt&access_token=${MAPBOX_ACCESS_TOKEN}`;
+            const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${longitude},${latitude}.json?country=gw&types=address,poi,neighborhood,locality,place&limit=5&language=pt,fr&access_token=${MAPBOX_ACCESS_TOKEN}`;
             const res = await fetch(url);
             if (res.ok) {
               const data = await res.json();
               if (data?.features?.length > 0 && isMountedRef.current) {
+                const streetOrPoi = data.features.find((f: any) =>
+                  f.place_type?.includes('address') || f.place_type?.includes('poi')
+                )?.text;
+                const neighborhood = data.features.find((f: any) =>
+                  f.place_type?.includes('neighborhood') || f.place_type?.includes('locality')
+                )?.text;
                 const bestFeature = data.features[0];
-                const neighborhood = data.features.find((f: any) => f.place_type?.includes('neighborhood'))?.text;
-                const placeName = bestFeature.text || bestFeature.place_name || 'Bissau, Centro';
+                const baseBairro = neighborhood || (localBairro ? localBairro.replace(/, Bissau$/i, '') : '');
 
-                const cleanAddress = neighborhood ? `${neighborhood}, Bissau` : placeName;
-                if (!isManualPickupRef.current) {
-                  setPickupAddress(cleanAddress);
+                let exactAddress = '';
+                if (streetOrPoi && baseBairro && !streetOrPoi.toLowerCase().includes(baseBairro.toLowerCase())) {
+                  exactAddress = `${streetOrPoi}, ${baseBairro}`;
+                } else if (streetOrPoi) {
+                  exactAddress = `${streetOrPoi}, Bissau`;
+                } else if (baseBairro) {
+                  exactAddress = `${baseBairro}, Bissau`;
+                } else {
+                  exactAddress = (bestFeature.place_name || bestFeature.text || localBairro || 'Bissau, Centro')
+                    .replace(/, Guiné-Bissau/gi, '')
+                    .trim();
+                }
+
+                if ((!isManualPickupRef.current || isForceFresh) && exactAddress) {
+                  setPickupAddress(exactAddress);
                 }
               }
             }
           } catch (gErr) {
-            if (!isManualPickupRef.current) setPickupAddress('Bissau, Centro');
+            if ((!isManualPickupRef.current || isForceFresh) && !pickupAddress) {
+              setPickupAddress(localBairro || 'Bissau, Centro');
+            }
           }
+        } else if (localBairro && (!isManualPickupRef.current || isForceFresh)) {
+          setPickupAddress(localBairro);
         }
       }
     } catch (error) {
@@ -1582,7 +1677,7 @@ const handleOpenChat = () => {
     } finally {
       isFetchingGpsRef.current = false;
     }
-  }, [t]);
+  }, [t, allBissauPlaces]);
 
   const handleInaccessibleLocationAlert = useCallback((data: any) => {
     if (isInaccessibleAlertShowingRef.current) return;
@@ -2720,8 +2815,13 @@ const handleOpenChat = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     translateY.setValue(0);
     setSearchType(type);
-    setSearchQuery('');
-    setSearchResults([]);
+    const initialText = type === 'pickup' ? '' : type === 'extraStop' ? extraStopAddress : dropoffAddress;
+    setSearchQuery(initialText);
+    if (initialText && initialText.trim().length > 0) {
+      handleMapboxSearch(initialText);
+    } else {
+      setSearchResults([]);
+    }
     setIsSearchModalVisible(true);
     setTimeout(() => {
       if (!isMountedRef.current) return;
@@ -2802,7 +2902,7 @@ const handleOpenChat = () => {
         <Text style={styles.loadingText}>{locationError || t('getting_location', 'Obtendo localização exata...')}</Text>
         <TouchableOpacity
           style={styles.retryLocationBtn}
-          onPress={getCurrentLocationWithFallback}
+          onPress={() => getCurrentLocationWithFallback(true)}
           activeOpacity={0.8}
         >
           <Text style={{ color: '#0F172A', fontWeight: 'bold' }}>{t('try_again', 'Tentar Novamente')}</Text>
@@ -3129,6 +3229,17 @@ const handleOpenChat = () => {
         pointerEvents="box-none"
       >
         <Animated.View
+          onLayout={(e) => {
+            const h = e.nativeEvent.layout.height;
+            if (h > 140) {
+              sheetHeightRef.current = h;
+              if (isSheetCollapsedRef.current) {
+                const updatedMax = getMaxSheetCollapse();
+                sheetOffsetRef.current = updatedMax;
+                translateY.setValue(updatedMax);
+              }
+            }
+          }}
           style={[
             styles.bottomSheet,
             {
@@ -3139,7 +3250,18 @@ const handleOpenChat = () => {
           ]}
         >
           <View style={styles.dragHandlerArea} {...panResponder.panHandlers}>
-            <View style={styles.dragIndicator} />
+            <TouchableOpacity
+              activeOpacity={0.75}
+              onPress={() => animateSheetTo(!isSheetCollapsedRef.current)}
+              style={{ alignItems: 'center', paddingVertical: 2, paddingHorizontal: 24 }}
+            >
+              <View style={styles.dragIndicator} />
+              {['accepted', 'arrived', 'in_progress'].includes(rideStatus) && (
+                <Text style={{ color: '#94A3B8', fontSize: 10, fontWeight: '700', marginTop: 4, letterSpacing: 0.4 }}>
+                  {isSheetCollapsed ? '▲ Arraste ou toque para ver detalhes' : '▼ Deslize para baixo para ver o mapa'}
+                </Text>
+              )}
+            </TouchableOpacity>
           </View>
 
           <ScrollView
@@ -3508,7 +3630,7 @@ const handleOpenChat = () => {
               <View style={styles.activeRideContainer}>
 
                 {/* HEADER DE STATUS E VALOR */}
-                <View style={styles.activeRideHeader}>
+                <View style={styles.activeRideHeader} {...panResponder.panHandlers}>
                   <View style={styles.statusPulseBox}>
                     <View style={styles.statusPulseDot} />
                     <Text style={styles.activeRideStatusTitle}>
@@ -3906,7 +4028,7 @@ const handleOpenChat = () => {
 
                   <TouchableOpacity
                     style={styles.cancelButtonOutline}
-                    onPress={getCurrentLocationWithFallback}
+                    onPress={() => getCurrentLocationWithFallback(true)}
                     activeOpacity={0.8}
                   >
                     <Text style={styles.cancelButtonOutlineText}>{t('try_again', 'Já ativei / Tentar novamente')}</Text>
@@ -4152,11 +4274,20 @@ const handleOpenChat = () => {
                           <Text style={[styles.routeStepLabel, { color: '#FACC15' }]}>
                             PONTO DE PARTIDA
                           </Text>
-                          {searchType === 'pickup' && (
-                            <View style={[styles.activeFieldBadge, { backgroundColor: 'rgba(234, 179, 8, 0.16)' }]}>
-                              <Text style={[styles.activeFieldBadgeText, { color: '#FACC15' }]}>Editando</Text>
-                            </View>
-                          )}
+                          <TouchableOpacity
+                            onPress={() => {
+                              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                              isManualPickupRef.current = false;
+                              setSearchQuery('');
+                              setSearchResults([]);
+                              getCurrentLocationWithFallback(true);
+                            }}
+                            style={[styles.activeFieldBadge, { backgroundColor: 'rgba(234, 179, 8, 0.16)', flexDirection: 'row', alignItems: 'center', gap: 4 }]}
+                            activeOpacity={0.75}
+                          >
+                            <Ionicons name="locate" size={11} color="#FACC15" />
+                            <Text style={[styles.activeFieldBadgeText, { color: '#FACC15' }]}>GPS atual</Text>
+                          </TouchableOpacity>
                         </View>
 
                         <View style={[
@@ -4174,8 +4305,12 @@ const handleOpenChat = () => {
                             onFocus={() => {
                               setSearchType('pickup');
                               setSearchQuery(pickupAddress);
+                              if (pickupAddress && pickupAddress.trim().length > 0) {
+                                handleMapboxSearch(pickupAddress);
+                              }
                             }}
                             onChangeText={(text) => {
+                              isManualPickupRef.current = true;
                               setSearchQuery(text);
                               handleMapboxSearch(text);
                             }}
@@ -4184,7 +4319,15 @@ const handleOpenChat = () => {
                             <ActivityIndicator size="small" color="#EAB308" style={{ marginLeft: 6 }} />
                           ) : (searchType === 'pickup' ? searchQuery : pickupAddress) ? (
                             <TouchableOpacity
-                              onPress={() => { setSearchQuery(''); setPickupAddress(''); setPickupCoords(null); }}
+                              onPress={() => {
+                                isManualPickupRef.current = true;
+                                setSearchType('pickup');
+                                setSearchQuery('');
+                                setPickupAddress('');
+                                setPickupCoords(null);
+                                setSearchResults([]);
+                                setTimeout(() => pickupInputRef.current?.focus(), 60);
+                              }}
                               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                             >
                               <Ionicons name="close-circle" size={18} color="#64748B" />
@@ -4300,6 +4443,9 @@ const handleOpenChat = () => {
                             onFocus={() => {
                               setSearchType('dropoff');
                               setSearchQuery(dropoffAddress);
+                              if (dropoffAddress && dropoffAddress.trim().length > 0) {
+                                handleMapboxSearch(dropoffAddress);
+                              }
                             }}
                             onChangeText={(text) => {
                               setSearchQuery(text);
@@ -4544,6 +4690,17 @@ const handleOpenChat = () => {
                       {isSearchingMapbox && <Text style={styles.sectionHeaderHint}>Buscando...</Text>}
                     </View>
                     <View style={styles.resultsListCard}>
+                      {!isSearchingMapbox && searchResults.length === 0 && (
+                        <View style={[styles.searchResultItem, { opacity: 0.85 }]}>
+                          <View style={styles.resultIconBadgeMuted}>
+                            <Ionicons name="search-outline" size={16} color="#94A3B8" />
+                          </View>
+                          <View style={{ flex: 1, minWidth: 0 }}>
+                            <Text style={styles.searchResultText}>Nenhum endereço exato encontrado</Text>
+                            <Text style={styles.searchResultSub}>Tente o nome do bairro ou ponto próximo</Text>
+                          </View>
+                        </View>
+                      )}
                       {searchResults.map((item, idx) => (
                         <TouchableOpacity
                           key={item.id}
