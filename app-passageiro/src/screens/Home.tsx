@@ -1338,6 +1338,12 @@ const handleOpenChat = () => {
         await persistRideState(null, 'idle');
       } else if (finalStatus === 'CANCELLED' && lastNotifiedId !== String(staleRideId)) {
         await AsyncStorage.setItem(terminalKey, String(staleRideId)).catch(() => {});
+        const cancelTimestamp = new Date(resolvedRide?.cancelledAt || resolvedRide?.updatedAt || 0).getTime();
+        const isRecentCancel = Number.isFinite(cancelTimestamp) && (Date.now() - cancelTimestamp) < 5 * 60 * 1000;
+        if (!activeRideIdRef.current && !isRecentCancel) {
+          resetRideState();
+          return;
+        }
         const cancelReason = String(resolvedRide?.cancelReason || resolvedRide?.cancellationReason || '');
         const isDriverCancel =
           String(resolvedRide?.cancelledBy || '').toUpperCase() === 'DRIVER' ||
