@@ -103,7 +103,7 @@ const allowedOrigins = rawOrigins
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin) || origin === 'https://app.nobai245.com' || origin === 'https://admin.nobai245.com') {
       callback(null, true);
     } else {
       callback(null, false);

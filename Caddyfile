@@ -34,3 +34,16 @@
         header_up X-Forwarded-Proto {scheme}
     }
 }
+
+{$PASSENGER_DOMAIN:app.nobai245.com} {
+    encode gzip zstd
+
+    header {
+        -Server
+    }
+
+    reverse_proxy nobai245-web-passenger:80 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}

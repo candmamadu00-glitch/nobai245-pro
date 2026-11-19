@@ -94,6 +94,22 @@ services:
     networks:
       - nobai245-net
 
+  nobai245-web-passenger:
+    build:
+      context: ./app-passageiro
+      dockerfile: Dockerfile
+    container_name: nobai245-web-passenger
+    restart: unless-stopped
+    depends_on:
+      - nobai245-api
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - nobai245-net
+
   nobai245-proxy:
     image: caddy:2-alpine
     container_name: nobai245-proxy
@@ -111,6 +127,7 @@ services:
     depends_on:
       - nobai245-api
       - nobai245-web-admin
+      - nobai245-web-passenger
     logging:
       driver: "json-file"
       options:

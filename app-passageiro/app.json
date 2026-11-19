@@ -37,7 +37,14 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/favicon.png",
+      "name": "Nô Bai 245",
+      "shortName": "Nô Bai 245",
+      "description": "Peça sua corrida rápida e segura na Guiné-Bissau.",
+      "themeColor": "#0E243C",
+      "backgroundColor": "#0E243C"
     },
     "plugins": [
       [
