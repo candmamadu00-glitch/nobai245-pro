@@ -89,9 +89,43 @@ socket.on('connect', async () => {
     console.warn('[SOCKET MOTORISTA] Erro ao sincronizar estado inicial:', err);
   }
 });
-socket.on('connect_error', (err) => {
-  if (err.message.includes('Token') || err.message.includes('Acesso negado')) {
-    console.warn('⚠️ [SOCKET MOTORISTA] Acesso negado pelo servidor:', err.message);
+let isRefreshingDriverSocket = false;
+
+const refreshDriverSocketToken = async (): Promise<string | null> => {
+  if (isRefreshingDriverSocket) return null;
+  isRefreshingDriverSocket = true;
+  try {
+    const refreshToken = await storage.getRefreshToken();
+    if (!refreshToken) return null;
+    const res = await fetch(`${BASE_URL}/api/drivers/refresh-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data?.accessToken) {
+      await storage.setAccessToken(data.accessToken);
+      socket.auth = { token: data.accessToken };
+      return data.accessToken;
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    isRefreshingDriverSocket = false;
+  }
+};
+
+socket.on('connect_error', async (err) => {
+  const msg = String(err?.message || '');
+  if (msg.includes('Token') || msg.includes('expirado') || msg.includes('Acesso negado')) {
+    const refreshed = await refreshDriverSocketToken();
+    if (refreshed) {
+      if (!socket.connected) socket.connect();
+      return;
+    }
+    console.warn('⚠️ [SOCKET MOTORISTA] Acesso negado pelo servidor:', msg);
     socket.disconnect();
   }
 });

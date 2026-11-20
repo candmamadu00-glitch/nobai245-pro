@@ -2179,9 +2179,11 @@ handleSocketEvent(socket, 'chat:send_message', async (data) => {
         }
 
       } catch (err: any) {
-        const errMsg = err?.message || 'Erro ao cancelar corrida.';
+        const errMsg = String(err?.message || 'Erro ao cancelar corrida.');
         console.error(`❌ [CANCEL_ERROR] ID: ${rideId}:`, errMsg);
-        socket.emit('error', { message: errMsg });
+        if (!errMsg.includes('STATE_CONFLICT')) {
+          socket.emit('error', { message: errMsg });
+        }
         if (typeof ackCallback === 'function') ackCallback({ error: true, message: errMsg });
       }
 

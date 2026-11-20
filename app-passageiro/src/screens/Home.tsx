@@ -2108,6 +2108,17 @@ const handleOpenChat = () => {
       }
     });
 
+    // 🛡️ WATCHDOG CONTÍNUO DE CORRIDA ATIVA (5s): Sincroniza finalização/cancelamento mesmo em viagens longas (>1h)
+    const passengerRideWatchdog = setInterval(() => {
+      if (!isMountedRef.current) return;
+      if (activeRideIdRef.current) {
+        if (socket && !socket.connected) {
+          connectPassengerSocket();
+        }
+        syncPassengerActiveRide(true);
+      }
+    }, 5000);
+
     if (!user?.id) return;
 
     connectPassengerSocket();
@@ -2544,6 +2555,7 @@ const handleOpenChat = () => {
     socket.on('ride:inaccessible_location', handleInaccessibleLocationAlert);
 
     return () => {
+      clearInterval(passengerRideWatchdog);
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       socket.off('passenger:state_recovered', handleStateRecovered);
@@ -2850,19 +2862,32 @@ const handleOpenChat = () => {
     return (new Date().getTime() - acceptedAt.getTime()) > 2 * 60 * 1000;
   };
 
-  const handleConfirmCancel = useCallback((reason: string) => {
+  const handleConfirmCancel = useCallback(async (reason: string) => {
   setShowCancelModal(false);
 
   if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
-  // Se houver uma corrida ativa no banco (mesmo ainda em busca), cancela via Socket + HTTP
   const targetRideId = activeRideIdRef.current || activeRideId;
   if (targetRideId && user?.id) {
-    AsyncStorage.setItem('@bai245:last_notified_terminal_ride', String(targetRideId)).catch(() => {});
     setIsChatVisible(false);
-    cancelRideByPassenger(targetRideId, user.id, reason);
-    api.post('/passengers/rides/cancel', { rideId: targetRideId, reason })
-      .catch(() => api.post('/rides/cancel', { rideId: targetRideId, reason }).catch(() => {}));
+    if (socket && socket.connected) {
+      cancelRideByPassenger(targetRideId, user.id, reason);
+    }
+
+    try {
+      await api.post('/passengers/rides/cancel', { rideId: targetRideId, reason });
+      await AsyncStorage.setItem('@bai245:last_notified_terminal_ride', String(targetRideId)).catch(() => {});
+    } catch (err: any) {
+      const status = err?.response?.status;
+      const errMsg = String(err?.response?.data?.error || err?.message || '');
+      // Se o motorista já concluiu a corrida enquanto o app estava dessincronizado, sincroniza para exibir o recibo/avaliação
+      if (status === 409 || errMsg.includes('concluída') || errMsg.includes('STATE_CONFLICT')) {
+        await syncPassengerActiveRide(true);
+        return;
+      }
+      await api.post('/rides/cancel', { rideId: targetRideId, reason }).catch(() => {});
+      await AsyncStorage.setItem('@bai245:last_notified_terminal_ride', String(targetRideId)).catch(() => {});
+    }
   }
 
   AsyncStorage.multiRemove([
@@ -2874,7 +2899,7 @@ const handleOpenChat = () => {
 
   // Executa o reset completo da tela
   handleFullCancelAndReset();
-}, [activeRideId, user?.id, handleFullCancelAndReset]);
+}, [activeRideId, user?.id, handleFullCancelAndReset, syncPassengerActiveRide]);
 
   const onMapRegionDidChange = useCallback(async (feature: any) => {
     setIsMapMoving(false);

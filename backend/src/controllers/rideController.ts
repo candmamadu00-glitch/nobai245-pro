@@ -613,8 +613,13 @@ export const cancelRide = async (req: Request, res: Response): Promise<void> => 
       refundExecuted: refundResult?.success || false
     });
   } catch (error: any) {
-    console.error(`❌ [CANCELAR_CORRIDA] Erro: ${error?.message || error}`);
-    res.status(500).json({ success: false, error: error?.message || 'Erro crítico ao cancelar a corrida.' });
+    const msg = String(error?.message || '');
+    console.error(`❌ [CANCELAR_CORRIDA] Erro: ${msg || error}`);
+    if (msg.includes('STATE_CONFLICT')) {
+      res.status(409).json({ success: false, error: msg.replace(/^STATE_CONFLICT:\s*/, '') || 'Esta corrida já foi concluída ou encerrada.' });
+      return;
+    }
+    res.status(500).json({ success: false, error: msg || 'Erro crítico ao cancelar a corrida.' });
   }
 };
 

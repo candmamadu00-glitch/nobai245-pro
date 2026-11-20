@@ -71,12 +71,46 @@ socket.on('connect', async () => {
     Sentry.captureException(err);
   }
 });
+let isRefreshingPassengerSocket = false;
+
+const refreshPassengerSocketToken = async (): Promise<string | null> => {
+  if (isRefreshingPassengerSocket) return null;
+  isRefreshingPassengerSocket = true;
+  try {
+    const refreshToken = await SecureStorage.getItem('@bai245:refreshToken');
+    if (!refreshToken) return null;
+    const res = await fetch(`${API_URL}/api/passengers/refresh-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data?.accessToken) {
+      await SecureStorage.setItem('@bai245:accessToken', data.accessToken);
+      socket.auth = { token: data.accessToken };
+      return data.accessToken;
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    isRefreshingPassengerSocket = false;
+  }
+};
+
 socket.on('connect_error', async (err) => {
-  if (err.message.includes('Token inválido') || err.message.includes('Acesso negado')) {
+  const msg = String(err?.message || '');
+  if (msg.includes('Token') || msg.includes('expirado') || msg.includes('Acesso negado')) {
+    const refreshed = await refreshPassengerSocketToken();
+    if (refreshed) {
+      if (!socket.connected) socket.connect();
+      return;
+    }
     socket.disconnect();
     await SecureStorage.removeItem('@bai245:accessToken');
   } else {
-    Sentry.captureMessage(`Socket Passageiro Error: ${err.message}`, 'error');
+    Sentry.captureMessage(`Socket Passageiro Error: ${msg}`, 'error');
   }
 });
 

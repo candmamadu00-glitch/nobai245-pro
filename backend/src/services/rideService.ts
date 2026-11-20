@@ -1549,13 +1549,19 @@ export async function cancelRideLogic(
     passengerCancelledAfterGrace || driverCancelledNoShow
   );
 
-  const dbResult = await prisma.$transaction(async (tx) => {
+  let dbResult: any;
+  try {
+    dbResult = await prisma.$transaction(async (tx) => {
     const updatedRide = await tx.ride.updateMany({
       where: { id: rideId, version: ride.version, status: { notIn: [RideStatus.COMPLETED, RideStatus.CANCELLED] } },
       data: { status: RideStatus.CANCELLED, cancellationReason: cleanReason, cancelledBy: userType as UserType, version: { increment: 1 } }
     });
 
     if (updatedRide.count === 0) {
+      const latestRide = await tx.ride.findUnique({ where: { id: rideId }, select: { status: true } });
+      if (latestRide?.status === RideStatus.CANCELLED) {
+        throw new Error('ALREADY_CANCELLED_CONCURRENT');
+      }
       throw new Error('STATE_CONFLICT: A corrida já foi alterada por outra operação.');
     }
 
@@ -1788,7 +1794,13 @@ export async function cancelRideLogic(
     });
 
     return { appliedPenalty, penaltyAmount, refundTxId, refundAmount, refundProvider, driverCompensationTxId };
-  });
+    });
+  } catch (txErr: any) {
+    if (String(txErr?.message || '').includes('ALREADY_CANCELLED_CONCURRENT')) {
+      return { appliedPenalty: false, penaltyAmount: 0, refundTxId: null, refundAmount: 0, refundProvider: PaymentMethod.ORANGE_MONEY, alreadyCancelled: true };
+    }
+    throw txErr;
+  }
 
   if (dbResult.refundTxId && dbResult.refundAmount > 0) {
     const pPhone = ride.passenger?.paymentAccountNumber || ride.passenger?.phone || '';
