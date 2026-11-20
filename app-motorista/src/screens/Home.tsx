@@ -1269,6 +1269,7 @@ export function Home() {
       const data = await response.json();
 
       if (data.routes && data.routes.length > 0 && isMountedRef.current) {
+        if (rideStateRef.current === 'idle' && !incomingRideRef.current) return;
         const route = data.routes[0];
         const coordsList = route.geometry.coordinates;
         setRouteCoordinates(coordsList);
@@ -1350,7 +1351,7 @@ export function Home() {
         }
       }
     } catch (err) {
-      if (isMountedRef.current) {
+      if (isMountedRef.current && !(rideStateRef.current === 'idle' && !incomingRideRef.current)) {
         setRouteCoordinates([[startLng, startLat], [endLng, endLat]]);
         const distKm = calculateDirectDistance(startLat, startLng, endLat, endLng);
         setDriverEta(Math.max(1, Math.ceil((distKm / 30) * 60)));
@@ -1757,7 +1758,12 @@ export function Home() {
         Vibration.cancel();
         isAcceptingRideRef.current = false;
         incomingRideRef.current = null;
+        routeCoordinatesRef.current = null;
         setIncomingRide(null);
+        setRouteCoordinates(null);
+        setDriverEta(null);
+        setRemainingDistanceKm(null);
+        setIsLoading(false);
         Alert.alert(
           'Corrida Já Aceita',
           data?.message || 'Outro motorista aceitou esta corrida primeiro.'
@@ -2703,7 +2709,7 @@ export function Home() {
       </View>
 
       {/* 🎛️ BOTÕES FLUTUANTES */}
-      <View style={styles.floatingButtonsWrapper} pointerEvents="box-none">
+      <View style={[styles.floatingButtonsWrapper, { bottom: Math.max(220, (sheetHeight || 220) + 14) }]} pointerEvents="box-none">
         <TouchableOpacity style={styles.recenterButton} onPress={handleRecenterMap} activeOpacity={0.85}>
           <Ionicons name="locate" size={20} color="#EAB308" />
         </TouchableOpacity>
