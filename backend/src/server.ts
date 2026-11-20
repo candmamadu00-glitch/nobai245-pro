@@ -1741,7 +1741,7 @@ io.on('connection', (socket: any) => {
     const safeRouteCoordinates =
       Array.isArray(routeCoordinates) &&
       routeCoordinates.length >= 2 &&
-      routeCoordinates.length <= 450 &&
+      routeCoordinates.length <= 5000 &&
       routeCoordinates.every(
         (pt: any) =>
           Array.isArray(pt) &&

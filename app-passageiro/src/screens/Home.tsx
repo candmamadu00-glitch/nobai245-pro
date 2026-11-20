@@ -37,7 +37,7 @@ import { updateOngoingRideNotification, dismissOngoingRideNotification } from '.
 import { speakRideStatusUpdate, speakText, triggerHapticFeedback } from '../utils/accessibility';
 
 // Token Mapbox
-const MAPBOX_ACCESS_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_KEY || 'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZTRyc3NmMDBzMTJ5cTA1anJvYjFsOSJ9.pUAoGXwZS8FtYNr85VD1TA';
+const MAPBOX_ACCESS_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_KEY || 'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZGpkMnVtMDMzdDJ4c2U0NHd3dHBtZiJ9.mT0BfmoFsPTgWFzNnblCZg';
 if (MAPBOX_ACCESS_TOKEN) {
   Mapbox.setAccessToken(MAPBOX_ACCESS_TOKEN);
 }
@@ -1176,8 +1176,22 @@ const handleOpenChat = () => {
       const coordinatesString = waypoints.join(';');
       const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${coordinatesString}?geometries=geojson&overview=full&access_token=${MAPBOX_ACCESS_TOKEN}`;
 
+      const fallbackCoords = waypoints.map((pt) => {
+        const [lngStr, latStr] = pt.split(',');
+        return [Number(lngStr), Number(latStr)];
+      });
+
       const res = await fetch(url);
-      if (!res.ok) return;
+      if (!res.ok) {
+        if (isMountedRef.current && fallbackCoords.length >= 2) {
+          setRouteGeometry({
+            type: 'Feature',
+            properties: {},
+            geometry: { type: 'LineString', coordinates: fallbackCoords },
+          });
+        }
+        return;
+      }
 
       const data = await res.json();
 
@@ -1200,9 +1214,28 @@ const handleOpenChat = () => {
           setEstimatedDistance(distanceKm);
           setEstimatedPrice(calculateVehiclePrice(vehicleType, distanceKm));
         }
+      } else if (isMountedRef.current && fallbackCoords.length >= 2) {
+        setRouteGeometry({
+          type: 'Feature',
+          properties: {},
+          geometry: { type: 'LineString', coordinates: fallbackCoords },
+        });
       }
     } catch (error) {
       console.warn('Erro ao buscar rota no Mapbox:', error);
+      if (isMountedRef.current && origin && destination) {
+        setRouteGeometry({
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'LineString',
+            coordinates: [
+              [origin.longitude, origin.latitude],
+              [destination.longitude, destination.latitude],
+            ],
+          },
+        });
+      }
     }
   }, [rideStatus, vehicleType]);
 
