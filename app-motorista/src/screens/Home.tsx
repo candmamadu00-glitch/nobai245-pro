@@ -284,6 +284,8 @@ function trimRouteFromPosition(
   let bestScore = Infinity;
   let bestDistSq = Infinity;
   let bestIdx = 0;
+  let bestProjLng = carLng;
+  let bestProjLat = carLat;
 
   for (let i = 0; i < routeCoords.length - 1; i++) {
     const [x1, y1] = routeCoords[i];
@@ -319,6 +321,8 @@ function trimRouteFromPosition(
       bestScore = score;
       bestDistSq = distSq;
       bestIdx = i;
+      bestProjLng = projLng;
+      bestProjLat = projLat;
     }
   }
 
@@ -329,10 +333,10 @@ function trimRouteFromPosition(
 
   const remaining = routeCoords.slice(bestIdx + 1);
   if (remaining.length === 0) {
-    return routeCoords.slice(-2);
+    return [[bestProjLng, bestProjLat], routeCoords[routeCoords.length - 1]];
   }
 
-  return [[carLng, carLat], ...remaining];
+  return [[bestProjLng, bestProjLat], ...remaining];
 }
 
 function computeRemainingRouteMetrics(
@@ -1258,7 +1262,7 @@ export function Home() {
 
       const waypointsString = validWaypoints.length > 0 ? `${validWaypoints.join(';')};` : '';
       const token = MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '';
-      const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${startLng},${startLat};${waypointsString}${endLng},${endLat}?geometries=geojson&steps=true&voice_instructions=true&banner_instructions=true&language=pt&access_token=${token}`;
+      const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${startLng},${startLat};${waypointsString}${endLng},${endLat}?geometries=geojson&overview=full&steps=true&voice_instructions=true&banner_instructions=true&language=pt&access_token=${token}`;
 
       const response = await fetch(url);
       if (!response.ok) throw new Error(`Falha rota Mapbox: ${response.status}`);
@@ -1929,6 +1933,18 @@ export function Home() {
             smoothLat = lerp(prevCoords.latitude, aligned.latitude, 0.45);
             smoothLng = lerp(prevCoords.longitude, aligned.longitude, 0.45);
             smoothHeading = lerpAngle(prevCoords.heading, aligned.bearing, 0.45);
+            if (aligned.isOnRoute && routeCoordinatesRef.current) {
+              const reSnapped = getRouteAlignedPosition(
+                smoothLat,
+                smoothLng,
+                smoothHeading,
+                routeCoordinatesRef.current
+              );
+              if (reSnapped.isOnRoute) {
+                smoothLat = reSnapped.latitude;
+                smoothLng = reSnapped.longitude;
+              }
+            }
           }
 
           lastDriverCoordsRef.current = {
@@ -1989,6 +2005,9 @@ export function Home() {
                 heading: smoothHeading,
                 durationMinutes: liveDurationMin ?? undefined,
                 distanceKm: liveDistanceKm ?? undefined,
+                tripDistanceKm: Number(incomingRideRef.current?.distanceKm || 0) > 0
+                  ? Number(Number(incomingRideRef.current.distanceKm).toFixed(2))
+                  : undefined,
                 phase: rideStateRef.current,
                 ...(shouldIncludePolyline ? { routeCoordinates: routeCoordinatesRef.current } : {}),
               });
@@ -2799,17 +2818,17 @@ export function Home() {
                     <View style={styles.distanceBadge}>
                       <Text style={styles.distanceBadgeText}>
                         📏 {(
-                          remainingDistanceKm != null && remainingDistanceKm > 0
-                            ? remainingDistanceKm
-                            : Number(incomingRide.distanceKm) > 0
+                          Number(incomingRide.distanceKm) > 0
                             ? Number(incomingRide.distanceKm)
+                            : remainingDistanceKm != null && remainingDistanceKm > 0
+                            ? remainingDistanceKm
                             : calculateDirectDistance(
                                 incomingRide.pickupLat,
                                 incomingRide.pickupLng,
                                 incomingRide.destinationLat,
                                 incomingRide.destinationLng ?? 0
                               )
-                        ).toFixed(1)} km {driverEta ? `• ~${driverEta} min` : ''}
+                        ).toFixed(1)} km{rideState === 'accepted' && remainingDistanceKm != null && remainingDistanceKm > 0 ? ` (${remainingDistanceKm.toFixed(1)} km até embarque)` : ''} {driverEta ? `• ~${driverEta} min` : ''}
                       </Text>
                     </View>
                   ) : null}
