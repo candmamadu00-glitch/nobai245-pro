@@ -3,8 +3,11 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, Alert,
   ActivityIndicator, ScrollView, Platform, StatusBar,
   Animated, TouchableWithoutFeedback, Keyboard,
-  KeyboardAvoidingView, BackHandler
+  KeyboardAvoidingView, BackHandler, Modal
 } from 'react-native';
+
+// 🎯 CHAVE DA APRESENTAÇÃO DE SEXTA-FEIRA: mude para false após o evento para ocultar a tela de boas-vindas
+const ENABLE_PRESENTATION_WELCOME = true;
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -23,6 +26,7 @@ export function Login() {
   const [isForgotModalVisible, setForgotModalVisible] = useState(false);
   const [recoveryPhone, setRecoveryPhone] = useState('');
   const [recoveryLoading, setRecoveryLoading] = useState(false);
+  const [showWelcomeModal, setShowWelcomeModal] = useState(ENABLE_PRESENTATION_WELCOME);
 
   // ⌨️ Monitor Dinâmico da Altura do Teclado
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -367,6 +371,184 @@ export function Login() {
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
+      )}
+
+      {/* ✨ MODAL VIP DE BOAS-VINDAS PARA APRESENTAÇÃO OFICIAL */}
+      {ENABLE_PRESENTATION_WELCOME && (
+        <Modal
+          visible={showWelcomeModal}
+          transparent
+          animationType="fade"
+          statusBarTranslucent
+          onRequestClose={() => setShowWelcomeModal(false)}
+        >
+          <View style={{
+            flex: 1,
+            backgroundColor: 'rgba(6, 11, 25, 0.92)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            paddingHorizontal: 22,
+          }}>
+            <View style={{
+              width: '100%',
+              backgroundColor: '#131C31',
+              borderRadius: 28,
+              padding: 24,
+              borderWidth: 1.5,
+              borderColor: 'rgba(234, 179, 8, 0.45)',
+              shadowColor: '#EAB308',
+              shadowOffset: { width: 0, height: 12 },
+              shadowOpacity: 0.25,
+              shadowRadius: 24,
+              elevation: 16,
+            }}>
+              {/* SELO SUPERIOR DO EVENTO */}
+              <View style={{
+                alignSelf: 'center',
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: 'rgba(234, 179, 8, 0.14)',
+                borderWidth: 1,
+                borderColor: 'rgba(234, 179, 8, 0.45)',
+                paddingHorizontal: 12,
+                paddingVertical: 5,
+                borderRadius: 20,
+                marginBottom: 18,
+                gap: 6,
+              }}>
+                <Ionicons name="sparkles" size={13} color="#FACC15" />
+                <Text style={{ color: '#FACC15', fontSize: 10, fontWeight: '900', letterSpacing: 0.9 }}>
+                  APRESENTAÇÃO OFICIAL • GUINÉ-BISSAU 🇬🇼
+                </Text>
+              </View>
+
+              {/* EMBLEMA CENTRAL */}
+              <View style={{
+                width: 74,
+                height: 74,
+                borderRadius: 24,
+                backgroundColor: '#EAB308',
+                alignSelf: 'center',
+                justifyContent: 'center',
+                alignItems: 'center',
+                marginBottom: 16,
+                shadowColor: '#EAB308',
+                shadowOffset: { width: 0, height: 8 },
+                shadowOpacity: 0.45,
+                shadowRadius: 14,
+                elevation: 10,
+              }}>
+                <Ionicons name="car-sport" size={40} color="#0F172A" />
+              </View>
+
+              <Text style={{
+                color: '#FFFFFF',
+                fontSize: 24,
+                fontWeight: '900',
+                textAlign: 'center',
+                letterSpacing: -0.4,
+              }}>
+                Bem-vindos ao <Text style={{ color: '#EAB308' }}>Nobai245</Text>
+              </Text>
+
+              <Text style={{
+                color: '#CBD5E1',
+                fontSize: 13,
+                textAlign: 'center',
+                lineHeight: 20,
+                marginTop: 8,
+                marginBottom: 18,
+              }}>
+                Uma nova era de mobilidade urbana inteligente, segura e conectada em tempo real para Bissau.
+              </Text>
+
+              {/* PILARES TECNOLÓGICOS */}
+              <View style={{ gap: 10, marginBottom: 22 }}>
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  backgroundColor: 'rgba(15, 23, 42, 0.78)',
+                  padding: 11,
+                  borderRadius: 14,
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.08)',
+                  gap: 10,
+                }}>
+                  <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: 'rgba(234, 179, 8, 0.16)', justifyContent: 'center', alignItems: 'center' }}>
+                    <Ionicons name="navigate" size={17} color="#EAB308" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: '#F8FAFC', fontSize: 13, fontWeight: '800' }}>Geolocalização de Alta Precisão</Text>
+                    <Text style={{ color: '#94A3B8', fontSize: 11 }}>Rastreamento ao vivo e rotas otimizadas</Text>
+                  </View>
+                </View>
+
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  backgroundColor: 'rgba(15, 23, 42, 0.78)',
+                  padding: 11,
+                  borderRadius: 14,
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.08)',
+                  gap: 10,
+                }}>
+                  <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: 'rgba(16, 185, 129, 0.16)', justifyContent: 'center', alignItems: 'center' }}>
+                    <Ionicons name="shield-checkmark" size={17} color="#10B981" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: '#F8FAFC', fontSize: 13, fontWeight: '800' }}>Segurança & Motoristas Verificados</Text>
+                    <Text style={{ color: '#94A3B8', fontSize: 11 }}>PIN noturno, botão SOS e partilha de viagem</Text>
+                  </View>
+                </View>
+
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  backgroundColor: 'rgba(15, 23, 42, 0.78)',
+                  padding: 11,
+                  borderRadius: 14,
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.08)',
+                  gap: 10,
+                }}>
+                  <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: 'rgba(59, 130, 246, 0.16)', justifyContent: 'center', alignItems: 'center' }}>
+                    <Ionicons name="flash" size={17} color="#60A5FA" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: '#F8FAFC', fontSize: 13, fontWeight: '800' }}>Experiência Executiva Instantânea</Text>
+                    <Text style={{ color: '#94A3B8', fontSize: 11 }}>Tarifas transparentes e comunicação direta</Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* BOTÃO DE ENTRADA */}
+              <TouchableOpacity
+                style={{
+                  backgroundColor: '#EAB308',
+                  height: 52,
+                  borderRadius: 16,
+                  flexDirection: 'row',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  gap: 8,
+                  shadowColor: '#EAB308',
+                  shadowOffset: { width: 0, height: 6 },
+                  shadowOpacity: 0.4,
+                  shadowRadius: 12,
+                  elevation: 8,
+                }}
+                activeOpacity={0.85}
+                onPress={() => setShowWelcomeModal(false)}
+              >
+                <Text style={{ color: '#0F172A', fontSize: 15, fontWeight: '900', letterSpacing: 0.3 }}>
+                  Iniciar Experiência
+                </Text>
+                <Ionicons name="arrow-forward-circle" size={20} color="#0F172A" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
       )}
 
     </View>
