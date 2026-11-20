@@ -1886,7 +1886,7 @@ const handleOpenChat = () => {
       }
     };
 
-    Notifications.getLastNotificationResponseAsync()
+    if (typeof Notifications.getLastNotificationResponseAsync === 'function') Notifications.getLastNotificationResponseAsync()
       .then(handleChatNotifResponse)
       .catch(() => {});
 
