@@ -1291,6 +1291,27 @@ export function Home() {
 
         const currentRideId = activeRideIdRef.current || activeRideId || incomingRide?.rideId;
         if (currentRideId) {
+          if (driver?.id && socket?.connected && Array.isArray(coordsList) && coordsList.length >= 2) {
+            lastRoutePolylineBroadcastAtRef.current = Date.now();
+            const emitLat = Number(snappedCarPos?.latitude || location?.coords?.latitude || coordsList[0][1]);
+            const emitLng = Number(snappedCarPos?.longitude || location?.coords?.longitude || coordsList[0][0]);
+            const emitHeading = Number(snappedCarPos?.heading ?? location?.coords?.heading ?? 0);
+            socket.emit('driver:location_update', {
+              driverId: driver.id,
+              rideId: currentRideId,
+              latitude: emitLat,
+              longitude: emitLng,
+              speed: Math.max(0, Number(location?.coords?.speed || 0)),
+              heading: Number.isFinite(emitHeading) ? emitHeading : 0,
+              durationMinutes: eta,
+              distanceKm: km,
+              tripDistanceKm: Number(incomingRideRef.current?.distanceKm || 0) > 0
+                ? Number(Number(incomingRideRef.current.distanceKm).toFixed(2))
+                : undefined,
+              phase: rideStateRef.current,
+              routeCoordinates: coordsList,
+            });
+          }
           AsyncStorage.setItem(
             '@nobai245:activeRouteMetrics',
             JSON.stringify({
@@ -1458,6 +1479,10 @@ export function Home() {
       rideId: currentRideKey,
       stopIdx: currentStopIndex,
     };
+
+    if (stateOrRideChanged) {
+      lastRoutePolylineBroadcastAtRef.current = 0;
+    }
 
     if (rideState === 'accepted' || rideState === 'arrived') {
       if (!isNaN(pLat) && !isNaN(pLng) && pLat !== 0 && pLng !== 0) {
