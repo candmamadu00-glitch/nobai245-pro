@@ -37,6 +37,101 @@ import { updateOngoingRideNotification, dismissOngoingRideNotification } from '.
 import { speakRideStatusUpdate, speakText, triggerHapticFeedback } from '../utils/accessibility';
 
 // Token Mapbox
+function computeSegmentBearing(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const toDeg = (r: number) => (r * 180) / Math.PI;
+  const dLon = toRad(lng2 - lng1);
+  const y = Math.sin(dLon) * Math.cos(toRad(lat2));
+  const x =
+    Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+    Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+function alignPassengerVehicleToRoute(
+  lng: number,
+  lat: number,
+  heading: number,
+  routeCoords?: number[][] | null
+): {
+  lng: number;
+  lat: number;
+  bearing: number;
+  isOnRoute: boolean;
+  trimmedCoords: number[][] | null;
+} {
+  if (!Array.isArray(routeCoords) || routeCoords.length < 2 || !Number.isFinite(lng) || !Number.isFinite(lat)) {
+    return { lng, lat, bearing: heading, isOnRoute: false, trimmedCoords: routeCoords || null };
+  }
+
+  const cosLat = Math.cos((lat * Math.PI) / 180);
+  let bestScore = Infinity;
+  let bestDistSq = Infinity;
+  let bestIdx = 0;
+  let bestProjLng = lng;
+  let bestProjLat = lat;
+  let bestBearing = heading;
+
+  for (let i = 0; i < routeCoords.length - 1; i++) {
+    const [x1, y1] = routeCoords[i];
+    const [x2, y2] = routeCoords[i + 1];
+    if (x1 === x2 && y1 === y2) continue;
+
+    const dx = (x2 - x1) * cosLat;
+    const dy = y2 - y1;
+    const px = (lng - x1) * cosLat;
+    const py = lat - y1;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq === 0) continue;
+
+    const t = Math.max(0, Math.min(1, (px * dx + py * dy) / lenSq));
+    const projLng = x1 + t * (x2 - x1);
+    const projLat = y1 + t * (y2 - y1);
+
+    const errX = (lng - projLng) * cosLat;
+    const errY = lat - projLat;
+    const distSq = errX * errX + errY * errY;
+
+    let score = distSq;
+    if (typeof heading === 'number' && Number.isFinite(heading)) {
+      const segBearing = computeSegmentBearing(y1, x1, y2, x2);
+      const angleDiff = Math.abs(((segBearing - heading + 540) % 360) - 180);
+      if (angleDiff > 110) {
+        const penaltyDeg = 35 / 111320;
+        score += penaltyDeg * penaltyDeg;
+      }
+    }
+
+    if (score < bestScore) {
+      bestScore = score;
+      bestDistSq = distSq;
+      bestIdx = i;
+      bestProjLng = projLng;
+      bestProjLat = projLat;
+      bestBearing = computeSegmentBearing(y1, x1, y2, x2);
+    }
+  }
+
+  const distMeters = Math.sqrt(bestDistSq) * 111320;
+  if (distMeters > 45) {
+    return { lng, lat, bearing: heading, isOnRoute: false, trimmedCoords: routeCoords };
+  }
+
+  const remaining = routeCoords.slice(bestIdx + 1);
+  const trimmed =
+    remaining.length === 0
+      ? [[bestProjLng, bestProjLat], routeCoords[routeCoords.length - 1]]
+      : [[bestProjLng, bestProjLat], ...remaining];
+
+  return {
+    lng: bestProjLng,
+    lat: bestProjLat,
+    bearing: bestBearing,
+    isOnRoute: true,
+    trimmedCoords: trimmed,
+  };
+}
+
 const MAPBOX_ACCESS_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN || process.env.EXPO_PUBLIC_MAPBOX_KEY || 'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZGpkMnVtMDMzdDJ4c2U0NHd3dHBtZiJ9.mT0BfmoFsPTgWFzNnblCZg';
 if (MAPBOX_ACCESS_TOKEN) {
   Mapbox.setAccessToken(MAPBOX_ACCESS_TOKEN);
@@ -436,6 +531,7 @@ export function Home() {
   const [pickupReferencePoint, setPickupReferencePoint] = useState('');
   const [dropoffReferencePoint, setDropoffReferencePoint] = useState('');
   const [driverEta, setDriverEta] = useState<number | null>(null);
+  const [mapCameraHeading, setMapCameraHeading] = useState<number>(0);
   const [extraStopReferencePoint, setExtraStopReferencePoint] = useState('');
 
   const [vehicleType, setVehicleType] = useState<VehicleType>('particular');
@@ -958,7 +1054,7 @@ const handleFullCancelAndReset = useCallback(() => {
         ? (driverLocation.heading + 360) % 360
         : null;
 
-    if (jumpMeters > 2.5) {
+    if (jumpMeters > 5.5) {
       const movementBearing = calculateGeoBearing(prevFix.lat, prevFix.lng, nextLat, nextLng);
       if (resolvedHeading === null) {
         resolvedHeading = movementBearing;
@@ -969,6 +1065,9 @@ const handleFullCancelAndReset = useCallback(() => {
       const targetHeading = resolvedHeading;
       setSmoothDriverHeading((prevH) => {
         const shortestDelta = ((targetHeading - prevH + 540) % 360) - 180;
+        if (jumpMeters < 8 && Math.abs(shortestDelta) > 135) {
+          return prevH;
+        }
         return Math.round((prevH + shortestDelta * 0.65 + 360) % 360);
       });
     }
@@ -2188,6 +2287,9 @@ const handleOpenChat = () => {
 
     const handleRideStarted = () => {
       if (!isMountedRef.current) return;
+      if (roadDurationRef.current && roadDurationRef.current > 0) {
+        setDriverEta(Math.max(1, Math.round(roadDurationRef.current)));
+      }
       setRideStatus('in_progress');
       setIsChatVisible(false);
       speakRideStatusUpdate('in_progress', {
@@ -2379,9 +2481,9 @@ const handleOpenChat = () => {
         setDriverEta(Math.max(1, Math.round(liveMinutes)));
       }
 
-      const liveKm = Number(data.distanceKm ?? 0);
-      if (Number.isFinite(liveKm) && liveKm > 0) {
-        setEstimatedDistance(Number(liveKm.toFixed(2)));
+      const syncedTripKm = Number(data.tripDistanceKm ?? 0);
+      if (Number.isFinite(syncedTripKm) && syncedTripKm > 0) {
+        setEstimatedDistance(Number(syncedTripKm.toFixed(2)));
       }
 
       if (Array.isArray(data.routeCoordinates) && data.routeCoordinates.length >= 2) {
@@ -3089,7 +3191,12 @@ const handleOpenChat = () => {
         scaleBarEnabled={false}
         logoEnabled={false}
         attributionEnabled={false}
-        onCameraChanged={(e) => {
+        onCameraChanged={(e: any) => {
+          const camHeading = Number(e?.properties?.heading);
+          if (!isNaN(camHeading)) {
+            const rounded = Math.round(((camHeading % 360) + 360) % 360);
+            setMapCameraHeading((prev) => (Math.abs(prev - rounded) >= 2 ? rounded : prev));
+          }
           if (e.gestures.isGestureActive) {
             setIsMapMoving(true);
             isManualPickupRef.current = false;
@@ -3105,20 +3212,68 @@ const handleOpenChat = () => {
           animationDuration={1000}
         />
 
-        {/* ROTA MAPBOX */}
-        {routeGeometry?.type === 'Feature' && routeGeometry?.geometry?.coordinates && (
-          <Mapbox.ShapeSource id="routeSource" shape={routeGeometry}>
-            <Mapbox.LineLayer
-              id="routeLine"
-              style={{
-                lineColor: '#EAB308',
-                lineWidth: 5,
-                lineCap: 'round',
-                lineJoin: 'round',
-              }}
-            />
-          </Mapbox.ShapeSource>
-        )}
+        {/* ROTA MAPBOX SEMPRE MONTADA NO ANDROID E APARADA ATRÁS DO VEÍCULO */}
+        {(() => {
+          const rawCoords = routeGeometry?.type === 'Feature' ? routeGeometry?.geometry?.coordinates : null;
+          const isTripActive = ['accepted', 'arrived', 'in_progress'].includes(rideStatus);
+          const aligned =
+            Array.isArray(rawCoords) &&
+            rawCoords.length >= 2 &&
+            isTripActive &&
+            driverLocation?.latitude &&
+            driverLocation?.longitude
+              ? alignPassengerVehicleToRoute(
+                  Number(interpolatedCoords[0]),
+                  Number(interpolatedCoords[1]),
+                  smoothDriverHeading || 0,
+                  rawCoords
+                )
+              : null;
+          const activeCoords =
+            aligned?.trimmedCoords && aligned.trimmedCoords.length >= 2
+              ? aligned.trimmedCoords
+              : Array.isArray(rawCoords) && rawCoords.length >= 2
+              ? rawCoords
+              : null;
+          const hasValidRoute = Array.isArray(activeCoords) && activeCoords.length >= 2;
+          const shapePayload: any = hasValidRoute
+            ? {
+                type: 'Feature',
+                properties: {},
+                geometry: { type: 'LineString', coordinates: activeCoords },
+              }
+            : {
+                type: 'FeatureCollection',
+                features: [],
+              };
+
+          return (
+            <Mapbox.ShapeSource id="routeSource" shape={shapePayload}>
+              <Mapbox.LineLayer
+                id="routeLineCasing"
+                style={{
+                  visibility: hasValidRoute ? 'visible' : 'none',
+                  lineColor: '#0F172A',
+                  lineWidth: 8,
+                  lineOpacity: 0.85,
+                  lineCap: 'round',
+                  lineJoin: 'round',
+                }}
+              />
+              <Mapbox.LineLayer
+                id="routeLine"
+                aboveLayerID="routeLineCasing"
+                style={{
+                  visibility: hasValidRoute ? 'visible' : 'none',
+                  lineColor: rideStatus === 'in_progress' ? '#3B82F6' : '#EAB308',
+                  lineWidth: 5,
+                  lineCap: 'round',
+                  lineJoin: 'round',
+                }}
+              />
+            </Mapbox.ShapeSource>
+          );
+        })()}
 
         {/* 📡 ONDAS DE RADAR */}
         {rideStatus === 'searching' && pickupCoords?.latitude != null && pickupCoords?.longitude != null && (
@@ -3158,7 +3313,7 @@ const handleOpenChat = () => {
               anchor={{ x: 0.5, y: 0.5 }}
             >
               <View style={styles.driverMarkerWrapper}>
-                <View style={{ transform: [{ rotate: `${Math.round(((Number(driver.heading) || 0) + 360) % 360)}deg` }] }}>
+                <View style={{ transform: [{ rotate: `${Math.round((((Number(driver.heading) || 0) - mapCameraHeading) % 360 + 360) % 360)}deg` }] }}>
                   <Image
                     source={getVehicleTopDownIconAsset(driver.vehicleType, driver.carColor || (driver as any).vehicleColor)}
                     style={styles.driverMarkerImage}
@@ -3207,35 +3362,73 @@ const handleOpenChat = () => {
           </Mapbox.PointAnnotation>
         )}
 
-        {/* 🏎️ MOTORISTA EM MOVIMENTO */}
-        {driverLocation?.latitude != null && driverLocation?.longitude != null && !isNaN(Number(driverLocation.longitude)) && Number(driverLocation.latitude) !== 0 && (
-          <Mapbox.PointAnnotation
-            key="driverMarker"
-            id="driverMarker"
-            coordinate={interpolatedCoords}
-            anchor={{ x: 0.5, y: 0.5 }}
-          >
-            <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-              {driverEta !== null && driverEta > 0 && ['accepted', 'arrived', 'in_progress'].includes(rideStatus) && (
-                <View style={styles.driverEtaBubble}>
-                  <Ionicons name="time" size={10} color="#0F172A" style={{ marginRight: 3 }} />
-                  <Text style={styles.driverEtaText}>{driverEta} min</Text>
+        {/* 🏎️ MOTORISTA EM MOVIMENTO (CENTRALIZADO NO EIXO DA ROTA E ANTI-INVERSÃO) */}
+        {driverLocation?.latitude != null && driverLocation?.longitude != null && !isNaN(Number(driverLocation.longitude)) && Number(driverLocation.latitude) !== 0 && (() => {
+          const rawCoords = routeGeometry?.type === 'Feature' ? routeGeometry?.geometry?.coordinates : null;
+          const isTripActive = ['accepted', 'arrived', 'in_progress'].includes(rideStatus);
+          const aligned = isTripActive
+            ? alignPassengerVehicleToRoute(
+                Number(interpolatedCoords[0]),
+                Number(interpolatedCoords[1]),
+                smoothDriverHeading || 0,
+                rawCoords
+              )
+            : null;
+          const markerCoord: [number, number] =
+            aligned && aligned.isOnRoute
+              ? [aligned.lng, aligned.lat]
+              : [Number(interpolatedCoords[0]), Number(interpolatedCoords[1])];
+          const worldHeading =
+            aligned && aligned.isOnRoute ? aligned.bearing : (smoothDriverHeading || 0);
+          const screenRelativeRotation = Math.round((((worldHeading - mapCameraHeading) % 360) + 360) % 360);
+
+          return (
+            <>
+              <Mapbox.PointAnnotation
+                key="driverMarker"
+                id="driverMarker"
+                coordinate={markerCoord}
+                anchor={{ x: 0.5, y: 0.5 }}
+              >
+                <View style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
+                  <View
+                    style={{
+                      width: 40,
+                      height: 40,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      transform: [{ rotate: `${screenRelativeRotation}deg` }],
+                    }}
+                  >
+                    <Image
+                      source={getVehicleTopDownIconAsset(
+                        driverInfo?.vehicleType || vehicleType,
+                        driverInfo?.carColor
+                      )}
+                      style={{ width: 38, height: 38, backgroundColor: 'transparent' }}
+                      fadeDuration={0}
+                      resizeMode="contain"
+                    />
+                  </View>
                 </View>
+              </Mapbox.PointAnnotation>
+
+              {driverEta !== null && driverEta > 0 && isTripActive && (
+                <Mapbox.PointAnnotation
+                  key="driverEtaMarker"
+                  id="driverEtaMarker"
+                  coordinate={markerCoord}
+                  anchor={{ x: 0.5, y: 2.1 }}
+                >
+                  <View style={styles.driverEtaBubble}>
+                    <Ionicons name="time" size={10} color="#0F172A" style={{ marginRight: 3 }} />
+                    <Text style={styles.driverEtaText}>{driverEta} min</Text>
+                  </View>
+                </Mapbox.PointAnnotation>
               )}
-              <View style={{ transform: [{ rotate: `${Math.round(((smoothDriverHeading || 0) + 360) % 360)}deg` }] }}>
-                <Image
-                  source={getVehicleTopDownIconAsset(
-                    driverInfo?.vehicleType || vehicleType,
-                    driverInfo?.carColor
-                  )}
-                  style={{ width: 44, height: 44, backgroundColor: 'transparent' }}
-                  fadeDuration={0}
-                  resizeMode="contain"
-                />
-              </View>
-            </View>
-          </Mapbox.PointAnnotation>
-        )}
+            </>
+          );
+        })()}
       </Mapbox.MapView>
 
       {/* PINO CENTRAL FLUTUANTE */}
