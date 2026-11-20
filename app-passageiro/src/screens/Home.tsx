@@ -1,4 +1,4 @@
-import { getVehicle3DIconAsset as resolveVehicleIcon, getVehicleColorHex, resolveVehicleColorKey, VEHICLE_COLOR_OPTIONS } from '../utils/vehicleAssets';
+import { getVehicle3DIconAsset as resolveVehicleIcon, getVehicleTopDownIconAsset, getVehicleColorHex, resolveVehicleColorKey, VEHICLE_COLOR_OPTIONS } from '../utils/vehicleAssets';
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Alert,
@@ -3122,9 +3122,9 @@ const handleOpenChat = () => {
               anchor={{ x: 0.5, y: 0.5 }}
             >
               <View style={styles.driverMarkerWrapper}>
-                <View style={{ transform: [{ rotate: `${Math.round(((Number(driver.heading) || 0) + 180) % 360)}deg` }] }}>
+                <View style={{ transform: [{ rotate: `${Math.round(((Number(driver.heading) || 0) + 360) % 360)}deg` }] }}>
                   <Image
-                    source={getVehicle3DIconAsset(driver.vehicleType, driver.carColor || (driver as any).vehicleColor)}
+                    source={getVehicleTopDownIconAsset(driver.vehicleType, driver.carColor || (driver as any).vehicleColor)}
                     style={styles.driverMarkerImage}
 
                     fadeDuration={0}
@@ -3186,9 +3186,9 @@ const handleOpenChat = () => {
                   <Text style={styles.driverEtaText}>{driverEta} min</Text>
                 </View>
               )}
-              <View style={{ transform: [{ rotate: `${Math.round((smoothDriverHeading + 180) % 360)}deg` }] }}>
+              <View style={{ transform: [{ rotate: `${Math.round(((smoothDriverHeading || 0) + 360) % 360)}deg` }] }}>
                 <Image
-                  source={getVehicle3DIconAsset(
+                  source={getVehicleTopDownIconAsset(
                     driverInfo?.vehicleType || vehicleType,
                     driverInfo?.carColor
                   )}

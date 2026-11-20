@@ -172,3 +172,42 @@ export function getVehicle3DIconAsset(vehicleType?: string, vehicleColor?: strin
 
   return category === 'TAXI' ? CAR_ASSETS_BY_COLOR.yellow : CAR_ASSETS_BY_COLOR.white;
 }
+
+const TOPDOWN_CAR_ASSETS_BY_COLOR: Record<VehicleColorKey, any> = {
+  black: require('../../assets/images/vehicles/topdown/topdown_car_black.png'),
+  blue: require('../../assets/images/vehicles/topdown/topdown_car_blue.png'),
+  brown: require('../../assets/images/vehicles/topdown/topdown_car_brown.png'),
+  gray: require('../../assets/images/vehicles/topdown/topdown_car_gray.png'),
+  green: require('../../assets/images/vehicles/topdown/topdown_car_green.png'),
+  orange: require('../../assets/images/vehicles/topdown/topdown_car_orange.png'),
+  red: require('../../assets/images/vehicles/topdown/topdown_car_red.png'),
+  white: require('../../assets/images/vehicles/topdown/topdown_car_white.png'),
+  yellow: require('../../assets/images/vehicles/topdown/topdown_car_yellow.png'),
+};
+
+const TOPDOWN_SPECIAL_VEHICLE_ASSETS = {
+  MOTO: require('../../assets/images/vehicles/topdown/topdown_moto.png'),
+  MOTO_CARRO: require('../../assets/images/vehicles/topdown/topdown_motocarro.png'),
+  TOCA_TOCA: require('../../assets/images/vehicles/topdown/topdown_toca_toca.png'),
+};
+
+export function getVehicleTopDownIconAsset(vehicleType?: string, vehicleColor?: string) {
+  const category = normalizeVehicleCategory(vehicleType);
+
+  if (category === 'MOTO') {
+    return TOPDOWN_SPECIAL_VEHICLE_ASSETS.MOTO;
+  }
+  if (category === 'MOTO_CARRO') {
+    return TOPDOWN_SPECIAL_VEHICLE_ASSETS.MOTO_CARRO;
+  }
+  if (category === 'TOCA_TOCA') {
+    return TOPDOWN_SPECIAL_VEHICLE_ASSETS.TOCA_TOCA;
+  }
+
+  const matchedColorKey = resolveVehicleColorKey(vehicleColor);
+  if (matchedColorKey) {
+    return TOPDOWN_CAR_ASSETS_BY_COLOR[matchedColorKey];
+  }
+
+  return category === 'TAXI' ? TOPDOWN_CAR_ASSETS_BY_COLOR.yellow : TOPDOWN_CAR_ASSETS_BY_COLOR.white;
+}
