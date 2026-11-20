@@ -230,15 +230,17 @@ export function Register() {
       formData.append('documentNumber', documentNumber.trim().toUpperCase());
 
       const appendImage = (key: string, uri: string) => {
-        const filename = uri.split('/').pop() || `${key}.jpg`;
-        const match = /\.(\w+)$/.exec(filename);
+        const cleanUri = uri.split('?')[0];
+        const rawName = cleanUri.split('/').pop() || `${key}.jpg`;
+        const match = /\.(\w+)$/.exec(rawName);
         const ext = match ? match[1].toLowerCase() : 'jpg';
-        const type = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+        const safeExt = ['jpg', 'jpeg', 'png', 'webp'].includes(ext) ? ext : 'jpg';
+        const type = safeExt === 'png' ? 'image/png' : safeExt === 'webp' ? 'image/webp' : 'image/jpeg';
         const normalizedUri = Platform.OS === 'android' ? uri : uri.replace('file://', '');
 
         formData.append(key, {
           uri: normalizedUri,
-          name: filename,
+          name: `${key}_${Date.now()}.${safeExt}`,
           type,
         } as any);
       };
@@ -247,15 +249,36 @@ export function Register() {
       appendImage('licenseFront', licenseFront!);
       appendImage('licenseBack', licenseBack!);
 
-      const response = await api.post('/drivers/register', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-          'Accept': 'application/json',
-        },
-        timeout: 60000,
-      });
+      const baseUrl = (api.defaults.baseURL || 'https://api.nobai245.com/api').replace(/\/+$/, '');
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
 
-      console.log('=== ✅ [DEBUG CADASTRO] SUCESSO ===', response.data);
+      let responseData: any = {};
+      try {
+        const fetchRes = await fetch(`${baseUrl}/drivers/register`, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+          },
+          body: formData,
+          signal: controller.signal,
+        });
+        const rawText = await fetchRes.text();
+        try {
+          responseData = rawText ? JSON.parse(rawText) : {};
+        } catch {
+          responseData = { error: rawText || `Erro HTTP ${fetchRes.status}` };
+        }
+        if (!fetchRes.ok || responseData?.success === false) {
+          const err: any = new Error(responseData?.error || responseData?.message || `Erro HTTP ${fetchRes.status}`);
+          err.response = { status: fetchRes.status, data: responseData };
+          throw err;
+        }
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      console.log('=== ✅ [DEBUG CADASTRO] SUCESSO ===', responseData);
       
       Alert.alert(
         '🎉 Cadastro Concluído com Sucesso!',
@@ -276,7 +299,13 @@ export function Register() {
       console.log('Status HTTP:', error.response?.status);
       console.log('Resposta do Servidor:', JSON.stringify(error.response?.data, null, 2));
 
-      Alert.alert('Erro no Cadastro', error.response?.data?.error || error.response?.data?.message || 'Falha ao registrar.');
+      const detail =
+        error?.response?.data?.error ||
+        error?.response?.data?.message ||
+        (error?.name === 'AbortError'
+          ? 'Tempo limite excedido ao enviar as fotos. Verifique sua internet e tente novamente.'
+          : error?.message || 'Falha ao registrar.');
+      Alert.alert('Erro no Cadastro', detail);
     } finally {
       setLoading(false);
     }
