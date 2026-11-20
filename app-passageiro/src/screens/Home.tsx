@@ -1784,6 +1784,7 @@ const handleOpenChat = () => {
       return false;
     };
 
+    if (Platform.OS === 'web') return;
     const backHandlerSubscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => backHandlerSubscription.remove();
   }, [isMenuVisible, isChatVisible, isSearchModalVisible, showCancelModal, showRatingModal, bookingStep, rideStatus]);
@@ -5365,20 +5366,22 @@ const handleOpenChat = () => {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* 💬 CHATMODAL DO PASSAGEIRO */}
-<ChatModal
-  visible={isChatVisible}
-  onClose={() => {
-    setIsChatVisible(false);
-    setUnreadCount(0); // 🟢 Zera o badge de não lidas ao fechar
-  }}
-  socket={socket}
-  rideId={activeRideId || ''}
-  currentRole="passenger"
-  currentUserPhoto={user?.profilePicture ? formatPhotoUrl(user.profilePicture) : null}
-  otherUserName={driverInfo?.name || 'Motorista'}
-  otherUserPhoto={driverInfo?.photoUrl || driverInfo?.profilePicture}
-/>
+      {/* 💬 CHATMODAL DO PASSAGEIRO (montado apenas quando aberto para compatibilidade Web/iOS) */}
+      {isChatVisible && (
+        <ChatModal
+          visible={isChatVisible}
+          onClose={() => {
+            setIsChatVisible(false);
+            setUnreadCount(0); // 🟢 Zera o badge de não lidas ao fechar
+          }}
+          socket={socket}
+          rideId={activeRideId || ''}
+          currentRole="passenger"
+          currentUserPhoto={user?.profilePicture ? formatPhotoUrl(user.profilePicture) : null}
+          otherUserName={driverInfo?.name || 'Motorista'}
+          otherUserPhoto={driverInfo?.photoUrl || driverInfo?.profilePicture}
+        />
+      )}
 
       {/* 🛑 MODAL DE CANCELAMENTO */}
       <CancelModal

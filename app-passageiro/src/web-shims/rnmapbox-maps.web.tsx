@@ -7,7 +7,7 @@ import React, {
   useContext,
   useState,
 } from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { createRoot } from 'react-dom/client';
 
 let mapboxAccessToken =
@@ -22,26 +22,30 @@ function loadMapboxGL(): Promise<any> {
   if (mapboxLoadPromise) return mapboxLoadPromise;
 
   mapboxLoadPromise = new Promise((resolve, reject) => {
-    if (!document.getElementById('mapbox-gl-css')) {
-      const link = document.createElement('link');
-      link.id = 'mapbox-gl-css';
-      link.rel = 'stylesheet';
-      link.href = 'https://api.mapbox.com/mapbox-gl-js/v3.6.0/mapbox-gl.css';
-      document.head.appendChild(link);
-    }
-
-    const script = document.createElement('script');
-    script.src = 'https://api.mapbox.com/mapbox-gl-js/v3.6.0/mapbox-gl.js';
-    script.async = true;
-    script.onload = () => {
-      const mbgl = (window as any).mapboxgl;
-      if (mbgl && mapboxAccessToken) {
-        mbgl.accessToken = mapboxAccessToken;
+    try {
+      if (!document.getElementById('mapbox-gl-css')) {
+        const link = document.createElement('link');
+        link.id = 'mapbox-gl-css';
+        link.rel = 'stylesheet';
+        link.href = 'https://api.mapbox.com/mapbox-gl-js/v3.6.0/mapbox-gl.css';
+        document.head.appendChild(link);
       }
-      resolve(mbgl);
-    };
-    script.onerror = (err) => reject(err);
-    document.head.appendChild(script);
+
+      const script = document.createElement('script');
+      script.src = 'https://api.mapbox.com/mapbox-gl-js/v3.6.0/mapbox-gl.js';
+      script.async = true;
+      script.onload = () => {
+        const mbgl = (window as any).mapboxgl;
+        if (mbgl && mapboxAccessToken) {
+          mbgl.accessToken = mapboxAccessToken;
+        }
+        resolve(mbgl);
+      };
+      script.onerror = (err) => reject(err);
+      document.head.appendChild(script);
+    } catch (e) {
+      reject(e);
+    }
   });
 
   return mapboxLoadPromise;
@@ -76,6 +80,7 @@ const MapView = ({
 }: any) => {
   const containerRef = useRef<any>(null);
   const mapInstanceRef = useRef<any>(null);
+  const [mapError, setMapError] = useState<string | null>(null);
   const [mapState, setMapState] = useState<{ map: any; isLoaded: boolean }>({
     map: null,
     isLoaded: false,
@@ -95,15 +100,25 @@ const MapView = ({
         if (!active || !mapboxgl || !containerRef.current) return;
         if (mapboxAccessToken) mapboxgl.accessToken = mapboxAccessToken;
 
-        map = new mapboxgl.Map({
-          container: containerRef.current,
-          style: styleURL || StyleURL.Street,
-          center: [-15.58, 11.86],
-          zoom: 14,
-          attributionControl: false,
-        });
+        try {
+          map = new mapboxgl.Map({
+            container: containerRef.current,
+            style: styleURL || StyleURL.Street,
+            center: [-15.58, 11.86],
+            zoom: 14,
+            attributionControl: false,
+            failIfMajorPerformanceCaveat: false,
+          });
+        } catch (initErr: any) {
+          if (active) setMapError(initErr?.message || 'Mapa indisponível neste navegador');
+          return;
+        }
 
         mapInstanceRef.current = map;
+
+        map.on('error', (ev: any) => {
+          console.warn('[MapboxWeb] Aviso do mapa:', ev?.error?.message || ev);
+        });
 
         map.on('load', () => {
           if (active) {
@@ -121,17 +136,22 @@ const MapView = ({
 
         map.on('moveend', () => {
           if (onMapIdleRef.current && map) {
-            const center = map.getCenter();
-            onMapIdleRef.current({
-              geometry: {
-                type: 'Point',
-                coordinates: [center.lng, center.lat],
-              },
-            });
+            try {
+              const center = map.getCenter();
+              onMapIdleRef.current({
+                geometry: {
+                  type: 'Point',
+                  coordinates: [center.lng, center.lat],
+                },
+              });
+            } catch (_) {}
           }
         });
       })
-      .catch((err) => console.warn('[MapboxWeb] Falha ao carregar GL JS:', err));
+      .catch((err) => {
+        console.warn('[MapboxWeb] Falha ao carregar GL JS:', err);
+        if (active) setMapError('Modo mapa simplificado ativo');
+      });
 
     return () => {
       active = false;
@@ -156,8 +176,13 @@ const MapView = ({
       <View style={[styles.container, style]}>
         <div
           ref={containerRef}
-          style={{ width: '100%', height: '100%', position: 'relative' }}
+          style={{ width: '100%', height: '100%', position: 'relative', backgroundColor: '#0F172A' }}
         />
+        {mapError && (
+          <View style={styles.fallbackBanner} pointerEvents="none">
+            <Text style={styles.fallbackText}>Bissau • GPS Ativo</Text>
+          </View>
+        )}
         {children}
       </View>
     </MapContext.Provider>
@@ -207,12 +232,14 @@ const Camera = forwardRef(({ zoomLevel = 14, centerCoordinate, animationDuration
     const [lng, lat] = centerCoordinate.map(Number);
     if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
 
-    if (!initializedRef.current) {
-      initializedRef.current = true;
-      map.jumpTo({ center: [lng, lat], zoom: zoomLevel });
-    } else {
-      map.easeTo({ center: [lng, lat], zoom: zoomLevel, duration: animationDuration });
-    }
+    try {
+      if (!initializedRef.current) {
+        initializedRef.current = true;
+        map.jumpTo({ center: [lng, lat], zoom: zoomLevel });
+      } else {
+        map.easeTo({ center: [lng, lat], zoom: zoomLevel, duration: animationDuration });
+      }
+    } catch (_) {}
   }, [map, centerCoordinate?.[0], centerCoordinate?.[1], zoomLevel]);
 
   return null;
@@ -239,8 +266,8 @@ const ShapeSource = ({ id, shape, children }: any) => {
     applySource();
     map.on('style.load', applySource);
     return () => {
-      map.off('style.load', applySource);
       try {
+        map.off('style.load', applySource);
         if (map.getSource(sourceId)) {
           map.getStyle()?.layers?.forEach((l: any) => {
             if (l.source === sourceId && map.getLayer(l.id)) {
@@ -295,8 +322,8 @@ const LineLayer = ({ id, sourceId = 'routeSource', style }: any) => {
     applyLayer();
     map.on('style.load', applyLayer);
     return () => {
-      map.off('style.load', applyLayer);
       try {
+        map.off('style.load', applyLayer);
         if (map.getLayer(layerId)) map.removeLayer(layerId);
       } catch (_) {}
     };
@@ -309,41 +336,49 @@ const PointAnnotation = ({ coordinate, anchor, children }: any) => {
   const { map, isLoaded } = useContext(MapContext);
   const markerRef = useRef<any>(null);
   const rootRef = useRef<any>(null);
-  const elRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!map || !isLoaded || !Array.isArray(coordinate) || coordinate.length < 2) return;
     const mbgl = (window as any).mapboxgl;
     if (!mbgl) return;
 
-    const el = document.createElement('div');
-    el.style.display = 'flex';
-    el.style.alignItems = 'center';
-    el.style.justifyContent = 'center';
-    el.style.pointerEvents = 'auto';
-    elRef.current = el;
+    let cancelled = false;
+    try {
+      const el = document.createElement('div');
+      el.style.display = 'flex';
+      el.style.alignItems = 'center';
+      el.style.justifyContent = 'center';
+      el.style.pointerEvents = 'auto';
 
-    const root = createRoot(el);
-    rootRef.current = root;
-    root.render(children);
+      const root = createRoot(el);
+      rootRef.current = root;
+      root.render(children);
 
-    const anchorMode = anchor && anchor.y >= 0.75 ? 'bottom' : 'center';
-    const marker = new mbgl.Marker({ element: el, anchor: anchorMode })
-      .setLngLat([Number(coordinate[0]), Number(coordinate[1])])
-      .addTo(map);
-    markerRef.current = marker;
+      const anchorMode = anchor && anchor.y >= 0.75 ? 'bottom' : 'center';
+      const marker = new mbgl.Marker({ element: el, anchor: anchorMode })
+        .setLngLat([Number(coordinate[0]), Number(coordinate[1])])
+        .addTo(map);
+      markerRef.current = marker;
+    } catch (e) {
+      console.warn('[MapboxWeb] Erro ao criar marcador:', e);
+    }
 
     return () => {
-      try {
-        marker.remove();
-      } catch (_) {}
-      setTimeout(() => {
-        try {
-          root.unmount();
-        } catch (_) {}
-      }, 0);
+      cancelled = true;
+      const m = markerRef.current;
+      const r = rootRef.current;
       markerRef.current = null;
       rootRef.current = null;
+      try {
+        if (m) m.remove();
+      } catch (_) {}
+      setTimeout(() => {
+        if (cancelled && r) {
+          try {
+            r.unmount();
+          } catch (_) {}
+        }
+      }, 50);
     };
   }, [map, isLoaded]);
 
@@ -352,14 +387,18 @@ const PointAnnotation = ({ coordinate, anchor, children }: any) => {
       const lng = Number(coordinate[0]);
       const lat = Number(coordinate[1]);
       if (Number.isFinite(lng) && Number.isFinite(lat)) {
-        markerRef.current.setLngLat([lng, lat]);
+        try {
+          markerRef.current.setLngLat([lng, lat]);
+        } catch (_) {}
       }
     }
   }, [coordinate?.[0], coordinate?.[1]]);
 
   useEffect(() => {
     if (rootRef.current) {
-      rootRef.current.render(children);
+      try {
+        rootRef.current.render(children);
+      } catch (_) {}
     }
   }, [children]);
 
@@ -383,7 +422,17 @@ const Mapbox = {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, overflow: 'hidden' },
+  container: { flex: 1, overflow: 'hidden', backgroundColor: '#0F172A' },
+  fallbackBanner: {
+    position: 'absolute',
+    top: 100,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  fallbackText: { color: '#EAB308', fontSize: 12, fontWeight: '700' },
 });
 
 export default Mapbox;

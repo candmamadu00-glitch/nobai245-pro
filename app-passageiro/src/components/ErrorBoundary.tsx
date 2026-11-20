@@ -46,6 +46,11 @@ export class ErrorBoundary extends Component<Props, State> {
           <Text style={styles.subtitle}>
             Ocorreu um erro inesperado na aplicação. Já notificámos a nossa equipa técnica.
           </Text>
+          {Boolean(this.state.error?.message) && (
+            <Text style={{ color: '#64748B', fontSize: 11, textAlign: 'center', marginBottom: 16 }}>
+              {String(this.state.error?.message)}
+            </Text>
+          )}
           <TouchableOpacity style={styles.button} onPress={this.handleReset} activeOpacity={0.8}>
             <Text style={styles.buttonText}>Tentar Novamente</Text>
           </TouchableOpacity>
