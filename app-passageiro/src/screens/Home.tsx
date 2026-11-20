@@ -2087,6 +2087,9 @@ const handleOpenChat = () => {
                 rawStatus === 'IN_PROGRESS' ? 'in_progress' : null;
 
               if (mappedRecoveredStatus) {
+                if (ride.acceptedAt) {
+                  setAcceptedAt(new Date(ride.acceptedAt));
+                }
                 setRideStatus(mappedRecoveredStatus);
                 socket.emit('passenger:rejoin_ride', { rideId: ride.id });
                 persistRideState(ride.id, mappedRecoveredStatus, {
@@ -2133,7 +2136,7 @@ const handleOpenChat = () => {
       if (serverDist > 0) setEstimatedDistance(Number(serverDist.toFixed(2)));
       const serverDur = Number(data.durationMin ?? 0);
       if (serverDur > 0) setDriverEta(serverDur);
-      setAcceptedAt(new Date());
+      setAcceptedAt(ridePayload?.acceptedAt ? new Date(ridePayload.acceptedAt) : new Date());
       setRideStatus(data.isQueuedRide ? 'queued' : 'accepted');
       persistRideState(data.rideId || data.id, data.isQueuedRide ? 'queued' : 'accepted', {
         driverInfo: parsedDriver,

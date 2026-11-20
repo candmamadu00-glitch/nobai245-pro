@@ -609,6 +609,7 @@ export const cancelRide = async (req: Request, res: Response): Promise<void> => 
       success: true,
       message: 'Corrida cancelada com sucesso.',
       penaltyApplied: cancelResult?.appliedPenalty || false,
+      penaltyAmount: Number(cancelResult?.penaltyAmount || 0),
       refundExecuted: refundResult?.success || false
     });
   } catch (error: any) {

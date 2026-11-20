@@ -1511,11 +1511,20 @@ export async function cancelRideLogic(
 
   const cleanReason = reason || 'Sem justificativa informada';
 
-  // 🛡️ POLÍTICA ENTERPRISE DE NO-SHOW E TAXA DE CANCELAMENTO (500 XOF)
-  const NO_SHOW_FEE_XOF = 500;
-  const NO_SHOW_GRACE_MS = 2 * 60 * 1000; // 2 minutos de tolerância após chegada do motorista
+  // 🛡️ POLÍTICA ENTERPRISE DE CANCELAMENTO (500 XOF APÓS 2 MINUTOS DO ACEITE OU NO-SHOW)
+  const CANCELLATION_FEE_XOF = CANCELLATION_PENALTY_XOF; // 500 XOF
+  const FREE_CANCEL_GRACE_MS = 2 * 60 * 1000; // 2 minutos gratuitos após o motorista aceitar
+  const nowMs = Date.now();
+  const acceptedAtMs = ride.acceptedAt ? new Date(ride.acceptedAt).getTime() : null;
   const arrivedAtMs = ride.arrivedAt ? new Date(ride.arrivedAt).getTime() : null;
-  const waitedLongEnough = ride.status === RideStatus.ARRIVED && arrivedAtMs !== null && (Date.now() - arrivedAtMs) >= NO_SHOW_GRACE_MS;
+
+  const passedTwoMinutesSinceAccept =
+    acceptedAtMs !== null && (nowMs - acceptedAtMs) >= FREE_CANCEL_GRACE_MS;
+  const waitedLongEnoughAtPickup =
+    ride.status === RideStatus.ARRIVED &&
+    arrivedAtMs !== null &&
+    (nowMs - arrivedAtMs) >= FREE_CANCEL_GRACE_MS;
+
   const normalizedReason = cleanReason.toLowerCase();
   const isDriverNoShowClaim =
     userType === 'DRIVER' &&
@@ -1525,7 +1534,20 @@ export async function cancelRideLogic(
       normalizedReason.includes('nao apareceu') ||
       normalizedReason.includes('passageiro não compareceu') ||
       normalizedReason.includes('passageiro nao compareceu'));
-  const shouldApplyNoShowPenalty = Boolean(ride.driverId && waitedLongEnough && (userType === 'PASSENGER' || isDriverNoShowClaim));
+
+  const passengerCancelledAfterGrace =
+    userType === 'PASSENGER' &&
+    Boolean(ride.driverId) &&
+    (passedTwoMinutesSinceAccept ||
+      waitedLongEnoughAtPickup ||
+      ride.status === RideStatus.IN_PROGRESS);
+
+  const driverCancelledNoShow =
+    Boolean(ride.driverId) && waitedLongEnoughAtPickup && isDriverNoShowClaim;
+
+  const shouldApplyNoShowPenalty = Boolean(
+    passengerCancelledAfterGrace || driverCancelledNoShow
+  );
 
   const dbResult = await prisma.$transaction(async (tx) => {
     const updatedRide = await tx.ride.updateMany({
@@ -1557,7 +1579,7 @@ export async function cancelRideLogic(
 
         if (shouldApplyNoShowPenalty && totalPaid > 0 && ride.driverId) {
           appliedPenalty = true;
-          penaltyAmount = Math.min(NO_SHOW_FEE_XOF, totalPaid);
+          penaltyAmount = Math.min(CANCELLATION_FEE_XOF, totalPaid);
           refundAmount = Math.max(0, totalPaid - penaltyAmount);
 
           const driverRecord = await tx.driver.findUnique({
@@ -1583,9 +1605,9 @@ export async function cancelRideLogic(
               amount: penaltyAmount,
               balanceBefore,
               balanceAfter,
-              reference: `NOSHOW-COMP-${ride.id.slice(0, 8)}-${Date.now()}`,
-              idempotencyKey: `noshow-comp-${ride.id}`,
-              description: `Compensação por No-Show / espera no embarque (${penaltyAmount} XOF)`
+              reference: `CANCEL-COMP-${ride.id.slice(0, 8)}-${Date.now()}`,
+              idempotencyKey: `cancel-comp-${ride.id}`,
+              description: `Compensação por cancelamento após 2 min (${penaltyAmount} XOF)`
             }
           });
           driverCompensationTxId = compTx.id;
@@ -1605,7 +1627,7 @@ export async function cancelRideLogic(
               reference: `REFUND-${ride.id.slice(0, 8)}-${Date.now()}`,
               idempotencyKey: `refund-cancel-${ride.id}`,
               description: appliedPenalty
-                ? `Estorno parcial pós-taxa de espera (${refundAmount} XOF de ${totalPaid} XOF)`
+                ? `Estorno parcial pós-taxa de cancelamento (${refundAmount} XOF de ${totalPaid} XOF)`
                 : `Estorno automático (${formatPaymentMethodLabel(refundProvider)})`
             }
           });
@@ -1613,14 +1635,122 @@ export async function cancelRideLogic(
         }
       } else {
         await tx.transaction.update({ where: { id: originalPayment.id }, data: { status: TransactionStatus.CANCELLED } });
-        if (shouldApplyNoShowPenalty) {
+        if (shouldApplyNoShowPenalty && ride.driverId) {
           appliedPenalty = true;
-          penaltyAmount = NO_SHOW_FEE_XOF;
+          penaltyAmount = CANCELLATION_FEE_XOF;
+
+          const passengerRecord = await tx.passenger.findUnique({
+            where: { id: ride.passengerId },
+            select: { walletBalance: true }
+          });
+          const pBefore = Number(passengerRecord?.walletBalance || 0);
+          const pAfter = Number((pBefore - penaltyAmount).toFixed(2));
+          await tx.passenger.update({
+            where: { id: ride.passengerId },
+            data: { walletBalance: pAfter }
+          });
+          await tx.transaction.create({
+            data: {
+              rideId: ride.id,
+              passengerId: ride.passengerId,
+              type: TransactionType.COMMISSION_FEE,
+              status: TransactionStatus.COMPLETED,
+              paymentMethod: PaymentMethod.WALLET,
+              amount: penaltyAmount,
+              balanceBefore: pBefore,
+              balanceAfter: pAfter,
+              reference: `CANCEL-FEE-${ride.id.slice(0, 8)}-${Date.now()}`,
+              idempotencyKey: `cancel-fee-${ride.id}`,
+              description: `Taxa de cancelamento após 2 minutos (${penaltyAmount} XOF)`
+            }
+          });
+
+          const driverRecord = await tx.driver.findUnique({
+            where: { id: ride.driverId },
+            select: { walletBalance: true }
+          });
+          const dBefore = Number(driverRecord?.walletBalance || 0);
+          const dAfter = Number((dBefore + penaltyAmount).toFixed(2));
+          await tx.driver.update({
+            where: { id: ride.driverId },
+            data: { walletBalance: dAfter }
+          });
+          const compTx = await tx.transaction.create({
+            data: {
+              rideId: ride.id,
+              driverId: ride.driverId,
+              passengerId: ride.passengerId,
+              type: TransactionType.DRIVER_PAYOUT,
+              status: TransactionStatus.COMPLETED,
+              paymentMethod: PaymentMethod.WALLET,
+              amount: penaltyAmount,
+              balanceBefore: dBefore,
+              balanceAfter: dAfter,
+              reference: `CANCEL-COMP-${ride.id.slice(0, 8)}-${Date.now()}`,
+              idempotencyKey: `cancel-comp-${ride.id}`,
+              description: `Compensação por cancelamento após 2 min (${penaltyAmount} XOF)`
+            }
+          });
+          driverCompensationTxId = compTx.id;
         }
       }
-    } else if (shouldApplyNoShowPenalty) {
+    } else if (shouldApplyNoShowPenalty && ride.driverId) {
       appliedPenalty = true;
-      penaltyAmount = NO_SHOW_FEE_XOF;
+      penaltyAmount = CANCELLATION_FEE_XOF;
+
+      const passengerRecord = await tx.passenger.findUnique({
+        where: { id: ride.passengerId },
+        select: { walletBalance: true }
+      });
+      const pBefore = Number(passengerRecord?.walletBalance || 0);
+      const pAfter = Number((pBefore - penaltyAmount).toFixed(2));
+      await tx.passenger.update({
+        where: { id: ride.passengerId },
+        data: { walletBalance: pAfter }
+      });
+      await tx.transaction.create({
+        data: {
+          rideId: ride.id,
+          passengerId: ride.passengerId,
+          type: TransactionType.COMMISSION_FEE,
+          status: TransactionStatus.COMPLETED,
+          paymentMethod: PaymentMethod.WALLET,
+          amount: penaltyAmount,
+          balanceBefore: pBefore,
+          balanceAfter: pAfter,
+          reference: `CANCEL-FEE-${ride.id.slice(0, 8)}-${Date.now()}`,
+          idempotencyKey: `cancel-fee-${ride.id}`,
+          description: `Taxa de cancelamento após 2 minutos (${penaltyAmount} XOF)`
+        }
+      });
+
+      const driverRecord = await tx.driver.findUnique({
+        where: { id: ride.driverId },
+        select: { walletBalance: true }
+      });
+      const dBefore = Number(driverRecord?.walletBalance || 0);
+      const dAfter = Number((dBefore + penaltyAmount).toFixed(2));
+      await tx.driver.update({
+        where: { id: ride.driverId },
+        data: { walletBalance: dAfter }
+      });
+      const compTx = await tx.transaction.create({
+        data: {
+          rideId: ride.id,
+          driverId: ride.driverId,
+          passengerId: ride.passengerId,
+          type: TransactionType.DRIVER_PAYOUT,
+          status: TransactionStatus.COMPLETED,
+          paymentMethod: PaymentMethod.WALLET,
+          amount: penaltyAmount,
+          balanceBefore: dBefore,
+          balanceAfter: dAfter,
+          reference: `CANCEL-COMP-${ride.id.slice(0, 8)}-${Date.now()}`,
+          idempotencyKey: `cancel-comp-${ride.id}`,
+          description: `Compensação por cancelamento após 2 min (${penaltyAmount} XOF)`
+        }
+      });
+      driverCompensationTxId = compTx.id;
     }
 
     if (ride.driverId) {
@@ -1695,6 +1825,19 @@ export async function cancelRideLogic(
 
   if (ride.status === RideStatus.SEARCHING || ride.status === RideStatus.PENDING) {
     safeSocketEmit('available_drivers', 'ride:cancelled_by_passenger', { rideId: ride.id });
+  }
+
+  if (userType === 'PASSENGER' && dbResult.appliedPenalty && ride.passenger?.deviceToken) {
+    const feeMsg = dbResult.refundAmount > 0
+      ? `Cancelamento realizado após 2 minutos: taxa de ${dbResult.penaltyAmount} XOF aplicada e estorno de ${dbResult.refundAmount} XOF em processamento.`
+      : `Cancelamento realizado após 2 minutos: taxa de ${dbResult.penaltyAmount} XOF debitada na sua carteira.`;
+    sendPushNotification(
+      ride.passenger.deviceToken,
+      '⚠️ Taxa de Cancelamento Aplicada',
+      feeMsg,
+      { type: 'RIDE_CANCELLED', rideId: ride.id, appliedPenalty: true, penaltyAmount: dbResult.penaltyAmount },
+      PUSH_CHANNELS.RIDE_UPDATE
+    ).catch(err => console.error('❌ Erro no push de taxa ao passageiro:', err));
   }
 
   if (userType === 'DRIVER' && ride.passenger?.deviceToken) {
