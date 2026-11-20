@@ -1625,48 +1625,85 @@ const handleOpenChat = () => {
           setPickupAddress(localBairro);
         }
 
-        // 2. Busca o endereço exato (rua/avenida/ponto + bairro) via Mapbox Reverse Geocoding
-        if (MAPBOX_ACCESS_TOKEN && isMountedRef.current) {
+        // 2. Busca o endereço exato (rua/avenida/ponto + bairro) via Mapbox Reverse Geocoding + fallback nativo
+        let resolvedGpsAddress = exactNearbyPlace && minPlaceDist <= 0.35 ? exactNearbyPlace : '';
+
+        if (!resolvedGpsAddress && MAPBOX_ACCESS_TOKEN && isMountedRef.current) {
           try {
-            const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${longitude},${latitude}.json?country=gw&types=address,poi,neighborhood,locality,place&limit=5&language=pt,fr&access_token=${MAPBOX_ACCESS_TOKEN}`;
-            const res = await fetch(url);
-            if (res.ok) {
-              const data = await res.json();
-              if (data?.features?.length > 0 && isMountedRef.current) {
-                const streetOrPoi = data.features.find((f: any) =>
-                  f.place_type?.includes('address') || f.place_type?.includes('poi')
-                )?.text;
-                const neighborhood = data.features.find((f: any) =>
-                  f.place_type?.includes('neighborhood') || f.place_type?.includes('locality')
-                )?.text;
-                const bestFeature = data.features[0];
-                const baseBairro = neighborhood || (localBairro ? localBairro.replace(/, Bissau$/i, '') : '');
+            let features: any[] = [];
+            const gwUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${longitude},${latitude}.json?country=gw&types=address,poi,neighborhood,locality,place&limit=5&language=pt,fr&access_token=${MAPBOX_ACCESS_TOKEN}`;
+            const resGw = await fetch(gwUrl);
+            if (resGw.ok) {
+              const dataGw = await resGw.json();
+              features = dataGw?.features || [];
+            }
 
-                let exactAddress = '';
-                if (streetOrPoi && baseBairro && !streetOrPoi.toLowerCase().includes(baseBairro.toLowerCase())) {
-                  exactAddress = `${streetOrPoi}, ${baseBairro}`;
-                } else if (streetOrPoi) {
-                  exactAddress = `${streetOrPoi}, Bissau`;
-                } else if (baseBairro) {
-                  exactAddress = `${baseBairro}, Bissau`;
-                } else {
-                  exactAddress = (bestFeature.place_name || bestFeature.text || localBairro || 'Bissau, Centro')
-                    .replace(/, Guiné-Bissau/gi, '')
-                    .trim();
-                }
+            if (features.length === 0) {
+              const globalUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${longitude},${latitude}.json?types=address,poi,neighborhood,locality,place&limit=5&language=pt,fr&access_token=${MAPBOX_ACCESS_TOKEN}`;
+              const resGlobal = await fetch(globalUrl);
+              if (resGlobal.ok) {
+                const dataGlobal = await resGlobal.json();
+                features = dataGlobal?.features || [];
+              }
+            }
 
-                if ((!isManualPickupRef.current || isForceFresh) && exactAddress) {
-                  setPickupAddress(exactAddress);
-                }
+            if (features.length > 0 && isMountedRef.current) {
+              const streetOrPoi = features.find((f: any) =>
+                f.place_type?.includes('address') || f.place_type?.includes('poi')
+              )?.text;
+              const neighborhood = features.find((f: any) =>
+                f.place_type?.includes('neighborhood') || f.place_type?.includes('locality')
+              )?.text;
+              const cityPlace = features.find((f: any) =>
+                f.place_type?.includes('place')
+              )?.text;
+              const bestFeature = features[0];
+              const baseBairro = neighborhood || (localBairro ? localBairro.replace(/, Bissau$/i, '') : '');
+              const baseCity = cityPlace || (localBairro ? 'Bissau' : '');
+
+              if (streetOrPoi && baseBairro && !streetOrPoi.toLowerCase().includes(baseBairro.toLowerCase())) {
+                resolvedGpsAddress = `${streetOrPoi}, ${baseBairro}`;
+              } else if (streetOrPoi && baseCity) {
+                resolvedGpsAddress = `${streetOrPoi}, ${baseCity}`;
+              } else if (streetOrPoi) {
+                resolvedGpsAddress = streetOrPoi;
+              } else if (baseBairro && baseCity && !baseBairro.toLowerCase().includes(baseCity.toLowerCase())) {
+                resolvedGpsAddress = `${baseBairro}, ${baseCity}`;
+              } else if (baseBairro) {
+                resolvedGpsAddress = baseBairro;
+              } else {
+                resolvedGpsAddress = (bestFeature.place_name || bestFeature.text || '')
+                  .replace(/, Guiné-Bissau/gi, '')
+                  .replace(/, Brasil/gi, '')
+                  .trim();
               }
             }
           } catch (gErr) {
-            if ((!isManualPickupRef.current || isForceFresh) && !pickupAddress) {
-              setPickupAddress(localBairro || 'Bissau, Centro');
-            }
+            // Segue para fallback nativo abaixo
           }
-        } else if (localBairro && (!isManualPickupRef.current || isForceFresh)) {
-          setPickupAddress(localBairro);
+        }
+
+        if (!resolvedGpsAddress && isMountedRef.current) {
+          try {
+            const nativeGeo = await Location.reverseGeocodeAsync({ latitude, longitude });
+            if (nativeGeo && nativeGeo.length > 0) {
+              const g = nativeGeo[0];
+              const streetPart = [g.street, g.streetNumber].filter(Boolean).join(', ') || g.name || '';
+              const areaPart = g.district || g.subregion || g.city || '';
+              if (streetPart && areaPart && !streetPart.toLowerCase().includes(areaPart.toLowerCase())) {
+                resolvedGpsAddress = `${streetPart}, ${areaPart}`;
+              } else {
+                resolvedGpsAddress = streetPart || areaPart;
+              }
+            }
+          } catch (_) {
+            // Segue para fallback final
+          }
+        }
+
+        const finalPickup = resolvedGpsAddress || localBairro || 'Localização atual (GPS)';
+        if ((!isManualPickupRef.current || isForceFresh) && finalPickup && isMountedRef.current) {
+          setPickupAddress(finalPickup);
         }
       }
     } catch (error) {
@@ -2972,7 +3009,7 @@ const handleOpenChat = () => {
                     {t('greeting', 'Olá')}, {user?.fullName ? user.fullName.split(' ')[0] : t('passenger', 'Passageiro')}
                   </Text>
                   <Text style={{ color: '#EAB308', fontSize: 10, fontWeight: '800', letterSpacing: 0.6 }}>
-                    GUINEEXPRESS • BISSAU
+                    NOBAI245 • BISSAU
                   </Text>
                 </View>
               </TouchableOpacity>
@@ -3545,7 +3582,7 @@ const handleOpenChat = () => {
                   <View style={{ flex: 1, paddingRight: 10 }}>
                     <Text style={{ color: '#94A3B8', fontSize: 10, fontWeight: '800', letterSpacing: 0.6 }}>RESUMO DA VIAGEM</Text>
                     <Text style={{ color: '#F8FAFC', fontSize: 13, fontWeight: '800', marginTop: 2 }} numberOfLines={1}>
-                      {VEHICLE_OPTIONS.find((v) => v.id === vehicleType)?.title || 'Guineexpress'}
+                      {VEHICLE_OPTIONS.find((v) => v.id === vehicleType)?.title || 'Nobai245'}
                       {estimatedDistance ? ` • ${estimatedDistance.toFixed(1)} km` : ''}
                     </Text>
                     <Text style={{ color: '#CBD5E1', fontSize: 11, marginTop: 2 }} numberOfLines={1}>
@@ -3801,7 +3838,7 @@ const handleOpenChat = () => {
                 }}>
                   <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#EAB308' }} />
                   <Text style={{ color: '#FACC15', fontSize: 10, fontWeight: '900', letterSpacing: 0.8 }}>
-                    RADAR GUINEEXPRESS ATIVO
+                    RADAR NOBAI245 ATIVO
                   </Text>
                 </View>
 
