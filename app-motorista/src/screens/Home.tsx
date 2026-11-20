@@ -1,4 +1,4 @@
-import { getVehicle3DIconAsset } from '../utils/vehicleAssets';
+import { getVehicle3DIconAsset, getVehicleTopDownIconAsset } from '../utils/vehicleAssets';
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -2530,7 +2530,7 @@ export function Home() {
                   ]}
                 >
                   <Image
-                    source={getVehicle3DIconAsset(
+                    source={getVehicleTopDownIconAsset(
                       (driver as any)?.vehicleType || incomingRide?.vehicleType || 'PARTICULAR',
                       (driver as any)?.carColor || (driver as any)?.vehicleColor || 'BRANCO'
                     )}
