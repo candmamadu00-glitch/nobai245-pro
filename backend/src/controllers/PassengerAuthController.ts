@@ -77,10 +77,67 @@ export class PassengerAuthController {
         return res.status(400).json({ success: false, error: 'Número de telefone inválido para a Guiné-Bissau (+245).' });
       }
 
-      const passengerPhoneExists = await prisma.passenger.findUnique({ where: { phone: formattedPhone } });
-      const driverPhoneExists = await prisma.driver.findUnique({ where: { phone: formattedPhone } });
+      let passengerPhoneExists = await prisma.passenger.findUnique({ where: { phone: formattedPhone } });
+      let driverPhoneExists = await prisma.driver.findUnique({ where: { phone: formattedPhone } });
 
-      if (passengerPhoneExists || driverPhoneExists) {
+      // Libera automaticamente telefones de contas antigas marcadas como excluídas (deletedAt != null)
+      if (passengerPhoneExists?.deletedAt) {
+        const stamp = `${Date.now().toString().slice(-8)}_${Math.floor(10 + Math.random() * 89)}`;
+        await prisma.passenger.update({
+          where: { id: passengerPhoneExists.id },
+          data: { phone: `del_p_${stamp}`, status: 'INACTIVE' },
+        });
+        passengerPhoneExists = null;
+      }
+      if (driverPhoneExists?.deletedAt) {
+        const stamp = `${Date.now().toString().slice(-8)}_${Math.floor(10 + Math.random() * 89)}`;
+        await prisma.driver.update({
+          where: { id: driverPhoneExists.id },
+          data: { phone: `del_d_${stamp}`, status: 'INACTIVE' },
+        });
+        driverPhoneExists = null;
+      }
+
+      if (driverPhoneExists) {
+        return res.status(409).json({ success: false, error: 'Este número de telefone já está registrado no sistema.' });
+      }
+
+      // Se existir apenas um cadastro pendente nunca verificado (isVerified: false), atualiza e reenvia o SMS
+      if (passengerPhoneExists && !passengerPhoneExists.isVerified) {
+        const passwordHash = await bcrypt.hash(String(password), 12);
+        const otpCode = crypto.randomInt(1000, 10000).toString();
+        const otpCodeHash = await bcrypt.hash(otpCode, 10);
+        const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+        const updatedPassenger = await prisma.passenger.update({
+          where: { id: passengerPhoneExists.id },
+          data: {
+            fullName: cleanFullName,
+            passwordHash,
+            otpCodeHash,
+            otpExpiresAt,
+            lastResetAttempt: new Date(),
+          },
+        });
+
+        const smsSent = await sendTermiiSMS(formattedPhone, otpCode, 'REGISTER');
+        if (!smsSent) {
+          return res.status(500).json({ success: false, error: 'Falha ao enviar o SMS de verificação. Tente novamente.' });
+        }
+
+        return res.status(200).json({
+          success: true,
+          message: 'Código de verificação reenviado por SMS.',
+          passenger: {
+            id: updatedPassenger.id,
+            fullName: updatedPassenger.fullName,
+            phone: updatedPassenger.phone,
+            email: updatedPassenger.email,
+          },
+        });
+      }
+
+      if (passengerPhoneExists) {
         return res.status(409).json({ success: false, error: 'Este número de telefone já está registrado no sistema.' });
       }
 
@@ -125,7 +182,10 @@ export class PassengerAuthController {
         },
       });
 
-      await sendTermiiSMS(formattedPhone, otpCode);
+      const smsSent = await sendTermiiSMS(formattedPhone, otpCode, 'REGISTER');
+      if (!smsSent) {
+        return res.status(500).json({ success: false, error: 'Conta criada, mas houve falha ao enviar o SMS. Clique em reenviar código.' });
+      }
 
       if (passenger.email) {
         Promise.resolve(sendWelcomeEmail(passenger.email, passenger.fullName)).catch((err) => {
@@ -260,7 +320,7 @@ export class PassengerAuthController {
         },
       });
 
-      const smsSent = await sendTermiiSMS(formattedPhone, otpCode, 'RESET_PASSWORD');
+      const smsSent = await sendTermiiSMS(formattedPhone, otpCode, passenger.isVerified ? 'RESET_PASSWORD' : 'REGISTER');
       if (!smsSent) {
         return res.status(500).json({
           success: false,

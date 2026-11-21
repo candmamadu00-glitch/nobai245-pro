@@ -166,10 +166,27 @@ export class DriverAuthController {
         return res.status(400).json({ success: false, error: 'Informe um número válido da Guiné-Bissau (+245).' });
       }
 
-      const [driverExists, passengerExists] = await Promise.all([
+      let [driverExists, passengerExists] = await Promise.all([
         prisma.driver.findFirst({ where: { phone: formattedPhone } }),
         prisma.passenger.findFirst({ where: { phone: formattedPhone } }),
       ]);
+
+      if (driverExists?.deletedAt) {
+        const stamp = `${Date.now().toString().slice(-8)}_${Math.floor(10 + Math.random() * 89)}`;
+        await prisma.driver.update({
+          where: { id: driverExists.id },
+          data: { phone: `del_d_${stamp}`, status: 'INACTIVE' },
+        });
+        driverExists = null;
+      }
+      if (passengerExists?.deletedAt) {
+        const stamp = `${Date.now().toString().slice(-8)}_${Math.floor(10 + Math.random() * 89)}`;
+        await prisma.passenger.update({
+          where: { id: passengerExists.id },
+          data: { phone: `del_p_${stamp}`, status: 'INACTIVE' },
+        });
+        passengerExists = null;
+      }
 
       if (driverExists || passengerExists) {
         return res.status(409).json({
