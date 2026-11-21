@@ -430,6 +430,7 @@ export function Home() {
   const [driverEta, setDriverEta] = useState<number | null>(null);
   const [remainingDistanceKm, setRemainingDistanceKm] = useState<number | null>(null);
   const [routeCoordinates, setRouteCoordinates] = useState<number[][] | null>(null);
+  const carAnnotationRef = useRef<Mapbox.PointAnnotation>(null);
   const driverEtaRef = useRef<number | null>(null);
   const remainingDistanceKmRef = useRef<number | null>(null);
   const routeTotalDurationSecRef = useRef<number | null>(null);
@@ -890,6 +891,16 @@ export function Home() {
   }, []);
 
   useEffect(() => { fetchTodayEarnings(); }, [fetchTodayEarnings, rideState]);
+
+  useEffect(() => {
+    if (!isOnline) return;
+    const t1 = setTimeout(() => { carAnnotationRef.current?.refresh(); }, 150);
+    const t2 = setTimeout(() => { carAnnotationRef.current?.refresh(); }, 600);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [isOnline, driver?.vehicleType, (driver as any)?.carColor, (driver as any)?.vehicleColor]);
 
   useEffect(() => {
     if (driver?.id && typeof registerForPushNotifications === 'function') registerForPushNotifications(driver.id);
@@ -1709,6 +1720,16 @@ export function Home() {
       setShowNavSheet(false);
       persistActiveRideState(null, 'idle', null);
       fetchTodayEarnings();
+
+      if (isOnlineRef.current && driver?.id && socket?.connected) {
+        const curLat = lastDriverCoordsRef.current?.latitude ?? location?.coords?.latitude;
+        const curLng = lastDriverCoordsRef.current?.longitude ?? location?.coords?.longitude;
+        lastDriverOnlineEmitAt = Date.now();
+        socket.emit('driver:online', {
+          driverId: driver.id,
+          ...(curLat && curLng ? { lat: curLat, lng: curLng, latitude: curLat, longitude: curLng } : {}),
+        });
+      }
     }
   };
   const handleQueuedNowActive = async (data: { rideId: string; status: string }) => {
@@ -2082,6 +2103,20 @@ export function Home() {
         return Alert.alert('GPS Simulado Detectado 🚨', 'Desative o aplicativo de GPS Falso para continuar.');
       }
 
+      const initialHeading =
+        currentLoc.coords.heading != null && currentLoc.coords.heading >= 0
+          ? currentLoc.coords.heading
+          : 0;
+      lastDriverCoordsRef.current = {
+        latitude: currentLoc.coords.latitude,
+        longitude: currentLoc.coords.longitude,
+        heading: initialHeading,
+      };
+      setSnappedCarPos({
+        latitude: currentLoc.coords.latitude,
+        longitude: currentLoc.coords.longitude,
+        heading: initialHeading,
+      });
       setIsOnline(true);
       const activeSocket = await connectDriverSocket();
 
@@ -2563,6 +2598,7 @@ export function Home() {
 
           return (
             <Mapbox.PointAnnotation
+              ref={carAnnotationRef}
               key={`driver-car-${driver?.id || 'active'}`}
               id="car-location"
               coordinate={[carLng, carLat]}
@@ -2587,6 +2623,9 @@ export function Home() {
                     style={styles.vehicle3DImage}
                     fadeDuration={0}
                     resizeMode="contain"
+                    onLoad={() => {
+                      carAnnotationRef.current?.refresh();
+                    }}
                   />
                 </View>
               </View>

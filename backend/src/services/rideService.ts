@@ -1447,6 +1447,36 @@ export async function finalizeRideAndCharge(
     }
   });
 
+  if (ride.driverId) {
+    if (nextCurrentRideId) {
+      await safeRedis.set(`driver_active_ride:${ride.driverId}`, nextCurrentRideId).catch(() => {});
+    } else {
+      await safeRedis.del(`driver_active_ride:${ride.driverId}`).catch(() => {});
+      const ioInstance = getIo();
+      if (ioInstance) {
+        if (wasForcedOfflineDueToBalance) {
+          driverRooms.forEach(room => ioInstance.in(room).socketsLeave('available_drivers'));
+          await safeRedis.zRem('drivers:locations', ride.driverId).catch(() => {});
+        } else {
+          driverRooms.forEach(room => ioInstance.in(room).socketsJoin('available_drivers'));
+          const driverCoords = await prisma.driver.findUnique({
+            where: { id: ride.driverId },
+            select: { lastLat: true, lastLng: true }
+          }).catch(() => null);
+          const dLat = Number(driverCoords?.lastLat);
+          const dLng = Number(driverCoords?.lastLng);
+          if (isValidCoordinate(dLat, dLng)) {
+            await safeRedis.geoAdd('drivers:locations', {
+              longitude: dLng,
+              latitude: dLat,
+              member: ride.driverId
+            }).catch(() => {});
+          }
+        }
+      }
+    }
+  }
+
   if (ride.passenger?.deviceToken) {
     const finishBody = isDigitalRide
       ? `Você chegou ao seu destino. Pagamento de ${calculatedFare} XOF via ${formatPaymentMethodLabel(ride.paymentMethod)} confirmado! Avalie seu motorista!`
@@ -1815,6 +1845,16 @@ export async function cancelRideLogic(
   await safeRedis.del(`active_ride:${ride.id}`).catch(() => {});
   if (ride.driverId) {
     await safeRedis.del(`driver_active_ride:${ride.driverId}`).catch(() => {});
+    const driverAfterCancel = await prisma.driver.findUnique({
+      where: { id: ride.driverId },
+      select: { isOnline: true, isAvailable: true, currentRideId: true }
+    }).catch(() => null);
+    const ioCancel = getIo();
+    if (ioCancel && driverAfterCancel?.isOnline && driverAfterCancel?.isAvailable && !driverAfterCancel?.currentRideId) {
+      [ride.driverId, `driver_${ride.driverId}`, `driver:${ride.driverId}`].forEach(room => {
+        ioCancel.in(room).socketsJoin('available_drivers');
+      });
+    }
   }
 
   const cancelPayload = {

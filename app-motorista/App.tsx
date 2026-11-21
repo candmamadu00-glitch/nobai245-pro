@@ -8,6 +8,7 @@ import Mapbox from '@rnmapbox/maps';
 
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import { registerAndSendPushToken, setupNotificationListeners } from './src/services/notifications';
+import { socket, connectDriverSocket } from './src/services/socket';
 
 import { Login } from './src/screens/Login';
 import { Register } from './src/screens/Register';
@@ -41,6 +42,7 @@ if (Platform.OS === 'android') {
     importance: Notifications.AndroidImportance.MAX,
     vibrationPattern: [0, 1000, 500, 1000],
     lightColor: '#059669',
+    sound: 'default',
     lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     bypassDnd: true,
     audioAttributes: {
@@ -82,17 +84,29 @@ function AppContent() {
 
     registerAndSendPushToken().catch(() => {});
 
+    const wakeDriverForRideOffer = async () => {
+      try {
+        await connectDriverSocket();
+        if (socket.connected) {
+          socket.emit('driver:request_state');
+        }
+        if (navigationRef.isReady()) {
+          navigationRef.navigate('Home');
+        }
+      } catch {}
+    };
+
     const cleanupListeners = setupNotificationListeners(
       (notification) => {
         const type = notification.request.content.data?.type;
         if (type === 'NEW_RIDE_REQUEST') {
-          console.log('🔔 [MOTORISTA] Nova chamada de corrida em 1º plano');
+          wakeDriverForRideOffer();
         }
       },
       (response) => {
         const data = response.notification.request.content.data;
         if (data?.type === 'NEW_RIDE_REQUEST') {
-          console.log("👆 [MOTORISTA] Corrida clicada, ID:", data.rideId);
+          wakeDriverForRideOffer();
         } else if (data?.type === 'CHAT_MESSAGE' && data?.rideId) {
           if (navigationRef.isReady()) {
             navigationRef.navigate('Home', { activeRideId: data.rideId, openChat: true });
