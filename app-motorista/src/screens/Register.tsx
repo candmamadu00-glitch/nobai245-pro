@@ -207,6 +207,15 @@ export function Register() {
       return Alert.alert('Sessão SMS Expirada', 'Volte à etapa anterior e solicite um novo código SMS.');
     }
 
+    if (
+      typeof selfie !== 'string' || !selfie.trim() ||
+      typeof licenseFront !== 'string' || !licenseFront.trim() ||
+      typeof licenseBack !== 'string' || !licenseBack.trim()
+    ) {
+      setStep(3);
+      return Alert.alert('Fotos Obrigatórias', 'Selecione novamente a selfie e as fotos frente/verso do documento.');
+    }
+
     setLoading(true);
 
     try {
@@ -230,13 +239,14 @@ export function Register() {
       formData.append('documentNumber', documentNumber.trim().toUpperCase());
 
       const appendImage = (key: string, uri: string) => {
-        const cleanUri = uri.split('?')[0];
+        const trimmedUri = String(uri || '').trim();
+        const cleanUri = trimmedUri.split('?')[0];
         const rawName = cleanUri.split('/').pop() || `${key}.jpg`;
         const match = /\.(\w+)$/.exec(rawName);
         const ext = match ? match[1].toLowerCase() : 'jpg';
         const safeExt = ['jpg', 'jpeg', 'png', 'webp'].includes(ext) ? ext : 'jpg';
         const type = safeExt === 'png' ? 'image/png' : safeExt === 'webp' ? 'image/webp' : 'image/jpeg';
-        const normalizedUri = Platform.OS === 'android' ? uri : uri.replace('file://', '');
+        const normalizedUri = Platform.OS === 'android' ? trimmedUri : trimmedUri.replace('file://', '');
 
         formData.append(key, {
           uri: normalizedUri,
