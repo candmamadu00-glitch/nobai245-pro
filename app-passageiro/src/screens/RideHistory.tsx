@@ -47,6 +47,7 @@ export function RideHistory() {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   
   const isMountedRef = useRef(true);
 
@@ -58,10 +59,17 @@ export function RideHistory() {
   }, []);
 
   const fetchHistory = useCallback(async (pageNumber = 1, isRefresh = false) => {
+    if (isMountedRef.current && pageNumber === 1) setFetchError(null);
+    const requestOnce = () => api.get('/passengers/rides', { params: { page: pageNumber, limit: 10 } });
     try {
-      const response = await api.get('/passengers/rides', {
-        params: { page: pageNumber, limit: 10 }
-      }); 
+      let response;
+      try {
+        response = await requestOnce();
+      } catch (firstErr: any) {
+        if (firstErr?.response?.status === 401) throw firstErr;
+        await new Promise((r) => setTimeout(r, 1200));
+        response = await requestOnce();
+      }
       
       if (!isMountedRef.current) return;
 
@@ -73,15 +81,17 @@ export function RideHistory() {
       setHasMore(historyData.length >= 10);
       setRides(prev => isRefresh ? historyData : [...prev, ...historyData]);
       setPage(pageNumber);
+      setFetchError(null);
     } catch (error: any) {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || error?.response?.status === 401) return;
       
       const errorMessage = 
+        error.response?.data?.error ||
         error.response?.data?.message || 
-        t('history_error_msg', 'Erro ao carregar o histórico de corridas. Verifique sua conexão.');
+        t('history_error_msg', 'Não foi possível carregar o histórico agora. Arraste para baixo ou toque para tentar novamente.');
       
-      if (isRefresh && pageNumber === 1) {
-        Alert.alert(t('warning_title', 'Aviso'), errorMessage);
+      if (pageNumber === 1) {
+        setFetchError(errorMessage);
       }
     } finally {
       if (isMountedRef.current) {
@@ -225,6 +235,17 @@ export function RideHistory() {
           <ActivityIndicator size="large" color="#EAB308" />
         </View>
       ) : (
+        <>
+          {fetchError ? (
+            <TouchableOpacity
+              onPress={() => fetchHistory(1, true)}
+              activeOpacity={0.85}
+              style={{ marginHorizontal: 16, marginTop: 12, padding: 12, borderRadius: 12, backgroundColor: '#FEF3C7', borderWidth: 1, borderColor: '#F59E0B', flexDirection: 'row', alignItems: 'center', gap: 10 }}
+            >
+              <Ionicons name="refresh-circle" size={22} color="#B45309" />
+              <Text style={{ flex: 1, color: '#92400E', fontSize: 13, fontWeight: '600' }}>{fetchError}</Text>
+            </TouchableOpacity>
+          ) : null}
         <FlatList
           data={rides}
           keyExtractor={keyExtractor}
@@ -254,6 +275,7 @@ export function RideHistory() {
             </View>
           }
         />
+        </>
       )}
     </SafeAreaView>
   );

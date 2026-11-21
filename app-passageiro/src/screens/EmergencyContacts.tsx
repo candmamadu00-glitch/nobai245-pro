@@ -29,6 +29,7 @@ export function EmergencyContacts() {
   const [phone, setPhone] = useState('');
   const [relationship, setRelationship] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const isMountedRef = useRef(true);
 
@@ -40,9 +41,20 @@ export function EmergencyContacts() {
   }, []);
 
   const fetchContacts = useCallback(async () => {
-    if (isMountedRef.current) setLoading(true);
+    if (isMountedRef.current) {
+      setLoading(true);
+      setFetchError(null);
+    }
+    const requestOnce = () => api.get('/passengers/emergency-contacts');
     try {
-      const response = await api.get('/passengers/emergency-contacts', { timeout: 8000 });
+      let response;
+      try {
+        response = await requestOnce();
+      } catch (firstErr: any) {
+        if (firstErr?.response?.status === 401) throw firstErr;
+        await new Promise((r) => setTimeout(r, 1200));
+        response = await requestOnce();
+      }
       if (isMountedRef.current) {
         const list = Array.isArray(response.data)
           ? response.data
@@ -50,12 +62,13 @@ export function EmergencyContacts() {
             ? response.data.contacts
             : [];
         setContacts(list);
+        setFetchError(null);
       }
     } catch (error: any) {
-      if (isMountedRef.current) {
-        Alert.alert(
-          t('error_title', 'Erro de Conexão'),
-          t('error_fetch_contacts', 'Verifique sua internet. Não foi possível carregar os contatos.')
+      if (isMountedRef.current && error?.response?.status !== 401) {
+        setFetchError(
+          error?.response?.data?.error ||
+          t('error_fetch_contacts', 'Não foi possível atualizar os contatos agora. Toque para tentar novamente.')
         );
       }
     } finally {
@@ -203,6 +216,15 @@ export function EmergencyContacts() {
             </View>
           }
           ListEmptyComponent={
+            fetchError ? (
+              <View style={styles.emptyContainer}>
+                <Ionicons name="cloud-offline-outline" size={44} color="#F59E0B" />
+                <Text style={styles.emptyTitle}>{fetchError}</Text>
+                <TouchableOpacity style={styles.stunningButton} activeOpacity={0.85} onPress={fetchContacts}>
+                  <Text style={styles.stunningButtonText}>{t('retry', 'Tentar Novamente')}</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
             <View style={styles.emptyContainer}>
               <Ionicons name="people-outline" size={48} color="#94A3B8" />
               <Text style={styles.emptyTitle}>{t('no_contacts', 'Nenhum contato adicionado')}</Text>
@@ -210,6 +232,7 @@ export function EmergencyContacts() {
                 <Text style={styles.stunningButtonText}>{t('add_contact_btn', 'Adicionar Contato Seguro')}</Text>
               </TouchableOpacity>
             </View>
+            )
           }
           renderItem={({ item }) => (
             <View style={styles.contactCard}>

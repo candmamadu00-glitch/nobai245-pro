@@ -489,14 +489,17 @@ export function Home() {
 
   const panY = useRef(new Animated.Value(0)).current;
   const isExpandedRef = useRef(true);
+  const [isSheetExpanded, setIsSheetExpanded] = useState(true);
   const [sheetHeight, setSheetHeight] = useState(380);
 
-  const maxCollapsedY = Math.max(100, sheetHeight - 90 - Math.max(insets.bottom, 20));
+  const collapsedBottomPadding = Math.max(insets.bottom, Platform.OS === 'android' ? 48 : 20);
+  const maxCollapsedY = Math.max(100, sheetHeight - 96 - collapsedBottomPadding);
   const maxCollapsedYRef = useRef(maxCollapsedY);
   useEffect(() => { maxCollapsedYRef.current = maxCollapsedY; }, [maxCollapsedY]);
 
   const snapToState = useCallback((toExpanded: boolean) => {
     isExpandedRef.current = toExpanded;
+    setIsSheetExpanded(toExpanded);
     const targetY = toExpanded ? 0 : maxCollapsedYRef.current;
     Animated.spring(panY, {
       toValue: targetY,
@@ -2499,8 +2502,12 @@ export function Home() {
     } catch (err) {}
   };
 
-  const topHeaderInset = Math.max((insets?.top || 0) + 10, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 16);
-  const bottomInset = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 24 : 16);
+  const topHeaderInset = Math.max((insets?.top || 0) + 12, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 12 : 16);
+  const bottomInset = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 48 : 20);
+  const collapsedSheetHeight = 96 + collapsedBottomPadding;
+  const floatingButtonsBottom = isSheetExpanded
+    ? Math.min(Math.max(220, (sheetHeight || 220) + 14), 380)
+    : collapsedSheetHeight + 14;
 
   const activeOffer = (queuedOfferData && queuedOfferData.rideId !== activeRideId)
     ? queuedOfferData
@@ -2748,7 +2755,7 @@ export function Home() {
       </View>
 
       {/* 🎛️ BOTÕES FLUTUANTES */}
-      <View style={[styles.floatingButtonsWrapper, { bottom: Math.max(220, (sheetHeight || 220) + 14) }]} pointerEvents="box-none">
+      <View style={[styles.floatingButtonsWrapper, { bottom: floatingButtonsBottom }]} pointerEvents="box-none">
         <TouchableOpacity style={styles.recenterButton} onPress={handleRecenterMap} activeOpacity={0.85}>
           <Ionicons name="locate" size={20} color="#EAB308" />
         </TouchableOpacity>
@@ -2803,7 +2810,7 @@ export function Home() {
           >
             <View style={styles.dragHandle} />
             <Text style={styles.dragHintText}>
-              {isExpandedRef.current ? '▼ Arraste para recolher' : '▲ Toque para expandir'}
+              {isSheetExpanded ? '▼ Arraste para recolher' : '▲ Toque para expandir'}
             </Text>
           </TouchableOpacity>
 
@@ -3492,13 +3499,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#0F172A',
   },
   voiceToggleHeaderBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#334155',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.5,
     elevation: 6,
   },
   vehicle3DContainer: {
@@ -3535,22 +3546,26 @@ const styles = StyleSheet.create({
   },
   headerContainer: {
     position: 'absolute',
-    left: 16,
-    right: 16,
+    left: 12,
+    right: 12,
     zIndex: 15,
   },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 8,
+    gap: 6,
   },
   statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
     borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.5,
     elevation: 6,
     borderWidth: 1,
   },
@@ -3582,40 +3597,53 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#1E293B',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: '#334155',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.5,
     elevation: 6,
-    gap: 6,
+    gap: 5,
+    flexShrink: 1,
   },
   earningsPillText: {
     color: '#10B981',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '800',
   },
   filterPill: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: '#1E293B',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#334155',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.5,
     elevation: 6,
   },
   profilePill: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: '#1E293B',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#334155',
     overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.5,
     elevation: 6,
   },
   headerProfileImage: {
@@ -3640,45 +3668,60 @@ const styles = StyleSheet.create({
   },
   floatingButtonsWrapper: {
     position: 'absolute',
-    right: 16,
+    right: 14,
     bottom: 220,
     alignItems: 'flex-end',
     gap: 10,
-    zIndex: 10,
+    zIndex: 12,
   },
   recenterButton: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: '#1E293B',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#334155',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
     elevation: 6,
   },
   sosButton: {
     backgroundColor: '#DC2626',
     paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: 20,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#F87171',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
     elevation: 6,
   },
   sosText: {
     color: '#FFF',
     fontWeight: '900',
     fontSize: 12,
+    letterSpacing: 0.3,
   },
   audioRecordButton: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#1E293B',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 18,
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+    borderRadius: 22,
     borderWidth: 1,
     borderColor: '#334155',
     gap: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
     elevation: 6,
   },
   audioRecordButtonActive: {
