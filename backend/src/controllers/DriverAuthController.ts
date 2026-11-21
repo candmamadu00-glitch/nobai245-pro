@@ -1,7 +1,34 @@
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+
+function saveBase64ImageToUploads(base64Input: unknown): string | null {
+  if (typeof base64Input !== 'string' || !base64Input.trim()) return null;
+  const trimmed = base64Input.trim();
+  const match = /^data:image\/(jpeg|jpg|png|webp);base64,([A-Za-z0-9+/=\r\n]+)$/i.exec(trimmed);
+  const rawExt = match ? match[1].toLowerCase() : 'jpg';
+  const ext = rawExt === 'jpeg' ? 'jpg' : rawExt;
+  const rawB64 = match ? match[2] : trimmed;
+
+  try {
+    const buffer = Buffer.from(rawB64, 'base64');
+    if (!buffer.length || buffer.length > 10 * 1024 * 1024) return null;
+    const uploadDir = path.resolve(__dirname, '..', '..', 'uploads');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    const fileName = `${crypto.randomBytes(10).toString('hex')}-${Date.now()}.${ext}`;
+    fs.writeFileSync(path.join(uploadDir, fileName), buffer);
+    return `/uploads/${encodeURIComponent(fileName)}`;
+  } catch (err) {
+    console.error('[BASE64_UPLOAD_ERROR]:', err);
+    return null;
+  }
+}
+
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import crypto from 'crypto';
 import { prisma } from '../config/prisma';
 import { chargeMobileMoney } from '../services/mobileMoneyService';
 import { getIo } from '../server';
@@ -425,9 +452,15 @@ export class DriverAuthController {
       const licenseFrontFile = files?.['documentFront']?.[0] || files?.['licenseFront']?.[0] || files?.['cnhPhoto']?.[0] || files?.['document']?.[0];
       const licenseBackFile = files?.['documentBack']?.[0] || files?.['licenseBack']?.[0] || files?.['vehiclePhoto']?.[0];
 
-      const profilePicture = selfieFile ? `/uploads/${encodeURIComponent(selfieFile.filename)}` : null;
-      const licenseFrontPicture = licenseFrontFile ? `/uploads/${encodeURIComponent(licenseFrontFile.filename)}` : null;
-      const licenseBackPicture = licenseBackFile ? `/uploads/${encodeURIComponent(licenseBackFile.filename)}` : null;
+      const profilePicture = selfieFile
+        ? `/uploads/${encodeURIComponent(selfieFile.filename)}`
+        : saveBase64ImageToUploads(req.body.selfieBase64 || req.body.profilePictureBase64);
+      const licenseFrontPicture = licenseFrontFile
+        ? `/uploads/${encodeURIComponent(licenseFrontFile.filename)}`
+        : saveBase64ImageToUploads(req.body.licenseFrontBase64 || req.body.documentFrontBase64);
+      const licenseBackPicture = licenseBackFile
+        ? `/uploads/${encodeURIComponent(licenseBackFile.filename)}`
+        : saveBase64ImageToUploads(req.body.licenseBackBase64 || req.body.documentBackBase64);
 
       const passwordHash = await bcrypt.hash(String(password), 12);
 

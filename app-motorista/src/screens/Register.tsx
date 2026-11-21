@@ -45,6 +45,9 @@ export function Register() {
   const [selfie, setSelfie] = useState<string | null>(null);
   const [licenseFront, setLicenseFront] = useState<string | null>(null);
   const [licenseBack, setLicenseBack] = useState<string | null>(null);
+  const [selfieBase64, setSelfieBase64] = useState<string | null>(null);
+  const [licenseFrontBase64, setLicenseFrontBase64] = useState<string | null>(null);
+  const [licenseBackBase64, setLicenseBackBase64] = useState<string | null>(null);
 
   // Fase 4: Código SMS OTP
   const [otpCode, setOtpCode] = useState('');
@@ -74,7 +77,23 @@ export function Register() {
   /**
    * Menu de captura de imagem com opções de Câmera ou Galeria
    */
-  function pickImage(setter: (uri: string) => void, title: string) {
+  function pickImage(
+    setter: (uri: string) => void,
+    title: string,
+    base64Setter?: (b64: string | null) => void
+  ) {
+    const handleAsset = (asset: ImagePicker.ImagePickerAsset) => {
+      setter(asset.uri);
+      if (base64Setter) {
+        if (asset.base64) {
+          const mime = asset.mimeType && asset.mimeType.startsWith('image/') ? asset.mimeType : 'image/jpeg';
+          base64Setter(`data:${mime};base64,${asset.base64}`);
+        } else {
+          base64Setter(null);
+        }
+      }
+    };
+
     Alert.alert(
       `Enviar ${title}`,
       'Escolha como deseja enviar a imagem do seu documento ou foto:',
@@ -91,11 +110,12 @@ export function Register() {
               const result = await ImagePicker.launchCameraAsync({
                 mediaTypes: ['images'],
                 allowsEditing: true,
-                quality: 0.65,
+                quality: 0.55,
+                base64: true,
               });
 
               if (!result.canceled && result.assets && result.assets[0]?.uri) {
-                setter(result.assets[0].uri);
+                handleAsset(result.assets[0]);
               }
             } catch (error) {
               console.error('Erro ao abrir câmera:', error);
@@ -115,11 +135,12 @@ export function Register() {
               const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: ['images'],
                 allowsEditing: true,
-                quality: 0.65,
+                quality: 0.55,
+                base64: true,
               });
 
               if (!result.canceled && result.assets && result.assets[0]?.uri) {
-                setter(result.assets[0].uri);
+                handleAsset(result.assets[0]);
               }
             } catch (error) {
               console.error('Erro ao abrir galeria:', error);
@@ -260,32 +281,71 @@ export function Register() {
       appendImage('licenseBack', licenseBack!);
 
       const baseUrl = (api.defaults.baseURL || 'https://api.nobai245.com/api').replace(/\/+$/, '');
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000);
+      const sendJsonFallback = async () => {
+        const jsonRes = await api.post(
+          '/drivers/register',
+          {
+            fullName: fullName.trim(),
+            phone: `+245${cleanPhone}`,
+            password,
+            vehicleBrand: vehicleModel.trim(),
+            vehicleModel: vehicleModel.trim(),
+            vehiclePlate: vehiclePlate.trim().toUpperCase(),
+            vehicleColor: vehicleColor.trim(),
+            vehicleType,
+            otpCode: cleanOtp,
+            otpToken: activeOtpToken,
+            ...(vehicleType === 'TOCA_TOCA' && vehicleSeats
+              ? { vehicleSeats: String(vehicleSeats).trim() }
+              : {}),
+            documentType,
+            documentNumber: documentNumber.trim().toUpperCase(),
+            ...(selfieBase64 ? { selfieBase64 } : {}),
+            ...(licenseFrontBase64 ? { licenseFrontBase64 } : {}),
+            ...(licenseBackBase64 ? { licenseBackBase64 } : {}),
+          },
+          { timeout: 45000 }
+        );
+        return jsonRes.data || {};
+      };
 
       let responseData: any = {};
-      try {
-        const fetchRes = await fetch(`${baseUrl}/drivers/register`, {
-          method: 'POST',
-          headers: {
-            Accept: 'application/json',
-          },
-          body: formData,
-          signal: controller.signal,
-        });
-        const rawText = await fetchRes.text();
+      const hasAllBase64 = Boolean(selfieBase64 && licenseFrontBase64 && licenseBackBase64);
+
+      if (Platform.OS === 'android' && hasAllBase64) {
+        responseData = await sendJsonFallback();
+      } else {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 35000);
         try {
-          responseData = rawText ? JSON.parse(rawText) : {};
-        } catch {
-          responseData = { error: rawText || `Erro HTTP ${fetchRes.status}` };
+          const fetchRes = await fetch(`${baseUrl}/drivers/register`, {
+            method: 'POST',
+            headers: {
+              Accept: 'application/json',
+            },
+            body: formData,
+            signal: controller.signal,
+          });
+          const rawText = await fetchRes.text();
+          try {
+            responseData = rawText ? JSON.parse(rawText) : {};
+          } catch {
+            responseData = { error: rawText || `Erro HTTP ${fetchRes.status}` };
+          }
+          if (!fetchRes.ok || responseData?.success === false) {
+            const err: any = new Error(responseData?.error || responseData?.message || `Erro HTTP ${fetchRes.status}`);
+            err.response = { status: fetchRes.status, data: responseData };
+            throw err;
+          }
+        } catch (multipartErr: any) {
+          if (!multipartErr?.response && hasAllBase64) {
+            responseData = await sendJsonFallback();
+          } else {
+            throw multipartErr;
+          }
+        } finally {
+          clearTimeout(timeoutId);
         }
-        if (!fetchRes.ok || responseData?.success === false) {
-          const err: any = new Error(responseData?.error || responseData?.message || `Erro HTTP ${fetchRes.status}`);
-          err.response = { status: fetchRes.status, data: responseData };
-          throw err;
-        }
-      } finally {
-        clearTimeout(timeoutId);
       }
 
       console.log('=== ✅ [DEBUG CADASTRO] SUCESSO ===', responseData);
@@ -487,15 +547,15 @@ export function Register() {
 
                 <Text style={styles.inputLabel}>Anexar Documentos Claros</Text>
                 <View style={styles.photoGrid}>
-                  <TouchableOpacity style={[styles.photoBox, selfie && styles.photoBoxSuccess]} onPress={() => pickImage(setSelfie, 'Selfie')}>
+                  <TouchableOpacity style={[styles.photoBox, selfie && styles.photoBoxSuccess]} onPress={() => pickImage(setSelfie, 'Selfie', setSelfieBase64)}>
                     {selfie ? <Image source={{ uri: selfie }} style={styles.previewImg} /> : <><Ionicons name="camera-outline" size={24} color={theme.colors.primaryDark} /><Text style={styles.photoBoxText}>Selfie</Text></>}
                   </TouchableOpacity>
                   
-                  <TouchableOpacity style={[styles.photoBox, licenseFront && styles.photoBoxSuccess]} onPress={() => pickImage(setLicenseFront, 'Frente da Carta')}>
+                  <TouchableOpacity style={[styles.photoBox, licenseFront && styles.photoBoxSuccess]} onPress={() => pickImage(setLicenseFront, 'Frente da Carta', setLicenseFrontBase64)}>
                     {licenseFront ? <Image source={{ uri: licenseFront }} style={styles.previewImg} /> : <><Ionicons name="card-outline" size={24} color={theme.colors.primaryDark} /><Text style={styles.photoBoxText}>Carta (Frente)</Text></>}
                   </TouchableOpacity>
 
-                  <TouchableOpacity style={[styles.photoBox, licenseBack && styles.photoBoxSuccess]} onPress={() => pickImage(setLicenseBack, 'Verso da Carta')}>
+                  <TouchableOpacity style={[styles.photoBox, licenseBack && styles.photoBoxSuccess]} onPress={() => pickImage(setLicenseBack, 'Verso da Carta', setLicenseBackBase64)}>
                     {licenseBack ? <Image source={{ uri: licenseBack }} style={styles.previewImg} /> : <><Ionicons name="document-text-outline" size={24} color={theme.colors.primaryDark} /><Text style={styles.photoBoxText}>Carta (Verso)</Text></>}
                   </TouchableOpacity>
                 </View>
