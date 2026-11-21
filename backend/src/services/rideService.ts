@@ -1448,8 +1448,13 @@ export async function finalizeRideAndCharge(
   });
 
   if (ride.driverId) {
-    if (nextCurrentRideId) {
-      await safeRedis.set(`driver_active_ride:${ride.driverId}`, nextCurrentRideId).catch(() => {});
+    const driverAfterFinish = await prisma.driver.findUnique({
+      where: { id: ride.driverId },
+      select: { currentRideId: true, lastLat: true, lastLng: true }
+    }).catch(() => null);
+
+    if (driverAfterFinish?.currentRideId) {
+      await safeRedis.set(`driver_active_ride:${ride.driverId}`, driverAfterFinish.currentRideId).catch(() => {});
     } else {
       await safeRedis.del(`driver_active_ride:${ride.driverId}`).catch(() => {});
       const ioInstance = getIo();
@@ -1459,12 +1464,8 @@ export async function finalizeRideAndCharge(
           await safeRedis.zRem('drivers:locations', ride.driverId).catch(() => {});
         } else {
           driverRooms.forEach(room => ioInstance.in(room).socketsJoin('available_drivers'));
-          const driverCoords = await prisma.driver.findUnique({
-            where: { id: ride.driverId },
-            select: { lastLat: true, lastLng: true }
-          }).catch(() => null);
-          const dLat = Number(driverCoords?.lastLat);
-          const dLng = Number(driverCoords?.lastLng);
+          const dLat = Number(driverAfterFinish?.lastLat);
+          const dLng = Number(driverAfterFinish?.lastLng);
           if (isValidCoordinate(dLat, dLng)) {
             await safeRedis.geoAdd('drivers:locations', {
               longitude: dLng,

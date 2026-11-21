@@ -900,7 +900,7 @@ export function Home() {
       clearTimeout(t1);
       clearTimeout(t2);
     };
-  }, [isOnline, driver?.vehicleType, (driver as any)?.carColor, (driver as any)?.vehicleColor]);
+  }, [isOnline, (driver as any)?.vehicleType, (driver as any)?.carColor, (driver as any)?.vehicleColor]);
 
   useEffect(() => {
     if (driver?.id && typeof registerForPushNotifications === 'function') registerForPushNotifications(driver.id);
