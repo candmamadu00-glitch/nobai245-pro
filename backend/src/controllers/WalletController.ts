@@ -187,7 +187,7 @@ export async function handleSmsGatewayWebhook(req: Request, res: Response) {
         id: `wallet-claim-${Date.now()}`,
         category: 'FINANCE',
         title: 'Recarga de Motorista Validada (TxID)',
-        message: `Motorista validou recarga de ${pendingTransaction.amount} XOF.`,
+        message: Number((payload as any)?.amount || 0) > 0 ? `Motorista validou recarga de ${Number((payload as any).amount).toLocaleString('pt-BR')} XOF.` : 'Motorista validou uma recarga na carteira via TxID.',
         route: '/financial',
         severity: 'success',
         createdAt: new Date().toISOString(),
