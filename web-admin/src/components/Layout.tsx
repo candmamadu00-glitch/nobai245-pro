@@ -6,6 +6,7 @@ import type { SystemHealthResponse } from '../services/api';
 import { adminSocket } from '../services/adminSocket';
 import { useAdminSocket } from '../hooks/useAdminSocket';
 import { AdminNotificationCenter } from './AdminNotificationCenter';
+import { GlobalCommandSearch } from './GlobalCommandSearch';
 import {
   LayoutDashboard,
   Radio,
@@ -358,6 +359,7 @@ export function Layout() {
             <span className="topbar-live-pill">
               <span className="topbar-dot" /> Central Operacional Guiné-Bissau 🇬🇼
             </span>
+            <GlobalCommandSearch />
           </div>
 
           <div className="desktop-topbar-right">

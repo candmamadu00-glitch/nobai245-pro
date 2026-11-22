@@ -7,7 +7,7 @@ import { exportToExcel } from '../utils/excelExport';
 import { BarComparisonChart } from '../components/AdminCharts';
 
 export function Governance() {
-  const [tab, setTab] = useState<'antifraud' | 'zones' | 'missions' | 'dre'>('antifraud');
+  const [tab, setTab] = useState<'antifraud' | 'zones' | 'missions' | 'dre' | 'audit'>('antifraud');
   const [loading, setLoading] = useState(true);
 
   const [fraudAlerts, setFraudAlerts] = useState<any[]>([]);
@@ -25,6 +25,9 @@ export function Governance() {
 
   const [dreMonths, setDreMonths] = useState<any[]>([]);
   const [backingUp, setBackingUp] = useState(false);
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [auditSearch, setAuditSearch] = useState('');
+  const [auditRestricted, setAuditRestricted] = useState(false);
 
   const formatXof = (v: number) =>
     new Intl.NumberFormat('pt-GW', { style: 'currency', currency: 'XOF', maximumFractionDigits: 0 }).format(v || 0);
@@ -32,17 +35,33 @@ export function Governance() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [afRes, zRes, mRes, dreRes] = await Promise.all([
+      const [afRes, zRes, mRes, dreRes, auditRes] = await Promise.allSettled([
         api.get('/admin/enterprise/antifraud/scan'),
         api.get('/admin/enterprise/zones'),
         api.get('/admin/enterprise/missions'),
-        api.get('/admin/enterprise/dre')
+        api.get('/admin/enterprise/dre'),
+        api.get('/admin/audit-logs')
       ]);
-      setFraudAlerts(Array.isArray(afRes.data?.alerts) ? afRes.data.alerts : []);
-      setBlacklist(Array.isArray(afRes.data?.blacklist) ? afRes.data.blacklist : []);
-      setZones(Array.isArray(zRes.data?.data) ? zRes.data.data : []);
-      setMissions(Array.isArray(mRes.data?.data) ? mRes.data.data : []);
-      setDreMonths(Array.isArray(dreRes.data?.months) ? dreRes.data.months : []);
+      if (afRes.status === 'fulfilled') {
+        setFraudAlerts(Array.isArray(afRes.value.data?.alerts) ? afRes.value.data.alerts : []);
+        setBlacklist(Array.isArray(afRes.value.data?.blacklist) ? afRes.value.data.blacklist : []);
+      }
+      if (zRes.status === 'fulfilled') {
+        setZones(Array.isArray(zRes.value.data?.data) ? zRes.value.data.data : []);
+      }
+      if (mRes.status === 'fulfilled') {
+        setMissions(Array.isArray(mRes.value.data?.data) ? mRes.value.data.data : []);
+      }
+      if (dreRes.status === 'fulfilled') {
+        setDreMonths(Array.isArray(dreRes.value.data?.months) ? dreRes.value.data.months : []);
+      }
+      if (auditRes.status === 'fulfilled') {
+        const rawLogs = auditRes.value.data?.logs || auditRes.value.data?.data || auditRes.value.data;
+        setAuditLogs(Array.isArray(rawLogs) ? rawLogs : []);
+        setAuditRestricted(false);
+      } else {
+        setAuditRestricted(true);
+      }
     } catch (err) {
       console.error('Erro ao carregar governança:', err);
     } finally {
@@ -134,7 +153,8 @@ export function Governance() {
           { id: 'antifraud', label: `Antifraude & Blacklist (${fraudAlerts.length})`, icon: ShieldAlert },
           { id: 'zones', label: `Zonas & Rotas Fixas (${zones.length})`, icon: MapPin },
           { id: 'missions', label: `Missões da Frota (${missions.length})`, icon: Award },
-          { id: 'dre', label: 'DRE Mensal & Backup', icon: FileSpreadsheet }
+          { id: 'dre', label: 'DRE Mensal & Backup', icon: FileSpreadsheet },
+          { id: 'audit', label: `Trilha de Auditoria (${auditLogs.length})`, icon: Database }
         ].map((t) => {
           const Icon = t.icon;
           const active = tab === t.id;
@@ -422,6 +442,126 @@ export function Governance() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {tab === 'audit' && (
+        <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '16px', padding: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '1.05rem', color: '#0F172A' }}>
+                Trilha Imutável de Auditoria Administrativa (Compliance)
+              </h3>
+              <p style={{ margin: '4px 0 0', fontSize: '0.84rem', color: '#64748B' }}>
+                Registro automático de todas as alterações financeiras, aprovações de frota, tarifas e configurações.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                placeholder="Filtrar por operador, ação, IP ou alvo..."
+                value={auditSearch}
+                onChange={(e) => setAuditSearch(e.target.value)}
+                style={{
+                  padding: '9px 12px',
+                  borderRadius: '10px',
+                  border: '1px solid #CBD5E1',
+                  fontSize: '0.85rem',
+                  minWidth: '250px',
+                }}
+              />
+              <button
+                type="button"
+                className="btn-excel-export"
+                onClick={() => {
+                  if (auditLogs.length === 0) return alert('Nenhum registro de auditoria para exportar.');
+                  exportToExcel({
+                    fileName: `nobai245-auditoria-${new Date().toISOString().slice(0, 10)}.xlsx`,
+                    sheetName: 'Trilha de Auditoria',
+                    columns: [
+                      { header: 'Data / Hora', key: (l: any) => (l.createdAt ? new Date(l.createdAt).toLocaleString('pt-BR') : '') },
+                      { header: 'Colaborador', key: (l: any) => l.admin?.name || l.adminId || '' },
+                      { header: 'E-mail', key: (l: any) => l.admin?.email || '' },
+                      { header: 'Cargo', key: (l: any) => l.admin?.role || '' },
+                      { header: 'Ação Executada', key: (l: any) => l.action || '' },
+                      { header: 'Módulo / Alvo', key: (l: any) => `${l.targetType || ''} ${l.targetId || ''}`.trim() },
+                      { header: 'Endereço IP', key: (l: any) => l.ipAddress || '' },
+                      { header: 'Detalhes (JSON)', key: (l: any) => (l.payload ? JSON.stringify(l.payload) : '') },
+                    ],
+                    rows: auditLogs,
+                  });
+                }}
+              >
+                <ExcelIcon size={16} /> Exportar Auditoria (Excel)
+              </button>
+            </div>
+          </div>
+
+          {auditRestricted ? (
+            <div style={{ padding: '24px', borderRadius: '12px', backgroundColor: '#FEF2F2', border: '1px solid #FECACA', color: '#991B1B', fontSize: '0.9rem', fontWeight: 600 }}>
+              Acesso restrito: apenas contas com perfil <strong>SUPER_ADMIN</strong> podem visualizar o histórico completo de auditoria.
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.84rem' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '1px solid #E2E8F0', textAlign: 'left', color: '#475569' }}>
+                    <th style={{ padding: '12px 14px' }}>Data / Hora</th>
+                    <th style={{ padding: '12px 14px' }}>Operador</th>
+                    <th style={{ padding: '12px 14px' }}>Ação</th>
+                    <th style={{ padding: '12px 14px' }}>Módulo / Alvo</th>
+                    <th style={{ padding: '12px 14px' }}>IP Origem</th>
+                    <th style={{ padding: '12px 14px' }}>Payload</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditLogs
+                    .filter((log: any) => {
+                      const q = auditSearch.trim().toLowerCase();
+                      if (!q) return true;
+                      return (
+                        String(log.admin?.name || '').toLowerCase().includes(q) ||
+                        String(log.admin?.email || '').toLowerCase().includes(q) ||
+                        String(log.action || '').toLowerCase().includes(q) ||
+                        String(log.targetType || '').toLowerCase().includes(q) ||
+                        String(log.ipAddress || '').toLowerCase().includes(q)
+                      );
+                    })
+                    .map((log: any) => (
+                      <tr key={log.id} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                        <td style={{ padding: '11px 14px', whiteSpace: 'nowrap', color: '#334155' }}>
+                          {log.createdAt ? new Date(log.createdAt).toLocaleString('pt-BR') : '-'}
+                        </td>
+                        <td style={{ padding: '11px 14px' }}>
+                          <strong style={{ display: 'block', color: '#0F172A' }}>{log.admin?.name || 'Admin'}</strong>
+                          <span style={{ fontSize: '0.75rem', color: '#64748B' }}>{log.admin?.role || log.admin?.email || ''}</span>
+                        </td>
+                        <td style={{ padding: '11px 14px', fontFamily: 'monospace', fontWeight: 700, color: '#059669' }}>
+                          {log.action}
+                        </td>
+                        <td style={{ padding: '11px 14px' }}>
+                          <span style={{ padding: '3px 8px', borderRadius: '6px', backgroundColor: '#F1F5F9', fontWeight: 700, fontSize: '0.75rem', color: '#334155' }}>
+                            {log.targetType}
+                          </span>
+                          {log.targetId && (
+                            <span style={{ display: 'block', fontSize: '0.74rem', color: '#64748B', marginTop: '2px' }}>
+                              ID: {String(log.targetId).slice(0, 18)}
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ padding: '11px 14px', fontFamily: 'monospace', color: '#475569' }}>
+                          {log.ipAddress || '-'}
+                        </td>
+                        <td style={{ padding: '11px 14px', maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#64748B', fontFamily: 'monospace', fontSize: '0.76rem' }} title={log.payload ? JSON.stringify(log.payload) : ''}>
+                          {log.payload ? JSON.stringify(log.payload) : '-'}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>
