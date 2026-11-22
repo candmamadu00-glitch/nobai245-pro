@@ -3,6 +3,26 @@ import { Eye, Check, X, Search, Loader2 } from 'lucide-react';
 import { api, API_URL } from '../services/api';
 import './Drivers.css';
 
+interface DriverChangeRequestItem {
+  id: string;
+  driverId: string;
+  newFullName?: string | null;
+  newVehiclePlate?: string | null;
+  newVehicleBrand?: string | null;
+  newVehicleColor?: string | null;
+  newDocumentNumber?: string | null;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  createdAt: string;
+  driver?: {
+    fullName: string;
+    phone: string;
+    vehiclePlate: string;
+    vehicleBrand?: string | null;
+    vehicleColor?: string | null;
+    documentNumber?: string | null;
+  };
+}
+
 interface DriverRequest {
   id: string;
   fullName: string;
@@ -22,7 +42,9 @@ interface DriverRequest {
 }
 
 export function DriverRequests() {
+  const [activeTab, setActiveTab] = useState<'new' | 'updates'>('new');
   const [requests, setRequests] = useState<DriverRequest[]>([]);
+  const [changeRequests, setChangeRequests] = useState<DriverChangeRequestItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -53,10 +75,18 @@ export function DriverRequests() {
   const fetchRequests = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await api.get<DriverRequest[]>('/admin/drivers', {
-        params: { status: 'PENDING_APPROVAL' }
-      });
-      setRequests(response.data);
+      const [newDriversRes, changeReqRes] = await Promise.all([
+        api.get<DriverRequest[]>('/admin/drivers', {
+          params: { status: 'PENDING_APPROVAL' }
+        }),
+        api.get<DriverChangeRequestItem[]>('/admin/driver-requests').catch(() => ({ data: [] as DriverChangeRequestItem[] })),
+      ]);
+      setRequests(Array.isArray(newDriversRes.data) ? newDriversRes.data : []);
+      const pendingChanges = Array.isArray(changeReqRes.data) ? changeReqRes.data : [];
+      setChangeRequests(pendingChanges);
+      if ((newDriversRes.data?.length || 0) === 0 && pendingChanges.length > 0) {
+        setActiveTab('updates');
+      }
     } catch (error) {
       console.error('Erro ao buscar solicitações de motoristas:', error);
     } finally {
@@ -110,6 +140,35 @@ export function DriverRequests() {
     }
   };
 
+  const handleReviewChangeRequest = async (requestId: string, action: 'APPROVE' | 'REJECT') => {
+    const confirmMsg = action === 'APPROVE'
+      ? 'Confirmar aprovação e aplicar os novos dados no cadastro deste motorista?'
+      : 'Tem certeza que deseja REJEITAR esta solicitação de alteração?';
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      setActionLoading(requestId);
+      await api.put(`/admin/driver-requests/${requestId}/review`, { action });
+      await fetchRequests();
+    } catch (error: any) {
+      console.error('Erro ao revisar alteração de motorista:', error);
+      alert(error?.response?.data?.error || 'Erro ao processar solicitação de alteração.');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const filteredChangeRequests = changeRequests.filter((item) => {
+    const term = searchTerm.toLowerCase();
+    return (
+      (item.driver?.fullName || '').toLowerCase().includes(term) ||
+      (item.driver?.phone || '').toLowerCase().includes(term) ||
+      (item.driver?.vehiclePlate || '').toLowerCase().includes(term) ||
+      (item.newFullName || '').toLowerCase().includes(term) ||
+      (item.newVehiclePlate || '').toLowerCase().includes(term)
+    );
+  });
+
   const filteredRequests = requests.filter((driver) => {
     const term = searchTerm.toLowerCase();
     return (
@@ -134,9 +193,55 @@ export function DriverRequests() {
         <div>
           <h1>Solicitações de Motoristas</h1>
           <p style={{ color: '#6B7280', margin: '4px 0 0 0' }}>
-            Análise e validação de novos cadastros
+            Análise de novos cadastros e pedidos de alteração de dados / veículo
           </p>
         </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          onClick={() => setActiveTab('new')}
+          style={{
+            padding: '10px 16px',
+            borderRadius: 10,
+            border: activeTab === 'new' ? '2px solid #EAB308' : '1px solid #E5E7EB',
+            backgroundColor: activeTab === 'new' ? '#FEF9C3' : '#FFFFFF',
+            color: '#111827',
+            fontWeight: 700,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          <span>Novos Cadastros</span>
+          <span style={{ backgroundColor: '#111827', color: '#FFFFFF', borderRadius: 999, padding: '2px 8px', fontSize: 12 }}>
+            {requests.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('updates')}
+          style={{
+            padding: '10px 16px',
+            borderRadius: 10,
+            border: activeTab === 'updates' ? '2px solid #EAB308' : '1px solid #E5E7EB',
+            backgroundColor: activeTab === 'updates' ? '#FEF9C3' : '#FFFFFF',
+            color: '#111827',
+            fontWeight: 700,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          <span>Alterações de Dados / Veículo</span>
+          <span style={{ backgroundColor: changeRequests.length > 0 ? '#D97706' : '#6B7280', color: '#FFFFFF', borderRadius: 999, padding: '2px 8px', fontSize: 12 }}>
+            {changeRequests.length}
+          </span>
+        </button>
       </div>
 
       <div className="controls-bar">
@@ -150,10 +255,101 @@ export function DriverRequests() {
           />
         </div>
         <div className="results-info">
-          {filteredRequests.length} solicitação(ões) pendente(s)
+          {activeTab === 'new'
+            ? `${filteredRequests.length} novo(s) cadastro(s) pendente(s)`
+            : `${filteredChangeRequests.length} alteração(ões) de dados pendente(s)`}
         </div>
       </div>
 
+      {activeTab === 'updates' ? (
+        <div className="table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Motorista</th>
+                <th>Alterações Solicitadas (Atual → Novo)</th>
+                <th>Data do Pedido</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredChangeRequests.length === 0 ? (
+                <tr>
+                  <td colSpan={4} style={{ textAlign: 'center', padding: '32px', color: '#6B7280' }}>
+                    Nenhuma solicitação de alteração de dados pendente no momento.
+                  </td>
+                </tr>
+              ) : (
+                filteredChangeRequests.map((item) => {
+                  const isProcessing = actionLoading === item.id;
+                  const currentDriver = item.driver;
+                  const diffs: Array<{ label: string; oldVal: string; newVal: string }> = [];
+
+                  if (item.newFullName && item.newFullName !== (currentDriver?.fullName || '')) {
+                    diffs.push({ label: 'Nome', oldVal: currentDriver?.fullName || '—', newVal: item.newFullName });
+                  }
+                  if (item.newVehiclePlate && item.newVehiclePlate !== (currentDriver?.vehiclePlate || '')) {
+                    diffs.push({ label: 'Placa', oldVal: currentDriver?.vehiclePlate || '—', newVal: item.newVehiclePlate });
+                  }
+                  if (item.newVehicleBrand && item.newVehicleBrand !== (currentDriver?.vehicleBrand || '')) {
+                    diffs.push({ label: 'Marca/Modelo', oldVal: currentDriver?.vehicleBrand || '—', newVal: item.newVehicleBrand });
+                  }
+                  if (item.newVehicleColor && item.newVehicleColor !== (currentDriver?.vehicleColor || '')) {
+                    diffs.push({ label: 'Cor', oldVal: currentDriver?.vehicleColor || '—', newVal: item.newVehicleColor });
+                  }
+                  if (item.newDocumentNumber && item.newDocumentNumber !== (currentDriver?.documentNumber || '')) {
+                    diffs.push({ label: 'Nº Documento', oldVal: currentDriver?.documentNumber || '—', newVal: item.newDocumentNumber });
+                  }
+
+                  return (
+                    <tr key={item.id}>
+                      <td>
+                        <strong>{currentDriver?.fullName || 'Motorista'}</strong>
+                        <div style={{ fontSize: 12, color: '#6B7280' }}>{currentDriver?.phone || ''}</div>
+                        <div style={{ fontSize: 12, color: '#6B7280' }}>Placa atual: {currentDriver?.vehiclePlate || '—'}</div>
+                      </td>
+                      <td>
+                        {diffs.length === 0 ? (
+                          <span style={{ color: '#6B7280' }}>Sem campos divergentes</span>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {diffs.map((d) => (
+                              <div key={d.label} style={{ fontSize: 13 }}>
+                                <strong>{d.label}:</strong>{' '}
+                                <span style={{ color: '#6B7280', textDecoration: 'line-through' }}>{d.oldVal}</span>{' '}
+                                → <span style={{ color: '#059669', fontWeight: 700 }}>{d.newVal}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td>{new Date(item.createdAt).toLocaleString('pt-BR')}</td>
+                      <td>
+                        <button
+                          className="action-btn"
+                          disabled={isProcessing}
+                          style={{ backgroundColor: '#059669', color: 'white' }}
+                          onClick={() => handleReviewChangeRequest(item.id, 'APPROVE')}
+                        >
+                          <Check size={16} /> Aprovar Alteração
+                        </button>
+                        <button
+                          className="action-btn"
+                          disabled={isProcessing}
+                          style={{ backgroundColor: '#DC2626', color: 'white', marginLeft: 8 }}
+                          onClick={() => handleReviewChangeRequest(item.id, 'REJECT')}
+                        >
+                          <X size={16} /> Rejeitar
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      ) : (
       <div className="table-container">
         <table className="data-table">
           <thead>
@@ -233,6 +429,7 @@ export function DriverRequests() {
           </tbody>
         </table>
       </div>
+      )}
 
       {isModalOpen && selectedDriver && (
         <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>

@@ -485,6 +485,7 @@ export function Home() {
   const navigation = useNavigation<any>();
   const { t, i18n } = useTranslation();
   const isMountedRef = useRef(true);
+  const notifiedLocalRideEventsRef = useRef<Set<string>>(new Set());
   const insets = useSafeAreaInsets();
   const cameraRef = useRef<Mapbox.Camera>(null);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2263,15 +2264,21 @@ const handleOpenChat = () => {
         enabled: isVoiceAssistEnabledRef.current,
       });
 
-      Notifications.scheduleNotificationAsync({
-        content: {
-          title: t('ride_accepted_title', 'Corrida Aceita! 🚗'),
-          body: `${parsedDriver?.name || 'O motorista'} ${t('ride_accepted_msg', 'aceitou sua viagem e está a caminho.')}`,
-          data: { channelId: 'ride-updates' },
-          sound: 'default',
-        },
-        trigger: null,
-      }).catch(() => {});
+      const acceptedRideKey = String(data.rideId || data.id || activeRideIdRef.current || 'current');
+      const acceptedEventSig = `${acceptedRideKey}:accepted`;
+      if (!notifiedLocalRideEventsRef.current.has(acceptedEventSig)) {
+        notifiedLocalRideEventsRef.current.add(acceptedEventSig);
+        Notifications.scheduleNotificationAsync({
+          identifier: `nobai-ride-${acceptedRideKey}-accepted`,
+          content: {
+            title: t('ride_accepted_title', 'Corrida Aceita! 🚗'),
+            body: `${parsedDriver?.name || 'O motorista'} ${t('ride_accepted_msg', 'aceitou sua viagem e está a caminho.')}`,
+            data: { rideId: acceptedRideKey, type: 'RIDE_ACCEPTED' },
+            sound: 'default',
+          },
+          trigger: Platform.OS === 'android' ? { channelId: 'ride-updates' } : null,
+        }).catch(() => {});
+      }
     };
 
     const handleDriverArrived = (data: any) => {
@@ -2285,15 +2292,21 @@ const handleOpenChat = () => {
         enabled: isVoiceAssistEnabledRef.current,
       });
 
-      Notifications.scheduleNotificationAsync({
-        content: {
-          title: t('driver_arrived_title', 'Motorista no Local! 📍'),
-          body: t('driver_arrived_alert_msg', 'Seu motorista chegou ao ponto de partida e está te aguardando.'),
-          data: { channelId: 'ride-updates' },
-          sound: 'default',
-        },
-        trigger: null,
-      }).catch(() => {});
+      const arrivedRideKey = String(data?.rideId || activeRideIdRef.current || 'current');
+      const arrivedEventSig = `${arrivedRideKey}:arrived`;
+      if (!notifiedLocalRideEventsRef.current.has(arrivedEventSig)) {
+        notifiedLocalRideEventsRef.current.add(arrivedEventSig);
+        Notifications.scheduleNotificationAsync({
+          identifier: `nobai-ride-${arrivedRideKey}-arrived`,
+          content: {
+            title: t('driver_arrived_title', 'Motorista no Local! 📍'),
+            body: t('driver_arrived_alert_msg', 'Seu motorista chegou ao ponto de partida e está te aguardando.'),
+            data: { rideId: arrivedRideKey, type: 'DRIVER_ARRIVED' },
+            sound: 'default',
+          },
+          trigger: Platform.OS === 'android' ? { channelId: 'ride-updates' } : null,
+        }).catch(() => {});
+      }
     };
 
     const handleRideStarted = () => {
@@ -2347,15 +2360,21 @@ const handleOpenChat = () => {
         ? t('driver_cancelled_msg', 'O motorista cancelou a corrida. Por favor, solicite um novo veículo.')
         : (data?.appliedPenalty ? `${t('cancellation_fee', 'Taxa de cancelamento:')} ${data.penaltyAmount} XOF.` : t('ride_cancelled_msg', 'Sua corrida foi cancelada.'));
 
-      Notifications.scheduleNotificationAsync({
-        content: {
-          title,
-          body,
-          data: { channelId: 'ride-updates' },
-          sound: 'default',
-        },
-        trigger: null,
-      }).catch(() => {});
+      const cancelledRideKey = String(data?.rideId || activeRideIdRef.current || 'current');
+      const cancelledEventSig = `${cancelledRideKey}:cancelled`;
+      if (!notifiedLocalRideEventsRef.current.has(cancelledEventSig)) {
+        notifiedLocalRideEventsRef.current.add(cancelledEventSig);
+        Notifications.scheduleNotificationAsync({
+          identifier: `nobai-ride-${cancelledRideKey}-cancelled`,
+          content: {
+            title,
+            body,
+            data: { rideId: cancelledRideKey, type: 'RIDE_CANCELLED' },
+            sound: 'default',
+          },
+          trigger: Platform.OS === 'android' ? { channelId: 'ride-updates' } : null,
+        }).catch(() => {});
+      }
 
       const cancelledId = data?.rideId || activeRideIdRef.current;
       if (cancelledId) {
@@ -2371,15 +2390,21 @@ const handleOpenChat = () => {
       if (!isMountedRef.current) return;
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
-      Notifications.scheduleNotificationAsync({
-        content: {
-          title: t('search_ended_title', 'Busca Encerrada'),
-          body: t('no_drivers_found_msg', 'Nenhum motorista disponível próximo de si no momento. Caso tenha pago digitalmente, o estorno é automático.'),
-          data: { channelId: 'ride-updates' },
-          sound: 'default',
-        },
-        trigger: null,
-      }).catch(() => {});
+      const noDriverRideKey = String(activeRideIdRef.current || 'current');
+      const noDriverEventSig = `${noDriverRideKey}:no_drivers`;
+      if (!notifiedLocalRideEventsRef.current.has(noDriverEventSig)) {
+        notifiedLocalRideEventsRef.current.add(noDriverEventSig);
+        Notifications.scheduleNotificationAsync({
+          identifier: `nobai-ride-${noDriverRideKey}-no-drivers`,
+          content: {
+            title: t('search_ended_title', 'Busca Encerrada'),
+            body: t('no_drivers_found_msg', 'Nenhum motorista disponível próximo de si no momento. Caso tenha pago digitalmente, o estorno é automático.'),
+            data: { rideId: noDriverRideKey, type: 'NO_DRIVERS_FOUND' },
+            sound: 'default',
+          },
+          trigger: Platform.OS === 'android' ? { channelId: 'ride-updates' } : null,
+        }).catch(() => {});
+      }
 
       Alert.alert(
         t('no_response_title', 'Sem motoristas'),

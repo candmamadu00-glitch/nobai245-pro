@@ -47,6 +47,21 @@ export async function registerAndSendPushToken(accessToken?: string): Promise<st
         sound: 'default',
       });
 
+      await Notifications.setNotificationChannelAsync('ride-updates', {
+        name: 'Atualizações da Corrida',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#EAB308',
+        sound: 'default',
+      });
+
+      await Notifications.setNotificationChannelAsync('active-ride-ongoing', {
+        name: 'Status da Corrida Ativa',
+        importance: Notifications.AndroidImportance.HIGH,
+        sound: undefined,
+        vibrationPattern: [0],
+      });
+
       await Notifications.setNotificationChannelAsync('chat-messages', {
         name: 'Mensagens do Chat',
         importance: Notifications.AndroidImportance.MAX,

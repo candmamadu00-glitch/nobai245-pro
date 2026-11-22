@@ -4,6 +4,16 @@ const { Expo } = require('expo-server-sdk');
 const expo = new Expo();
 
 const PUSH_DEDUP_WINDOW_MS = 8_000;
+const RIDE_STAGE_DEDUP_WINDOW_MS = 60_000;
+const SINGLE_STAGE_RIDE_TYPES = new Set([
+  'NEW_RIDE_REQUEST',
+  'RIDE_ACCEPTED',
+  'DRIVER_NEARBY',
+  'DRIVER_ARRIVED',
+  'RIDE_STARTED',
+  'RIDE_COMPLETED',
+  'RIDE_CANCELLED',
+]);
 const recentPushDispatches = new Map<string, number>();
 
 export const PUSH_CHANNELS = {
@@ -59,13 +69,20 @@ export async function sendPushNotification(
   for (const [k, exp] of recentPushDispatches.entries()) {
     if (exp <= now) recentPushDispatches.delete(k);
   }
-  const pushSig = `${pushToken}|${channelId}|${title || ''}|${body || ''}|${data?.rideId || ''}|${data?.type || ''}`;
+  const rideIdKey = data?.rideId ? String(data.rideId) : '';
+  const eventTypeKey = data?.type ? String(data.type) : '';
+  const isSingleRideStage = Boolean(rideIdKey && eventTypeKey && SINGLE_STAGE_RIDE_TYPES.has(eventTypeKey));
+  const dedupWindowMs = isSingleRideStage ? RIDE_STAGE_DEDUP_WINDOW_MS : PUSH_DEDUP_WINDOW_MS;
+  const pushSig = isSingleRideStage
+    ? `${pushToken}|${channelId}|RIDE_STAGE|${rideIdKey}|${eventTypeKey}`
+    : `${pushToken}|${channelId}|${title || ''}|${body || ''}|${rideIdKey}|${eventTypeKey}`;
+
   const existingExp = recentPushDispatches.get(pushSig);
   if (existingExp && existingExp > now) {
-    console.log(`🛡️ [PUSH DEDUP] Ignorando envio duplicado em janela de 8s para "${pushToken}"`);
+    console.log(`🛡️ [PUSH DEDUP] Ignorando envio duplicado (${eventTypeKey || 'GENERIC'}) para "${pushToken}"`);
     return;
   }
-  recentPushDispatches.set(pushSig, now + PUSH_DEDUP_WINDOW_MS);
+  recentPushDispatches.set(pushSig, now + dedupWindowMs);
 
   const message: any = {
     to: pushToken,

@@ -41,7 +41,7 @@ export async function updateOngoingRideNotification({
       priority: Notifications.AndroidNotificationPriority.HIGH,
       categoryIdentifier: 'active-ride',
     },
-    trigger: null, // Atualização imediata
+    trigger: { channelId: 'active-ride-ongoing' },
   });
 }
 
