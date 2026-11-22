@@ -71,6 +71,10 @@ const escapeCsvField = (field: string | number | null | undefined): string => {
   return `"${str}"`;
 };
 
+import { FileSpreadsheet as ExcelIcon } from 'lucide-react';
+import { exportToExcel } from '../utils/excelExport';
+import { BarComparisonChart } from '../components/AdminCharts';
+
 export function Financial() {
   const [activeTab, setActiveTab] = useState<'overview' | 'driver_closing' | 'manage_balances'>('overview');
   const [wallet, setWallet] = useState<WalletData>({ balance: 0, totalCollected: 0, pendingWithdrawalsAmount: 0 });
@@ -385,12 +389,63 @@ export function Financial() {
           </p>
         </div>
 
-        <button onClick={() => setIsExportModalOpen(true)} className="btn-dark">
-          <FileSpreadsheet size={18} /> Exportar Fechamento
-        </button>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn-excel-export"
+            onClick={() => {
+              if (transactions.length === 0) return alert('Nenhuma transação carregada para exportar.');
+              exportToExcel({
+                fileName: `nobai245-financeiro-${new Date().toISOString().slice(0, 10)}.xlsx`,
+                sheetName: 'Transações',
+                columns: [
+                  { header: 'ID', key: (t: any) => t.id || '' },
+                  { header: 'Tipo', key: (t: any) => t.type || '' },
+                  { header: 'Valor (XOF)', key: (t: any) => Math.round(Number(t.amount || 0)) },
+                  { header: 'Status', key: (t: any) => t.status || '' },
+                  { header: 'Método', key: (t: any) => t.paymentMethod || '' },
+                  { header: 'Motorista', key: (t: any) => t.driver?.fullName || '' },
+                  { header: 'Passageiro', key: (t: any) => t.passenger?.fullName || '' },
+                  { header: 'Data/Hora', key: (t: any) => (t.createdAt ? new Date(t.createdAt).toLocaleString('pt-BR') : '') },
+                ],
+                rows: transactions,
+              });
+            }}
+          >
+            <ExcelIcon size={18} /> Excel (.xlsx)
+          </button>
+          <button onClick={() => setIsExportModalOpen(true)} className="btn-dark">
+            <FileSpreadsheet size={18} /> Exportar Fechamento
+          </button>
+        </div>
       </div>
 
       {/* Navegação por Abas */}
+      <div style={{ marginBottom: 20 }}>
+        <BarComparisonChart
+          title="Balanço Financeiro & Liquidez (XOF)"
+          subtitle="Visão consolidada de caixa, taxas arrecadadas e repasses pendentes"
+          valueFormatter={(v) => `${Math.round(v).toLocaleString('pt-BR')} XOF`}
+          data={[
+            {
+              label: 'Saldo em Caixa',
+              value: Number(wallet.balance || 0),
+              color: 'linear-gradient(180deg, #10B981 0%, #059669 100%)',
+            },
+            {
+              label: 'Total Arrecadado',
+              value: Number(wallet.totalCollected || 0),
+              color: 'linear-gradient(180deg, #38BDF8 0%, #0284C7 100%)',
+            },
+            {
+              label: 'Repasses Pendentes',
+              value: Number(wallet.pendingWithdrawalsAmount || 0),
+              color: 'linear-gradient(180deg, #FBBF24 0%, #D97706 100%)',
+            },
+          ]}
+        />
+      </div>
+
       <div className="fin-tabs">
         <button 
           className={`fin-tab-btn ${activeTab === 'overview' ? 'active' : ''}`}

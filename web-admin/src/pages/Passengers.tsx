@@ -25,6 +25,9 @@ interface Passenger {
   createdAt: string;
 }
 
+import { FileSpreadsheet as ExcelIcon } from 'lucide-react';
+import { exportToExcel } from '../utils/excelExport';
+
 export function Passengers() {
   const [passengers, setPassengers] = useState<Passenger[]>([]);
   const [loading, setLoading] = useState(true);
@@ -260,9 +263,34 @@ export function Passengers() {
     <div className="page-container">
       <div className="page-header">
         <h1>Gestão de Passageiros</h1>
-        <button className="export-btn" onClick={handleExportAllPDF}>
-          <Download size={18} /> Baixar PDF Geral
-        </button>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn-excel-export"
+            onClick={() => {
+              if (filteredPassengers.length === 0) return alert('Nenhum passageiro para exportar.');
+              exportToExcel({
+                fileName: `nobai245-passageiros-${new Date().toISOString().slice(0, 10)}.xlsx`,
+                sheetName: 'Passageiros',
+                columns: [
+                  { header: 'Nome Completo', key: (p: any) => p.fullName || '' },
+                  { header: 'Telefone', key: (p: any) => p.phone || '' },
+                  { header: 'E-mail', key: (p: any) => p.email || '' },
+                  { header: 'Status', key: (p: any) => p.status || '' },
+                  { header: 'Saldo (XOF)', key: (p: any) => Math.round(Number(p.walletBalance || 0)) },
+                  { header: 'Avaliação', key: (p: any) => Number(p.ratingAverage ?? p.rating ?? 5).toFixed(2) },
+                  { header: 'Cadastro', key: (p: any) => (p.createdAt ? new Date(p.createdAt).toLocaleDateString('pt-BR') : '') },
+                ],
+                rows: filteredPassengers,
+              });
+            }}
+          >
+            <ExcelIcon size={17} /> Exportar Excel
+          </button>
+          <button className="export-btn" onClick={handleExportAllPDF}>
+            <Download size={18} /> Baixar PDF Geral
+          </button>
+        </div>
       </div>
 
       <div className="controls-bar">

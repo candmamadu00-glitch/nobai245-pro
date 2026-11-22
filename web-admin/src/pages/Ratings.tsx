@@ -18,6 +18,9 @@ interface RatingItem {
   };
 }
 
+import { FileSpreadsheet as ExcelIcon } from 'lucide-react';
+import { exportToExcel } from '../utils/excelExport';
+
 export const RatingsPage: React.FC = () => {
   const [ratings, setRatings] = useState<RatingItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -82,6 +85,29 @@ export const RatingsPage: React.FC = () => {
             <option value="DRIVER">Motoristas avaliando</option>
           </select>
           <button onClick={fetchRatings} className="btn-primary">Filtrar</button>
+          <button
+            type="button"
+            className="btn-excel-export"
+            onClick={() => {
+              if (ratings.length === 0) return alert('Nenhuma avaliação carregada para exportar.');
+              exportToExcel({
+                fileName: `nobai245-avaliacoes-${new Date().toISOString().slice(0, 10)}.xlsx`,
+                sheetName: 'Avaliações',
+                columns: [
+                  { header: 'Data', key: (r: any) => (r.createdAt ? new Date(r.createdAt).toLocaleDateString('pt-BR') : '') },
+                  { header: 'Avaliador', key: (r: any) => r.reviewerType || '' },
+                  { header: 'Estrelas', key: (r: any) => Number(r.stars || 0) },
+                  { header: 'Passageiro', key: (r: any) => r.ride?.passenger?.fullName || '' },
+                  { header: 'Motorista', key: (r: any) => r.ride?.driver?.fullName || '' },
+                  { header: 'Comentário', key: (r: any) => r.comment || '' },
+                  { header: 'Visível', key: (r: any) => (r.isApproved ? 'Sim' : 'Oculta') },
+                ],
+                rows: ratings,
+              });
+            }}
+          >
+            <ExcelIcon size={16} /> Excel
+          </button>
         </div>
       </div>
 

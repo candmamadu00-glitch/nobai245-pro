@@ -2,6 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
 import { ShieldAlert, MapPin, Award, FileSpreadsheet, Database, RefreshCw, AlertTriangle, CheckCircle2, Trash2 } from 'lucide-react';
 
+import { FileSpreadsheet as ExcelIcon } from 'lucide-react';
+import { exportToExcel } from '../utils/excelExport';
+import { BarComparisonChart } from '../components/AdminCharts';
+
 export function Governance() {
   const [tab, setTab] = useState<'antifraud' | 'zones' | 'missions' | 'dre'>('antifraud');
   const [loading, setLoading] = useState(true);
@@ -338,13 +342,54 @@ export function Governance() {
                 Gera ponto de restauração verificado das tarifas, configurações, cupons e contadores do livro-razão.
               </p>
             </div>
-            <button
-              onClick={handleBackupNow}
-              disabled={backingUp}
-              style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', backgroundColor: '#10B981', color: '#0F172A', fontWeight: 800, cursor: 'pointer' }}
-            >
-              {backingUp ? 'Gerando Snapshot...' : 'Gerar Backup Agora'}
-            </button>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn-excel-export"
+                onClick={() => {
+                  if (dreMonths.length === 0) return alert('Sem dados de DRE para exportar.');
+                  exportToExcel({
+                    fileName: `nobai245-dre-6meses-${new Date().toISOString().slice(0, 10)}.xlsx`,
+                    sheetName: 'DRE Consolidado',
+                    columns: [
+                      { header: 'Mês', key: (m: any) => m.monthLabel || '' },
+                      { header: 'Corridas Concluídas', key: (m: any) => Number(m.completedRides || 0) },
+                      { header: 'Volume Bruto (XOF)', key: (m: any) => Number(m.grossVolumeXof || 0) },
+                      { header: 'Comissões Retidas (XOF)', key: (m: any) => Number(m.commissionsXof || 0) },
+                      { header: 'Subsídios Cupons (XOF)', key: (m: any) => Number(m.promoSubsidiesXof || 0) },
+                      { header: 'Estornos (XOF)', key: (m: any) => Number(m.refundsXof || 0) },
+                      { header: 'Resultado Líquido Plataforma (XOF)', key: (m: any) => Number(m.netPlatformResultXof || 0) },
+                    ],
+                    rows: dreMonths,
+                  });
+                }}
+              >
+                <ExcelIcon size={16} /> Exportar DRE (Excel)
+              </button>
+              <button
+                onClick={handleBackupNow}
+                disabled={backingUp}
+                style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', backgroundColor: '#10B981', color: '#0F172A', fontWeight: 800, cursor: 'pointer' }}
+              >
+                {backingUp ? 'Gerando Snapshot...' : 'Gerar Backup Agora'}
+              </button>
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 18 }}>
+            <BarComparisonChart
+              title="Evolução Financeira DRE (Últimos 6 Meses)"
+              subtitle="Volume Bruto vs. Resultado Líquido da Plataforma"
+              primaryLabel="Volume Bruto"
+              secondaryLabel="Resultado Líquido"
+              valueFormatter={(v) => formatXof(v)}
+              data={dreMonths.map((m: any) => ({
+                label: m.monthLabel,
+                value: Number(m.grossVolumeXof || 0),
+                secondaryValue: Number(m.netPlatformResultXof || 0),
+                subtitle: `${m.completedRides || 0} corridas`,
+              }))}
+            />
           </div>
 
           <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '14px', overflowX: 'auto' }}>

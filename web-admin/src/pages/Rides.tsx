@@ -123,6 +123,9 @@ const normalizeRideData = (raw: Record<string, any>): Ride => {
   };
 };
 
+import { FileSpreadsheet as ExcelIcon } from 'lucide-react';
+import { exportToExcel } from '../utils/excelExport';
+
 export function Rides() {
   const [rides, setRides] = useState<Ride[]>([]);
   const [loading, setLoading] = useState(true);
@@ -383,10 +386,39 @@ export function Rides() {
           <h1 className="page-title">Gestão & Auditoria de Corridas</h1>
           <p className="page-subtitle">Acompanhamento operacional, métricas financeiras e reprodução de trajetos</p>
         </div>
-        <button className="btn-refresh" onClick={fetchRides} disabled={loading} title="Recarregar Dados">
-          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-          <span>{loading ? 'Atualizando...' : 'Atualizar'}</span>
-        </button>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn-excel-export"
+            onClick={() => {
+              if (rides.length === 0) return alert('Nenhuma corrida carregada para exportar.');
+              exportToExcel({
+                fileName: `nobai245-corridas-${new Date().toISOString().slice(0, 10)}.xlsx`,
+                sheetName: 'Corridas',
+                columns: [
+                  { header: 'ID Corrida', key: (r: any) => r.id || '' },
+                  { header: 'Passageiro', key: (r: any) => r.passengerName || '' },
+                  { header: 'Tel. Passageiro', key: (r: any) => r.passengerPhone || '' },
+                  { header: 'Motorista', key: (r: any) => r.driverName || '' },
+                  { header: 'Placa', key: (r: any) => r.vehiclePlate || '' },
+                  { header: 'Origem', key: (r: any) => r.originAddress || '' },
+                  { header: 'Destino', key: (r: any) => r.destinationAddress || '' },
+                  { header: 'Valor (XOF)', key: (r: any) => Math.round(Number(r.amount || 0)) },
+                  { header: 'Status', key: (r: any) => r.status || '' },
+                  { header: 'Data/Hora', key: (r: any) => (r.createdAt ? new Date(r.createdAt).toLocaleString('pt-BR') : '') },
+                ],
+                rows: rides,
+              });
+            }}
+          >
+            <ExcelIcon size={16} />
+            <span>Exportar Excel</span>
+          </button>
+          <button className="btn-refresh" onClick={fetchRides} disabled={loading} title="Recarregar Dados">
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+            <span>{loading ? 'Atualizando...' : 'Atualizar'}</span>
+          </button>
+        </div>
       </div>
 
       <div className="kpi-grid">
