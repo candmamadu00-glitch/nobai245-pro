@@ -31,6 +31,7 @@ import {
 import { CancelModal } from '../components/CancelModal';
 import { RatingModal } from '../components/RatingModal';
 import { ChatModal } from '../components/ChatModal';
+import { InAppCallModal, CallDirection } from '../components/InAppCallModal';
 import { api } from '../services/api';
 import { registerAndSendPushToken } from '../services/notifications';
 import { updateOngoingRideNotification, dismissOngoingRideNotification } from '../services/ongoingNotification';
@@ -603,6 +604,10 @@ export function Home() {
   const handleCloseCancelModal = useCallback(() => setShowCancelModal(false), []);
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [isChatVisible, setIsChatVisible] = useState(false);
+  const [isCallVisible, setIsCallVisible] = useState(false);
+  const [callDirection, setCallDirection] = useState<CallDirection>('outgoing');
+  const [activeCallLogId, setActiveCallLogId] = useState<string | null>(null);
+  const [callRideId, setCallRideId] = useState<string>('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
   const [homeLocation, setHomeLocation] = useState<FavoritePlace | null>(null);
@@ -2579,6 +2584,15 @@ const handleOpenChat = () => {
     socket.on('ride:price_calculated', handlePriceCalculated);
     socket.on('ride:inaccessible_location', handleInaccessibleLocationAlert);
 
+    const handleIncomingDriverCall = (data: any) => {
+      if (!data?.rideId) return;
+      setCallRideId(String(data.rideId));
+      setCallDirection('incoming');
+      setActiveCallLogId(data.callLogId || null);
+      setIsCallVisible(true);
+    };
+    socket.on('call:incoming', handleIncomingDriverCall);
+
     return () => {
       clearInterval(passengerRideWatchdog);
       socket.off('connect', handleConnect);
@@ -2608,6 +2622,7 @@ const handleOpenChat = () => {
       socket.off('ride:no_drivers_found', handleNoDriversFound);
       socket.off('ride:price_calculated', handlePriceCalculated);
       socket.off('ride:inaccessible_location', handleInaccessibleLocationAlert);
+      socket.off('call:incoming', handleIncomingDriverCall);
 
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     };
@@ -2989,11 +3004,11 @@ const handleOpenChat = () => {
   }, [activeRideId, driverInfo, user?.id, resetRideState]);
 
   const handleCallDriver = () => {
-    setIsChatVisible(true);
-    Alert.alert(
-      t('contact_protected_title', 'Contato Protegido 🔒'),
-      t('contact_protected_msg', 'Por motivos de segurança e privacidade, a comunicação deve ser feita exclusivamente pelo Chat do aplicativo.')
-    );
+    if (!activeRideId) return;
+    setCallRideId(String(activeRideId));
+    setCallDirection('outgoing');
+    setActiveCallLogId(null);
+    setIsCallVisible(true);
   };
 
   const handleShareTrip = async () => {
@@ -5723,6 +5738,20 @@ const handleOpenChat = () => {
           currentUserPhoto={user?.profilePicture ? formatPhotoUrl(user.profilePicture) : null}
           otherUserName={driverInfo?.name || 'Motorista'}
           otherUserPhoto={driverInfo?.photoUrl || driverInfo?.profilePicture}
+        />
+      )}
+
+      {isCallVisible && (
+        <InAppCallModal
+          visible={isCallVisible}
+          onClose={() => setIsCallVisible(false)}
+          socket={socket}
+          rideId={callRideId || activeRideId || ''}
+          currentRole="passenger"
+          otherUserName={driverInfo?.name || 'Motorista'}
+          otherUserPhoto={driverInfo?.photoUrl || driverInfo?.profilePicture}
+          initialDirection={callDirection}
+          callLogId={activeCallLogId}
         />
       )}
 

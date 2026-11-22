@@ -898,7 +898,7 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     status: targetStatus,
     driverId: result.driverId,
     driverName: result.driver?.fullName || 'Motorista',
-    driverPhone: result.driver?.phone || null,
+    driverPhone: null,
     driverPhoto: result.driver?.profilePicture || null,
     carModel: result.driver?.vehicleBrand || 'Veículo Padrão',
     carColor: result.driver?.vehicleColor || 'BRANCO',

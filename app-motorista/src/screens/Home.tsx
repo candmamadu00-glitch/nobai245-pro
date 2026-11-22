@@ -18,6 +18,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { registerAndSendPushToken as registerForPushNotifications } from '../services/notifications';
 import { ChatModal } from '../components/ChatModal';
+import { InAppCallModal, CallDirection } from '../components/InAppCallModal';
 import { saveActionToQueue, processOfflineQueue } from '../services/offlineSync';
 import { TurnByTurnSheet } from '../components/TurnByTurnSheet';
 import { socket, connectDriverSocket } from '../services/socket';
@@ -438,6 +439,10 @@ export function Home() {
   const lastRoutePolylineBroadcastAtRef = useRef<number>(0);
 
   const [isChatVisible, setIsChatVisible] = useState(false);
+  const [isCallVisible, setIsCallVisible] = useState(false);
+  const [callDirection, setCallDirection] = useState<CallDirection>('outgoing');
+  const [activeCallLogId, setActiveCallLogId] = useState<string | null>(null);
+  const [callRideId, setCallRideId] = useState<string>('');
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [finishedRideId, setFinishedRideId] = useState<string | null>(null);
@@ -963,7 +968,18 @@ export function Home() {
       }
     };
     socket.on('chat:receive_message', handleChatMessage);
-    return () => { socket.off('chat:receive_message', handleChatMessage); };
+    const handleIncomingVoiceCall = (data: any) => {
+      if (!data?.rideId) return;
+      setCallRideId(String(data.rideId));
+      setCallDirection('incoming');
+      setActiveCallLogId(data.callLogId || null);
+      setIsCallVisible(true);
+    };
+    socket.on('call:incoming', handleIncomingVoiceCall);
+    return () => {
+      socket.off('chat:receive_message', handleChatMessage);
+      socket.off('call:incoming', handleIncomingVoiceCall);
+    };
   }, [socket, isVoiceAssistEnabled]);
 
   useEffect(() => {
@@ -2475,7 +2491,12 @@ export function Home() {
   }
 
   function handleCallPassenger() {
-    setIsChatVisible(true);
+    const targetRideId = activeRideId || incomingRide?.rideId;
+    if (!targetRideId) return;
+    setCallRideId(String(targetRideId));
+    setCallDirection('outgoing');
+    setActiveCallLogId(null);
+    setIsCallVisible(true);
   }
 
   const handleRecenterMap = () => {
@@ -2937,7 +2958,7 @@ export function Home() {
                       <Text style={styles.ratingText}>{incomingRide.passengerRating?.toFixed(1) || '5.0'}</Text>
                     </View>
                   </View>
-                  {(incomingRide.passengerPhone || incomingRide.guestPhone) && (
+                  {Boolean(incomingRide?.rideId || activeRideId) && (
                     <TouchableOpacity style={styles.callIconBtn} onPress={handleCallPassenger} activeOpacity={0.85}>
                       <Ionicons name="call" size={15} color="#0F172A" />
                     </TouchableOpacity>
@@ -3485,6 +3506,18 @@ export function Home() {
         currentUserPhoto={profileImageUrl}
         otherUserName={displayPassengerName}
         otherUserPhoto={formatImageUrl(incomingRide?.passengerPhoto)}
+      />
+
+      <InAppCallModal
+        visible={isCallVisible}
+        onClose={() => setIsCallVisible(false)}
+        socket={socket}
+        rideId={callRideId || activeRideId || incomingRide?.rideId || ''}
+        currentRole="driver"
+        otherUserName={displayPassengerName}
+        otherUserPhoto={formatImageUrl(incomingRide?.passengerPhoto)}
+        initialDirection={callDirection}
+        callLogId={activeCallLogId}
       />
 
       <StartRideOtpModal

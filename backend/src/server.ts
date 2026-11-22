@@ -969,6 +969,140 @@ io.on('connection', (socket: any) => {
     }
   });
 
+// 📞 CHAMADA DE VOZ INTERNA SEGURA (NÚMEROS OCULTOS + AUDITORIA RideCallLog)
+handleSocketEvent(socket, 'call:initiate', async (data, ackCallback) => {
+  const { rideId, callerRole } = data || {};
+  const callerId = socket.data.user?.id;
+  if (!rideId || !isUuid(rideId) || !callerId) {
+    if (typeof ackCallback === 'function') ackCallback({ error: true, message: 'Corrida inválida para chamada.' });
+    return;
+  }
+
+  const ride = await prisma.ride.findUnique({
+    where: { id: rideId },
+    include: {
+      driver: { select: { id: true, fullName: true, profilePicture: true } },
+      passenger: { select: { id: true, fullName: true, profilePicture: true } },
+    },
+  });
+
+  if (!ride || !['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'].includes(ride.status)) {
+    if (typeof ackCallback === 'function') ackCallback({ error: true, message: 'Chamada disponível apenas durante corrida ativa.' });
+    return;
+  }
+
+  const isDriverCaller = ride.driverId === callerId || String(callerRole).toLowerCase() === 'driver';
+  const isPassengerCaller = ride.passengerId === callerId || String(callerRole).toLowerCase() === 'passenger';
+  if (!isDriverCaller && !isPassengerCaller) {
+    if (typeof ackCallback === 'function') ackCallback({ error: true, message: 'Acesso negado à chamada desta corrida.' });
+    return;
+  }
+
+  const receiverId = isDriverCaller ? ride.passengerId : ride.driverId;
+  if (!receiverId) {
+    if (typeof ackCallback === 'function') ackCallback({ error: true, message: 'Destinatário ainda não conectado.' });
+    return;
+  }
+
+  socket.join(rideId);
+  socket.join(`ride_${rideId}`);
+
+  const callLog = await prisma.rideCallLog.create({
+    data: {
+      rideId,
+      callerId,
+      callerType: isDriverCaller ? 'DRIVER' : 'PASSENGER',
+      receiverId,
+    },
+  });
+
+  const incomingPayload = {
+    rideId,
+    callLogId: callLog.id,
+    callerRole: isDriverCaller ? 'driver' : 'passenger',
+    callerName: isDriverCaller ? (ride.driver?.fullName || 'Motorista') : (ride.passenger?.fullName || 'Passageiro'),
+    callerPhoto: isDriverCaller ? (ride.driver?.profilePicture || null) : (ride.passenger?.profilePicture || null),
+  };
+
+  if (isDriverCaller) {
+    io.to(receiverId).to(`passenger_${receiverId}`).to(`passenger:${receiverId}`).emit('call:incoming', incomingPayload);
+  } else {
+    io.to(receiverId).to(`driver_${receiverId}`).to(`driver:${receiverId}`).emit('call:incoming', incomingPayload);
+  }
+
+  if (typeof ackCallback === 'function') {
+    ackCallback({ ok: true, callLogId: callLog.id });
+  }
+});
+
+handleSocketEvent(socket, 'call:accept', async (data) => {
+  const { rideId, callLogId, accepterRole } = data || {};
+  if (!rideId || !isUuid(rideId)) return;
+  socket.join(rideId);
+  socket.join(`ride_${rideId}`);
+  const payload = { rideId, callLogId: callLogId || null, accepterRole };
+  io.to(rideId).to(`ride_${rideId}`).emit('call:accepted', payload);
+});
+
+handleSocketEvent(socket, 'call:reject', async (data) => {
+  const { rideId, callLogId, rejecterRole } = data || {};
+  if (!rideId || !isUuid(rideId)) return;
+  if (callLogId && isUuid(callLogId)) {
+    await prisma.rideCallLog.updateMany({
+      where: { id: callLogId },
+      data: { durationSec: 0 },
+    }).catch(() => {});
+  }
+  io.to(rideId).to(`ride_${rideId}`).emit('call:rejected', { rideId, callLogId: callLogId || null, rejecterRole });
+});
+
+handleSocketEvent(socket, 'call:end', async (data) => {
+  const { rideId, callLogId, durationSec, endedBy } = data || {};
+  if (!rideId || !isUuid(rideId)) return;
+  if (callLogId && isUuid(callLogId)) {
+    await prisma.rideCallLog.updateMany({
+      where: { id: callLogId },
+      data: { durationSec: Math.max(0, Math.round(Number(durationSec || 0))) },
+    }).catch(() => {});
+  }
+  io.to(rideId).to(`ride_${rideId}`).emit('call:ended', {
+    rideId,
+    callLogId: callLogId || null,
+    durationSec: Math.max(0, Math.round(Number(durationSec || 0))),
+    endedBy,
+  });
+});
+
+handleSocketEvent(socket, 'call:voice_chunk', async (data) => {
+  const { rideId, senderRole, audioBase64 } = data || {};
+  const senderId = socket.data.user?.id;
+  if (!rideId || !isUuid(rideId) || !senderId || !audioBase64 || typeof audioBase64 !== 'string') return;
+  if (audioBase64.length > 1500000) return;
+
+  const ride = await prisma.ride.findUnique({
+    where: { id: rideId },
+    select: { driverId: true, passengerId: true, status: true },
+  });
+  if (!ride || !['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'].includes(ride.status)) return;
+  if (ride.driverId !== senderId && ride.passengerId !== senderId) return;
+
+  const isDriverSender = ride.driverId === senderId;
+  const targetId = isDriverSender ? ride.passengerId : ride.driverId;
+  if (!targetId) return;
+
+  const chunkPayload = {
+    rideId,
+    senderRole: isDriverSender ? 'driver' : 'passenger',
+    audioBase64,
+  };
+
+  if (isDriverSender) {
+    io.to(targetId).to(`passenger_${targetId}`).to(`passenger:${targetId}`).emit('call:voice_chunk', chunkPayload);
+  } else {
+    io.to(targetId).to(`driver_${targetId}`).to(`driver:${targetId}`).emit('call:voice_chunk', chunkPayload);
+  }
+});
+
   socket.on('disconnect', () => {
     console.log(`[-] [SOCKET_DEBUG] Cliente desconectado: ${socket.id} (ID: ${socket.data.user?.id})`);
 
@@ -1224,7 +1358,7 @@ io.on('connection', (socket: any) => {
         rideId: pendingRide.id,
         passengerId: pendingRide.passengerId,
         passengerName: pendingRide.passenger?.fullName || 'Passageiro',
-        passengerPhone: pendingRide.passenger?.phone || null,
+        passengerPhone: null,
         passengerPhoto: pendingRide.passenger?.profilePicture || null,
         passengerRating: Number(pendingRide.passenger?.ratingAverage || 5.0),
         pickupLat: Number(pendingRide.originLat),
@@ -1455,7 +1589,7 @@ io.on('connection', (socket: any) => {
         rideId,
         passengerId: ride.passengerId,
         passengerName: passengerInfo?.fullName || 'Passageiro',
-        passengerPhone: passengerInfo?.phone || null,
+        passengerPhone: null,
         passengerPhoto: passengerInfo?.profilePicture || null,
         passengerRating: Number(passengerInfo?.ratingAverage || 5.0),
         pickupLat: pLat,
@@ -1640,10 +1774,10 @@ io.on('connection', (socket: any) => {
         vehicleType: driverUser?.vehicleType || 'PARTICULAR',
         licensePlate: driverUser?.vehiclePlate || 'N/A',
         driverRating: Number(driverUser?.ratingAverage || 5.0),
-        driverPhone: driverUser?.phone || null,
+        driverPhone: null,
         startOtp: updatedRide.startOtp || ride.startOtp || null,
         passengerName: passengerUser?.fullName || 'Passageiro',
-        passengerPhone: passengerUser?.phone || null,
+        passengerPhone: null,
         passengerPhoto: passengerUser?.profilePicture || null,
         originAddress: updatedRide.originAddress || ride.originAddress,
         destinationAddress: updatedRide.destinationAddress || ride.destinationAddress,
@@ -2334,3 +2468,4 @@ setInterval(async () => {
     console.error('⚠️ [WATCHDOG_ERR]:', err);
   }
 }, 60000);
+
