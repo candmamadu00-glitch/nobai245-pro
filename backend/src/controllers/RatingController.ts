@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
+import { getIo } from '../server';
 
 export class RatingController {
   static async submitRating(req: Request, res: Response) {
@@ -85,6 +86,20 @@ export class RatingController {
           });
         }
       });
+
+      const ratingIo = getIo();
+      if (ratingIo) {
+        const numericStars = Number(stars || 5);
+        ratingIo.to('admin_dashboard').emit('admin:activity_notification', {
+          id: `rating-${rideId}-${Date.now()}`,
+          category: 'RATING',
+          title: numericStars <= 2 ? 'Alerta: Avaliação Baixa Recebida' : 'Nova Avaliação de Corrida',
+          message: `Nota ${numericStars}/5 registrada por ${reviewerType === 'DRIVER' ? 'Motorista' : 'Passageiro'}.`,
+          route: '/ratings',
+          severity: numericStars <= 2 ? 'warning' : 'info',
+          createdAt: new Date().toISOString(),
+        });
+      }
 
       return res.status(200).json({ message: 'Avaliação registrada com sucesso.' });
     } catch (error: any) {

@@ -7,6 +7,7 @@ import { prisma } from '../config/prisma';
 import { formatPhoneNumber, isValidBissauPhone, chargePassengerMobileMoney } from '../services/mobileMoneyService';
 import { sendWelcomeEmail } from '../services/emailService';
 import { sendSmsOtp } from '../services/smsService';
+import { getIo } from '../server';
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
@@ -162,6 +163,19 @@ export class PassengerAuthController {
       const otpCode = crypto.randomInt(1000, 10000).toString();
       const otpCodeHash = await bcrypt.hash(otpCode, 10);
       const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+      const paxRegIo = getIo();
+      if (paxRegIo) {
+        paxRegIo.to('admin_dashboard').emit('admin:activity_notification', {
+          id: `pax-reg-${Date.now()}`,
+          category: 'PASSENGER_REGISTER',
+          title: 'Novo Passageiro Registrado',
+          message: `${cleanFullName} (${formattedPhone}) iniciou cadastro na plataforma.`,
+          route: '/passengers',
+          severity: 'info',
+          createdAt: new Date().toISOString(),
+        });
+      }
 
       console.log(`\n🔑 [NOVO CADASTRO PASSAGEIRO] Telefone: ${formattedPhone}`);
 
@@ -723,6 +737,19 @@ if (uploadedFile) {
         },
         select: { paymentProvider: true, paymentAccountNumber: true },
       });
+
+      const payCfgIo = getIo();
+      if (payCfgIo) {
+        payCfgIo.to('admin_dashboard').emit('admin:activity_notification', {
+          id: `pax-paycfg-${passengerId}-${Date.now()}`,
+          category: 'FINANCE',
+          title: 'Conta Mobile Money Atualizada',
+          message: `Passageiro configurou ${paymentProvider} (${formattedAccount}).`,
+          route: '/passengers',
+          severity: 'info',
+          createdAt: new Date().toISOString(),
+        });
+      }
 
       return res.status(200).json({
         success: true,

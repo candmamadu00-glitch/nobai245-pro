@@ -1,7 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, ShieldCheck } from 'lucide-react';
+import {
+  Mail,
+  Lock,
+  Eye,
+  EyeOff,
+  Loader2,
+  AlertCircle,
+  ShieldCheck,
+  Sparkles,
+  Activity,
+  Navigation,
+} from 'lucide-react';
 import './Login.css';
 
 interface ApiError {
@@ -21,6 +32,7 @@ export function Login() {
   const [error, setError] = useState('');
   const [infoBanner, setInfoBanner] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [tilt, setTilt] = useState({ rotateX: 0, rotateY: 0 });
 
   const { signIn, admin } = useAuth();
   const navigate = useNavigate();
@@ -39,6 +51,20 @@ export function Login() {
       setInfoBanner('Sua credencial de acesso expirou. Autentique-se novamente para continuar.');
     }
   }, [admin, navigate, searchParams]);
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width - 0.5;
+    const y = (e.clientY - rect.top) / rect.height - 0.5;
+    setTilt({
+      rotateX: Number((-y * 9).toFixed(2)),
+      rotateY: Number((x * 11).toFixed(2)),
+    });
+  };
+
+  const handleMouseLeave = () => {
+    setTilt({ rotateX: 0, rotateY: 0 });
+  };
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -71,108 +97,141 @@ export function Login() {
   }
 
   return (
-    <div className="login-container">
-      <div className="login-card">
-        <div className="login-header">
-          <div className="login-icon" style={{ background: 'transparent', padding: 0 }}>
-            <img
-              src="/logo-pwa.png"
-              alt="BAI 245"
-              style={{ width: 56, height: 56, objectFit: 'contain' }}
-            />
+    <div
+      className="login-3d-viewport"
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+    >
+      {/* CAMADAS DE AMBIENTE 3D & ILUMINACAO VOLUMETRICA */}
+      <div className="login-3d-bg-grid" />
+      <div className="login-3d-orb orb-emerald" />
+      <div className="login-3d-orb orb-gold" />
+      <div className="login-3d-orb orb-cyan" />
+
+      {/* ANEIS ORBITAIS 3D FLUTUANTES */}
+      <div className="login-3d-orbital-ring ring-one" />
+      <div className="login-3d-orbital-ring ring-two" />
+
+      {/* CHIPS 3D FLUTUANTES DE TELEMETRIA */}
+      <div className="floating-3d-chip chip-top-left">
+        <Activity size={15} />
+        <span>Telemetria ao Vivo • Bissau</span>
+      </div>
+      <div className="floating-3d-chip chip-bottom-right">
+        <Navigation size={15} />
+        <span>Core Mobilidade 245 • TLS 1.3</span>
+      </div>
+
+      {/* CARTAO PRINCIPAL COM PERSPECTIVA 3D INTERATIVA */}
+      <div
+        className="login-3d-stage"
+        style={{
+          transform: `perspective(1200px) rotateX(${tilt.rotateX}deg) rotateY(${tilt.rotateY}deg)`,
+        }}
+      >
+        <div className="login-card-3d">
+          <div className="login-header">
+            <div className="login-3d-logo-cube">
+              <img
+                src="/logo-pwa.png"
+                alt="Nô Bai 245"
+                className="login-3d-logo-img"
+              />
+            </div>
+
+            <div className="login-3d-badge">
+              <Sparkles size={12} />
+              <span>CENTRO DE COMANDO EXECUTIVO</span>
+            </div>
+
+            <h1 className="login-title">NÔ BAI 245 Admin</h1>
+            <p className="login-subtitle">
+              Gestão inteligente de frotas, finanças e segurança em tempo real
+            </p>
           </div>
-          <h1 className="login-title">NOBAI 245 Admin</h1>
-          <p className="login-subtitle">Acesso restrito ao sistema de controle</p>
+
+          {infoBanner && (
+            <div role="status" className="login-info-banner">
+              <ShieldCheck size={18} className="shrink-0" />
+              <span>{infoBanner}</span>
+            </div>
+          )}
+
+          {error && (
+            <div className="error-message" role="alert">
+              <AlertCircle size={18} className="shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} noValidate>
+            <div className="form-group">
+              <label htmlFor="email-input" className="form-label">
+                E-mail Corporativo
+              </label>
+              <div className="input-wrapper">
+                <Mail className="input-icon" size={19} />
+                <input
+                  id="email-input"
+                  type="email"
+                  className="form-input"
+                  placeholder="admin@nobai245.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={isSubmitting}
+                  autoComplete="email"
+                  autoFocus
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="password-input" className="form-label">
+                Senha de Acesso
+              </label>
+              <div className="input-wrapper">
+                <Lock className="input-icon" size={19} />
+                <input
+                  id="password-input"
+                  type={showPassword ? 'text' : 'password'}
+                  className="form-input password-input"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  disabled={isSubmitting}
+                  autoComplete="current-password"
+                  required
+                />
+                <button
+                  type="button"
+                  className="toggle-password"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  tabIndex={0}
+                  aria-label={showPassword ? 'Ocultar senha' : 'Exibir senha'}
+                  disabled={isSubmitting}
+                >
+                  {showPassword ? <EyeOff size={19} /> : <Eye size={19} />}
+                </button>
+              </div>
+            </div>
+
+            <button type="submit" className="btn-submit-3d" disabled={isSubmitting}>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="spinner" size={20} />
+                  <span>Autenticando no Core...</span>
+                </>
+              ) : (
+                <span>Entrar no Sistema</span>
+              )}
+            </button>
+          </form>
+
+          <div className="login-3d-footer">
+            <span>🇬🇼 Guiné-Bissau • Plataforma Oficial Nô Bai 245</span>
+          </div>
         </div>
-
-        {infoBanner && (
-          <div
-            role="status"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              backgroundColor: '#fef3c7',
-              border: '1px solid #f59e0b',
-              color: '#92400e',
-              padding: '10px 12px',
-              borderRadius: '8px',
-              fontSize: '12px',
-              fontWeight: 600,
-              marginBottom: '14px'
-            }}
-          >
-            <ShieldCheck size={18} className="shrink-0" />
-            <span>{infoBanner}</span>
-          </div>
-        )}
-
-        {error && (
-          <div className="error-message" role="alert">
-            <AlertCircle size={18} className="shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} noValidate>
-          <div className="form-group">
-            <label htmlFor="email-input" className="form-label">E-mail Corporativo</label>
-            <div className="input-wrapper">
-              <Mail className="input-icon" size={20} />
-              <input
-                id="email-input"
-                type="email"
-                className="form-input"
-                placeholder="admin@nobai245.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={isSubmitting}
-                autoComplete="email"
-                autoFocus
-                required
-              />
-            </div>
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="password-input" className="form-label">Senha de Acesso</label>
-            <div className="input-wrapper">
-              <Lock className="input-icon" size={20} />
-              <input
-                id="password-input"
-                type={showPassword ? 'text' : 'password'}
-                className="form-input password-input"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={isSubmitting}
-                autoComplete="current-password"
-                required
-              />
-              <button
-                type="button"
-                className="toggle-password"
-                onClick={() => setShowPassword((prev) => !prev)}
-                tabIndex={0}
-                aria-label={showPassword ? 'Ocultar senha' : 'Exibir senha'}
-                disabled={isSubmitting}
-              >
-                {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
-              </button>
-            </div>
-          </div>
-
-          <button type="submit" className="btn-submit" disabled={isSubmitting}>
-            {isSubmitting ? (
-              <>
-                <Loader2 className="spinner" size={20} />
-                <span>Autenticando...</span>
-              </>
-            ) : (
-              <span>Entrar no Sistema</span>
-            )}
-          </button>
-        </form>
       </div>
     </div>
   );

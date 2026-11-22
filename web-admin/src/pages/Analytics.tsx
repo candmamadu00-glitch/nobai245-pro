@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
-import { BarChart3, RefreshCw, XCircle, CheckCircle2, TrendingUp, MapPin, CreditCard } from 'lucide-react';
+import { BarChart3, RefreshCw, XCircle, MapPin, CreditCard, FileSpreadsheet } from 'lucide-react';
+import { BarComparisonChart, DonutDistributionChart } from '../components/AdminCharts';
+import { exportToExcel } from '../utils/excelExport';
 
 export function Analytics() {
   const [days, setDays] = useState(30);
@@ -60,6 +62,25 @@ export function Analytics() {
             </button>
           ))}
           <button
+            type="button"
+            className="btn-excel-export"
+            onClick={() =>
+              exportToExcel({
+                fileName: `nobai245-bi-${days}dias-${new Date().toISOString().slice(0, 10)}.xlsx`,
+                sheetName: 'Corredores e BI',
+                columns: [
+                  { header: 'Origem', key: 'origin' },
+                  { header: 'Destino', key: 'destination' },
+                  { header: 'Total Pedidos', key: 'total' },
+                  { header: 'Corridas Concluídas', key: 'completed' },
+                ],
+                rows: topRoutes,
+              })
+            }
+          >
+            <FileSpreadsheet size={16} /> Excel
+          </button>
+          <button
             onClick={() => fetchAnalytics(days)}
             style={{
               padding: '8px 12px', borderRadius: '10px', border: '1px solid #CBD5E1',
@@ -112,6 +133,48 @@ export function Analytics() {
             Passag: {cancelByActor.PASSENGER || 0} • Mot: {cancelByActor.DRIVER || 0} • Sem atrib: {cancelByActor.SYSTEM_OR_UNASSIGNED || 0}
           </span>
         </div>
+      </div>
+
+      {/* Gráficos Analíticos Interativos */}
+      <div className="modern-charts-row">
+        <BarComparisonChart
+          title="Receita por Canal de Pagamento (XOF)"
+          subtitle={`Volume financeiro consolidado nos últimos ${days} dias`}
+          valueFormatter={(v) => formatXof(v)}
+          data={[
+            {
+              label: 'Dinheiro (Cash)',
+              value: Number(paymentBreakdown.CASH?.revenue || 0),
+              subtitle: `${paymentBreakdown.CASH?.rides || 0} corridas`,
+              color: 'linear-gradient(180deg, #10B981 0%, #059669 100%)',
+            },
+            {
+              label: 'Orange Money',
+              value: Number(paymentBreakdown.ORANGE_MONEY?.revenue || 0),
+              subtitle: `${paymentBreakdown.ORANGE_MONEY?.rides || 0} corridas`,
+              color: 'linear-gradient(180deg, #FB923C 0%, #EA580C 100%)',
+            },
+            {
+              label: 'MTN / Telecel',
+              value: Number(paymentBreakdown.MTN_MOMO?.revenue || 0),
+              subtitle: `${paymentBreakdown.MTN_MOMO?.rides || 0} corridas`,
+              color: 'linear-gradient(180deg, #FACC15 0%, #CA8A04 100%)',
+            },
+          ]}
+        />
+
+        <DonutDistributionChart
+          title="Funil de Corridas & Cancelamentos"
+          subtitle="Eficiência operacional no período selecionado"
+          centerLabel="Taxa Sucesso"
+          centerValue={`${kpis.completionRate || 0}%`}
+          segments={[
+            { label: 'Concluídas', value: Number(kpis.completedRides || 0), color: '#10B981' },
+            { label: 'Canc. Passageiro', value: Number(cancelByActor.PASSENGER || 0), color: '#F59E0B' },
+            { label: 'Canc. Motorista', value: Number(cancelByActor.DRIVER || 0), color: '#EF4444' },
+            { label: 'Sem Motorista / Sist.', value: Number(cancelByActor.SYSTEM_OR_UNASSIGNED || 0), color: '#64748B' },
+          ]}
+        />
       </div>
 
       {/* Blocos Analíticos */}

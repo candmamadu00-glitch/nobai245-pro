@@ -5,6 +5,9 @@ import {
 } from 'lucide-react';
 import { api, API_URL } from '../services/api';
 import { jsPDF } from 'jspdf';
+import { FileSpreadsheet } from 'lucide-react';
+import { exportToExcel } from '../utils/excelExport';
+import { BarComparisonChart } from '../components/AdminCharts';
 import autoTable from 'jspdf-autotable';
 import './Drivers.css';
 
@@ -474,6 +477,33 @@ export function Drivers() {
           <p className="drivers-subtitle">Aprovação, carteira digital, monitoramento em tempo real e controle de acesso dos motoristas</p>
         </div>
         <div className="drivers-header-actions">
+          <button
+            type="button"
+            className="btn-excel-export"
+            onClick={() => {
+              if (filteredDrivers.length === 0) return alert('Nenhum motorista para exportar.');
+              exportToExcel({
+                fileName: `nobai245-motoristas-${new Date().toISOString().slice(0, 10)}.xlsx`,
+                sheetName: 'Motoristas',
+                columns: [
+                  { header: 'Nome Completo', key: 'fullName' },
+                  { header: 'Telefone', key: 'phone' },
+                  { header: 'Tipo Veículo', key: 'vehicleType' },
+                  { header: 'Marca / Modelo', key: 'vehicleBrand' },
+                  { header: 'Cor', key: 'vehicleColor' },
+                  { header: 'Placa', key: 'vehiclePlate' },
+                  { header: 'Documento', key: 'documentNumber' },
+                  { header: 'Status', key: 'status' },
+                  { header: 'Saldo Carteira (XOF)', key: (d) => Math.round(Number(d.walletBalance || 0)) },
+                  { header: 'Avaliação Média', key: (d) => Number(d.ratingAverage || 5).toFixed(2) },
+                ],
+                rows: filteredDrivers,
+              });
+            }}
+          >
+            <FileSpreadsheet size={17} />
+            <span>Excel (.xlsx)</span>
+          </button>
           <button className="btn-modern secondary" onClick={fetchDrivers} disabled={loading}>
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             <span>Atualizar</span>
@@ -483,6 +513,41 @@ export function Drivers() {
             <span>{isExporting ? 'Exportando...' : 'Exportar Relatório'}</span>
           </button>
         </div>
+      </div>
+
+      {/* Gráfico de Distribuição da Frota */}
+      <div style={{ marginBottom: 18 }}>
+        <BarComparisonChart
+          title="Panorama da Frota Cadastrada"
+          subtitle="Distribuição por status operacional e categoria de veículo"
+          data={[
+            {
+              label: 'Aprovados',
+              value: drivers.filter((d) => d.status === 'APPROVED').length,
+              color: 'linear-gradient(180deg, #10B981 0%, #059669 100%)',
+            },
+            {
+              label: 'Pendentes',
+              value: drivers.filter((d) => d.status === 'PENDING_APPROVAL').length,
+              color: 'linear-gradient(180deg, #FBBF24 0%, #D97706 100%)',
+            },
+            {
+              label: 'Suspensos',
+              value: drivers.filter((d) => d.status === 'SUSPENDED').length,
+              color: 'linear-gradient(180deg, #F87171 0%, #DC2626 100%)',
+            },
+            {
+              label: 'Táxi / Carro',
+              value: drivers.filter((d) => d.vehicleType === 'TAXI' || d.vehicleType === 'CAR').length,
+              color: 'linear-gradient(180deg, #38BDF8 0%, #0284C7 100%)',
+            },
+            {
+              label: 'Moto / Toca-Toca',
+              value: drivers.filter((d) => d.vehicleType !== 'TAXI' && d.vehicleType !== 'CAR').length,
+              color: 'linear-gradient(180deg, #A78BFA 0%, #7C3AED 100%)',
+            },
+          ]}
+        />
       </div>
 
       <div className="kpi-grid">

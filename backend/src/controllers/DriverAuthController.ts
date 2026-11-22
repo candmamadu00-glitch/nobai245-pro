@@ -503,6 +503,19 @@ export class DriverAuthController {
         },
       });
 
+      const regIo = getIo();
+      if (regIo) {
+        regIo.to('admin_dashboard').emit('admin:activity_notification', {
+          id: `drv-reg-${driver.id}-${Date.now()}`,
+          category: 'DRIVER_REGISTER',
+          title: 'Novo Motorista Cadastrado',
+          message: `${driver.fullName} (${driver.vehiclePlate}) enviou documentos para aprovação.`,
+          route: '/driver-requests',
+          severity: 'warning',
+          createdAt: new Date().toISOString(),
+        });
+      }
+
       return res.status(201).json({
         success: true,
         message: 'Cadastro realizado com sucesso! Aguarde a aprovação do seu perfil.',
@@ -1043,6 +1056,23 @@ export class DriverAuthController {
           newDocumentNumber: newDocumentNumber ? sanitize(newDocumentNumber) : undefined
         }
       });
+
+      const updIo = getIo();
+      if (updIo) {
+        const driverInfo = await prisma.driver.findUnique({
+          where: { id: driverId },
+          select: { fullName: true, vehiclePlate: true },
+        }).catch(() => null);
+        updIo.to('admin_dashboard').emit('admin:activity_notification', {
+          id: `drv-upd-${changeRequest.id}-${Date.now()}`,
+          category: 'DRIVER_CHANGE',
+          title: 'Alteração de Dados de Motorista',
+          message: `${driverInfo?.fullName || 'Motorista'} (${driverInfo?.vehiclePlate || ''}) solicitou revisão cadastral.`,
+          route: '/driver-requests',
+          severity: 'warning',
+          createdAt: new Date().toISOString(),
+        });
+      }
 
       return res.status(201).json({ success: true, message: 'Solicitação enviada com sucesso!', changeRequest });
     } catch (error: any) {

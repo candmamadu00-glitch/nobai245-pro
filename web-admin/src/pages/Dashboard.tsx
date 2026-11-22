@@ -5,6 +5,7 @@ import {
   TrendingUp, Activity, Users, Car, AlertTriangle, 
   CheckCircle, XCircle, RefreshCw, Clock, AlertCircle
 } from 'lucide-react';
+import { BarComparisonChart, DonutDistributionChart } from '../components/AdminCharts';
 import './Dashboard.css'; 
 
 interface DashboardMetrics {
@@ -228,6 +229,53 @@ export function Dashboard() {
             )}
           </div>
         </div>
+      </div>
+
+      {/* GRÁFICOS EXECUTIVOS EM TEMPO REAL */}
+      <div className="modern-charts-row">
+        <DonutDistributionChart
+          title="Distribuição das Corridas (Hoje)"
+          subtitle="Proporção operacional entre concluídas, em andamento e canceladas"
+          centerLabel="Corridas Hoje"
+          centerValue={metrics?.corridasHoje || 0}
+          segments={[
+            { label: 'Concluídas', value: metrics?.corridasCompletas || 0, color: '#10B981' },
+            { label: 'Em Andamento', value: metrics?.corridasEmAndamento || 0, color: '#0284C7' },
+            { label: 'Canceladas', value: metrics?.corridasCanceladas || 0, color: '#EF4444' },
+          ]}
+        />
+
+        <BarComparisonChart
+          title="Pulso da Operação & Pendências"
+          subtitle="Comparativo imediato de oferta ativa, demanda e fila de aprovação"
+          data={[
+            {
+              label: 'Motoristas Online',
+              value: metrics?.motoristasOnline || 0,
+              color: 'linear-gradient(180deg, #10B981 0%, #059669 100%)',
+            },
+            {
+              label: 'Passageiros Ativos',
+              value: metrics?.passageirosAtivos || 0,
+              color: 'linear-gradient(180deg, #38BDF8 0%, #0284C7 100%)',
+            },
+            {
+              label: 'Corridas Ativas',
+              value: metrics?.corridasEmAndamento || 0,
+              color: 'linear-gradient(180deg, #818CF8 0%, #4F46E5 100%)',
+            },
+            {
+              label: 'Aprovações Pend.',
+              value: metrics?.motoristasPendentes || 0,
+              color: 'linear-gradient(180deg, #FBBF24 0%, #D97706 100%)',
+            },
+            {
+              label: 'Tickets Abertos',
+              value: metrics?.ticketsAbertos || 0,
+              color: 'linear-gradient(180deg, #F87171 0%, #DC2626 100%)',
+            },
+          ]}
+        />
       </div>
     </div>
   );

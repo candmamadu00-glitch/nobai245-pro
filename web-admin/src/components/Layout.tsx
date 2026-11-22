@@ -5,6 +5,7 @@ import { getSystemHealth } from '../services/api';
 import type { SystemHealthResponse } from '../services/api';
 import { adminSocket } from '../services/adminSocket';
 import { useAdminSocket } from '../hooks/useAdminSocket';
+import { AdminNotificationCenter } from './AdminNotificationCenter';
 import {
   LayoutDashboard,
   Radio,
@@ -45,8 +46,17 @@ export function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  // Monitoramento global em tempo real (SOS, chats, tickets) em todas as páginas
-  const { incomingSosAlert } = useAdminSocket(admin?.id, token || undefined);
+  // Monitoramento global em tempo real (SOS, chats, tickets, cadastros, alterações, financeiro)
+  const {
+    incomingSosAlert,
+    notifications,
+    unreadCount,
+    soundMuted,
+    toggleSoundMute,
+    markNotificationAsRead,
+    markAllNotificationsAsRead,
+    clearNotifications,
+  } = useAdminSocket(admin?.id, token || undefined);
   const [dismissedSosId, setDismissedSosId] = useState<string | null>(null);
 
   const role = admin?.role || 'OPERATOR';
@@ -133,14 +143,22 @@ export function Layout() {
           <span><span className="logo-accent">NÔ BAI</span> 245</span>
         </div>
 
-        {deferredPrompt ? (
-          <button type="button" className="pwa-install-icon-btn" onClick={handleInstallApp} title="Instalar App">
-            <Download size={18} />
-            <span className="btn-text-mobile">App</span>
-          </button>
-        ) : (
-          <div className="mobile-header-placeholder" />
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <AdminNotificationCenter
+            notifications={notifications}
+            unreadCount={unreadCount}
+            soundMuted={soundMuted}
+            onToggleMute={toggleSoundMute}
+            onMarkRead={markNotificationAsRead}
+            onMarkAllRead={markAllNotificationsAsRead}
+            onClearAll={clearNotifications}
+          />
+          {deferredPrompt && (
+            <button type="button" className="pwa-install-icon-btn" onClick={handleInstallApp} title="Instalar App">
+              <Download size={18} />
+            </button>
+          )}
+        </div>
       </header>
 
       {isMobileMenuOpen && (
@@ -334,6 +352,36 @@ export function Layout() {
 
       {/* ÁREA PRINCIPAL DO CONTEÚDO */}
       <main className="main-content-wrapper">
+        {/* BARRA SUPERIOR GLOBAL DESKTOP COM TELEMETRIA E CENTRAL DE NOTIFICAÇÕES */}
+        <header className="desktop-topbar">
+          <div className="desktop-topbar-left">
+            <span className="topbar-live-pill">
+              <span className="topbar-dot" /> Central Operacional Guiné-Bissau 🇬🇼
+            </span>
+          </div>
+
+          <div className="desktop-topbar-right">
+            <AdminNotificationCenter
+              notifications={notifications}
+              unreadCount={unreadCount}
+              soundMuted={soundMuted}
+              onToggleMute={toggleSoundMute}
+              onMarkRead={markNotificationAsRead}
+              onMarkAllRead={markAllNotificationsAsRead}
+              onClearAll={clearNotifications}
+            />
+
+            <div className="topbar-admin-chip">
+              <div className="topbar-avatar">
+                {(admin?.name || 'A').charAt(0).toUpperCase()}
+              </div>
+              <div className="topbar-admin-meta">
+                <strong>{admin?.name || 'Administrador'}</strong>
+                <span>{admin?.role || 'OPERATOR'}</span>
+              </div>
+            </div>
+          </div>
+        </header>
         {/* AVISO DE BLOQUEIO POR INATIVIDADE (PADRÃO BANCÁRIO) */}
         {inactivityCountdown !== null && (
           <div

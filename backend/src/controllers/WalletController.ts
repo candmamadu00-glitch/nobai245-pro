@@ -182,6 +182,16 @@ export async function handleSmsGatewayWebhook(req: Request, res: Response) {
         .to(`driver_${driver.id}`)
         .to(`driver:${driver.id}`)
         .emit('wallet:updated', payload);
+
+      io.to('admin_dashboard').emit('admin:activity_notification', {
+        id: `wallet-claim-${Date.now()}`,
+        category: 'FINANCE',
+        title: 'Recarga de Motorista Validada (TxID)',
+        message: `Motorista validou recarga de ${pendingTransaction.amount} XOF.`,
+        route: '/financial',
+        severity: 'success',
+        createdAt: new Date().toISOString(),
+      });
     }
 
     return res.status(200).json({
