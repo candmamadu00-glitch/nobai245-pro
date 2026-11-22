@@ -230,6 +230,49 @@ export class B2BPortalController {
 
       const monthSpendXof = monthRides.reduce((acc: number, r: any) => acc + Number(r.fareXof || 0), 0);
 
+      let syncedPresets = [...BISSAU_B2B_PRESETS];
+      try {
+        const [adminPlaces, adminNeighborhoods] = await Promise.all([
+          (prisma as any).customPlace.findMany({
+            where: { isActive: true },
+            include: { neighborhood: { select: { name: true, city: true } } },
+            orderBy: { name: 'asc' }
+          }),
+          (prisma as any).neighborhood.findMany({
+            where: { isActive: true, centerLat: { not: null }, centerLng: { not: null } },
+            orderBy: { name: 'asc' }
+          })
+        ]);
+
+        const mappedPlaces = (adminPlaces || []).map((p: any) => {
+          const nbName = p.neighborhood?.name || 'Bissau';
+          const city = p.neighborhood?.city || 'Bissau';
+          const alias = p.popularName ? ` (${p.popularName})` : '';
+          const ref = p.referenceNotes ? ` - ${p.referenceNotes}` : '';
+          return {
+            id: `place-${p.id}`,
+            name: `${p.name}${alias} — ${nbName}`,
+            category: 'ADMIN_PLACE',
+            address: `${p.name}, ${nbName}, ${city}${ref}`,
+            lat: Number(p.latitude),
+            lng: Number(p.longitude)
+          };
+        });
+
+        const mappedNeighborhoods = (adminNeighborhoods || []).map((n: any) => ({
+          id: `nb-${n.id}`,
+          name: `Bairro ${n.name} (${n.city || 'Bissau'})`,
+          category: 'ADMIN_NEIGHBORHOOD',
+          address: `Bairro ${n.name}, ${n.city || 'Bissau'}`,
+          lat: Number(n.centerLat),
+          lng: Number(n.centerLng)
+        }));
+
+        syncedPresets = [...BISSAU_B2B_PRESETS, ...mappedPlaces, ...mappedNeighborhoods];
+      } catch (syncErr) {
+        console.warn('⚠️ [B2B_PRESETS_SYNC_FALLBACK]:', syncErr);
+      }
+
       return res.status(200).json({
         success: true,
         corporate: {
@@ -254,7 +297,7 @@ export class B2BPortalController {
           monthRidesCount: monthRides.length,
           monthSpendXof: Math.round(monthSpendXof)
         },
-        presets: BISSAU_B2B_PRESETS
+        presets: syncedPresets
       });
     } catch (error) {
       console.error('❌ [B2B_ME_ERROR]:', error);

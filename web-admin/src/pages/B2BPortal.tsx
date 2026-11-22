@@ -1568,9 +1568,25 @@ export function B2BPortal() {
                       style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '7px', border: '1px solid #cbd5e1', background: '#f8fafc', fontWeight: 600 }}
                     >
                       <option value="custom-hq">Ponto Rápido...</option>
-                      {presets.map((p) => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
+                      <optgroup label="Pontos Principais & Aeroporto">
+                        {presets.filter((p) => !p.category.startsWith('ADMIN_')).map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </optgroup>
+                      {presets.some((p) => p.category === 'ADMIN_PLACE') && (
+                        <optgroup label="Locais & Referências (Admin)">
+                          {presets.filter((p) => p.category === 'ADMIN_PLACE').map((p) => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {presets.some((p) => p.category === 'ADMIN_NEIGHBORHOOD') && (
+                        <optgroup label="Bairros Cadastrados">
+                          {presets.filter((p) => p.category === 'ADMIN_NEIGHBORHOOD').map((p) => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </optgroup>
+                      )}
                     </select>
                   </div>
                   <input
