@@ -3892,6 +3892,54 @@ const handleOpenChat = () => {
 
                 <View style={[styles.paymentOptionsContainer, { flexDirection: 'column', gap: 10 }]}>
                   {/* OPÇÃO 1: DINHEIRO */}
+                  {corporateInfo && (
+                    <TouchableOpacity
+                      style={[
+                        styles.paymentBtn,
+                        {
+                          width: '100%',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          backgroundColor: useCorporateAccount ? 'rgba(59, 130, 246, 0.18)' : 'rgba(30, 41, 59, 0.8)',
+                          borderColor: useCorporateAccount ? '#3B82F6' : 'rgba(255,255,255,0.12)',
+                          borderWidth: 1.5,
+                          paddingVertical: 12,
+                          paddingHorizontal: 12,
+                          borderRadius: 14,
+                          marginBottom: 8,
+                        }
+                      ]}
+                      onPress={() => {
+                        if (Number(corporateInfo.availableCreditXof || 0) <= 0) {
+                          Alert.alert(
+                            'Saldo Corporativo Esgotado',
+                            `O limite de crédito da empresa ${corporateInfo.name} está esgotado no momento. Utilize Dinheiro ou contate o gestor da empresa.`
+                          );
+                          return;
+                        }
+                        setPaymentMethod('CASH');
+                        setUseCorporateAccount(true);
+                      }}
+                      activeOpacity={0.85}
+                    >
+                      <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(59, 130, 246, 0.2)', justifyContent: 'center', alignItems: 'center' }}>
+                        <Ionicons name="briefcase-outline" size={18} color="#60A5FA" />
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 10 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Text style={{ color: '#F8FAFC', fontWeight: '800', fontSize: 14 }}>Conta Corporativa</Text>
+                          <View style={{ backgroundColor: 'rgba(59, 130, 246, 0.22)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+                            <Text style={{ color: '#93C5FD', fontSize: 9, fontWeight: '800' }}>EMPRESA</Text>
+                          </View>
+                        </View>
+                        <Text style={{ color: '#94A3B8', fontSize: 11, marginTop: 1 }} numberOfLines={1}>
+                          {corporateInfo.name} • Fatura empresarial (não paga ao motorista)
+                        </Text>
+                      </View>
+                      <Ionicons name={useCorporateAccount ? 'checkmark-circle' : 'ellipse-outline'} size={22} color={useCorporateAccount ? '#3B82F6' : '#64748B'} />
+                    </TouchableOpacity>
+                  )}
+
                   <TouchableOpacity
                     style={[
                       styles.paymentBtn,
@@ -3899,15 +3947,19 @@ const handleOpenChat = () => {
                         width: '100%',
                         flexDirection: 'row',
                         alignItems: 'center',
-                        backgroundColor: paymentMethod === 'CASH' ? 'rgba(16, 185, 129, 0.16)' : 'rgba(30, 41, 59, 0.8)',
-                        borderColor: paymentMethod === 'CASH' ? '#10B981' : 'rgba(255,255,255,0.12)',
+                        backgroundColor: (paymentMethod === 'CASH' && !useCorporateAccount) ? 'rgba(16, 185, 129, 0.16)' : 'rgba(30, 41, 59, 0.8)',
+                        borderColor: (paymentMethod === 'CASH' && !useCorporateAccount) ? '#10B981' : 'rgba(255,255,255,0.12)',
                         borderWidth: 1.5,
                         paddingVertical: 12,
                         paddingHorizontal: 12,
                         borderRadius: 14,
                       }
                     ]}
-                    onPress={() => setPaymentMethod('CASH')}
+                    onPress={() => {
+                      setPaymentMethod('CASH');
+                      setUseCorporateAccount(false);
+                      setUseCorporateAccount(false);
+                    }}
                     activeOpacity={0.85}
                   >
                     <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(16, 185, 129, 0.18)', justifyContent: 'center', alignItems: 'center' }}>
@@ -3917,7 +3969,7 @@ const handleOpenChat = () => {
                       <Text style={{ color: '#F8FAFC', fontWeight: '800', fontSize: 14 }}>Dinheiro em Espécie</Text>
                       <Text style={{ color: '#94A3B8', fontSize: 11, marginTop: 1 }}>Pague ao motorista ao chegar ao destino</Text>
                     </View>
-                    <Ionicons name={paymentMethod === 'CASH' ? 'checkmark-circle' : 'ellipse-outline'} size={22} color={paymentMethod === 'CASH' ? '#10B981' : '#64748B'} />
+                    <Ionicons name={(paymentMethod === 'CASH' && !useCorporateAccount) ? 'checkmark-circle' : 'ellipse-outline'} size={22} color={(paymentMethod === 'CASH' && !useCorporateAccount) ? '#10B981' : '#64748B'} />
                   </TouchableOpacity>
 
                   {/* OPÇÃO 2: ORANGE MONEY (TEMPORARIAMENTE INDISPONÍVEL) */}
@@ -4035,9 +4087,11 @@ const handleOpenChat = () => {
                   <View style={{ flex: 1.6 }}>
                     <GlowingButton
                       title={
-                        paymentMethod === 'CASH'
-                          ? t('request_now_btn', 'Pedir Agora')
-                          : `Pagar ${estimatedPrice ? `${Math.round(estimatedPrice)} XOF` : ''} e Pedir`
+                        useCorporateAccount && corporateInfo
+                          ? 'Pedir via Conta Corporativa'
+                          : paymentMethod === 'CASH'
+                            ? t('request_now_btn', 'Pedir Agora')
+                            : `Pagar ${estimatedPrice ? `${Math.round(estimatedPrice)} XOF` : ''} e Pedir`
                       }
                       onPress={handleInitialRequestRide}
                       isGlowEnabled={isBorderGlowEnabled}
@@ -4450,9 +4504,19 @@ const handleOpenChat = () => {
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
                     <Text style={[styles.routeTimelineHeaderTitle, { color: '#94A3B8', letterSpacing: 0.7 }]}>ITINERÁRIO DA VIAGEM</Text>
                     <View style={styles.paymentMethodChip}>
-                      <Ionicons name={paymentMethod === 'CASH' ? 'cash' : 'phone-portrait'} size={12} color="#EAB308" />
+                      <Ionicons
+                        name={useCorporateAccount ? 'briefcase' : paymentMethod === 'CASH' ? 'cash' : 'phone-portrait'}
+                        size={12}
+                        color={useCorporateAccount ? '#60A5FA' : '#EAB308'}
+                      />
                       <Text style={[styles.paymentMethodChipText, { fontSize: 10, fontWeight: '800' }]}>
-                        {paymentMethod === 'ORANGE_MONEY' ? 'Orange Money' : paymentMethod === 'MTN_MOMO' ? 'Telecel / MTN' : 'Dinheiro'}
+                        {useCorporateAccount && corporateInfo
+                          ? `Corporativo (${corporateInfo.name})`
+                          : paymentMethod === 'ORANGE_MONEY'
+                            ? 'Orange Money'
+                            : paymentMethod === 'MTN_MOMO'
+                              ? 'Telecel / MTN'
+                              : 'Dinheiro'}
                       </Text>
                     </View>
                   </View>

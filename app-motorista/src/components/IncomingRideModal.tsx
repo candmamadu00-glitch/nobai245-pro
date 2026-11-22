@@ -21,7 +21,7 @@ interface IncomingRideData {
   originAddress?: string;
   destinationAddress?: string;
   serviceType?: 'RIDE' | 'DELIVERY' | 'RENTAL';
-  paymentMethod?: 'ORANGE_MONEY' | 'MTN_MOMO' | 'WALLET' | 'CASH';
+  paymentMethod?: 'ORANGE_MONEY' | 'MTN_MOMO' | 'WALLET' | 'CASH' | 'CORPORATE' | 'CORPORATE_B2B' | string;
   priceXof?: number;
   stops?: Stop[];
 }
@@ -155,7 +155,7 @@ export function IncomingRideModal({
           <View style={styles.paymentTag}>
             <Ionicons name="wallet-outline" size={14} color="#6B7280" />
             <Text style={styles.paymentText}>
-              Pagamento: {ride.paymentMethod === 'ORANGE_MONEY' ? 'Orange Money (Pago)' : ride.paymentMethod === 'MTN_MOMO' ? 'Telecel / MTN (Pago)' : 'Dinheiro em Espécie'}
+              Pagamento: {(ride.paymentMethod === 'CORPORATE' || ride.paymentMethod === 'CORPORATE_B2B') ? 'Conta Corporativa (Não cobrar)' : ride.paymentMethod === 'ORANGE_MONEY' ? 'Orange Money (Pago)' : ride.paymentMethod === 'MTN_MOMO' ? 'Telecel / MTN (Pago)' : 'Dinheiro em Espécie'}
             </Text>
           </View>
 

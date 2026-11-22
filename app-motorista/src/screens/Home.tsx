@@ -165,7 +165,7 @@ export interface IncomingRideData {
   startOtp?: string;
   serviceType?: 'RIDE' | 'DELIVERY' | 'RENTAL';
   vehicleType?: 'PARTICULAR' | 'TAXI' | 'MOTO' | 'MOTO_CARRO' | 'TOCA_TOCA';
-  paymentMethod?: 'ORANGE_MONEY' | 'MTN_MOMO' | 'WALLET' | 'CASH';
+  paymentMethod?: 'ORANGE_MONEY' | 'MTN_MOMO' | 'WALLET' | 'CASH' | 'CORPORATE' | 'CORPORATE_B2B' | string;
   priceXof?: number;
   deliveryNotes?: string;
   recipientName?: string;
@@ -1425,9 +1425,11 @@ export function Home() {
         }
       } else {
         const payMethod = String(incomingRide?.paymentMethod || 'CASH').toUpperCase();
+        const isCorporatePay = payMethod === 'CORPORATE' || payMethod === 'CORPORATE_B2B';
         const priceVal = Math.round(Number(incomingRide?.priceXof || 0));
-        const paymentGuidance =
-          payMethod === 'CASH'
+        const paymentGuidance = isCorporatePay
+          ? 'Viagem corporativa já faturada para a empresa. Não cobre dinheiro do passageiro.'
+          : payMethod === 'CASH'
             ? (priceVal > 0 ? `Receba ${priceVal} francos CFA em dinheiro.` : 'Receba o valor da corrida em dinheiro.')
             : 'Pagamento digital já confirmado pelo aplicativo.';
 
@@ -3132,7 +3134,19 @@ export function Home() {
             <Text style={styles.receiptTitle}>Serviço Concluído!</Text>
             <Text style={styles.receiptSubtitle}>{t('ride_completed_sub', 'Corrida finalizada com sucesso. Confira os detalhes abaixo:')}</Text>
 
-            {finishedRideSummary?.paymentMethod === 'ORANGE_MONEY' || finishedRideSummary?.paymentMethod === 'MTN_MOMO' ? (
+            {finishedRideSummary?.paymentMethod === 'CORPORATE' || finishedRideSummary?.paymentMethod === 'CORPORATE_B2B' ? (
+              <View style={styles.paidOnlineBox}>
+                <Ionicons name="briefcase" size={22} color="#2563EB" />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={styles.paidOnlineTitle}>
+                    VIAGEM CORPORATIVA (B2B)
+                  </Text>
+                  <Text style={styles.paidOnlineSub}>
+                    Faturado direto para a empresa. <Text style={{ fontWeight: 'bold', color: '#EF4444' }}>NÃO cobre dinheiro do passageiro!</Text>
+                  </Text>
+                </View>
+              </View>
+            ) : finishedRideSummary?.paymentMethod === 'ORANGE_MONEY' || finishedRideSummary?.paymentMethod === 'MTN_MOMO' ? (
               <View style={styles.paidOnlineBox}>
                 <Ionicons name="shield-checkmark-sharp" size={22} color="#FF6600" />
                 <View style={{ flex: 1, marginLeft: 10 }}>
