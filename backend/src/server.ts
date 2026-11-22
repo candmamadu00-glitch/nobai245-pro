@@ -15,6 +15,7 @@ import { driverRoutes } from './routes/driverRoutes';
 import { adminRoutes } from './routes/adminRoutes';
 import webhookRoutes from './routes/webhookRoutes';
 import rideRoutes from './routes/rideRoutes';
+import b2bRoutes from './routes/b2bRoutes';
 import { createAdapter } from '@socket.io/redis-adapter';
 import { setupTicketSocketHandlers } from './sockets/ticketSocket';
 import { sendPushNotification, PUSH_CHANNELS } from './services/pushNotifications';
@@ -194,7 +195,8 @@ const authBruteForceLimiter = rateLimit({
   keyGenerator: (req) => {
     const rawPhone = typeof req.body?.phone === 'string' ? req.body.phone.replace(/\D/g, '') : '';
     const rawEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-    const identifier = rawPhone || rawEmail;
+    const rawIdent = typeof req.body?.identifier === 'string' ? req.body.identifier.trim().toLowerCase() : '';
+    const identifier = rawPhone || rawEmail || rawIdent;
     return identifier ? `auth:${identifier}` : `auth-ip:${req.ip || 'unknown'}`;
   },
   message: { error: 'Muitas tentativas para esta conta. Aguarde 15 minutos e tente novamente.' }
@@ -211,6 +213,7 @@ app.use('/api/passengers/register', authBruteForceLimiter);
 app.use('/api/passengers/request-otp', authBruteForceLimiter);
 app.use('/api/passengers/forgot-password', authBruteForceLimiter);
 app.use('/api/passengers/verify-otp', authBruteForceLimiter);
+app.use('/api/b2b/login', authBruteForceLimiter);
 
 app.use('/api/', apiLimiter);
 app.use('/api/', userAccountLimiter);
@@ -229,6 +232,7 @@ app.use('/api/passengers', passengerRoutes);
 app.use('/api/drivers', driverRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/rides', rideRoutes);
+app.use('/api/b2b', b2bRoutes);
 app.use('/api', locationRoutes);
 
 const deepHealthHandler = async (_req: Request, res: Response) => {

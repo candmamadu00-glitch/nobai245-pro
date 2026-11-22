@@ -1322,8 +1322,17 @@ export async function finalizeRideAndCharge(
       });
     }
 
+    const corpRideRecord = await (tx as any).corporateRide.findUnique({
+      where: { rideId: ride.id }
+    }).catch(() => null);
+    const isCorporateRide = Boolean(corpRideRecord) || String(ride.referencePoint || '').startsWith('[B2B:');
+
     const currentDriverBalance = Number(ride.driver?.walletBalance || 0);
-    finalDriverBalance = isDigitalRide ? currentDriverBalance : (currentDriverBalance - platformFee);
+    finalDriverBalance = isCorporateRide
+      ? (currentDriverBalance + driverEarnings)
+      : isDigitalRide
+        ? currentDriverBalance
+        : (currentDriverBalance - platformFee);
 
     const shouldStayOnline = finalDriverBalance >= MIN_DRIVER_BALANCE_FOR_ONLINE;
     wasForcedOfflineDueToBalance = !shouldStayOnline;
@@ -1359,7 +1368,32 @@ export async function finalizeRideAndCharge(
     });
     commissionTransactionId = commTx.id;
 
-    if (isDigitalRide && driverEarnings > 0) {
+    if (isCorporateRide) {
+      if (corpRideRecord) {
+        await (tx as any).corporateRide.update({
+          where: { id: corpRideRecord.id },
+          data: { status: 'COMPLETED', fareXof: calculatedFare }
+        }).catch(() => null);
+      }
+      if (driverEarnings > 0) {
+        await tx.transaction.create({
+          data: {
+            rideId: ride.id,
+            driverId: ride.driverId,
+            type: TransactionType.DRIVER_PAYOUT,
+            status: TransactionStatus.COMPLETED,
+            paymentMethod: ride.paymentMethod,
+            amount: driverEarnings,
+            balanceBefore: currentDriverBalance,
+            balanceAfter: finalDriverBalance,
+            reference: `B2B-PAYOUT-${ride.id.slice(0, 8)}-${Date.now()}`,
+            description: `Repasse B2B Corporativo/Hotelaria (${driverEarnings} XOF creditados na carteira)`
+          }
+        });
+      }
+    }
+
+    if (isDigitalRide && !isCorporateRide && driverEarnings > 0) {
       const hasValidPhone = Boolean(driverPayoutPhone && driverPayoutPhone.replace(/\D/g, '').length >= 9);
       const payoutTx = await tx.transaction.create({
         data: {
@@ -1604,6 +1638,25 @@ export async function cancelRideLogic(
     let appliedPenalty = false;
     let penaltyAmount = 0;
     let driverCompensationTxId: string | null = null;
+
+    const corpCancelRecord = await (tx as any).corporateRide.findUnique({
+      where: { rideId: ride.id }
+    }).catch(() => null);
+
+    if (corpCancelRecord && corpCancelRecord.status !== 'CANCELLED') {
+      const reservedXof = Math.max(0, Math.round(Number(corpCancelRecord.fareXof || ride.priceXof || 0)));
+      await (tx as any).corporateRide.update({
+        where: { id: corpCancelRecord.id },
+        data: { status: 'CANCELLED' }
+      }).catch(() => null);
+
+      if (reservedXof > 0) {
+        await (tx as any).corporateAccount.update({
+          where: { id: corpCancelRecord.corporateId },
+          data: { currentBalanceXof: { decrement: reservedXof } }
+        }).catch(() => null);
+      }
+    }
 
     if (originalPayment) {
       const isPaidDigital = (originalPayment.paymentMethod === PaymentMethod.ORANGE_MONEY || originalPayment.paymentMethod === PaymentMethod.MTN_MOMO) &&

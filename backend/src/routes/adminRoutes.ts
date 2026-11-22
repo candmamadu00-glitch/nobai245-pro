@@ -426,6 +426,8 @@ adminRoutes.get(
 adminRoutes.get('/enterprise/corporates', authorizeRole(['SUPER_ADMIN', 'FINANCE']), (req, res) => AdminScaleController.listCorporates(req, res));
 adminRoutes.post('/enterprise/corporates', authorizeRole(['SUPER_ADMIN', 'FINANCE']), (req, res) => AdminScaleController.createCorporate(req, res));
 adminRoutes.patch('/enterprise/corporates/:id/balance', authorizeRole(['SUPER_ADMIN', 'FINANCE']), (req, res) => AdminScaleController.adjustCorporateBalance(req, res));
+adminRoutes.patch('/enterprise/corporates/:id/access', authorizeRole(['SUPER_ADMIN', 'FINANCE']), (req, res) => AdminScaleController.updateCorporateAccess(req, res));
+adminRoutes.get('/enterprise/corporate-rides', authorizeRole(['SUPER_ADMIN', 'FINANCE', 'OPERATOR']), (req, res) => AdminScaleController.listCorporateRides(req, res));
 adminRoutes.post('/enterprise/corporates/:id/employees', authorizeRole(['SUPER_ADMIN', 'FINANCE']), (req, res) => AdminScaleController.addCorporateEmployee(req, res));
 adminRoutes.delete('/enterprise/corporates/employees/:empId', authorizeRole(['SUPER_ADMIN', 'FINANCE']), (req, res) => AdminScaleController.removeCorporateEmployee(req, res));
 

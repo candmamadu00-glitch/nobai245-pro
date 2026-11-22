@@ -1,3 +1,4 @@
+import bcrypt from 'bcrypt';
 import fs from 'fs';
 import path from 'path';
 import { Request, Response } from 'express';
@@ -27,10 +28,29 @@ export class AdminScaleController {
 
   static async createCorporate(req: Request, res: Response): Promise<Response> {
     try {
-      const { name, taxId, contactName, contactPhone, contactEmail, creditLimitXof, initialBalanceXof, costCenter } = req.body || {};
+      const {
+        name,
+        taxId,
+        contactName,
+        contactPhone,
+        contactEmail,
+        creditLimitXof,
+        initialBalanceXof,
+        costCenter,
+        accountType,
+        accessCode,
+        defaultPickupAddress,
+        defaultPickupLat,
+        defaultPickupLng
+      } = req.body || {};
+
       if (!name || !contactPhone) {
-        return res.status(400).json({ success: false, error: 'Nome da empresa e telefone de contato são obrigatórios.' });
+        return res.status(400).json({ success: false, error: 'Nome da empresa/hotel e telefone de contato são obrigatórios.' });
       }
+
+      const accessCodeHash = accessCode && String(accessCode).trim().length >= 4
+        ? await bcrypt.hash(String(accessCode).trim(), 10)
+        : null;
 
       const created = await (prisma as any).corporateAccount.create({
         data: {
@@ -42,14 +62,79 @@ export class AdminScaleController {
           creditLimitXof: Number(creditLimitXof) || 0,
           currentBalanceXof: Number(initialBalanceXof) || 0,
           costCenter: costCenter ? String(costCenter).trim() : null,
+          accountType: ['HOTEL', 'DELIVERY'].includes(String(accountType)) ? String(accountType) : 'CORPORATE',
+          accessCodeHash,
+          defaultPickupAddress: defaultPickupAddress ? String(defaultPickupAddress).trim() : null,
+          defaultPickupLat: defaultPickupLat ? Number(defaultPickupLat) : null,
+          defaultPickupLng: defaultPickupLng ? Number(defaultPickupLng) : null,
           isActive: true
         }
       });
 
-      return res.status(201).json({ success: true, message: `Conta corporativa ${created.name} criada!`, data: created });
+      return res.status(201).json({ success: true, message: `Parceiro B2B ${created.name} criado com sucesso!`, data: created });
     } catch (error) {
       console.error('❌ [CREATE CORPORATE ERROR]:', error);
       return res.status(500).json({ success: false, error: 'Erro ao criar conta corporativa.' });
+    }
+  }
+
+  static async updateCorporateAccess(req: Request, res: Response): Promise<Response> {
+    try {
+      const { id } = req.params;
+      const { accessCode, creditLimitXof, accountType, defaultPickupAddress, defaultPickupLat, defaultPickupLng, isActive } = req.body || {};
+
+      const updateData: any = {};
+      if (accessCode && String(accessCode).trim().length >= 4) {
+        updateData.accessCodeHash = await bcrypt.hash(String(accessCode).trim(), 10);
+      }
+      if (creditLimitXof !== undefined && !isNaN(Number(creditLimitXof))) {
+        updateData.creditLimitXof = Number(creditLimitXof);
+      }
+      if (['HOTEL', 'DELIVERY', 'CORPORATE'].includes(String(accountType))) {
+        updateData.accountType = accountType;
+      }
+      if (defaultPickupAddress !== undefined) {
+        updateData.defaultPickupAddress = defaultPickupAddress ? String(defaultPickupAddress).trim() : null;
+      }
+      if (defaultPickupLat !== undefined) {
+        updateData.defaultPickupLat = defaultPickupLat !== null && defaultPickupLat !== '' ? Number(defaultPickupLat) : null;
+      }
+      if (defaultPickupLng !== undefined) {
+        updateData.defaultPickupLng = defaultPickupLng !== null && defaultPickupLng !== '' ? Number(defaultPickupLng) : null;
+      }
+      if (typeof isActive === 'boolean') {
+        updateData.isActive = isActive;
+      }
+
+      const updated = await (prisma as any).corporateAccount.update({
+        where: { id: String(id) },
+        data: updateData
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: `Configurações B2B de ${updated.name} atualizadas!`,
+        data: updated
+      });
+    } catch (error) {
+      console.error('❌ [UPDATE CORPORATE ACCESS ERROR]:', error);
+      return res.status(500).json({ success: false, error: 'Erro ao atualizar acesso B2B.' });
+    }
+  }
+
+  static async listCorporateRides(req: Request, res: Response): Promise<Response> {
+    try {
+      const rides = await (prisma as any).corporateRide.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+        include: {
+          corporate: { select: { name: true, accountType: true } }
+        }
+      });
+      return res.status(200).json({ success: true, data: rides });
+    } catch (error) {
+      console.error('❌ [LIST CORPORATE RIDES ERROR]:', error);
+      return res.status(500).json({ success: false, error: 'Erro ao listar corridas corporativas.' });
     }
   }
 

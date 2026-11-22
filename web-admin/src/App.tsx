@@ -27,6 +27,7 @@ const Promos = lazy(() => import('./pages/Promos').then((m) => ({ default: m.Pro
 const Broadcast = lazy(() => import('./pages/Broadcast').then((m) => ({ default: m.Broadcast })));
 const Analytics = lazy(() => import('./pages/Analytics').then((m) => ({ default: m.Analytics })));
 const Corporate = lazy(() => import('./pages/Corporate').then((m) => ({ default: m.Corporate })));
+const B2BPortal = lazy(() => import('./pages/B2BPortal').then((m) => ({ default: m.B2BPortal })));
 const Governance = lazy(() => import('./pages/Governance').then((m) => ({ default: m.Governance })));
 
 function RouteFallback() {
@@ -130,6 +131,7 @@ function AppRoutes() {
         {/* Rotas Públicas */}
         <Route path="/login" element={<Login />} />
         <Route path="/track/:rideId" element={<TrackRide />} />
+        <Route path="/portal-b2b" element={<B2BPortal />} />
 
         {/* Rotas Privadas */}
         <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>

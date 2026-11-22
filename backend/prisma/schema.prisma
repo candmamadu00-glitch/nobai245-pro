@@ -869,12 +869,18 @@ model CorporateAccount {
   contactEmail      String?             @db.VarChar(100)
   creditLimitXof    Decimal             @default(0.00) @db.Decimal(12, 2)
   currentBalanceXof Decimal             @default(0.00) @db.Decimal(12, 2)
-  costCenter        String?             @db.VarChar(80)
-  isActive          Boolean             @default(true)
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
+  costCenter           String?             @db.VarChar(80)
+  accountType          String              @default("CORPORATE") @db.VarChar(30)
+  accessCodeHash       String?             @db.VarChar(255)
+  defaultPickupAddress String?             @db.VarChar(200)
+  defaultPickupLat     Decimal?            @db.Decimal(10, 7)
+  defaultPickupLng     Decimal?            @db.Decimal(10, 7)
+  isActive             Boolean             @default(true)
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
 
-  employees         CorporateEmployee[]
+  employees            CorporateEmployee[]
+  corporateRides       CorporateRide[]
 }
 
 model CorporateEmployee {
@@ -957,4 +963,25 @@ model DriverMission {
   endsAt      DateTime
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
+}
+
+model CorporateRide {
+  id           String           @id @default(uuid()) @db.Uuid
+  corporateId  String           @db.Uuid
+  rideId       String           @unique @db.Uuid
+  guestName    String           @db.VarChar(120)
+  guestPhone   String?          @db.VarChar(30)
+  roomNumber   String?          @db.VarChar(40)
+  flightNumber String?          @db.VarChar(40)
+  tripCategory String           @default("CITY_RIDE") @db.VarChar(40)
+  requestedBy  String?          @db.VarChar(100)
+  notes        String?          @db.VarChar(255)
+  fareXof      Decimal          @default(0.00) @db.Decimal(12, 2)
+  status       String           @default("ACTIVE") @db.VarChar(30)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  corporate    CorporateAccount @relation(fields: [corporateId], references: [id], onDelete: Cascade)
+
+  @@index([corporateId, createdAt])
 }
