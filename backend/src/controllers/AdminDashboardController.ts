@@ -1,3 +1,4 @@
+import { safeRedis } from '../server';
 import crypto from 'crypto';
 import { getIo } from '../server';
 import { cancelRideLogic } from '../services/rideService';
@@ -387,28 +388,76 @@ export class AdminDashboardController {
           id: true,
           fullName: true,
           phone: true,
+          profilePicture: true,
           vehiclePlate: true,
           vehicleBrand: true,
+          vehicleType: true,
+          vehicleColor: true,
+          currentHeading: true,
           status: true,
           isAvailable: true,
           lastLat: true,
           lastLng: true,
-          updatedAt: true
-        }
+          updatedAt: true,
+          rides: {
+            where: { status: { in: ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] } },
+            take: 1,
+            orderBy: { createdAt: 'desc' },
+            select: {
+              id: true,
+              status: true,
+              originAddress: true,
+              destinationAddress: true,
+              priceXof: true,
+              passenger: { select: { fullName: true, phone: true } },
+            },
+          },
+        },
       });
 
-      const formattedDrivers = drivers.map((driver) => ({
-        driverId: driver.id,
-        fullName: driver.fullName || 'Motorista Sem Nome',
-        phone: driver.phone || '',
-        vehiclePlate: driver.vehiclePlate || '',
-        vehicleBrand: driver.vehicleBrand || '',
-        latitude: Number((driver as any).lastLat || (driver as any).currentLat || (driver as any).latitude || 11.8632),
-        longitude: Number((driver as any).lastLng || (driver as any).currentLng || (driver as any).longitude || -15.5977),
-        heading: (driver as any).heading ?? 0,
-        status: driver.isAvailable ? 'AVAILABLE' : 'ON_RIDE',
-        lastUpdate: driver.updatedAt
-      }));
+      const formattedDrivers = await Promise.all(
+        drivers.map(async (driver) => {
+          let lat = Number(driver.lastLat || 0);
+          let lng = Number(driver.lastLng || 0);
+          try {
+            const redisPos = await safeRedis.geoPos('drivers:locations', driver.id);
+            if (redisPos && redisPos[0]) {
+              lng = Number(redisPos[0].longitude);
+              lat = Number(redisPos[0].latitude);
+            }
+          } catch {}
+
+          if (!lat || !lng) {
+            lat = 11.8632;
+            lng = -15.5977;
+          }
+
+          const activeRide = driver.rides?.[0] || null;
+          const isRiding = Boolean(activeRide) || !driver.isAvailable;
+
+          return {
+            driverId: driver.id,
+            fullName: driver.fullName || 'Motorista Sem Nome',
+            phone: driver.phone || '',
+            profilePicture: driver.profilePicture || null,
+            vehiclePlate: driver.vehiclePlate || '',
+            vehicleBrand: driver.vehicleBrand || '',
+            vehicleType: driver.vehicleType || 'PARTICULAR',
+            vehicleColor: driver.vehicleColor || (driver.vehicleType === 'TAXI' ? 'Amarelo' : 'Branco'),
+            latitude: lat,
+            longitude: lng,
+            heading: Number(driver.currentHeading || 0),
+            speed: 0,
+            status: isRiding ? 'ON_RIDE' : 'AVAILABLE',
+            rideStatus: activeRide?.status || null,
+            activeRideId: activeRide?.id || null,
+            originAddress: activeRide?.originAddress || null,
+            destinationAddress: activeRide?.destinationAddress || null,
+            passengerName: activeRide?.passenger?.fullName || null,
+            lastUpdate: driver.updatedAt,
+          };
+        })
+      );
 
       return res.status(200).json(formattedDrivers);
     } catch (error) {

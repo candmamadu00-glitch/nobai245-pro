@@ -421,6 +421,17 @@ app.get('/api/passengers/drivers/nearby', async (req: Request, res: Response) =>
 // =============================================================================
 // 🌐 API JSON DE DADOS EM TEMPO REAL DO RASTREAMENTO
 // =============================================================================
+function computeHaversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const toRad = (v: number) => (v * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 app.get('/track/:rideId/data', async (req: Request, res: Response) => {
   try {
     const rideId = String(req.params.rideId);
@@ -430,23 +441,50 @@ app.get('/track/:rideId/data', async (req: Request, res: Response) => {
 
     const ride = await prisma.ride.findUnique({
       where: { id: rideId },
-      include: { driver: true }
+      include: { driver: true },
     });
 
     if (!ride) return res.status(404).json({ error: 'Corrida não encontrada' });
 
-    const driverLat = Number(ride.driver?.lastLat || ride.originLat || 11.8633);
-    const driverLng = Number(ride.driver?.lastLng || ride.originLng || -15.5833);
+    let driverLat = Number(ride.driver?.lastLat || ride.originLat || 11.8633);
+    let driverLng = Number(ride.driver?.lastLng || ride.originLng || -15.5833);
+
+    if (ride.driverId) {
+      try {
+        const redisPos = await safeRedis.geoPos('drivers:locations', ride.driverId);
+        if (redisPos && redisPos[0]) {
+          driverLng = Number(redisPos[0].longitude);
+          driverLat = Number(redisPos[0].latitude);
+        }
+      } catch {}
+    }
+
+    const originLat = Number(ride.originLat || driverLat);
+    const originLng = Number(ride.originLng || driverLng);
+    const destinationLat = Number(ride.destinationLat || driverLat);
+    const destinationLng = Number(ride.destinationLng || driverLng);
+
+    const isHeadingToPickup = ['ACCEPTED', 'ARRIVED'].includes(ride.status);
+    const targetLat = isHeadingToPickup ? originLat : destinationLat;
+    const targetLng = isHeadingToPickup ? originLng : destinationLng;
+    const straightKm = computeHaversineKm(driverLat, driverLng, targetLat, targetLng);
+    const roadKm = Number((straightKm * 1.25).toFixed(1));
+    const etaMinutes = Math.max(1, Math.round((roadKm / 28) * 60));
 
     return res.json({
       rideId: ride.id,
       status: ride.status || 'IN_PROGRESS',
       driverLat,
       driverLng,
-      originLat: Number(ride.originLat),
-      originLng: Number(ride.originLng),
-      destinationLat: Number(ride.destinationLat),
-      destinationLng: Number(ride.destinationLng),
+      heading: Number(ride.driver?.currentHeading || 0),
+      vehicleType: ride.driver?.vehicleType || 'PARTICULAR',
+      vehicleColor: ride.driver?.vehicleColor || 'Amarelo',
+      originLat,
+      originLng,
+      destinationLat,
+      destinationLng,
+      distanceKm: roadKm,
+      etaMinutes,
     });
   } catch (error) {
     console.error('❌ Erro na API de dados de rastreamento:', error);
@@ -455,7 +493,7 @@ app.get('/track/:rideId/data', async (req: Request, res: Response) => {
 });
 
 // =============================================================================
-// 🌐 ROTA PÚBLICA DE RASTREAMENTO WEB DA VIAGEM
+// 🌐 ROTA PÚBLICA DE RASTREAMENTO WEB DA VIAGEM (TEMPO REAL + FALLBACK MAPA)
 // =============================================================================
 app.get('/track/:rideId', async (req: Request, res: Response) => {
   try {
@@ -465,8 +503,8 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
       where: { id: rideId },
       include: {
         driver: true,
-        passenger: true
-      }
+        passenger: true,
+      },
     });
 
     if (!ride) {
@@ -478,16 +516,16 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>Viagem Não Encontrada - Nô Bai 245</title>
           <style>
-            body { background: #0F172A; color: white; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; text-align: center; }
-            .card { background: #1E293B; padding: 30px; border-radius: 20px; border: 1px solid #334155; }
+            body { background: #0F172A; color: white; font-family: -apple-system, BlinkMacSystemFont, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; text-align: center; padding: 20px; }
+            .card { background: #1E293B; padding: 30px; border-radius: 20px; border: 1px solid #334155; max-width: 400px; }
             h2 { color: #EAB308; margin-bottom: 8px; }
-            p { color: #94A3B8; }
+            p { color: #94A3B8; line-height: 1.5; }
           </style>
         </head>
         <body>
           <div class="card">
             <h2>⚠️ Viagem não encontrada</h2>
-            <p>Esta corrida não existe ou já foi finalizada.</p>
+            <p>Esta corrida não existe ou o link de acompanhamento expirou.</p>
           </div>
         </body>
         </html>
@@ -495,30 +533,51 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
     }
 
     res.setHeader(
-      "Content-Security-Policy",
+      'Content-Security-Policy',
       "default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'; " +
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://api.mapbox.com; " +
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://api.mapbox.com https://unpkg.com https://cdn.socket.io; " +
       "worker-src 'self' blob:; " +
       "child-src 'self' blob:; " +
-      "style-src 'self' 'unsafe-inline' https://api.mapbox.com; " +
-      "connect-src 'self' https://*.mapbox.com https://api.mapbox.com; " +
-      "img-src 'self' blob: data: https://*.mapbox.com;"
+      "style-src 'self' 'unsafe-inline' https://api.mapbox.com https://unpkg.com; " +
+      "connect-src 'self' wss: ws: https: http:; " +
+      "img-src 'self' blob: data: https: http:;"
     );
 
-    const driverLat = Number(ride.driver?.lastLat || ride.originLat || 11.8633);
-    const driverLng = Number(ride.driver?.lastLng || ride.originLng || -15.5833);
+    let driverLat = Number(ride.driver?.lastLat || ride.originLat || 11.8633);
+    let driverLng = Number(ride.driver?.lastLng || ride.originLng || -15.5833);
+    if (ride.driverId) {
+      try {
+        const redisPos = await safeRedis.geoPos('drivers:locations', ride.driverId);
+        if (redisPos && redisPos[0]) {
+          driverLng = Number(redisPos[0].longitude);
+          driverLat = Number(redisPos[0].latitude);
+        }
+      } catch {}
+    }
+
     const originLat = Number(ride.originLat || driverLat);
     const originLng = Number(ride.originLng || driverLng);
     const destLat = Number(ride.destinationLat || driverLat);
     const destLng = Number(ride.destinationLng || driverLng);
+    const initialHeading = Number(ride.driver?.currentHeading || 0);
+
+    const isHeadingToPickup = ['ACCEPTED', 'ARRIVED'].includes(ride.status);
+    const initialKm = Number((computeHaversineKm(driverLat, driverLng, isHeadingToPickup ? originLat : destLat, isHeadingToPickup ? originLng : destLng) * 1.25).toFixed(1));
+    const initialEta = Math.max(1, Math.round((initialKm / 28) * 60));
 
     const driverName = sanitizeHtmlText(ride.driver?.fullName || 'Motorista Nô Bai');
+    const driverPhoto = sanitizeHtmlText(ride.driver?.profilePicture || '');
     const carModel = sanitizeHtmlText(ride.driver?.vehicleBrand || 'Veículo');
     const carColor = sanitizeHtmlText(ride.driver?.vehicleColor || 'Amarelo');
+    const vehicleType = sanitizeHtmlText(ride.driver?.vehicleType || 'PARTICULAR');
     const licensePlate = sanitizeHtmlText(ride.driver?.vehiclePlate || 'N/A');
+    const originAddress = sanitizeHtmlText(ride.originAddress || 'Ponto de embarque');
     const destinationAddress = sanitizeHtmlText(ride.destinationAddress || 'Endereço de destino');
 
-    const mapboxToken = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || process.env.MAPBOX_ACCESS_TOKEN || '';
+    const mapboxToken =
+      process.env.EXPO_PUBLIC_MAPBOX_TOKEN ||
+      process.env.MAPBOX_ACCESS_TOKEN ||
+      'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZGpkMnVtMDMzdDJ4c2U0NHd3dHBtZiJ9.mT0BfmoFsPTgWFzNnblCZg';
 
     res.send(`
       <!DOCTYPE html>
@@ -526,204 +585,420 @@ app.get('/track/:rideId', async (req: Request, res: Response) => {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-        <title>Rastreamento de Viagem - Nô Bai 245</title>
-        <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+        <title>Acompanhamento ao Vivo - Nô Bai 245</title>
         <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
+        <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+        <script src="/socket.io/socket.io.js"></script>
         <style>
           * { box-sizing: border-box; margin: 0; padding: 0; }
           html, body { height: 100%; width: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #0F172A; color: #FFFFFF; }
           body { display: flex; flex-direction: column; }
-          #map { flex: 1; width: 100%; height: 100%; }
-          .info-card { background-color: #1E293B; padding: 20px; border-top-left-radius: 24px; border-top-right-radius: 24px; border-top: 1px solid #334155; z-index: 10; box-shadow: 0 -10px 25px rgba(0,0,0,0.5); }
-          .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
-          .title { font-size: 18px; font-weight: 800; color: #EAB308; display: flex; align-items: center; gap: 8px; }
-          .badge { background: #0F172A; color: #10B981; font-weight: 700; font-size: 11px; padding: 4px 10px; border-radius: 12px; border: 1px solid #334155; text-transform: uppercase; letter-spacing: 0.5px; }
-          .badge.cancelled { color: #EF4444; border-color: #7F1D1D; }
-          .badge.completed { color: #3B82F6; border-color: #1E3A8A; }
-          .badge.queued { color: #F59E0B; border-color: #78350F; }
+          #mapWrap { position: relative; flex: 1; width: 100%; min-height: 45%; background: #1E293B; }
+          #map, #leafletMap { position: absolute; inset: 0; width: 100%; height: 100%; }
+          #leafletMap { display: none; z-index: 2; }
 
-          .metrics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; background: #0F172A; padding: 12px; border-radius: 14px; margin-bottom: 14px; border: 1px solid #334155; }
-          .metric-box { text-align: center; }
-          .metric-label { font-size: 11px; color: #94A3B8; text-transform: uppercase; font-weight: 600; margin-bottom: 2px; }
-          .metric-value { font-size: 16px; font-weight: 800; color: #F8FAFC; }
-
-          .detail-item { font-size: 13px; color: #CBD5E1; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
-          .detail-item strong { color: #FFF; }
-
-          .car-icon-wrapper {
-            width: 42px;
-            height: 42px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: transform 0.6s cubic-bezier(0.25, 1, 0.5, 1);
-            transform-origin: center center;
+          .live-pill {
+            position: absolute; top: 14px; left: 14px; z-index: 20;
+            background: rgba(15, 23, 42, 0.92); backdrop-filter: blur(8px);
+            border: 1px solid rgba(234, 179, 8, 0.45);
+            border-radius: 999px; padding: 7px 14px;
+            display: flex; align-items: center; gap: 8px;
+            font-size: 12px; font-weight: 700; color: #F8FAFC;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.35);
           }
-          .car-svg { width: 36px; height: 36px; filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.6)); }
+          .live-dot { width: 9px; height: 9px; border-radius: 50%; background: #22C55E; box-shadow: 0 0 0 4px rgba(34,197,94,0.25); animation: pulse 1.6s infinite; }
+          @keyframes pulse { 0% { transform: scale(0.95); opacity: 1; } 70% { transform: scale(1.2); opacity: 0.6; } 100% { transform: scale(0.95); opacity: 1; } }
+
+          .recenter-btn {
+            position: absolute; right: 14px; bottom: 16px; z-index: 20;
+            background: #0F172A; color: #EAB308; border: 1px solid #334155;
+            border-radius: 12px; padding: 10px 14px; font-size: 12px; font-weight: 800;
+            cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+          }
+
+          .info-card {
+            background: linear-gradient(180deg, #1E293B 0%, #0F172A 100%);
+            padding: 18px 20px 22px; border-top-left-radius: 24px; border-top-right-radius: 24px;
+            border-top: 1px solid #334155; z-index: 25; box-shadow: 0 -10px 30px rgba(0,0,0,0.55);
+          }
+          .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+          .title { font-size: 18px; font-weight: 900; color: #EAB308; display: flex; align-items: center; gap: 8px; letter-spacing: 0.3px; }
+          .badge { background: rgba(16, 185, 129, 0.14); color: #34D399; font-weight: 800; font-size: 11px; padding: 5px 11px; border-radius: 999px; border: 1px solid rgba(16, 185, 129, 0.4); letter-spacing: 0.4px; }
+          .badge.cancelled { background: rgba(239, 68, 68, 0.14); color: #F87171; border-color: rgba(239, 68, 68, 0.4); }
+          .badge.completed { background: rgba(59, 130, 246, 0.14); color: #60A5FA; border-color: rgba(59, 130, 246, 0.4); }
+
+          .metrics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; background: rgba(15, 23, 42, 0.85); padding: 11px; border-radius: 14px; margin-bottom: 14px; border: 1px solid #334155; }
+          .metric-box { text-align: center; }
+          .metric-label { font-size: 10px; color: #94A3B8; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 3px; }
+          .metric-value { font-size: 17px; font-weight: 900; color: #F8FAFC; }
+
+          .driver-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: rgba(30, 41, 59, 0.65); border: 1px solid #334155; border-radius: 14px; padding: 10px 12px; margin-bottom: 12px; }
+          .driver-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+          .driver-avatar { width: 42px; height: 42px; border-radius: 50%; object-fit: cover; border: 2px solid #EAB308; background: #0F172A; display: flex; align-items: center; justify-content: center; font-weight: 800; color: #EAB308; flex-shrink: 0; }
+          .driver-name { font-size: 14px; font-weight: 800; color: #F8FAFC; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+          .driver-car { font-size: 12px; color: #94A3B8; }
+          .plate-pill { background: #EAB308; color: #0F172A; font-family: monospace; font-weight: 900; font-size: 12px; padding: 4px 9px; border-radius: 8px; letter-spacing: 0.6px; flex-shrink: 0; }
+
+          .route-box { display: flex; flex-direction: column; gap: 7px; font-size: 12px; color: #CBD5E1; }
+          .route-line { display: flex; align-items: flex-start; gap: 8px; }
+          .dot-origin { width: 9px; height: 9px; border-radius: 50%; background: #22C55E; margin-top: 4px; flex-shrink: 0; }
+          .dot-dest { width: 9px; height: 9px; border-radius: 2px; background: #EAB308; margin-top: 4px; flex-shrink: 0; }
+
+          .vehicle-marker-wrap {
+            width: 52px; height: 52px; display: flex; align-items: center; justify-content: center;
+            transition: transform 0.45s linear; transform-origin: center center;
+          }
+          .vehicle-halo {
+            position: absolute; width: 46px; height: 46px; border-radius: 50%;
+            background: rgba(234, 179, 8, 0.22); border: 1.5px solid rgba(234, 179, 8, 0.55);
+          }
         </style>
       </head>
       <body>
-        <div id="map"></div>
+        <div id="mapWrap">
+          <div class="live-pill">
+            <span class="live-dot" id="liveDot"></span>
+            <span id="liveText">Rastreamento ao vivo</span>
+          </div>
+          <div id="map"></div>
+          <div id="leafletMap"></div>
+          <button class="recenter-btn" id="recenterBtn" type="button">🎯 Centralizar veículo</button>
+        </div>
+
         <div class="info-card">
           <div class="header">
             <div class="title">🚕 Nô Bai 245</div>
-            <div id="statusBadge" class="badge ${ride.status === 'CANCELLED' ? 'cancelled' : (ride.status === 'COMPLETED' ? 'completed' : ((ride.status as any) === 'QUEUED' ? 'queued' : ''))}">${sanitizeHtmlText(ride.status) || 'EM ANDAMENTO'}</div>
+            <div id="statusBadge" class="badge ${ride.status === 'CANCELLED' ? 'cancelled' : (ride.status === 'COMPLETED' ? 'completed' : '')}">
+              ${ride.status === 'ACCEPTED' ? 'MOTORISTA A CAMINHO' : ride.status === 'ARRIVED' ? 'NO LOCAL DE EMBARQUE' : ride.status === 'IN_PROGRESS' ? 'EM VIAGEM' : ride.status === 'COMPLETED' ? 'VIAGEM CONCLUÍDA' : ride.status === 'CANCELLED' ? 'CANCELADA' : sanitizeHtmlText(ride.status)}
+            </div>
           </div>
 
           <div class="metrics-grid">
             <div class="metric-box">
               <div class="metric-label">Tempo Estimado</div>
-              <div id="etaValue" class="metric-value">Calculando...</div>
+              <div id="etaValue" class="metric-value">${ride.status === 'COMPLETED' ? 'Chegou' : initialEta + ' min'}</div>
             </div>
             <div class="metric-box">
-              <div class="metric-label">Distância</div>
-              <div id="distValue" class="metric-value">Calculando...</div>
+              <div class="metric-label">Distância Restante</div>
+              <div id="distValue" class="metric-value">${ride.status === 'COMPLETED' ? '0.0 km' : initialKm + ' km'}</div>
             </div>
           </div>
 
-          <div class="detail-item"><strong>👤 Motorista:</strong> ${driverName}</div>
-          <div class="detail-item"><strong>🚘 Veículo:</strong> ${carModel} (${carColor}) — Placa: <strong>${licensePlate}</strong></div>
-          <div class="detail-item"><strong>📍 Destino:</strong> ${destinationAddress}</div>
+          <div class="driver-row">
+            <div class="driver-left">
+              ${driverPhoto ? `<img src="${driverPhoto}" class="driver-avatar" alt="Motorista" />` : `<div class="driver-avatar">${driverName.charAt(0).toUpperCase()}</div>`}
+              <div style="min-width:0">
+                <div class="driver-name">${driverName}</div>
+                <div class="driver-car">${carModel} • ${carColor}</div>
+              </div>
+            </div>
+            <div class="plate-pill">${licensePlate}</div>
+          </div>
+
+          <div class="route-box">
+            <div class="route-line"><span class="dot-origin"></span><span><strong>Embarque:</strong> ${originAddress}</span></div>
+            <div class="route-line"><span class="dot-dest"></span><span><strong>Destino:</strong> ${destinationAddress}</span></div>
+          </div>
         </div>
 
         <script>
+          const RIDE_ID = '${rideId}';
           const MAPBOX_TOKEN = '${mapboxToken}';
-          mapboxgl.accessToken = MAPBOX_TOKEN;
-
+          const VEHICLE_TYPE = '${vehicleType}';
           const origin = [${originLng}, ${originLat}];
           const destination = [${destLng}, ${destLat}];
           let lastPos = [${driverLng}, ${driverLat}];
+          let currentHeading = ${initialHeading};
+          let currentStatus = '${ride.status}';
+          let followVehicle = true;
+          let usingLeaflet = false;
+          let map = null;
+          let driverMarker = null;
+          let leafletMap = null;
+          let leafletCarMarker = null;
+          let leafletRouteLine = null;
 
-          const map = new mapboxgl.Map({
-            container: 'map',
-            style: 'mapbox://styles/mapbox/dark-v11',
-            center: lastPos,
-            zoom: 15
-          });
-
-          const carContainer = document.createElement('div');
-          carContainer.className = 'car-icon-wrapper';
-          carContainer.innerHTML = \`
-            <svg class="car-svg" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5H6.5C5.84 5 5.29 5.42 5.08 6.01L3 12V20C3 20.55 3.45 21 4 21H5C5.55 21 6 20.55 6 20V19H18V20C18 20.55 18.45 21 19 21H20C20.55 21 21 20.55 21 20V12L18.92 6.01ZM6.85 7H17.14L18.22 10.12H5.78L6.85 7ZM19 17H5V12H19V17ZM7.5 16C8.33 16 9 15.33 9 14.5C9 13.67 8.33 13 7.5 13C6.67 13 6 13.67 6 14.5C6 15.33 6.67 16 7.5 16ZM16.5 16C17.33 16 18 15.33 18 14.5C18 13.67 17.33 13 16.5 13C15.67 13 15 13.67 15 14.5C15 15.33 15.67 16 16.5 16Z" fill="#EAB308"/>
-            </svg>
-          \`;
-
-          const driverMarker = new mapboxgl.Marker({ element: carContainer, anchor: 'center' }).setLngLat(lastPos).addTo(map);
-
-          const originEl = document.createElement('div');
-          originEl.style.fontSize = '22px';
-          originEl.innerHTML = '🟢';
-          new mapboxgl.Marker({ element: originEl }).setLngLat(origin).addTo(map);
-
-          const destEl = document.createElement('div');
-          destEl.style.fontSize = '22px';
-          destEl.innerHTML = '🏁';
-          new mapboxgl.Marker({ element: destEl }).setLngLat(destination).addTo(map);
-
-          function calculateBearing(startLat, startLng, destLat, destLng) {
-            const startLatRad = startLat * Math.PI / 180;
-            const startLngRad = startLng * Math.PI / 180;
-            const destLatRad = destLat * Math.PI / 180;
-            const destLngRad = destLng * Math.PI / 180;
-
-            const y = Math.sin(destLngRad - startLngRad) * Math.cos(destLatRad);
-            const x = Math.cos(startLatRad) * Math.sin(destLatRad) -
-                      Math.sin(startLatRad) * Math.cos(destLatRad) * Math.cos(destLngRad - startLngRad);
-
-            let brng = Math.atan2(y, x) * 180 / Math.PI;
-            return (brng + 360) % 360;
+          function statusLabel(st) {
+            if (st === 'ACCEPTED') return 'MOTORISTA A CAMINHO';
+            if (st === 'ARRIVED') return 'NO LOCAL DE EMBARQUE';
+            if (st === 'IN_PROGRESS') return 'EM VIAGEM';
+            if (st === 'COMPLETED') return 'VIAGEM CONCLUÍDA';
+            if (st === 'CANCELLED') return 'CANCELADA';
+            return st || 'EM ANDAMENTO';
           }
 
-          async function updateRoute(currentPos) {
+          function buildTopDownVehicleSvg(vType) {
+            const isMoto = String(vType).toUpperCase().includes('MOTO');
+            const isTaxi = String(vType).toUpperCase().includes('TAXI');
+            if (isMoto) {
+              return \`
+                <svg width="42" height="42" viewBox="0 0 64 64" fill="none">
+                  <ellipse cx="32" cy="34" rx="10" ry="22" fill="rgba(0,0,0,0.35)"/>
+                  <rect x="29" y="8" width="6" height="12" rx="3" fill="#1E293B"/>
+                  <rect x="28" y="44" width="8" height="12" rx="3" fill="#1E293B"/>
+                  <path d="M24 22C24 17 40 17 40 22L38 44C38 48 26 48 26 44L24 22Z" fill="#EAB308" stroke="#0F172A" stroke-width="2"/>
+                  <rect x="21" y="21" width="22" height="3.5" rx="1.7" fill="#0F172A"/>
+                  <circle cx="32" cy="31" r="6" fill="#F8FAFC" stroke="#0F172A" stroke-width="2"/>
+                  <circle cx="32" cy="11" r="2.2" fill="#FEF08A"/>
+                </svg>\`;
+            }
+            const bodyFill = isTaxi ? '#FACC15' : '#F8FAFC';
+            const roofFill = isTaxi ? '#FEF08A' : '#E2E8F0';
+            return \`
+              <svg width="44" height="44" viewBox="0 0 64 64" fill="none">
+                <ellipse cx="32" cy="34" rx="16" ry="25" fill="rgba(0,0,0,0.4)"/>
+                <rect x="14" y="15" width="4" height="9" rx="2" fill="#0F172A"/>
+                <rect x="46" y="15" width="4" height="9" rx="2" fill="#0F172A"/>
+                <rect x="14" y="40" width="4" height="9" rx="2" fill="#0F172A"/>
+                <rect x="46" y="40" width="4" height="9" rx="2" fill="#0F172A"/>
+                <rect x="17" y="8" width="30" height="48" rx="11" fill="\${bodyFill}" stroke="#0F172A" stroke-width="2.2"/>
+                <path d="M21 17C21 14 43 14 43 17L41 24H23L21 17Z" fill="#1E293B"/>
+                <path d="M23 42H41L42 48C42 50 22 50 22 48L23 42Z" fill="#1E293B"/>
+                <rect x="22" y="24" width="20" height="18" rx="5" fill="\${roofFill}" stroke="#94A3B8" stroke-width="1"/>
+                \${isTaxi ? '<rect x="26" y="30" width="12" height="5" rx="2" fill="#0F172A"/><rect x="28" y="31" width="8" height="3" rx="1" fill="#FACC15"/>' : ''}
+                <rect x="20" y="9" width="6" height="2.5" rx="1.2" fill="#FEF9C3"/>
+                <rect x="38" y="9" width="6" height="2.5" rx="1.2" fill="#FEF9C3"/>
+                <rect x="20" y="53" width="6" height="2" rx="1" fill="#EF4444"/>
+                <rect x="38" y="53" width="6" height="2" rx="1" fill="#EF4444"/>
+              </svg>\`;
+          }
+
+          function calculateBearing(lat1, lng1, lat2, lng2) {
+            const toRad = (d) => d * Math.PI / 180;
+            const y = Math.sin(toRad(lng2 - lng1)) * Math.cos(toRad(lat2));
+            const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+                      Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lng2 - lng1));
+            return ((Math.atan2(y, x) * 180 / Math.PI) + 360) % 360;
+          }
+
+          function haversineKm(lat1, lng1, lat2, lng2) {
+            const toRad = (v) => v * Math.PI / 180;
+            const R = 6371;
+            const dLat = toRad(lat2 - lat1);
+            const dLng = toRad(lng2 - lng1);
+            const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng/2)**2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          }
+
+          const carEl = document.createElement('div');
+          carEl.className = 'vehicle-marker-wrap';
+          carEl.style.transform = 'rotate(' + currentHeading + 'deg)';
+          carEl.innerHTML = '<div class="vehicle-halo"></div>' + buildTopDownVehicleSvg(VEHICLE_TYPE);
+
+          function activateLeafletFallback() {
+            if (usingLeaflet || typeof L === 'undefined') return;
+            usingLeaflet = true;
+            document.getElementById('map').style.display = 'none';
+            const lDiv = document.getElementById('leafletMap');
+            lDiv.style.display = 'block';
+
+            leafletMap = L.map('leafletMap', { zoomControl: false }).setView([lastPos[1], lastPos[0]], 15);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+              maxZoom: 19,
+              attribution: '&copy; OpenStreetMap'
+            }).addTo(leafletMap);
+
+            const carIcon = L.divIcon({
+              html: '<div id="lCarRot" style="width:48px;height:48px;display:flex;align-items:center;justify-content:center;transform:rotate(' + currentHeading + 'deg);transition:transform 0.45s linear;">' + buildTopDownVehicleSvg(VEHICLE_TYPE) + '</div>',
+              className: '',
+              iconSize: [48, 48],
+              iconAnchor: [24, 24]
+            });
+            leafletCarMarker = L.marker([lastPos[1], lastPos[0]], { icon: carIcon }).addTo(leafletMap);
+
+            L.circleMarker([origin[1], origin[0]], { radius: 7, color: '#16A34A', fillColor: '#22C55E', fillOpacity: 1 }).addTo(leafletMap);
+            L.circleMarker([destination[1], destination[0]], { radius: 7, color: '#0F172A', fillColor: '#EAB308', fillOpacity: 1 }).addTo(leafletMap);
+            leafletRouteLine = L.polyline([[lastPos[1], lastPos[0]], [destination[1], destination[0]]], { color: '#EAB308', weight: 5, opacity: 0.9 }).addTo(leafletMap);
+            leafletMap.fitBounds([[origin[1], origin[0]], [destination[1], destination[0]], [lastPos[1], lastPos[0]]], { padding: [50, 50] });
+          }
+
+          async function updateRouteAndMetrics(pos, status) {
+            const isPickup = status === 'ACCEPTED' || status === 'ARRIVED';
+            const target = isPickup ? origin : destination;
+
+            if (status === 'COMPLETED') {
+              document.getElementById('etaValue').innerText = 'Chegou';
+              document.getElementById('distValue').innerText = '0.0 km';
+              return;
+            }
+
+            const fallbackKm = Math.max(0.1, haversineKm(pos[1], pos[0], target[1], target[0]) * 1.25);
+            const fallbackMin = Math.max(1, Math.round((fallbackKm / 28) * 60));
+
             try {
-              const query = await fetch(
-                \`https://api.mapbox.com/directions/v5/mapbox/driving/\${currentPos[0]},\${currentPos[1]};\${destination[0]},\${destination[1]}?steps=true&geometries=geojson&access_token=\${MAPBOX_TOKEN}\`
-              );
-              const json = await query.json();
-
+              const url = \`https://api.mapbox.com/directions/v5/mapbox/driving/\${pos[0]},\${pos[1]};\${target[0]},\${target[1]}?geometries=geojson&overview=full&access_token=\${MAPBOX_TOKEN}\`;
+              const resp = await fetch(url);
+              const json = await resp.json();
               if (json.routes && json.routes[0]) {
-                const route = json.routes[0];
-                const routeCoords = route.geometry.coordinates;
+                const r = json.routes[0];
+                const mins = Math.max(1, Math.round(r.duration / 60));
+                const kms = (r.distance / 1000).toFixed(1);
+                document.getElementById('etaValue').innerText = mins + ' min';
+                document.getElementById('distValue').innerText = kms + ' km';
 
-                const durationMin = Math.round(route.duration / 60);
-                const distanceKm = (route.distance / 1000).toFixed(1);
+                const coords = r.geometry.coordinates;
+                if (!usingLeaflet && map && map.isStyleLoaded()) {
+                  if (map.getSource('route')) {
+                    map.getSource('route').setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } });
+                  } else {
+                    map.addSource('route', { type: 'geojson', data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } } });
+                    map.addLayer({ id: 'routeLine', type: 'line', source: 'route', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#EAB308', 'line-width': 5, 'line-opacity': 0.92 } });
+                  }
+                } else if (usingLeaflet && leafletRouteLine) {
+                  leafletRouteLine.setLatLngs(coords.map((c) => [c[1], c[0]]));
+                }
+                return;
+              }
+            } catch {}
 
-                document.getElementById('etaValue').innerText = durationMin > 0 ? durationMin + ' min' : 'Chegando';
-                document.getElementById('distValue').innerText = distanceKm + ' km';
+            document.getElementById('etaValue').innerText = fallbackMin + ' min';
+            document.getElementById('distValue').innerText = fallbackKm.toFixed(1) + ' km';
+          }
 
-                if (map.getSource('route')) {
-                  map.getSource('route').setData({
-                    type: 'Feature',
-                    properties: {},
-                    geometry: { type: 'LineString', coordinates: routeCoords }
-                  });
-                } else {
-                  map.addSource('route', {
-                    type: 'geojson',
-                    data: {
-                      type: 'Feature',
-                      properties: {},
-                      geometry: { type: 'LineString', coordinates: routeCoords }
-                    }
-                  });
+          function applyLiveUpdate(newLat, newLng, incomingHeading, newStatus) {
+            if (newStatus) {
+              currentStatus = newStatus;
+              const badge = document.getElementById('statusBadge');
+              if (badge) {
+                badge.innerText = statusLabel(newStatus);
+                badge.className = 'badge' + (newStatus === 'CANCELLED' ? ' cancelled' : newStatus === 'COMPLETED' ? ' completed' : '');
+              }
+              if (newStatus === 'COMPLETED' || newStatus === 'CANCELLED') {
+                document.getElementById('liveText').innerText = newStatus === 'COMPLETED' ? 'Viagem encerrada' : 'Corrida cancelada';
+                document.getElementById('liveDot').style.background = newStatus === 'COMPLETED' ? '#3B82F6' : '#EF4444';
+              }
+            }
 
-                  map.addLayer({
-                    id: 'routeLine',
-                    type: 'line',
-                    source: 'route',
-                    layout: { 'line-join': 'round', 'line-cap': 'round' },
-                    paint: { 'line-color': '#EAB308', 'line-width': 5, 'line-opacity': 0.85 }
-                  });
+            if (Number.isFinite(newLat) && Number.isFinite(newLng) && newLat !== 0 && newLng !== 0) {
+              const nextPos = [newLng, newLat];
+              const movedMeters = haversineKm(lastPos[1], lastPos[0], newLat, newLng) * 1000;
+
+              if (movedMeters > 1.5) {
+                currentHeading = calculateBearing(lastPos[1], lastPos[0], newLat, newLng);
+              } else if (typeof incomingHeading === 'number' && incomingHeading > 0) {
+                currentHeading = incomingHeading;
+              }
+
+              lastPos = nextPos;
+
+              if (!usingLeaflet && driverMarker) {
+                carEl.style.transform = 'rotate(' + Math.round(currentHeading) + 'deg)';
+                driverMarker.setLngLat(nextPos);
+                if (followVehicle && map) {
+                  map.easeTo({ center: nextPos, duration: 700 });
+                }
+              } else if (usingLeaflet && leafletCarMarker) {
+                leafletCarMarker.setLatLng([newLat, newLng]);
+                const rotNode = document.getElementById('lCarRot');
+                if (rotNode) rotNode.style.transform = 'rotate(' + Math.round(currentHeading) + 'deg)';
+                if (followVehicle && leafletMap) {
+                  leafletMap.panTo([newLat, newLng]);
                 }
               }
-            } catch (err) {
-              console.error('Erro ao buscar rota Mapbox:', err);
+
+              updateRouteAndMetrics(nextPos, currentStatus);
             }
           }
 
-          map.on('load', async function() {
-            map.resize();
-            const bounds = new mapboxgl.LngLatBounds();
-            bounds.extend(origin);
-            bounds.extend(destination);
-            bounds.extend(lastPos);
-            map.fitBounds(bounds, { padding: 60, maxZoom: 16 });
+          // Inicialização do Mapa Mapbox com fallback automático para Leaflet se falhar em 5s
+          let mapboxLoaded = false;
+          try {
+            if (typeof mapboxgl !== 'undefined' && MAPBOX_TOKEN) {
+              mapboxgl.accessToken = MAPBOX_TOKEN;
+              map = new mapboxgl.Map({
+                container: 'map',
+                style: 'mapbox://styles/mapbox/streets-v12',
+                center: lastPos,
+                zoom: 15
+              });
 
-            await updateRoute(lastPos);
+              map.on('dragstart', () => { followVehicle = false; });
+
+              driverMarker = new mapboxgl.Marker({ element: carEl, anchor: 'center' }).setLngLat(lastPos).addTo(map);
+
+              const originEl = document.createElement('div');
+              originEl.style.cssText = 'width:16px;height:16px;border-radius:50%;background:#22C55E;border:3px solid #FFF;box-shadow:0 2px 6px rgba(0,0,0,0.4);';
+              new mapboxgl.Marker({ element: originEl }).setLngLat(origin).addTo(map);
+
+              const destEl = document.createElement('div');
+              destEl.style.cssText = 'width:18px;height:18px;border-radius:4px;background:#0F172A;border:3px solid #EAB308;box-shadow:0 2px 6px rgba(0,0,0,0.4);';
+              new mapboxgl.Marker({ element: destEl }).setLngLat(destination).addTo(map);
+
+              map.on('load', async () => {
+                mapboxLoaded = true;
+                map.resize();
+                const bounds = new mapboxgl.LngLatBounds();
+                bounds.extend(origin);
+                bounds.extend(destination);
+                bounds.extend(lastPos);
+                map.fitBounds(bounds, { padding: 65, maxZoom: 16 });
+                await updateRouteAndMetrics(lastPos, currentStatus);
+              });
+
+              map.on('error', () => {
+                if (!mapboxLoaded) activateLeafletFallback();
+              });
+            } else {
+              activateLeafletFallback();
+            }
+          } catch {
+            activateLeafletFallback();
+          }
+
+          setTimeout(() => {
+            if (!mapboxLoaded && !usingLeaflet) {
+              activateLeafletFallback();
+              updateRouteAndMetrics(lastPos, currentStatus);
+            }
+          }, 4500);
+
+          document.getElementById('recenterBtn').addEventListener('click', () => {
+            followVehicle = true;
+            if (!usingLeaflet && map) {
+              map.flyTo({ center: lastPos, zoom: 16, duration: 900 });
+            } else if (usingLeaflet && leafletMap) {
+              leafletMap.setView([lastPos[1], lastPos[0]], 16);
+            }
           });
 
+          // Tempo real via Socket.IO
+          try {
+            if (typeof io !== 'undefined') {
+              const sock = io({ transports: ['websocket', 'polling'] });
+              sock.on('connect', () => {
+                sock.emit('join_ride', RIDE_ID);
+                sock.emit('ride:join', { rideId: RIDE_ID });
+              });
+              sock.on('driver:position', (p) => {
+                if (p && Number.isFinite(Number(p.latitude)) && Number.isFinite(Number(p.longitude))) {
+                  applyLiveUpdate(Number(p.latitude), Number(p.longitude), Number(p.heading || 0), currentStatus);
+                }
+              });
+              sock.on('ride:accepted', () => applyLiveUpdate(lastPos[1], lastPos[0], currentHeading, 'ACCEPTED'));
+              sock.on('ride:arrived', () => applyLiveUpdate(lastPos[1], lastPos[0], currentHeading, 'ARRIVED'));
+              sock.on('ride:started', () => applyLiveUpdate(lastPos[1], lastPos[0], currentHeading, 'IN_PROGRESS'));
+              sock.on('ride:finished', () => applyLiveUpdate(lastPos[1], lastPos[0], currentHeading, 'COMPLETED'));
+              sock.on('ride:completed', () => applyLiveUpdate(lastPos[1], lastPos[0], currentHeading, 'COMPLETED'));
+              sock.on('ride:cancelled', () => applyLiveUpdate(lastPos[1], lastPos[0], currentHeading, 'CANCELLED'));
+            }
+          } catch {}
+
+          // Polling de redundância a cada 3 segundos
           setInterval(async () => {
             try {
-              const res = await fetch('/track/${rideId}/data');
+              const res = await fetch('/track/' + encodeURIComponent(RIDE_ID) + '/data');
               if (!res.ok) return;
               const data = await res.json();
-
-              if (data.driverLat && data.driverLng) {
-                const newPos = [Number(data.driverLng), Number(data.driverLat)];
-
-                if (newPos[0] !== lastPos[0] || newPos[1] !== lastPos[1]) {
-                  const angle = calculateBearing(lastPos[1], lastPos[0], newPos[1], newPos[0]);
-                  carContainer.style.transform = 'rotate(' + angle + 'deg)';
-
-                  driverMarker.setLngLat(newPos);
-                  lastPos = newPos;
-
-                  updateRoute(newPos);
-                }
-              }
-
-              const badge = document.getElementById('statusBadge');
-              if (badge && data.status) {
-                badge.innerText = data.status;
-                if (data.status === 'CANCELLED') badge.className = 'badge cancelled';
-                else if (data.status === 'COMPLETED') badge.className = 'badge completed';
-                else if (data.status === 'QUEUED') badge.className = 'badge queued';
-              }
-            } catch (e) {
-              console.warn('Erro na atualização em tempo real:', e);
-            }
-          }, 3500);
+              applyLiveUpdate(
+                Number(data.driverLat),
+                Number(data.driverLng),
+                Number(data.heading || 0),
+                data.status
+              );
+            } catch {}
+          }, 3000);
         </script>
       </body>
       </html>
@@ -1941,7 +2216,11 @@ handleSocketEvent(socket, 'call:voice_chunk', async (data) => {
       driverId,
       latitude: Number(latitude),
       longitude: Number(longitude),
-      status: rideId ? 'ON_RIDE' : 'AVAILABLE'
+      heading: safeHeading,
+      speed: Number(coords?.speed || 0),
+      rideId: rideId || null,
+      phase: typeof phase === 'string' ? phase : null,
+      status: rideId ? 'ON_RIDE' : 'AVAILABLE',
     });
 
     const dbKey = `last_db_sync:${driverId}`;
