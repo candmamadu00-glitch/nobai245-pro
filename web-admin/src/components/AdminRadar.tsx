@@ -3,7 +3,9 @@ import Map, { Marker, Popup, NavigationControl, Source, Layer } from 'react-map-
 import type { MapRef } from 'react-map-gl/mapbox';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { io, Socket } from 'socket.io-client';
-import { api } from '../services/api';
+import { api, BASE_SERVER_URL } from '../services/api';
+import { TopDownVehicle3D } from './TopDownVehicle3D';
+import { emergencySiren } from '../utils/emergencySiren';
 
 const rawUrl = import.meta.env?.VITE_API_URL || 'https://api.nobai245.com';
 const BACKEND_BASE_URL = rawUrl.replace(/\/api\/?$/, '').replace(/\/$/, '');
@@ -12,6 +14,17 @@ const MAPBOX_TOKEN =
   'pk.eyJ1IjoibWFtYWR1Y2FuZGUiLCJhIjoiY211ZGpkMnVtMDMzdDJ4c2U0NHd3dHBtZiJ9.mT0BfmoFsPTgWFzNnblCZg';
 
 const DEFAULT_CENTER = { latitude: 11.8632, longitude: -15.5977, zoom: 13 };
+
+export interface ActiveSosInfo {
+  id: string;
+  userType: 'PASSENGER' | 'DRIVER';
+  lat: number;
+  lng: number;
+  audioUrl?: string | null;
+  createdAt: string;
+  passengerName?: string | null;
+  phone?: string | null;
+}
 
 export interface DriverLocation {
   driverId: string;
@@ -33,6 +46,7 @@ export interface DriverLocation {
   destinationAddress?: string | null;
   passengerName?: string | null;
   trail?: Array<[number, number]>;
+  activeSos?: ActiveSosInfo | null;
   lastUpdate: Date;
 }
 
@@ -45,128 +59,60 @@ function calculateBearing(lat1: number, lng1: number, lat2: number, lng2: number
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
 }
 
-function resolveCarPalette(vehicleType?: string, vehicleColor?: string) {
-  const type = String(vehicleType || 'PARTICULAR').toUpperCase();
-  const color = String(vehicleColor || '').toLowerCase();
-
-  if (type.includes('TAXI')) {
-    return { body: '#FACC15', roof: '#FEF08A', accent: '#0F172A', isTaxi: true, isMoto: false, isVan: false };
-  }
-  if (type.includes('MOTO')) {
-    return { body: '#EAB308', roof: '#F8FAFC', accent: '#0F172A', isTaxi: false, isMoto: true, isVan: false };
-  }
-  if (type.includes('EXEC') || type.includes('COMFORT') || color.includes('pret') || color.includes('black')) {
-    return { body: '#1E293B', roof: '#334155', accent: '#EAB308', isTaxi: false, isMoto: false, isVan: false };
-  }
-  if (type.includes('VAN') || type.includes('XL')) {
-    return { body: '#F8FAFC', roof: '#E2E8F0', accent: '#0284C7', isTaxi: false, isMoto: false, isVan: true };
-  }
-  if (color.includes('prata') || color.includes('cinz') || color.includes('silver') || color.includes('gray')) {
-    return { body: '#CBD5E1', roof: '#E2E8F0', accent: '#334155', isTaxi: false, isMoto: false, isVan: false };
-  }
-  if (color.includes('azul') || color.includes('blue')) {
-    return { body: '#2563EB', roof: '#60A5FA', accent: '#0F172A', isTaxi: false, isMoto: false, isVan: false };
-  }
-  if (color.includes('vermelh') || color.includes('red')) {
-    return { body: '#DC2626', roof: '#F87171', accent: '#0F172A', isTaxi: false, isMoto: false, isVan: false };
-  }
-  return { body: '#FFFFFF', roof: '#F1F5F9', accent: '#0F172A', isTaxi: false, isMoto: false, isVan: false };
-}
-
-function TopDownVehicleIcon({
-  vehicleType,
-  vehicleColor,
-  isRiding,
-}: {
-  vehicleType?: string;
-  vehicleColor?: string;
-  isRiding: boolean;
-}) {
-  const palette = resolveCarPalette(vehicleType, vehicleColor);
-  const haloColor = isRiding ? 'rgba(59, 130, 246, 0.25)' : 'rgba(16, 185, 129, 0.22)';
-  const ringColor = isRiding ? '#3B82F6' : '#10B981';
-
-  if (palette.isMoto) {
-    return (
-      <div style={{ position: 'relative', width: 46, height: 46, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ position: 'absolute', width: 40, height: 40, borderRadius: '50%', backgroundColor: haloColor, border: `1.5px solid ${ringColor}` }} />
-        <svg width="36" height="36" viewBox="0 0 64 64" fill="none">
-          <ellipse cx="32" cy="34" rx="9" ry="21" fill="rgba(15,23,42,0.3)" />
-          <rect x="29" y="8" width="6" height="12" rx="3" fill="#0F172A" />
-          <rect x="28" y="44" width="8" height="12" rx="3" fill="#0F172A" />
-          <path d="M24 22C24 17 40 17 40 22L38 44C38 48 26 48 26 44L24 22Z" fill="#EAB308" stroke="#0F172A" strokeWidth="2.2" />
-          <rect x="20" y="21" width="24" height="3.5" rx="1.7" fill="#0F172A" />
-          <circle cx="32" cy="31" r="6" fill="#FFFFFF" stroke="#0F172A" strokeWidth="2" />
-          <circle cx="32" cy="11" r="2.2" fill="#FEF08A" />
-        </svg>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ position: 'relative', width: 50, height: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ position: 'absolute', width: 44, height: 44, borderRadius: '50%', backgroundColor: haloColor, border: `1.5px solid ${ringColor}` }} />
-      <svg width="40" height="40" viewBox="0 0 64 64" fill="none">
-        <ellipse cx="32" cy="34" rx="16" ry="25" fill="rgba(15,23,42,0.32)" />
-        <rect x="14" y="14" width="4" height="9" rx="2" fill="#0F172A" />
-        <rect x="46" y="14" width="4" height="9" rx="2" fill="#0F172A" />
-        <rect x="14" y="41" width="4" height="9" rx="2" fill="#0F172A" />
-        <rect x="46" y="41" width="4" height="9" rx="2" fill="#0F172A" />
-        <rect
-          x="17"
-          y={palette.isVan ? '6' : '8'}
-          width="30"
-          height={palette.isVan ? '52' : '48'}
-          rx="10"
-          fill={palette.body}
-          stroke="#0F172A"
-          strokeWidth="2.2"
-        />
-        <path d="M21 17C21 14 43 14 43 17L41 24H23L21 17Z" fill="#0F172A" />
-        <path d="M23 43H41L42 49C42 51 22 51 22 49L23 43Z" fill="#0F172A" />
-        <rect
-          x="22"
-          y="24"
-          width="20"
-          height={palette.isVan ? '20' : '18'}
-          rx="4"
-          fill={palette.roof}
-          stroke="#94A3B8"
-          strokeWidth="1"
-        />
-        {palette.isTaxi && (
-          <>
-            <rect x="25" y="30" width="14" height="5" rx="2" fill="#0F172A" />
-            <rect x="27" y="31" width="10" height="3" rx="1" fill="#FACC15" />
-          </>
-        )}
-        <rect x="20" y="9" width="6" height="2.5" rx="1.2" fill="#FEF9C3" />
-        <rect x="38" y="9" width="6" height="2.5" rx="1.2" fill="#FEF9C3" />
-        <rect x="20" y="53" width="6" height="2" rx="1" fill="#EF4444" />
-        <rect x="38" y="53" width="6" height="2" rx="1" fill="#EF4444" />
-      </svg>
-    </div>
-  );
-}
-
 export function AdminRadar() {
   const mapRef = useRef<MapRef>(null);
   const [drivers, setDrivers] = useState<Record<string, DriverLocation>>({});
+  const [orphanSosAlerts, setOrphanSosAlerts] = useState<any[]>([]);
   const [selectedDriverId, setSelectedDriverId] = useState<string | null>(null);
   const [followSelected, setFollowSelected] = useState<boolean>(false);
   const [showLabels, setShowLabels] = useState<boolean>(true);
   const [mapTheme, setMapTheme] = useState<'streets' | 'satellite'>('streets');
   const [isConnected, setIsConnected] = useState(false);
-  const [filter, setFilter] = useState<'ALL' | 'AVAILABLE' | 'ON_RIDE'>('ALL');
+  const [filter, setFilter] = useState<'ALL' | 'AVAILABLE' | 'ON_RIDE' | 'SOS'>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
+  const [sirenMuted, setSirenMuted] = useState<boolean>(() => emergencySiren.isMuted());
 
-  const fetchOnlineDrivers = useCallback(async () => {
+  const fetchOnlineDriversAndSos = useCallback(async () => {
     try {
-      const response = await api.get<DriverLocation[]>('/admin/drivers/online');
-      if (Array.isArray(response.data)) {
+      const [driversRes, sosRes] = await Promise.all([
+        api.get<DriverLocation[]>('/admin/drivers/online'),
+        api.get<any[]>('/admin/sos?status=ACTIVE').catch(() => ({ data: [] })),
+      ]);
+
+      const activeSosList = Array.isArray(sosRes.data) ? sosRes.data : [];
+      const sosByDriverId: Record<string, ActiveSosInfo> = {};
+      const unmatchedSos: any[] = [];
+
+      activeSosList.forEach((s: any) => {
+        const dId = s.driverId || s.ride?.driverId || s.driver?.id || null;
+        if (dId) {
+          sosByDriverId[dId] = {
+            id: s.id,
+            userType: s.userType || 'DRIVER',
+            lat: Number(s.lat || 0),
+            lng: Number(s.lng || 0),
+            audioUrl: s.audioUrl || null,
+            createdAt: s.createdAt,
+            passengerName: s.passenger?.fullName || null,
+            phone: s.passenger?.phone || s.driver?.phone || null,
+          };
+        } else {
+          unmatchedSos.push(s);
+        }
+      });
+
+      setOrphanSosAlerts(unmatchedSos);
+
+      if (activeSosList.length > 0 && !emergencySiren.isMuted()) {
+        emergencySiren.startContinuous();
+      } else if (activeSosList.length === 0) {
+        emergencySiren.stopContinuous();
+      }
+
+      if (Array.isArray(driversRes.data)) {
         setDrivers((prev) => {
           const nextMap: Record<string, DriverLocation> = {};
-          response.data.forEach((driver) => {
+          driversRes.data.forEach((driver) => {
             const existing = prev[driver.driverId];
             const prevTrail = existing?.trail || [];
             const nextPoint: [number, number] = [Number(driver.longitude), Number(driver.latitude)];
@@ -191,6 +137,7 @@ export function AdminRadar() {
               longitude: Number(driver.longitude),
               heading: resolvedHeading,
               trail: updatedTrail,
+              activeSos: sosByDriverId[driver.driverId] || null,
               lastUpdate: new Date(driver.lastUpdate || Date.now()),
             };
           });
@@ -203,10 +150,13 @@ export function AdminRadar() {
   }, []);
 
   useEffect(() => {
-    fetchOnlineDrivers();
-    const syncTimer = setInterval(fetchOnlineDrivers, 15000);
-    return () => clearInterval(syncTimer);
-  }, [fetchOnlineDrivers]);
+    fetchOnlineDriversAndSos();
+    const syncTimer = setInterval(fetchOnlineDriversAndSos, 12000);
+    return () => {
+      clearInterval(syncTimer);
+      emergencySiren.stopContinuous();
+    };
+  }, [fetchOnlineDriversAndSos]);
 
   useEffect(() => {
     const token = localStorage.getItem('@bai245:admin_token');
@@ -276,34 +226,79 @@ export function AdminRadar() {
       });
     });
 
+    socket.on('admin:sos_alert', (sos: any) => {
+      emergencySiren.startContinuous();
+      const targetDriverId = sos?.driverId || sos?.ride?.driverId || sos?.driver?.id || null;
+      const lat = Number(sos?.lat ?? sos?.latitude ?? 11.8632);
+      const lng = Number(sos?.lng ?? sos?.longitude ?? -15.5977);
+
+      if (targetDriverId) {
+        setDrivers((prev) => {
+          const existing = prev[targetDriverId];
+          return {
+            ...prev,
+            [targetDriverId]: {
+              driverId: targetDriverId,
+              fullName: existing?.fullName || sos?.driverName || sos?.driver?.fullName || 'Motorista em Emergência',
+              phone: existing?.phone || sos?.phone || sos?.driver?.phone || '',
+              vehiclePlate: existing?.vehiclePlate || sos?.vehiclePlate || sos?.driver?.vehiclePlate || '',
+              vehicleBrand: existing?.vehicleBrand || sos?.vehicleModel || sos?.driver?.vehicleBrand || '',
+              vehicleType: existing?.vehicleType || sos?.driver?.vehicleType || 'PARTICULAR',
+              vehicleColor: existing?.vehicleColor || sos?.vehicleColor || sos?.driver?.vehicleColor || 'Vermelho',
+              latitude: lat || existing?.latitude || 11.8632,
+              longitude: lng || existing?.longitude || -15.5977,
+              heading: existing?.heading || 0,
+              status: 'ON_RIDE',
+              activeSos: {
+                id: sos?.id || sos?.sosId || `sos-${Date.now()}`,
+                userType: sos?.userType || 'DRIVER',
+                lat,
+                lng,
+                audioUrl: sos?.audioUrl || null,
+                createdAt: sos?.createdAt || new Date().toISOString(),
+                passengerName: sos?.passengerName || sos?.passenger?.fullName || null,
+                phone: sos?.phone || sos?.passenger?.phone || sos?.driver?.phone || null,
+              },
+              lastUpdate: new Date(),
+            },
+          };
+        });
+        setSelectedDriverId(targetDriverId);
+        setFollowSelected(true);
+      } else {
+        setOrphanSosAlerts((prev) => [sos, ...prev]);
+      }
+
+      if (mapRef.current && Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0) {
+        mapRef.current.flyTo({ center: [lng, lat], zoom: 16.5, duration: 1100 });
+      }
+    });
+
+    socket.on('admin:sos_resolved', (evt: any) => {
+      if (evt?.driverId) {
+        setDrivers((prev) => {
+          if (!prev[evt.driverId]) return prev;
+          return {
+            ...prev,
+            [evt.driverId]: { ...prev[evt.driverId], activeSos: null },
+          };
+        });
+      }
+      setOrphanSosAlerts((prev) => prev.filter((item) => item.id !== evt?.sosId));
+      fetchOnlineDriversAndSos();
+    });
+
     return () => {
       socket.disconnect();
     };
-  }, []);
-
-  useEffect(() => {
-    const cleanupInterval = setInterval(() => {
-      const now = Date.now();
-      setDrivers((prev) => {
-        const updated = { ...prev };
-        let hasChanges = false;
-        Object.keys(updated).forEach((id) => {
-          if (now - new Date(updated[id].lastUpdate).getTime() > 120000) {
-            delete updated[id];
-            hasChanges = true;
-          }
-        });
-        return hasChanges ? updated : prev;
-      });
-    }, 30000);
-
-    return () => clearInterval(cleanupInterval);
-  }, []);
+  }, [fetchOnlineDriversAndSos]);
 
   const driverList = Object.values(drivers);
   const totalOnline = driverList.length;
   const onRideCount = driverList.filter((d) => d.status === 'ON_RIDE').length;
   const availableCount = totalOnline - onRideCount;
+  const sosDrivers = driverList.filter((d) => Boolean(d.activeSos));
+  const totalSosCount = sosDrivers.length + orphanSosAlerts.length;
   const selectedDriver = selectedDriverId ? drivers[selectedDriverId] || null : null;
 
   useEffect(() => {
@@ -320,6 +315,8 @@ export function AdminRadar() {
       const matchesFilter =
         filter === 'ALL'
           ? true
+          : filter === 'SOS'
+          ? Boolean(d.activeSos)
           : filter === 'AVAILABLE'
           ? d.status === 'AVAILABLE'
           : d.status === 'ON_RIDE';
@@ -342,8 +339,24 @@ export function AdminRadar() {
       mapRef.current.flyTo({
         center: [driver.longitude, driver.latitude],
         zoom: 16,
-        duration: 1200,
+        duration: 1100,
       });
+    }
+  };
+
+  const handleResolveSos = async (sosId: string, driverId?: string) => {
+    if (!window.confirm('Confirmar encerramento deste chamado de emergência SOS?')) return;
+    try {
+      await api.patch(`/admin/sos/${sosId}/status`, { status: 'RESOLVED' });
+      emergencySiren.stopContinuous();
+      if (driverId) {
+        setDrivers((prev) =>
+          prev[driverId] ? { ...prev, [driverId]: { ...prev[driverId], activeSos: null } } : prev
+        );
+      }
+      fetchOnlineDriversAndSos();
+    } catch {
+      alert('Falha ao encerrar incidente SOS.');
     }
   };
 
@@ -384,19 +397,52 @@ export function AdminRadar() {
     };
   }, [selectedDriver]);
 
+  const toggleSirenMute = () => {
+    const next = !sirenMuted;
+    setSirenMuted(next);
+    emergencySiren.setMuted(next);
+    if (!next && totalSosCount > 0) emergencySiren.startContinuous();
+  };
+
   return (
     <div style={styles.container}>
+      {totalSosCount > 0 && (
+        <div style={styles.emergencyBanner}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 20 }}>🚨</span>
+            <div>
+              <strong style={{ display: 'block', fontSize: 13, letterSpacing: 0.4 }}>
+                EMERGÊNCIA PRIORITÁRIA ATIVA ({totalSosCount} {totalSosCount === 1 ? 'OCORRÊNCIA' : 'OCORRÊNCIAS'})
+              </strong>
+              <span style={{ fontSize: 11, opacity: 0.92 }}>
+                {sosDrivers[0]
+                  ? `Veículo ${sosDrivers[0].vehiclePlate || ''} (${sosDrivers[0].fullName || 'Motorista'}) em alerta vermelho no radar`
+                  : 'Passageiro acionou SOS — localize no mapa imediato'}
+              </span>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {sosDrivers[0] && (
+              <button
+                type="button"
+                onClick={() => {
+                  handleSelectDriver(sosDrivers[0]);
+                  setFollowSelected(true);
+                }}
+                style={styles.bannerLocateBtn}
+              >
+                🎯 Localizar Veículo
+              </button>
+            )}
+            <button type="button" onClick={toggleSirenMute} style={styles.bannerMuteBtn}>
+              {sirenMuted ? '🔇 Ativar Sirene' : '🔊 Silenciar Sirene'}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div style={styles.mapContainer}>
-        <Map
-          ref={mapRef}
-          initialViewState={DEFAULT_CENTER}
-          mapStyle={
-            mapTheme === 'satellite'
-              ? 'mapbox://styles/mapbox/satellite-streets-v12'
-              : 'mapbox://styles/mapbox/streets-v12'
-          }
-          mapboxAccessToken={MAPBOX_TOKEN}
-          onDragStart={() => setFollowSelected(false)}
+         setFollowSelected(false)}
           style={{ width: '100%', height: '100%' }}
         >
           <NavigationControl position="bottom-right" />
@@ -407,7 +453,7 @@ export function AdminRadar() {
                 id="selected-driver-trail-line"
                 type="line"
                 paint={{
-                  'line-color': '#EAB308',
+                  'line-color': selectedDriver?.activeSos ? '#EF4444' : '#EAB308',
                   'line-width': 4,
                   'line-opacity': 0.85,
                   'line-dasharray': [2, 1],
@@ -418,6 +464,7 @@ export function AdminRadar() {
 
           {filteredDrivers.map((driver) => {
             const isRiding = driver.status === 'ON_RIDE';
+            const isEmergency = Boolean(driver.activeSos);
             const isSelected = selectedDriver?.driverId === driver.driverId;
 
             return (
@@ -432,7 +479,26 @@ export function AdminRadar() {
                 }}
               >
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
-                  {showLabels && (
+                  {isEmergency && (
+                    <div
+                      style={{
+                        backgroundColor: '#DC2626',
+                        color: '#FFFFFF',
+                        border: '1.5px solid #FEF2F2',
+                        borderRadius: 8,
+                        padding: '3px 8px',
+                        fontSize: 10,
+                        fontWeight: 900,
+                        marginBottom: 3,
+                        whiteSpace: 'nowrap',
+                        boxShadow: '0 4px 12px rgba(220,38,38,0.65)',
+                      }}
+                    >
+                      🚨 SOS PRIORITÁRIO • {driver.vehiclePlate || 'ALERTA'}
+                    </div>
+                  )}
+
+                  {!isEmergency && showLabels && (
                     <div
                       style={{
                         backgroundColor: isSelected ? '#0F172A' : 'rgba(15, 23, 42, 0.86)',
@@ -461,16 +527,43 @@ export function AdminRadar() {
                       justifyContent: 'center',
                     }}
                   >
-                    <TopDownVehicleIcon
+                    <TopDownVehicle3D
                       vehicleType={driver.vehicleType}
                       vehicleColor={driver.vehicleColor}
                       isRiding={isRiding}
+                      isEmergency={isEmergency}
+                      size={isEmergency ? 64 : 54}
                     />
                   </div>
                 </div>
               </Marker>
             );
           })}
+
+          {orphanSosAlerts.map((sos) => (
+            <Marker
+              key={`orphan-sos-${sos.id}`}
+              latitude={Number(sos.lat || 11.8632)}
+              longitude={Number(sos.lng || -15.5977)}
+              anchor="center"
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                <div
+                  style={{
+                    backgroundColor: '#DC2626',
+                    color: '#FFFFFF',
+                    padding: '4px 9px',
+                    borderRadius: 8,
+                    fontSize: 11,
+                    fontWeight: 900,
+                    boxShadow: '0 4px 14px rgba(220,38,38,0.7)',
+                  }}
+                >
+                  🚨 SOS PASSAGEIRO: {sos.passenger?.fullName || 'Urgente'}
+                </div>
+              </div>
+            </Marker>
+          ))}
 
           {selectedDriver && (
             <Popup
@@ -482,55 +575,120 @@ export function AdminRadar() {
               }}
               closeOnClick={false}
               anchor="bottom"
-              offset={30}
+              offset={34}
             >
-              <div style={styles.popupCard}>
+              <div
+                style={{
+                  ...styles.popupCard,
+                  border: selectedDriver.activeSos ? '2px solid #EF4444' : 'none',
+                  borderRadius: 10,
+                }}
+              >
+                {selectedDriver.activeSos && (
+                  <div
+                    style={{
+                      backgroundColor: '#DC2626',
+                      color: '#FFFFFF',
+                      padding: '6px 8px',
+                      borderRadius: 6,
+                      fontSize: 11,
+                      fontWeight: 900,
+                      marginBottom: 8,
+                    }}
+                  >
+                    🚨 ALERTA DE EMERGÊNCIA PRIORITÁRIO ({selectedDriver.activeSos.userType === 'PASSENGER' ? 'PASSAGEIRO' : 'MOTORISTA'})
+                  </div>
+                )}
+
                 <div style={styles.popupHeader}>
                   <span style={styles.driverName}>{selectedDriver.fullName || 'Motorista sem nome'}</span>
                   <span
                     style={{
                       ...styles.statusBadgePopup,
-                      backgroundColor: selectedDriver.status === 'ON_RIDE' ? '#DBEAFE' : '#D1FAE5',
-                      color: selectedDriver.status === 'ON_RIDE' ? '#1E40AF' : '#065F46',
+                      backgroundColor: selectedDriver.activeSos
+                        ? '#FEE2E2'
+                        : selectedDriver.status === 'ON_RIDE'
+                        ? '#DBEAFE'
+                        : '#D1FAE5',
+                      color: selectedDriver.activeSos
+                        ? '#B91C1C'
+                        : selectedDriver.status === 'ON_RIDE'
+                        ? '#1E40AF'
+                        : '#065F46',
                     }}
                   >
-                    {selectedDriver.status === 'ON_RIDE' ? 'Em Corrida' : 'Livre'}
+                    {selectedDriver.activeSos ? 'EMERGÊNCIA SOS' : selectedDriver.status === 'ON_RIDE' ? 'Em Corrida' : 'Livre'}
                   </span>
                 </div>
 
                 <div style={styles.popupBody}>
                   <p>
-                    <strong>Telefone:</strong> {selectedDriver.phone || 'N/A'}
+                    <strong>Telefone:</strong>{' '}
+                    <a href={`tel:${selectedDriver.activeSos?.phone || selectedDriver.phone}`} style={{ color: '#0F172A' }}>
+                      {selectedDriver.activeSos?.phone || selectedDriver.phone || 'N/A'}
+                    </a>
                   </p>
                   <p>
-                    <strong>Veículo:</strong> {selectedDriver.vehicleBrand || 'N/A'} ({selectedDriver.vehicleType || 'PARTICULAR'}){' '}
+                    <strong>Veículo:</strong> {selectedDriver.vehicleBrand || 'N/A'} ({selectedDriver.vehicleColor || selectedDriver.vehicleType || 'Particular'}){' '}
                     <span style={styles.plateTag}>{selectedDriver.vehiclePlate || 'N/A'}</span>
                   </p>
+                  {selectedDriver.activeSos?.passengerName && (
+                    <p style={{ color: '#B91C1C' }}>
+                      <strong>Passageiro em risco:</strong> {selectedDriver.activeSos.passengerName}
+                    </p>
+                  )}
                   {selectedDriver.status === 'ON_RIDE' && selectedDriver.destinationAddress && (
                     <p style={{ marginTop: 4, color: '#1E3A8A' }}>
                       <strong>Destino:</strong> {selectedDriver.destinationAddress}
                     </p>
                   )}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+                  {selectedDriver.activeSos?.audioUrl && (
+                    <audio
+                      controls
+                      src={`${BASE_SERVER_URL}${selectedDriver.activeSos.audioUrl}`}
+                      style={{ width: '100%', height: 30, marginTop: 6 }}
+                    />
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, gap: 6 }}>
                     <span style={styles.timeText}>
                       GPS: {new Date(selectedDriver.lastUpdate).toLocaleTimeString()}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => setFollowSelected((v) => !v)}
-                      style={{
-                        backgroundColor: followSelected ? '#EAB308' : '#0F172A',
-                        color: followSelected ? '#0F172A' : '#FFFFFF',
-                        border: 'none',
-                        borderRadius: 6,
-                        padding: '4px 8px',
-                        fontSize: 10,
-                        fontWeight: 800,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      {followSelected ? 'Seguindo ✓' : 'Seguir carro'}
-                    </button>
+                    <div style={{ display: 'flex', gap: 5 }}>
+                      {selectedDriver.activeSos && (
+                        <button
+                          type="button"
+                          onClick={() => handleResolveSos(selectedDriver.activeSos!.id, selectedDriver.driverId)}
+                          style={{
+                            backgroundColor: '#16A34A',
+                            color: '#FFFFFF',
+                            border: 'none',
+                            borderRadius: 6,
+                            padding: '4px 8px',
+                            fontSize: 10,
+                            fontWeight: 800,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          ✅ Resolver SOS
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setFollowSelected((v) => !v)}
+                        style={{
+                          backgroundColor: followSelected ? '#EAB308' : '#0F172A',
+                          color: followSelected ? '#0F172A' : '#FFFFFF',
+                          border: 'none',
+                          borderRadius: 6,
+                          padding: '4px 8px',
+                          fontSize: 10,
+                          fontWeight: 800,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {followSelected ? 'Seguindo ✓' : 'Seguir carro'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -538,8 +696,10 @@ export function AdminRadar() {
           )}
         </Map>
 
-        {/* Barra flutuante de controles operacionais no canto superior direito */}
         <div style={styles.mapToolbar}>
+          <button type="button" onClick={toggleSirenMute} style={styles.toolbarBtn}>
+            {sirenMuted ? '🔇 Som SOS Off' : '🔊 Som SOS On'}
+          </button>
           <button type="button" onClick={handleFitAllFleet} style={styles.toolbarBtn}>
             🗺️ Enquadrar Frota
           </button>
@@ -559,7 +719,7 @@ export function AdminRadar() {
       <div style={styles.overlayPanel}>
         <div style={styles.headerTitleRow}>
           <div>
-            <h2 style={styles.title}>Radar da Frota</h2>
+            <h2 style={styles.title}>Radar da Frota 3D</h2>
             <div style={styles.liveIndicator}>
               <span style={{ ...styles.dot, backgroundColor: isConnected ? '#10B981' : '#EF4444' }} />
               <span>{isConnected ? 'Telemetria Realtime Ativa' : 'Reconectando...'}</span>
@@ -567,7 +727,7 @@ export function AdminRadar() {
           </div>
         </div>
 
-        <div style={styles.statsRow}>
+        <div style={styles.statsRow4}>
           <div
             onClick={() => setFilter('ALL')}
             style={{ ...styles.statCard, borderColor: filter === 'ALL' ? '#0F172A' : '#E2E8F0' }}
@@ -589,7 +749,19 @@ export function AdminRadar() {
             style={{ ...styles.statCard, borderColor: filter === 'ON_RIDE' ? '#3B82F6' : '#E2E8F0' }}
           >
             <span style={{ ...styles.statVal, color: '#3B82F6' }}>{onRideCount}</span>
-            <span style={styles.statLbl}>Em Corrida</span>
+            <span style={styles.statLbl}>Corrida</span>
+          </div>
+
+          <div
+            onClick={() => setFilter('SOS')}
+            style={{
+              ...styles.statCard,
+              backgroundColor: totalSosCount > 0 ? '#FEF2F2' : '#F8FAFC',
+              borderColor: totalSosCount > 0 ? '#EF4444' : filter === 'SOS' ? '#EF4444' : '#E2E8F0',
+            }}
+          >
+            <span style={{ ...styles.statVal, color: '#DC2626' }}>{totalSosCount}</span>
+            <span style={{ ...styles.statLbl, color: '#DC2626' }}>SOS</span>
           </div>
         </div>
 
@@ -605,30 +777,44 @@ export function AdminRadar() {
           {filteredDrivers.length === 0 ? (
             <div style={styles.emptyText}>Nenhum veículo ativo encontrado no radar.</div>
           ) : (
-            filteredDrivers.map((driver) => (
-              <div
-                key={driver.driverId}
-                onClick={() => handleSelectDriver(driver)}
-                style={{
-                  ...styles.driverListItem,
-                  backgroundColor: selectedDriver?.driverId === driver.driverId ? '#F1F5F9' : '#FFFFFF',
-                  borderColor: selectedDriver?.driverId === driver.driverId ? '#0F172A' : '#E2E8F0',
-                }}
-              >
-                <div style={styles.driverListInfo}>
-                  <strong>{driver.fullName || 'Motorista'}</strong>
-                  <span style={styles.driverSubtext}>
-                    {driver.vehicleBrand || 'Veículo'} • {driver.vehiclePlate || 'Sem placa'}
-                  </span>
-                </div>
-                <span
+            filteredDrivers.map((driver) => {
+              const isSos = Boolean(driver.activeSos);
+              return (
+                <div
+                  key={driver.driverId}
+                  onClick={() => handleSelectDriver(driver)}
                   style={{
-                    ...styles.statusDot,
-                    backgroundColor: driver.status === 'ON_RIDE' ? '#3B82F6' : '#10B981',
+                    ...styles.driverListItem,
+                    backgroundColor: isSos
+                      ? '#FEF2F2'
+                      : selectedDriver?.driverId === driver.driverId
+                      ? '#F1F5F9'
+                      : '#FFFFFF',
+                    borderColor: isSos
+                      ? '#EF4444'
+                      : selectedDriver?.driverId === driver.driverId
+                      ? '#0F172A'
+                      : '#E2E8F0',
                   }}
-                />
-              </div>
-            ))
+                >
+                  <div style={styles.driverListInfo}>
+                    <strong>
+                      {isSos ? '🚨 ' : ''}
+                      {driver.fullName || 'Motorista'}
+                    </strong>
+                    <span style={styles.driverSubtext}>
+                      {driver.vehicleBrand || 'Veículo'} • {driver.vehiclePlate || 'Sem placa'}
+                    </span>
+                  </div>
+                  <span
+                    style={{
+                      ...styles.statusDot,
+                      backgroundColor: isSos ? '#EF4444' : driver.status === 'ON_RIDE' ? '#3B82F6' : '#10B981',
+                    }}
+                  />
+                </div>
+              );
+            })
           )}
         </div>
       </div>
@@ -645,6 +831,44 @@ const styles = {
     overflow: 'hidden',
     fontFamily: 'Inter, system-ui, sans-serif',
   },
+  emergencyBanner: {
+    position: 'absolute' as const,
+    top: '12px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    zIndex: 30,
+    backgroundColor: '#DC2626',
+    color: '#FFFFFF',
+    border: '2px solid #FECACA',
+    borderRadius: '14px',
+    padding: '10px 16px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '16px',
+    boxShadow: '0 14px 30px rgba(220, 38, 38, 0.55)',
+    maxWidth: '92%',
+  },
+  bannerLocateBtn: {
+    backgroundColor: '#FFFFFF',
+    color: '#B91C1C',
+    border: 'none',
+    borderRadius: '8px',
+    padding: '7px 11px',
+    fontSize: '11px',
+    fontWeight: '900',
+    cursor: 'pointer',
+  },
+  bannerMuteBtn: {
+    backgroundColor: '#7F1D1D',
+    color: '#FFFFFF',
+    border: '1px solid rgba(255,255,255,0.35)',
+    borderRadius: '8px',
+    padding: '7px 11px',
+    fontSize: '11px',
+    fontWeight: '800',
+    cursor: 'pointer',
+  },
   mapContainer: {
     width: '100%',
     height: '100%',
@@ -655,6 +879,7 @@ const styles = {
     right: '12px',
     display: 'flex',
     gap: '8px',
+    flexWrap: 'wrap' as const,
     zIndex: 10,
   },
   toolbarBtn: {
@@ -662,8 +887,8 @@ const styles = {
     color: '#F8FAFC',
     border: '1px solid rgba(255,255,255,0.16)',
     borderRadius: '10px',
-    padding: '8px 12px',
-    fontSize: '12px',
+    padding: '8px 11px',
+    fontSize: '11px',
     fontWeight: '700',
     cursor: 'pointer',
     boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
@@ -688,17 +913,17 @@ const styles = {
   title: { margin: 0, fontSize: '18px', fontWeight: '800', color: '#0F172A' },
   liveIndicator: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#64748B', marginTop: '2px' },
   dot: { width: '8px', height: '8px', borderRadius: '50%' },
-  statsRow: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' },
+  statsRow4: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '6px' },
   statCard: {
     backgroundColor: '#F8FAFC',
-    padding: '8px 6px',
+    padding: '8px 4px',
     borderRadius: '10px',
     border: '2px solid #E2E8F0',
     cursor: 'pointer',
     textAlign: 'center' as const,
     transition: 'all 0.2s',
   },
-  statVal: { fontSize: '16px', fontWeight: '800', color: '#0F172A', display: 'block' },
+  statVal: { fontSize: '15px', fontWeight: '800', color: '#0F172A', display: 'block' },
   statLbl: { fontSize: '9px', fontWeight: '700', color: '#64748B', textTransform: 'uppercase' as const },
   searchInput: {
     padding: '10px 14px',
@@ -708,21 +933,21 @@ const styles = {
     outline: 'none',
     backgroundColor: '#F8FAFC',
   },
-  driverList: { overflowY: 'auto' as const, display: 'flex', flexDirection: 'column' as const, gap: '8px', maxHeight: '240px' },
+  driverList: { overflowY: 'auto' as const, display: 'flex', flexDirection: 'column' as const, gap: '8px', maxHeight: '230px' },
   driverListItem: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: '10px 12px',
     borderRadius: '10px',
-    border: '1px solid #E2E8F0',
+    border: '1.5px solid #E2E8F0',
     cursor: 'pointer',
     transition: 'background-color 0.2s',
   },
   driverListInfo: { display: 'flex', flexDirection: 'column' as const, fontSize: '13px', color: '#0F172A' },
   driverSubtext: { fontSize: '11px', color: '#64748B' },
   statusDot: { width: '10px', height: '10px', borderRadius: '50%' },
-  popupCard: { minWidth: '210px', padding: '4px' },
+  popupCard: { minWidth: '225px', padding: '6px' },
   popupHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '8px' },
   driverName: { fontWeight: '800', fontSize: '13px', color: '#0F172A' },
   statusBadgePopup: { fontSize: '10px', fontWeight: '800', padding: '2px 8px', borderRadius: '12px' },
