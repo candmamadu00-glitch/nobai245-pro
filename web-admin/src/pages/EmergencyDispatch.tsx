@@ -294,9 +294,10 @@ export function EmergencyDispatch() {
         </div>
       )}
 
-      <div style={{ flex: 1, display: 'flex', position: 'relative', overflow: 'hidden' }}>
+      <style>{`@media (max-width: 768px) { .em-body { flex-direction: column-reverse !important; } .em-aside { width: 100% !important; height: 44% !important; border-right: none !important; border-top: 1px solid #1E293B !important; } .em-map { height: 56% !important; } }`}</style>
+      <div className="em-body" style={{ flex: 1, display: 'flex', position: 'relative', overflow: 'hidden' }}>
         {/* Lista lateral de Emergências & Veículos */}
-        <aside style={{ width: 320, background: '#0F172A', borderRight: '1px solid #1E293B', padding: 14, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <aside className="em-aside" style={{ width: 320, background: '#0F172A', borderRight: '1px solid #1E293B', padding: 14, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ fontSize: 11, fontWeight: 800, color: '#94A3B8', textTransform: 'uppercase' }}>
             Chamados SOS Prioritários ({sosAlerts.length})
           </div>
@@ -382,7 +383,7 @@ export function EmergencyDispatch() {
         </aside>
 
         {/* Mapa de Radar em Tempo Real */}
-        <div style={{ flex: 1, position: 'relative' }}>
+        <div className="em-map" style={{ flex: 1, position: 'relative' }}>
           <Map
             ref={mapRef}
             initialViewState={{ latitude: 11.8632, longitude: -15.5977, zoom: 13 }}

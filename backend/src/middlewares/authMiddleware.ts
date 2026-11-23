@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt, { JwtPayload } from 'jsonwebtoken';
 import { Role } from '@prisma/client';
 
-export type UserRole = 'PASSENGER' | 'DRIVER' | 'ADMIN' | 'SUPER_ADMIN' | 'OPERATOR' | 'FINANCE';
+export type UserRole = 'PASSENGER' | 'DRIVER' | 'ADMIN' | 'SUPER_ADMIN' | 'OPERATOR' | 'FINANCE' | 'EMERGENCY_AGENCY';
 
 export interface UserPayload extends JwtPayload {
   id: string;

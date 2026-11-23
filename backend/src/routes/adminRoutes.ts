@@ -188,25 +188,25 @@ adminRoutes.patch(
 // ------------------------------------------
 adminRoutes.get(
   '/dashboard/metrics', 
-  authorizeRole(['SUPER_ADMIN', 'OPERATOR', 'FINANCE']), 
+  authorizeRole(['SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'FINANCE', 'EMERGENCY_AGENCY']), 
   (req, res) => AdminDashboardController.getMetrics(req, res)
 );
 
 adminRoutes.get(
   '/rides', 
-  authorizeRole(['SUPER_ADMIN', 'OPERATOR', 'FINANCE']), 
+  authorizeRole(['SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'FINANCE', 'EMERGENCY_AGENCY']), 
   (req, res) => AdminDashboardController.getRides(req, res)
 );
 
 adminRoutes.get(
   '/rides/:rideId/chat', 
-  authorizeRole(['SUPER_ADMIN', 'OPERATOR', 'FINANCE']), 
+  authorizeRole(['SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'FINANCE', 'EMERGENCY_AGENCY']), 
   (req, res) => AdminDashboardController.getRideChat(req, res)
 );
 
 adminRoutes.get(
   '/rides/:rideId/telemetry', 
-  authorizeRole(['SUPER_ADMIN', 'OPERATOR', 'FINANCE']), 
+  authorizeRole(['SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'FINANCE', 'EMERGENCY_AGENCY']), 
   (req, res) => AdminDashboardController.getRideTelemetry(req, res)
 );
 
@@ -225,13 +225,13 @@ adminRoutes.patch(
 
 adminRoutes.get(
   '/drivers', 
-  authorizeRole(['SUPER_ADMIN', 'OPERATOR', 'FINANCE']), 
+  authorizeRole(['SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'FINANCE', 'EMERGENCY_AGENCY']), 
   (req, res) => adminController.listDrivers(req, res)
 );
 
 adminRoutes.get(
   '/drivers/online', 
-  authorizeRole(['SUPER_ADMIN', 'OPERATOR', 'FINANCE']), 
+  authorizeRole(['SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'FINANCE', 'EMERGENCY_AGENCY']), 
   (req, res) => adminController.getOnlineDrivers(req, res)
 );
 
@@ -243,7 +243,7 @@ adminRoutes.patch(
 
 adminRoutes.get(
   '/passengers', 
-  authorizeRole(['SUPER_ADMIN', 'OPERATOR', 'FINANCE']), 
+  authorizeRole(['SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'FINANCE', 'EMERGENCY_AGENCY']), 
   (req, res) => adminController.listPassengers(req, res)
 );
 
@@ -255,19 +255,19 @@ adminRoutes.patch(
 
 adminRoutes.get(
   '/settings/system', 
-  authorizeRole(['SUPER_ADMIN', 'OPERATOR', 'FINANCE']), 
+  authorizeRole(['SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'FINANCE', 'EMERGENCY_AGENCY']), 
   (req, res) => AdminSettingsController.getSystemConfig(req, res)
 );
 
 adminRoutes.get(
   '/settings/tariffs', 
-  authorizeRole(['SUPER_ADMIN', 'OPERATOR', 'FINANCE']), 
+  authorizeRole(['SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'FINANCE', 'EMERGENCY_AGENCY']), 
   (req, res) => AdminSettingsController.getTariffs(req, res)
 );
 
 adminRoutes.get(
   '/ratings', 
-  authorizeRole(['SUPER_ADMIN', 'OPERATOR', 'FINANCE']), 
+  authorizeRole(['SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'FINANCE', 'EMERGENCY_AGENCY']), 
   (req, res) => AdminRatingController.listRatings(req, res)
 );
 
@@ -446,12 +446,12 @@ adminRoutes.get('/enterprise/antifraud/scan', authorizeRole(['SUPER_ADMIN', 'OPE
 adminRoutes.post('/enterprise/blacklist', authorizeRole(['SUPER_ADMIN', 'OPERATOR']), (req, res) => AdminScaleController.addBlacklistEntry(req, res));
 adminRoutes.delete('/enterprise/blacklist/:id', authorizeRole(['SUPER_ADMIN']), (req, res) => AdminScaleController.removeBlacklistEntry(req, res));
 
-adminRoutes.get('/enterprise/zones', authorizeRole(['SUPER_ADMIN', 'OPERATOR', 'FINANCE']), (req, res) => AdminScaleController.listZones(req, res));
+adminRoutes.get('/enterprise/zones', authorizeRole(['SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'FINANCE', 'EMERGENCY_AGENCY']), (req, res) => AdminScaleController.listZones(req, res));
 adminRoutes.post('/enterprise/zones', authorizeRole(['SUPER_ADMIN']), (req, res) => AdminScaleController.createZone(req, res));
 adminRoutes.patch('/enterprise/zones/:id/toggle', authorizeRole(['SUPER_ADMIN']), (req, res) => AdminScaleController.toggleZone(req, res));
 adminRoutes.delete('/enterprise/zones/:id', authorizeRole(['SUPER_ADMIN']), (req, res) => AdminScaleController.deleteZone(req, res));
 
-adminRoutes.get('/enterprise/missions', authorizeRole(['SUPER_ADMIN', 'OPERATOR', 'FINANCE']), (req, res) => AdminScaleController.listMissions(req, res));
+adminRoutes.get('/enterprise/missions', authorizeRole(['SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'FINANCE', 'EMERGENCY_AGENCY']), (req, res) => AdminScaleController.listMissions(req, res));
 adminRoutes.post('/enterprise/missions', authorizeRole(['SUPER_ADMIN']), (req, res) => AdminScaleController.createMission(req, res));
 adminRoutes.post('/enterprise/missions/:id/payout', authorizeRole(['SUPER_ADMIN', 'FINANCE']), (req, res) => AdminScaleController.payoutQualifiedMission(req, res));
 
