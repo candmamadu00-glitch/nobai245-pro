@@ -32,6 +32,7 @@ import { CancelModal } from '../components/CancelModal';
 import { RatingModal } from '../components/RatingModal';
 import { ChatModal } from '../components/ChatModal';
 import { InAppCallModal, CallDirection } from '../components/InAppCallModal';
+import { SOSModal } from '../components/SOSModal';
 import { api } from '../services/api';
 import { registerAndSendPushToken } from '../services/notifications';
 import { updateOngoingRideNotification, dismissOngoingRideNotification } from '../services/ongoingNotification';
@@ -3094,30 +3095,11 @@ const handleOpenChat = () => {
     }, 160);
   }
 
+  const [showSosModal, setShowSosModal] = useState(false);
+
   const handleSosPress = () => {
-    Alert.alert(
-      t('emergency_sos', 'SOS / Emergência 🚨'),
-      t('choose_emergency_service', 'Selecione o serviço de emergência que deseja contactar:'),
-      [
-        {
-          text: '🚨 Central de Segurança (112)',
-          onPress: () => Linking.openURL('tel:112').catch(() => {})
-        },
-        {
-          text: '🚒 Bombeiros (1313)',
-          onPress: () => Linking.openURL('tel:1313').catch(() => {})
-        },
-        {
-          text: '🚑 Saúde / Ambulância (1919)',
-          onPress: () => Linking.openURL('tel:1919').catch(() => {})
-        },
-        {
-          text: t('back_btn', 'Cancelar'),
-          style: 'cancel'
-        },
-      ],
-      { cancelable: true }
-    );
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
+    setShowSosModal(true);
   };
 
   const safeCenterCoordinate = useMemo(() => {
@@ -5816,6 +5798,13 @@ const handleOpenChat = () => {
           callLogId={activeCallLogId}
         />
       )}
+
+      {/* 🛡️ CENTRAL DE EMERGÊNCIA SOS */}
+      <SOSModal
+        visible={showSosModal}
+        onClose={() => setShowSosModal(false)}
+        currentRideId={activeRideId || undefined}
+      />
 
       {/* 🛑 MODAL DE CANCELAMENTO */}
       <CancelModal

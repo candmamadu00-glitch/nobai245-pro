@@ -96,25 +96,46 @@ const activeSocket = socket?.connected ? socket : null;
   }, []);
 
   useEffect(() => {
-    if (!selectedTicket || !socket) return;
+    if (!selectedTicket) return;
 
-    socket.emit?.('ticket:join', { ticketId: selectedTicket.id });
+    socket?.emit?.('ticket:join', { ticketId: selectedTicket.id });
 
-    const handleReceiveMessage = (newMessage: TicketMessage) => {
-      if (!newMessage) return;
+    const handleReceiveMessage = (incoming: TicketMessage & { ticketId?: string }) => {
+      if (!incoming) return;
+      if (incoming.ticketId && String(incoming.ticketId) !== String(selectedTicket.id)) return;
+
       setChatMessages((prev) => {
-        if (newMessage.id && prev.some((m) => m.id === newMessage.id)) return prev;
-        return [...prev, newMessage];
+        if (incoming.id && prev.some((m) => m.id === incoming.id)) return prev;
+        const filtered = prev.filter(
+          (m) => !(m.id?.startsWith('temp_') && m.message === incoming.message && m.sender === incoming.sender)
+        );
+        return [...filtered, incoming];
       });
+
+      setTickets((prev) =>
+        prev.map((t) => {
+          if (t.id !== selectedTicket.id) return t;
+          const existing = t.messages || [];
+          if (incoming.id && existing.some((m) => m.id === incoming.id)) return t;
+          return { ...t, messages: [...existing, incoming] };
+        })
+      );
+
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
     };
 
-    socket.on?.('ticket:receive_message', handleReceiveMessage);
+    socket?.on?.('ticket:receive_message', handleReceiveMessage);
+
+    const pollInterval = setInterval(() => {
+      fetchTickets();
+    }, 8000);
 
     return () => {
-      socket.off?.('ticket:receive_message', handleReceiveMessage);
+      socket?.emit?.('ticket:leave', { ticketId: selectedTicket.id });
+      socket?.off?.('ticket:receive_message', handleReceiveMessage);
+      clearInterval(pollInterval);
     };
-  }, [selectedTicket, socket]);
+  }, [selectedTicket]);
 
   const handleCreateTicket = async () => {
     if (description.trim().length < 10) {
@@ -152,27 +173,52 @@ const activeSocket = socket?.connected ? socket : null;
     if (!inputMessage.trim() || !selectedTicket) return;
 
     const messageText = inputMessage.trim();
+    const ticketId = selectedTicket.id;
+    const tempId = `temp_${Date.now()}`;
     setInputMessage('');
 
-    if (socket && socket.connected) {
-      socket.emit('ticket:send_message', {
-        ticketId: selectedTicket.id,
+    const optimisticMsg: TicketMessage = {
+      id: tempId,
+      sender: 'DRIVER',
+      message: messageText,
+      createdAt: new Date().toISOString(),
+    };
+
+    setChatMessages((prev) => [...prev, optimisticMsg]);
+    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 80);
+
+    try {
+      const response = await api.post(`/drivers/tickets/${ticketId}/reply`, {
         message: messageText,
-        sender: 'DRIVER',
       });
-    } else {
-      try {
-        const response = await api.post(`/drivers/tickets/${selectedTicket.id}/reply`, {
+
+      const savedMsg: TicketMessage = response.data || optimisticMsg;
+
+      setChatMessages((prev) => {
+        const withoutTemp = prev.filter((m) => m.id !== tempId);
+        if (savedMsg.id && withoutTemp.some((m) => m.id === savedMsg.id)) return withoutTemp;
+        return [...withoutTemp, savedMsg];
+      });
+
+      setTickets((prev) =>
+        prev.map((t) => {
+          if (t.id !== ticketId) return t;
+          const existing = t.messages || [];
+          if (savedMsg.id && existing.some((m) => m.id === savedMsg.id)) return t;
+          return { ...t, messages: [...existing, savedMsg] };
+        })
+      );
+    } catch (error: any) {
+      if (socket && socket.connected) {
+        socket.emit('ticket:send_message', {
+          ticketId,
           message: messageText,
+          sender: 'DRIVER',
         });
-        if (response.data) {
-          setChatMessages((prev) => {
-            if (response.data.id && prev.some((m) => m.id === response.data.id)) return prev;
-            return [...prev, response.data];
-          });
-        }
-      } catch (error) {
-        Alert.alert('Erro', 'Falha ao enviar mensagem via rede.');
+      } else {
+        setChatMessages((prev) => prev.filter((m) => m.id !== tempId));
+        setInputMessage(messageText);
+        Alert.alert('Erro', error?.response?.data?.error || 'Falha ao enviar mensagem para o suporte.');
       }
     }
   };

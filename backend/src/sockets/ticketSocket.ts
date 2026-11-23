@@ -7,7 +7,19 @@ export function setupTicketSocketHandlers(io: Server, socket: Socket) {
     socket.join('admin_dashboard');
   });
 
-  socket.join(`ticket_${socket.id}`);
+  socket.on('ticket:join', (data: { ticketId?: string } | string) => {
+    const ticketId = typeof data === 'string' ? data : data?.ticketId;
+    if (ticketId) {
+      socket.join(`ticket_${String(ticketId)}`);
+    }
+  });
+
+  socket.on('ticket:leave', (data: { ticketId?: string } | string) => {
+    const ticketId = typeof data === 'string' ? data : data?.ticketId;
+    if (ticketId) {
+      socket.leave(`ticket_${String(ticketId)}`);
+    }
+  });
 
 // Atualização de localização do motorista
   socket.on('driver:update_location', async (data: { driverId: string; rideId?: string; latitude: number; longitude: number; heading?: number; speed?: number }) => {
@@ -57,14 +69,21 @@ export function setupTicketSocketHandlers(io: Server, socket: Socket) {
 
         if (!ticketId || !message?.trim()) return;
 
+        const authenticatedUserId = socket.data?.user?.id || data.senderId || data.userId || 'SYSTEM';
+
         const newMessage = await prisma.ticketMessage.create({
           data: {
             ticketId: String(ticketId),
             sender: sender,
-            senderId: String(data.senderId || data.userId || 'SYSTEM'),
+            senderId: String(authenticatedUserId),
             message: message.trim(),
           },
         });
+
+        await prisma.ticket.update({
+          where: { id: String(ticketId) },
+          data: { updatedAt: new Date() },
+        }).catch(() => {});
 
         if (sender === 'ADMIN') {
           await prisma.ticket.update({

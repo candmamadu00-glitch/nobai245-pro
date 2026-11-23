@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import './Tickets.css';
 import { api } from '../services/api';
+import { adminSocket } from '../services/adminSocket';
 
 interface TicketMessage {
   id: string;
@@ -29,28 +30,82 @@ export function Tickets() {
   const [replyMessage, setReplyMessage] = useState('');
   const [newStatus, setNewStatus] = useState('');
 
-  const fetchTickets = async () => {
+  const selectedTicketIdRef = useRef<string | null>(null);
+  selectedTicketIdRef.current = selectedTicket?.id || null;
+
+  const fetchTickets = useCallback(async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const response = await api.get('/admin/tickets');
       const data = response.data?.data || response.data || [];
       const list = Array.isArray(data) ? data : [];
       setTickets(list);
 
-      if (selectedTicket) {
-        const refreshed = list.find((t: Ticket) => t.id === selectedTicket.id);
+      if (selectedTicketIdRef.current) {
+        const refreshed = list.find((t: Ticket) => t.id === selectedTicketIdRef.current);
         if (refreshed) setSelectedTicket(refreshed);
       }
     } catch (error) {
       console.error('Erro ao buscar chamados:', error);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchTickets();
-  }, []);
+
+    const joinDashboard = () => {
+      adminSocket.emit('admin:join_dashboard');
+      if (selectedTicketIdRef.current) {
+        adminSocket.emit('ticket:join', { ticketId: selectedTicketIdRef.current });
+      }
+    };
+
+    if (adminSocket.connected) {
+      joinDashboard();
+    }
+
+    const handleRealtimeUpdate = () => {
+      fetchTickets(true);
+    };
+
+    const handleReceiveMessage = (msg: TicketMessage & { ticketId?: string }) => {
+      if (!msg) return;
+      if (msg.ticketId && msg.ticketId === selectedTicketIdRef.current) {
+        setSelectedTicket((prev) => {
+          if (!prev) return prev;
+          const existing = prev.messages || [];
+          if (msg.id && existing.some((m) => m.id === msg.id)) return prev;
+          return { ...prev, messages: [...existing, msg] };
+        });
+      }
+      fetchTickets(true);
+    };
+
+    adminSocket.on('connect', joinDashboard);
+    adminSocket.on('admin:ticket_updated', handleRealtimeUpdate);
+    adminSocket.on('admin:ticket_alert', handleRealtimeUpdate);
+    adminSocket.on('ticket:receive_message', handleReceiveMessage);
+
+    const interval = setInterval(() => fetchTickets(true), 8000);
+
+    return () => {
+      adminSocket.off('connect', joinDashboard);
+      adminSocket.off('admin:ticket_updated', handleRealtimeUpdate);
+      adminSocket.off('admin:ticket_alert', handleRealtimeUpdate);
+      adminSocket.off('ticket:receive_message', handleReceiveMessage);
+      clearInterval(interval);
+    };
+  }, [fetchTickets]);
+
+  useEffect(() => {
+    if (!selectedTicket?.id) return;
+    adminSocket.emit('ticket:join', { ticketId: selectedTicket.id });
+    return () => {
+      adminSocket.emit('ticket:leave', { ticketId: selectedTicket.id });
+    };
+  }, [selectedTicket?.id]);
 
   const handleReply = async (e: React.FormEvent) => {
     e.preventDefault();
