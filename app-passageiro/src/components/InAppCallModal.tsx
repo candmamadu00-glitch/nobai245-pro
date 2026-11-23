@@ -82,17 +82,34 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
 
   const [phase, setPhase] = useState<CallPhase>(initialDirection);
   const [statusLabel, setStatusLabel] = useState<string>(
-    initialDirection === 'incoming' ? 'Chamada de voz recebida...' : 'Chamando via canal seguro...'
+    initialDirection === 'incoming' ? 'Chamada de voz recebida...' : 'Chamando via canal protegido...'
   );
   const [elapsedSec, setElapsedSec] = useState<number>(0);
-  const [isRecordingVoice, setIsRecordingVoice] = useState<boolean>(false);
+  const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState<boolean>(true);
   const [isRemoteSpeaking, setIsRemoteSpeaking] = useState<boolean>(false);
   const [activeCallLogId, setActiveCallLogId] = useState<string | null>(initialCallLogId || null);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const elapsedRef = useRef<number>(0);
+  const phaseRef = useRef<CallPhase>(initialDirection);
+  const visibleRef = useRef<boolean>(visible);
+  const isMutedRef = useRef<boolean>(false);
+  const isSpeakerOnRef = useRef<boolean>(true);
   const isRecordingRef = useRef<boolean>(false);
+  const hasPermRef = useRef<boolean>(false);
+  const hasInitiatedSessionRef = useRef<boolean>(false);
+  const activeCallLogIdRef = useRef<string | null>(initialCallLogId || null);
+
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const socketRef = useRef(socket);
+  socketRef.current = socket;
+  const rideIdRef = useRef(rideId);
+  rideIdRef.current = rideId;
+  const currentRoleRef = useRef(currentRole);
+  currentRoleRef.current = currentRole;
+
   const playbackQueueRef = useRef<Array<{ id: string; base64: string }>>([]);
   const isPlayingQueueRef = useRef<boolean>(false);
   const currentPlayerRef = useRef<any>(null);
@@ -103,10 +120,36 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
   }, [elapsedSec]);
 
   useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+
+  useEffect(() => {
+    visibleRef.current = visible;
+  }, [visible]);
+
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
+
+  useEffect(() => {
+    isSpeakerOnRef.current = isSpeakerOn;
+  }, [isSpeakerOn]);
+
+  useEffect(() => {
     if (initialCallLogId) {
       setActiveCallLogId(initialCallLogId);
+      activeCallLogIdRef.current = initialCallLogId;
     }
   }, [initialCallLogId]);
+
+  const stopRecorderSafely = useCallback(async () => {
+    if (isRecordingRef.current) {
+      isRecordingRef.current = false;
+      try {
+        await audioRecorder.stop();
+      } catch {}
+    }
+  }, [audioRecorder]);
 
   const stopPlayback = useCallback(() => {
     playbackQueueRef.current = [];
@@ -123,23 +166,20 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
 
   const finishAndClose = useCallback(
     (label: string) => {
+      if (phaseRef.current === 'ended') return;
+      phaseRef.current = 'ended';
       Vibration.cancel();
       stopPlayback();
-      if (isRecordingRef.current) {
-        isRecordingRef.current = false;
-        setIsRecordingVoice(false);
-        try {
-          audioRecorder.stop();
-        } catch {}
-      }
+      stopRecorderSafely();
       setPhase('ended');
       setStatusLabel(label);
       if (closingTimeoutRef.current) clearTimeout(closingTimeoutRef.current);
       closingTimeoutRef.current = setTimeout(() => {
-        onClose();
-      }, 1300);
+        hasInitiatedSessionRef.current = false;
+        onCloseRef.current?.();
+      }, 1200);
     },
-    [audioRecorder, onClose, stopPlayback]
+    [stopPlayback, stopRecorderSafely]
   );
 
   useEffect(() => {
@@ -175,10 +215,11 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
   useEffect(() => {
     if (!visible || phase !== 'outgoing') return;
     const ringTimeout = setTimeout(() => {
-      if (socket && rideId) {
-        socket.emit('call:end', {
-          rideId,
-          callLogId: activeCallLogId,
+      if (phaseRef.current !== 'outgoing') return;
+      if (socketRef.current && rideIdRef.current) {
+        socketRef.current.emit('call:end', {
+          rideId: rideIdRef.current,
+          callLogId: activeCallLogIdRef.current,
           durationSec: 0,
           reason: 'no_answer',
         });
@@ -186,32 +227,51 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
       finishAndClose('Sem resposta');
     }, 35000);
     return () => clearTimeout(ringTimeout);
-  }, [visible, phase, socket, rideId, activeCallLogId, finishAndClose]);
+  }, [visible, phase, finishAndClose]);
 
   useEffect(() => {
     if (!visible) {
+      hasInitiatedSessionRef.current = false;
       Vibration.cancel();
       stopPlayback();
+      stopRecorderSafely();
       setElapsedSec(0);
+      setIsMuted(false);
+      isMutedRef.current = false;
       if (closingTimeoutRef.current) clearTimeout(closingTimeoutRef.current);
       return;
     }
 
+    if (hasInitiatedSessionRef.current) {
+      return;
+    }
+    hasInitiatedSessionRef.current = true;
+
+    phaseRef.current = initialDirection;
     setPhase(initialDirection);
     setElapsedSec(0);
+    setIsMuted(false);
+    isMutedRef.current = false;
     setStatusLabel(
       initialDirection === 'incoming'
         ? 'Chamada de voz segura recebida...'
         : 'Chamando via canal protegido...'
     );
 
-    if (initialDirection === 'outgoing' && socket && rideId) {
-      socket.emit(
+    AudioModule.requestRecordingPermissionsAsync()
+      .then((perm) => {
+        hasPermRef.current = Boolean(perm?.granted);
+      })
+      .catch(() => {});
+
+    if (initialDirection === 'outgoing' && socketRef.current && rideIdRef.current) {
+      socketRef.current.emit(
         'call:initiate',
-        { rideId, callerRole: currentRole },
+        { rideId: rideIdRef.current, callerRole: currentRoleRef.current },
         (ack?: { callLogId?: string; error?: boolean; message?: string }) => {
           if (ack?.callLogId) {
             setActiveCallLogId(ack.callLogId);
+            activeCallLogIdRef.current = ack.callLogId;
           }
           if (ack?.error) {
             finishAndClose(ack.message || 'Não foi possível completar a chamada');
@@ -219,7 +279,7 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
         }
       );
     }
-  }, [visible, initialDirection, socket, rideId, currentRole, finishAndClose, stopPlayback]);
+  }, [visible, initialDirection, finishAndClose, stopPlayback, stopRecorderSafely]);
 
   const processNextAudioChunk = useCallback(async () => {
     if (isPlayingQueueRef.current) return;
@@ -233,11 +293,12 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
     setIsRemoteSpeaking(true);
 
     try {
+      await stopRecorderSafely();
       await setIsAudioActiveAsync(true).catch(() => {});
       await setAudioModeAsync({
         playsInSilentMode: true,
         allowsRecording: false,
-        shouldRouteThroughEarpiece: !isSpeakerOn,
+        shouldRouteThroughEarpiece: !isSpeakerOnRef.current,
         interruptionMode: 'doNotMix',
         shouldPlayInBackground: false,
       }).catch(() => {});
@@ -272,7 +333,7 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
             if (st?.didJustFinish || st?.error) done();
           });
 
-          setTimeout(done, 15000);
+          setTimeout(done, 10000);
           try {
             player.play();
           } catch {
@@ -281,45 +342,134 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
         });
       }
     } catch {
-      // Ignora falha pontual
     } finally {
       isPlayingQueueRef.current = false;
-      if (playbackQueueRef.current.length > 0) {
+      if (playbackQueueRef.current.length > 0 && visibleRef.current && phaseRef.current === 'connected') {
         processNextAudioChunk();
       } else {
         setIsRemoteSpeaking(false);
       }
     }
-  }, [isSpeakerOn]);
+  }, [stopRecorderSafely]);
+
+  useEffect(() => {
+    if (!visible || phase !== 'connected' || isMuted) {
+      stopRecorderSafely();
+      return;
+    }
+
+    let cancelled = false;
+
+    const runVoiceLoop = async () => {
+      if (!hasPermRef.current) {
+        const perm = await AudioModule.requestRecordingPermissionsAsync().catch(() => null);
+        hasPermRef.current = Boolean(perm?.granted);
+      }
+      if (!hasPermRef.current || cancelled) return;
+
+      while (!cancelled && visibleRef.current && phaseRef.current === 'connected' && !isMutedRef.current) {
+        if (isPlayingQueueRef.current || playbackQueueRef.current.length > 0) {
+          await new Promise((r) => setTimeout(r, 180));
+          continue;
+        }
+
+        try {
+          await setIsAudioActiveAsync(true).catch(() => {});
+          await setAudioModeAsync({
+            allowsRecording: true,
+            playsInSilentMode: true,
+            shouldRouteThroughEarpiece: !isSpeakerOnRef.current,
+            interruptionMode: 'doNotMix',
+          }).catch(() => {});
+
+          await audioRecorder.prepareToRecordAsync(CALL_VOICE_PRESET);
+          audioRecorder.record();
+          isRecordingRef.current = true;
+
+          for (let step = 0; step < 7; step++) {
+            await new Promise((r) => setTimeout(r, 200));
+            if (
+              cancelled ||
+              !visibleRef.current ||
+              phaseRef.current !== 'connected' ||
+              isMutedRef.current ||
+              isPlayingQueueRef.current
+            ) {
+              break;
+            }
+          }
+
+          if (isRecordingRef.current) {
+            isRecordingRef.current = false;
+            await audioRecorder.stop().catch(() => {});
+            await new Promise((r) => setTimeout(r, 120));
+
+            const uri = audioRecorder?.uri || (audioRecorder as any)?.getStatus?.()?.url;
+            if (uri && socketRef.current && rideIdRef.current && !isMutedRef.current && phaseRef.current === 'connected') {
+              const info = await FileSystem.getInfoAsync(uri).catch(() => null);
+              if (info?.exists && (info?.size ?? 0) > 256) {
+                const base64Audio = await FileSystem.readAsStringAsync(uri, {
+                  encoding: FileSystem?.EncodingType?.Base64 || 'base64',
+                }).catch(() => '');
+
+                if (base64Audio && base64Audio.length > 200) {
+                  socketRef.current.emit('call:voice_chunk', {
+                    rideId: rideIdRef.current,
+                    senderRole: currentRoleRef.current,
+                    audioBase64: base64Audio,
+                  });
+                }
+              }
+            }
+          }
+        } catch {
+          isRecordingRef.current = false;
+          await new Promise((r) => setTimeout(r, 300));
+        }
+      }
+    };
+
+    runVoiceLoop();
+
+    return () => {
+      cancelled = true;
+      stopRecorderSafely();
+    };
+  }, [visible, phase, isMuted, audioRecorder, stopRecorderSafely]);
 
   useEffect(() => {
     if (!visible || !socket) return;
 
     const handleAccepted = (data: any) => {
-      if (data?.rideId && data.rideId !== rideId) return;
-      if (data?.callLogId) setActiveCallLogId(data.callLogId);
+      if (data?.rideId && String(data.rideId) !== String(rideIdRef.current)) return;
+      if (data?.callLogId) {
+        setActiveCallLogId(data.callLogId);
+        activeCallLogIdRef.current = data.callLogId;
+      }
       Vibration.cancel();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      phaseRef.current = 'connected';
       setPhase('connected');
       setStatusLabel('Chamada conectada • Áudio protegido');
     };
 
     const handleRejected = (data: any) => {
-      if (data?.rideId && data.rideId !== rideId) return;
+      if (data?.rideId && String(data.rideId) !== String(rideIdRef.current)) return;
       finishAndClose('Chamada recusada');
     };
 
     const handleEnded = (data: any) => {
-      if (data?.rideId && data.rideId !== rideId) return;
+      if (data?.rideId && String(data.rideId) !== String(rideIdRef.current)) return;
       finishAndClose('Chamada encerrada');
     };
 
     const handleVoiceChunk = (data: any) => {
-      if (data?.rideId && data.rideId !== rideId) return;
-      if (data?.senderRole === currentRole) return;
+      if (data?.rideId && String(data.rideId) !== String(rideIdRef.current)) return;
+      if (data?.senderRole === currentRoleRef.current) return;
       if (!data?.audioBase64) return;
 
-      if (phase !== 'connected') {
+      if (phaseRef.current !== 'connected' && phaseRef.current !== 'ended') {
+        phaseRef.current = 'connected';
         setPhase('connected');
         setStatusLabel('Chamada conectada • Áudio protegido');
       }
@@ -342,242 +492,148 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
       socket.off('call:ended', handleEnded);
       socket.off('call:voice_chunk', handleVoiceChunk);
     };
-  }, [visible, socket, rideId, currentRole, phase, finishAndClose, processNextAudioChunk]);
+  }, [visible, socket, finishAndClose, processNextAudioChunk]);
 
   const handleAcceptCall = async () => {
     Vibration.cancel();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    await AudioModule.requestRecordingPermissionsAsync().catch(() => {});
+    const perm = await AudioModule.requestRecordingPermissionsAsync().catch(() => null);
+    hasPermRef.current = Boolean(perm?.granted);
+    phaseRef.current = 'connected';
     setPhase('connected');
     setStatusLabel('Chamada conectada • Áudio protegido');
-    socket?.emit('call:accept', {
-      rideId,
-      callLogId: activeCallLogId,
-      accepterRole: currentRole,
+    socketRef.current?.emit('call:accept', {
+      rideId: rideIdRef.current,
+      callLogId: activeCallLogIdRef.current,
+      accepterRole: currentRoleRef.current,
     });
   };
 
   const handleRejectCall = () => {
     Vibration.cancel();
-    socket?.emit('call:reject', {
-      rideId,
-      callLogId: activeCallLogId,
-      rejecterRole: currentRole,
+    socketRef.current?.emit('call:reject', {
+      rideId: rideIdRef.current,
+      callLogId: activeCallLogIdRef.current,
+      rejecterRole: currentRoleRef.current,
     });
     finishAndClose('Chamada recusada');
   };
 
   const handleHangup = () => {
-    socket?.emit('call:end', {
-      rideId,
-      callLogId: activeCallLogId,
+    socketRef.current?.emit('call:end', {
+      rideId: rideIdRef.current,
+      callLogId: activeCallLogIdRef.current,
       durationSec: elapsedRef.current,
-      endedBy: currentRole,
+      endedBy: currentRoleRef.current,
     });
     finishAndClose('Chamada encerrada');
   };
 
-  const startSpeaking = async () => {
-    if (isRecordingRef.current || phase !== 'connected') return;
-    try {
-      const perm = await AudioModule.requestRecordingPermissionsAsync();
-      if (!perm?.granted) return;
-
-      stopPlayback();
-      await setIsAudioActiveAsync(true).catch(() => {});
-      await setAudioModeAsync({
-        allowsRecording: true,
-        playsInSilentMode: true,
-        shouldRouteThroughEarpiece: !isSpeakerOn,
-        interruptionMode: 'doNotMix',
-      }).catch(() => {});
-
-      await audioRecorder.prepareToRecordAsync();
-      audioRecorder.record();
-      isRecordingRef.current = true;
-      setIsRecordingVoice(true);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    } catch {
-      isRecordingRef.current = false;
-      setIsRecordingVoice(false);
-    }
-  };
-
-  const stopSpeakingAndSend = async () => {
-    if (!isRecordingRef.current) return;
-    isRecordingRef.current = false;
-    setIsRecordingVoice(false);
-
-    try {
-      await audioRecorder.stop();
-      await new Promise((r) => setTimeout(r, 120));
-    } catch {}
-
-    try {
-      await setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-        shouldRouteThroughEarpiece: !isSpeakerOn,
-        interruptionMode: 'doNotMix',
-      }).catch(() => {});
-
-      const uri = audioRecorder?.uri || (audioRecorder as any)?.getStatus?.()?.url;
-      if (!uri || !socket || !rideId) return;
-
-      const base64Audio = await FileSystem.readAsStringAsync(uri, {
-        encoding: FileSystem?.EncodingType?.Base64 || 'base64',
-      });
-
-      if (base64Audio && base64Audio.length > 120) {
-        socket.emit('call:voice_chunk', {
-          rideId,
-          senderRole: currentRole,
-          audioBase64: base64Audio,
-        });
-      }
-      FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
-    } catch {}
-  };
-
   const formatTimer = (sec: number) => {
-    const m = Math.floor(sec / 60)
-      .toString()
-      .padStart(2, '0');
-    const s = (sec % 60).toString().padStart(2, '0');
-    return `${m}:${s}`;
+    const mins = String(Math.floor(sec / 60)).padStart(2, '0');
+    const rem = String(sec % 60).padStart(2, '0');
+    return `${mins}:${rem}`;
   };
-
-  if (!visible) return null;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={handleHangup}>
-      <View
-        style={[
-          styles.container,
-          {
-            paddingTop: Math.max(insets.top + 16, 42),
-            paddingBottom: Math.max(insets.bottom + 24, 36),
-          },
-        ]}
-      >
+    <Modal visible={visible} animationType="fade" transparent={false} onRequestClose={handleHangup}>
+      <View style={[styles.container, { paddingTop: Math.max(insets.top + 20, 44), paddingBottom: Math.max(insets.bottom + 24, 36) }]}>
         <View style={styles.privacyBadge}>
-          <Ionicons name="shield-checkmark" size={15} color="#10B981" />
-          <Text style={styles.privacyBadgeText}>
-            Número oculto • Chamada segura Nô Bai 245
-          </Text>
+          <Ionicons name="shield-checkmark" size={16} color="#22C55E" />
+          <Text style={styles.privacyBadgeText}>Chamada Segura Nô Bai 245 • Número Protegido</Text>
         </View>
 
-        <View style={styles.profileSection}>
-          <Animated.View
-            style={[
-              styles.avatarPulseRing,
-              {
-                transform: [{ scale: pulseAnim }],
-                borderColor:
-                  phase === 'connected'
-                    ? isRemoteSpeaking
-                      ? '#10B981'
-                      : 'rgba(16, 185, 129, 0.35)'
-                    : 'rgba(234, 179, 8, 0.45)',
-              },
-            ]}
-          >
-            <View style={styles.avatarCircle}>
-              {otherUserPhoto ? (
-                <Image source={{ uri: otherUserPhoto }} style={styles.avatarImage} />
-              ) : (
-                <Ionicons name="person" size={52} color="#94A3B8" />
-              )}
-            </View>
+        <View style={styles.centerBlock}>
+          <Animated.View style={[styles.pulseRing, { transform: [{ scale: pulseAnim }] }]}>
+            {otherUserPhoto ? (
+              <Image source={{ uri: otherUserPhoto }} style={styles.avatar} />
+            ) : (
+              <View style={styles.avatarFallback}>
+                <Ionicons name="person" size={52} color="#EAB308" />
+              </View>
+            )}
           </Animated.View>
 
-          <Text style={styles.userName}>{otherUserName || 'Usuário Nô Bai 245'}</Text>
-          <Text style={styles.roleTag}>
-            {currentRole === 'driver' ? 'Passageiro da corrida' : 'Motorista parceiro'}
-          </Text>
-
+          <Text style={styles.userName}>{otherUserName || (currentRole === 'driver' ? 'Passageiro' : 'Motorista')}</Text>
           <Text style={styles.statusText}>{statusLabel}</Text>
+
           {phase === 'connected' && (
             <Text style={styles.timerText}>{formatTimer(elapsedSec)}</Text>
           )}
-        </View>
 
-        <View style={styles.centerControls}>
-          {phase === 'connected' ? (
-            <>
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPressIn={startSpeaking}
-                onPressOut={stopSpeakingAndSend}
-                style={[
-                  styles.pttButton,
-                  isRecordingVoice && styles.pttButtonRecording,
-                ]}
-              >
-                <Ionicons
-                  name={isRecordingVoice ? 'radio' : 'mic'}
-                  size={42}
-                  color={isRecordingVoice ? '#FFFFFF' : '#0F172A'}
-                />
-              </TouchableOpacity>
-              <Text style={styles.pttHintTitle}>
-                {isRecordingVoice
-                  ? 'Falando agora... Solte para enviar'
+          {phase === 'connected' && (
+            <View style={styles.liveIndicator}>
+              <Ionicons
+                name={isMuted ? 'mic-off' : isRemoteSpeaking ? 'volume-high' : 'mic'}
+                size={16}
+                color={isMuted ? '#EF4444' : isRemoteSpeaking ? '#38BDF8' : '#22C55E'}
+              />
+              <Text style={styles.liveIndicatorText}>
+                {isMuted
+                  ? 'Seu microfone está silenciado'
                   : isRemoteSpeaking
-                  ? `${otherUserName} está falando...`
-                  : 'Segure o microfone para falar'}
-              </Text>
-              <Text style={styles.pttHintSub}>
-                Sua voz é transmitida pelo aplicativo sem revelar seu número
-              </Text>
-            </>
-          ) : (
-            <View style={styles.infoBox}>
-              <Ionicons name="lock-closed" size={20} color="#EAB308" />
-              <Text style={styles.infoBoxText}>
-                Para sua segurança, os números de telefone pessoais nunca são exibidos entre motorista e passageiro.
+                  ? `${otherUserName || 'Contato'} está falando...`
+                  : 'Microfone ativo • Pode falar normalmente'}
               </Text>
             </View>
           )}
         </View>
 
-        <View style={styles.bottomActions}>
-          {phase === 'incoming' ? (
-            <View style={styles.incomingRow}>
-              <TouchableOpacity style={styles.rejectBtn} onPress={handleRejectCall} activeOpacity={0.85}>
-                <Ionicons name="call" size={30} color="#FFFFFF" style={{ transform: [{ rotate: '135deg' }] }} />
-                <Text style={styles.actionLabel}>Recusar</Text>
-              </TouchableOpacity>
+        {phase === 'incoming' ? (
+          <View style={styles.incomingActions}>
+            <TouchableOpacity style={styles.rejectBtn} onPress={handleRejectCall} activeOpacity={0.85}>
+              <Ionicons name="call" size={30} color="#FFF" style={{ transform: [{ rotate: '135deg' }] }} />
+              <Text style={styles.actionLabel}>Recusar</Text>
+            </TouchableOpacity>
 
-              <TouchableOpacity style={styles.acceptBtn} onPress={handleAcceptCall} activeOpacity={0.85}>
-                <Ionicons name="call" size={30} color="#FFFFFF" />
-                <Text style={styles.actionLabel}>Atender</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={styles.activeRow}>
-              <TouchableOpacity
-                style={[styles.secondaryCircleBtn, isSpeakerOn && styles.secondaryCircleBtnActive]}
-                onPress={() => setIsSpeakerOn((prev) => !prev)}
-                activeOpacity={0.85}
-              >
-                <Ionicons
-                  name={isSpeakerOn ? 'volume-high' : 'ear-outline'}
-                  size={24}
-                  color={isSpeakerOn ? '#0F172A' : '#E2E8F0'}
-                />
-                <Text style={[styles.secondaryBtnText, isSpeakerOn && { color: '#0F172A' }]}>
-                  {isSpeakerOn ? 'Viva-voz' : 'Auricular'}
-                </Text>
-              </TouchableOpacity>
+            <TouchableOpacity style={styles.acceptBtn} onPress={handleAcceptCall} activeOpacity={0.85}>
+              <Ionicons name="call" size={30} color="#FFF" />
+              <Text style={styles.actionLabel}>Atender</Text>
+            </TouchableOpacity>
+          </View>
+        ) : phase === 'connected' ? (
+          <View style={styles.connectedControlsRow}>
+            <TouchableOpacity
+              style={[styles.secondaryBtn, isMuted && styles.mutedBtnActive]}
+              onPress={() => {
+                const nextMuted = !isMuted;
+                setIsMuted(nextMuted);
+                isMutedRef.current = nextMuted;
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+              }}
+              activeOpacity={0.85}
+            >
+              <Ionicons name={isMuted ? 'mic-off' : 'mic'} size={24} color="#FFF" />
+              <Text style={styles.secondaryLabel}>{isMuted ? 'Ativar Som' : 'Silenciar'}</Text>
+            </TouchableOpacity>
 
-              <TouchableOpacity style={styles.hangupBtn} onPress={handleHangup} activeOpacity={0.85}>
-                <Ionicons name="call" size={30} color="#FFFFFF" style={{ transform: [{ rotate: '135deg' }] }} />
-                <Text style={styles.actionLabel}>Desligar</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
+            <TouchableOpacity style={styles.hangupBtn} onPress={handleHangup} activeOpacity={0.85}>
+              <Ionicons name="call" size={30} color="#FFF" style={{ transform: [{ rotate: '135deg' }] }} />
+              <Text style={styles.actionLabel}>Desligar</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.secondaryBtn, isSpeakerOn && styles.speakerBtnActive]}
+              onPress={() => {
+                const nextSpeaker = !isSpeakerOn;
+                setIsSpeakerOn(nextSpeaker);
+                isSpeakerOnRef.current = nextSpeaker;
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+              }}
+              activeOpacity={0.85}
+            >
+              <Ionicons name={isSpeakerOn ? 'volume-high' : 'ear'} size={24} color="#FFF" />
+              <Text style={styles.secondaryLabel}>{isSpeakerOn ? 'Viva-voz' : 'Auricular'}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.outgoingActions}>
+            <TouchableOpacity style={styles.hangupBtn} onPress={handleHangup} activeOpacity={0.85}>
+              <Ionicons name="call" size={30} color="#FFF" style={{ transform: [{ rotate: '135deg' }] }} />
+              <Text style={styles.actionLabel}>Desligar</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     </Modal>
   );
@@ -586,7 +642,7 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0B1324',
+    backgroundColor: '#0B1120',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 24,
@@ -594,138 +650,93 @@ const styles = StyleSheet.create({
   privacyBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    backgroundColor: 'rgba(34, 197, 94, 0.14)',
+    borderColor: 'rgba(34, 197, 94, 0.35)',
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.35)',
     paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 999,
+    borderRadius: 20,
+    gap: 8,
   },
   privacyBadgeText: {
-    color: '#6EE7B7',
+    color: '#86EFAC',
     fontSize: 12,
     fontWeight: '700',
   },
-  profileSection: {
+  centerBlock: {
     alignItems: 'center',
-    marginTop: 12,
   },
-  avatarPulseRing: {
+  pulseRing: {
     width: 136,
     height: 136,
     borderRadius: 68,
-    borderWidth: 3,
+    backgroundColor: 'rgba(234, 179, 8, 0.14)',
+    borderWidth: 2,
+    borderColor: 'rgba(234, 179, 8, 0.45)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
+    marginBottom: 20,
   },
-  avatarCircle: {
-    width: 116,
-    height: 116,
-    borderRadius: 58,
+  avatar: {
+    width: 112,
+    height: 112,
+    borderRadius: 56,
+  },
+  avatarFallback: {
+    width: 112,
+    height: 112,
+    borderRadius: 56,
     backgroundColor: '#1E293B',
     alignItems: 'center',
     justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  avatarImage: {
-    width: '100%',
-    height: '100%',
   },
   userName: {
     color: '#F8FAFC',
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: '800',
-    textAlign: 'center',
-  },
-  roleTag: {
-    color: '#94A3B8',
-    fontSize: 13,
-    fontWeight: '600',
-    marginTop: 4,
+    marginBottom: 6,
   },
   statusText: {
-    color: '#EAB308',
-    fontSize: 14,
-    fontWeight: '700',
-    marginTop: 14,
+    color: '#94A3B8',
+    fontSize: 15,
+    fontWeight: '600',
   },
   timerText: {
-    color: '#10B981',
-    fontSize: 28,
+    color: '#EAB308',
+    fontSize: 24,
     fontWeight: '800',
-    marginTop: 6,
-    fontVariant: ['tabular-nums'],
+    marginTop: 10,
+    letterSpacing: 1,
   },
-  centerControls: {
+  liveIndicator: {
+    flexDirection: 'row',
     alignItems: 'center',
-    width: '100%',
-  },
-  pttButton: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: '#EAB308',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#EAB308',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  pttButtonRecording: {
-    backgroundColor: '#EF4444',
-    shadowColor: '#EF4444',
-    transform: [{ scale: 1.08 }],
-  },
-  pttHintTitle: {
-    color: '#F8FAFC',
-    fontSize: 15,
-    fontWeight: '700',
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 16,
     marginTop: 14,
-    textAlign: 'center',
+    gap: 8,
   },
-  pttHintSub: {
-    color: '#94A3B8',
-    fontSize: 12,
-    marginTop: 4,
-    textAlign: 'center',
-    maxWidth: 280,
+  liveIndicatorText: {
+    color: '#E2E8F0',
+    fontSize: 13,
+    fontWeight: '700',
   },
-  infoBox: {
+  incomingActions: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: 'rgba(30, 41, 59, 0.85)',
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.2)',
-    borderRadius: 14,
-    padding: 14,
-    maxWidth: 330,
-  },
-  infoBoxText: {
-    color: '#CBD5E1',
-    fontSize: 12,
-    flex: 1,
-    lineHeight: 17,
-  },
-  bottomActions: {
     width: '100%',
-    alignItems: 'center',
-  },
-  incomingRow: {
-    flexDirection: 'row',
     justifyContent: 'space-around',
-    width: '100%',
-    maxWidth: 320,
-  },
-  activeRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
-    gap: 36,
+  },
+  connectedControlsRow: {
+    flexDirection: 'row',
+    width: '100%',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+  },
+  outgoingActions: {
+    alignItems: 'center',
   },
   rejectBtn: {
     width: 76,
@@ -739,7 +750,7 @@ const styles = StyleSheet.create({
     width: 76,
     height: 76,
     borderRadius: 38,
-    backgroundColor: '#10B981',
+    backgroundColor: '#22C55E',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -751,30 +762,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  secondaryCircleBtn: {
+  actionLabel: {
+    color: '#FFF',
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  secondaryBtn: {
     width: 72,
     height: 72,
     borderRadius: 36,
     backgroundColor: '#1E293B',
-    borderWidth: 1,
-    borderColor: '#334155',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
   },
-  secondaryCircleBtnActive: {
-    backgroundColor: '#E2E8F0',
-    borderColor: '#FFFFFF',
+  speakerBtnActive: {
+    backgroundColor: '#0284C7',
+    borderColor: '#38BDF8',
   },
-  secondaryBtnText: {
-    color: '#E2E8F0',
-    fontSize: 10,
-    fontWeight: '700',
-    marginTop: 3,
+  mutedBtnActive: {
+    backgroundColor: '#B91C1C',
+    borderColor: '#F87171',
   },
-  actionLabel: {
-    color: '#FFFFFF',
+  secondaryLabel: {
+    color: '#F8FAFC',
     fontSize: 11,
     fontWeight: '700',
-    marginTop: 2,
+    marginTop: 4,
   },
 });

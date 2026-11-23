@@ -570,7 +570,7 @@ export function Home() {
   const handleApplyCoupon = useCallback(async () => {
     const clean = couponCodeInput.trim().toUpperCase();
     if (!clean) {
-      Alert.alert('Cupom', 'Digite o código promocional.');
+      showTopNotice('Cupom', 'Digite o código promocional.');
       return;
     }
     setIsValidatingCoupon(true);
@@ -581,11 +581,11 @@ export function Home() {
       });
       if (res.data?.success) {
         setAppliedCoupon({ code: clean, discountXof: Number(res.data.discountXof || 0) });
-        Alert.alert('Cupom Aplicado!', `Desconto de ${res.data.discountXof} XOF aplicado na viagem.`);
+        showTopNotice('Cupom Aplicado!', `Desconto de ${res.data.discountXof} XOF aplicado na viagem.`);
       }
     } catch (err: any) {
       setAppliedCoupon(null);
-      Alert.alert('Cupom Inválido', err?.response?.data?.error || 'Não foi possível validar este cupom.');
+      showTopNotice('Cupom Inválido', err?.response?.data?.error || 'Não foi possível validar este cupom.');
     } finally {
       setIsValidatingCoupon(false);
     }
@@ -623,6 +623,25 @@ export function Home() {
   const [nearbyDrivers, setNearbyDrivers] = useState<Array<{ id: string; lat: number; lng: number; heading?: number; vehicleType?: string; carColor?: string }>>([]);
   const [, setIsSearchingRide] = useState(false);
   const [unreadCount, setUnreadCount] = useState<number>(0);
+  const [topNotice, setTopNotice] = useState<{ title: string; message: string } | null>(null);
+  const topNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showTopNotice = useCallback((title: string, message?: string, buttons?: any, _options?: any) => {
+    const cleanTitle = String(title || '').trim();
+    const cleanMsg = String(message || '').trim();
+    if (!cleanTitle && !cleanMsg) return;
+    setTopNotice({ title: cleanTitle, message: cleanMsg });
+    if (topNoticeTimerRef.current) clearTimeout(topNoticeTimerRef.current);
+    if (Array.isArray(buttons)) {
+      const firstBtn = buttons[0];
+      if (firstBtn && typeof firstBtn.onPress === 'function') {
+        try { firstBtn.onPress(); } catch {}
+      }
+    }
+    topNoticeTimerRef.current = setTimeout(() => {
+      setTopNotice(null);
+    }, 3800);
+  }, []);
 
   const radarScale1 = radarAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 3.2] });
   const radarOpacity1 = radarAnim.interpolate({ inputRange: [0, 0.6, 1], outputRange: [0.6, 0.25, 0] });
@@ -1060,11 +1079,9 @@ const handleFullCancelAndReset = useCallback(() => {
         ? (driverLocation.heading + 360) % 360
         : null;
 
-    if (jumpMeters > 5.5) {
+    if (jumpMeters > 2.0) {
       const movementBearing = calculateGeoBearing(prevFix.lat, prevFix.lng, nextLat, nextLng);
-      if (resolvedHeading === null) {
-        resolvedHeading = movementBearing;
-      }
+      resolvedHeading = movementBearing;
     }
 
     if (resolvedHeading !== null) {
@@ -1543,7 +1560,7 @@ const handleOpenChat = () => {
 
         setIsChatVisible(false);
         resetRideState();
-        Alert.alert(title, body, [{ text: 'OK' }]);
+        showTopNotice(title, body, [{ text: 'OK' }]);
       } else {
         if (activeRideIdRef.current) {
           resetRideState();
@@ -1858,7 +1875,7 @@ const handleOpenChat = () => {
     if (isInaccessibleAlertShowingRef.current) return;
     isInaccessibleAlertShowingRef.current = true;
 
-    Alert.alert(
+    showTopNotice(
       data?.title || t('warning_title', 'Atenção ⚠️'),
       data?.message || t('inaccessible_location_msg', 'O motorista pediu para você se aproximar, pois o local é de difícil acesso.'),
       [
@@ -1983,7 +2000,7 @@ const handleOpenChat = () => {
         JSON.stringify({ home: updatedHome, work: updatedWork })
       );
 
-      Alert.alert(
+      showTopNotice(
         'Endereço Salvo! 🌟',
         `${type === 'home' ? 'Casa' : 'Trabalho'} definido para: ${place.address}`
       );
@@ -2387,7 +2404,7 @@ const handleOpenChat = () => {
       }
       setIsChatVisible(false);
       speakRideStatusUpdate('cancelled', { enabled: isVoiceAssistEnabledRef.current });
-      Alert.alert(title, body, [{ text: 'OK' }]);
+      showTopNotice(title, body, [{ text: 'OK' }]);
       resetRideState();
     };
 
@@ -2411,7 +2428,7 @@ const handleOpenChat = () => {
         }).catch(() => {});
       }
 
-      Alert.alert(
+      showTopNotice(
         t('no_response_title', 'Sem motoristas'),
         'Nenhum motorista disponível próximo de si no momento. Caso tenha pago digitalmente, o estorno é automático.'
       );
@@ -2434,7 +2451,7 @@ const handleOpenChat = () => {
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
       searchTimeoutRef.current = setTimeout(() => {
         if (isMountedRef.current) {
-          Alert.alert(
+          showTopNotice(
             'Tempo de Pagamento Expirado',
             'O PIN de 4 dígitos não foi confirmado a tempo. Nenhuma cobrança foi concluída.'
           );
@@ -2446,7 +2463,7 @@ const handleOpenChat = () => {
     const handlePaymentFailed = (data: any) => {
       if (!isMountedRef.current) return;
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-      Alert.alert(
+      showTopNotice(
         'Pagamento Não Concluído',
         data?.message || 'O pagamento digital foi recusado ou expirado. Nenhuma corrida foi iniciada.'
       );
@@ -2455,7 +2472,7 @@ const handleOpenChat = () => {
 
     const handlePaymentRefundSuccess = (data: any) => {
       if (!isMountedRef.current) return;
-      Alert.alert(
+      showTopNotice(
         'Estorno Concluído ✅',
         data?.message || 'O valor da sua corrida foi devolvido automaticamente para sua conta Mobile Money.'
       );
@@ -2474,7 +2491,7 @@ const handleOpenChat = () => {
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
       searchTimeoutRef.current = setTimeout(() => {
         if (isMountedRef.current) {
-          Alert.alert(
+          showTopNotice(
             t('no_response_title', 'Sem resposta'),
             t('no_driver_accepted_msg', 'Nenhum motorista aceitou no momento. Seu pagamento será estornado automaticamente.')
           );
@@ -2553,7 +2570,7 @@ const handleOpenChat = () => {
       setRideStatus((prev) => {
         if (prev === 'awaiting_payment' || prev === 'searching') {
           if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-          Alert.alert('Aviso Nobai245', msg);
+          showTopNotice('Aviso Nobai245', msg);
           return 'idle';
         }
         return prev;
@@ -2586,10 +2603,13 @@ const handleOpenChat = () => {
 
     const handleIncomingDriverCall = (data: any) => {
       if (!data?.rideId) return;
-      setCallRideId(String(data.rideId));
-      setCallDirection('incoming');
-      setActiveCallLogId(data.callLogId || null);
-      setIsCallVisible(true);
+      setIsCallVisible((prevOpen) => {
+        if (prevOpen) return prevOpen;
+        setCallRideId(String(data.rideId));
+        setCallDirection('incoming');
+        setActiveCallLogId(data.callLogId || null);
+        return true;
+      });
     };
     socket.on('call:incoming', handleIncomingDriverCall);
 
@@ -2752,7 +2772,7 @@ const handleOpenChat = () => {
     if (rideStatus !== 'idle') return;
     const needsDropoff = serviceType !== 'aluguel';
     if (!pickupCoords || (needsDropoff && (!dropoffCoords || !dropoffAddress.trim())) || !user?.id) {
-      Alert.alert(
+      showTopNotice(
         t('warning_title', 'Aviso ⚠️'),
         t('select_origin_destination_msg', 'Preencha obrigatoriamente o local de partida e o destino final.')
       );
@@ -2771,7 +2791,7 @@ const handleOpenChat = () => {
       const isMocked = Boolean(quickLoc?.mocked || (quickLoc?.coords as any)?.mocked);
 
       if (isMocked) {
-        Alert.alert(
+        showTopNotice(
           "🚨 Localização Simulada Detectada",
           "Por motivos de segurança, não é possível solicitar corridas utilizando aplicativos de GPS falso.",
           [{ text: "Entendido" }]
@@ -2788,7 +2808,7 @@ const handleOpenChat = () => {
   function executeRideRequest() {
     const needsDropoff = serviceType !== 'aluguel';
     if (!user?.id || !pickupCoords || (needsDropoff && !dropoffCoords)) {
-      Alert.alert(t('warning_title', 'Aviso ⚠️'), t('missing_data_msg', 'Preencha o local de partida e o destino final para continuar.'));
+      showTopNotice(t('warning_title', 'Aviso ⚠️'), t('missing_data_msg', 'Preencha o local de partida e o destino final para continuar.'));
       return;
     }
 
@@ -2802,15 +2822,15 @@ const handleOpenChat = () => {
       if (isDigital) {
         const local9 = cleanPayerPhone.startsWith('245') ? cleanPayerPhone.slice(3) : cleanPayerPhone;
         if (local9.length !== 9) {
-          Alert.alert('Número Inválido', 'Informe um número Mobile Money válido de 9 dígitos da Guiné-Bissau.');
+          showTopNotice('Número Inválido', 'Informe um número Mobile Money válido de 9 dígitos da Guiné-Bissau.');
           return;
         }
         if (paymentMethod === 'ORANGE_MONEY' && !local9.startsWith('95')) {
-          Alert.alert('Operadora Incompatível', 'Números Orange Money começam com 95.');
+          showTopNotice('Operadora Incompatível', 'Números Orange Money começam com 95.');
           return;
         }
         if (paymentMethod === 'MTN_MOMO' && !local9.startsWith('96') && !local9.startsWith('97')) {
-          Alert.alert('Operadora Incompatível', 'Números Telecel (antigo MTN) começam com 96 ou 97.');
+          showTopNotice('Operadora Incompatível', 'Números Telecel (antigo MTN) começam com 96 ou 97.');
           return;
         }
       }
@@ -2881,7 +2901,7 @@ const handleOpenChat = () => {
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
       searchTimeoutRef.current = setTimeout(() => {
         if (isMountedRef.current) {
-          Alert.alert(
+          showTopNotice(
             t('no_response_title', 'Sem resposta'),
             t('no_driver_accepted_msg', 'Nenhum motorista aceitou no momento. Tente novamente.')
           );
@@ -2890,7 +2910,7 @@ const handleOpenChat = () => {
       }, 60000);
 
     } catch (error) {
-      Alert.alert(
+      showTopNotice(
         t('error_title', 'Erro'),
         t('server_error_msg', 'Ocorreu um problema ao comunicar com os servidores.')
       );
@@ -3014,7 +3034,7 @@ const handleOpenChat = () => {
   const handleShareTrip = async () => {
     try {
       if (!driverInfo || !dropoffAddress || !activeRideId) {
-        Alert.alert(
+        showTopNotice(
           t('warning_title', 'Aviso ⚠️'),
           t('wait_trip_data', 'Aguarde os dados da corrida carregarem para compartilhar.')
         );
@@ -3045,7 +3065,7 @@ const handleOpenChat = () => {
         title: 'Acompanhar Minha Viagem - Nô Bai 245'
       });
     } catch (error) {
-      Alert.alert(
+      showTopNotice(
         t('error_title', 'Erro'),
         t('share_error_msg', 'Não foi possível abrir o menu de compartilhamento.')
       );
@@ -3249,6 +3269,49 @@ const handleOpenChat = () => {
         </BlurView>
       </View>
 
+      {topNotice && (
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPress={() => setTopNotice(null)}
+          style={{
+            position: 'absolute',
+            top: Math.max(insets.top + 66, 92),
+            left: 16,
+            right: 16,
+            zIndex: 45,
+            backgroundColor: 'rgba(15, 23, 42, 0.94)',
+            borderColor: 'rgba(234, 179, 8, 0.55)',
+            borderWidth: 1,
+            borderRadius: 14,
+            paddingHorizontal: 14,
+            paddingVertical: 10,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 10,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.25,
+            shadowRadius: 8,
+            elevation: 6,
+          }}
+        >
+          <Ionicons name="information-circle" size={20} color="#EAB308" />
+          <View style={{ flex: 1 }}>
+            {!!topNotice.title && (
+              <Text style={{ color: '#F8FAFC', fontSize: 13, fontWeight: '800' }} numberOfLines={1}>
+                {topNotice.title}
+              </Text>
+            )}
+            {!!topNotice.message && (
+              <Text style={{ color: '#CBD5E1', fontSize: 12, fontWeight: '500', marginTop: 1 }} numberOfLines={2}>
+                {topNotice.message}
+              </Text>
+            )}
+          </View>
+          <Ionicons name="close" size={16} color="#94A3B8" />
+        </TouchableOpacity>
+      )}
+
       {/* 2. MAPA DE NAVEGAÇÃO MAPBOX */}
       <Mapbox.MapView
         style={StyleSheet.absoluteFill}
@@ -3371,24 +3434,23 @@ const handleOpenChat = () => {
         {nearbyDrivers && nearbyDrivers
           .filter((driver: any) => driver.lat && driver.lng && Number(driver.lat) !== 0 && Number(driver.lng) !== 0 && String(driver.id) !== String(driverInfo?.id || ''))
           .map((driver: any) => (
-            <Mapbox.PointAnnotation
+            <Mapbox.MarkerView
               key={`online-driver-${driver.id}`}
-              id={`online-driver-${driver.id}`}
               coordinate={[Number(driver.lng), Number(driver.lat)]}
               anchor={{ x: 0.5, y: 0.5 }}
+              allowOverlap={true}
             >
-              <View style={styles.driverMarkerWrapper}>
+              <View pointerEvents="none" style={styles.driverMarkerWrapper}>
                 <View style={{ transform: [{ rotate: `${Math.round((((Number(driver.heading) || 0) - mapCameraHeading) % 360 + 360) % 360)}deg` }] }}>
                   <Image
                     source={getVehicleTopDownIconAsset(driver.vehicleType, driver.carColor || (driver as any).vehicleColor)}
                     style={styles.driverMarkerImage}
-
                     fadeDuration={0}
                     resizeMode="contain"
                   />
                 </View>
               </View>
-            </Mapbox.PointAnnotation>
+            </Mapbox.MarkerView>
           ))}
 
         {/* 📍 PONTO DE EMBARQUE */}
@@ -3449,13 +3511,13 @@ const handleOpenChat = () => {
 
           return (
             <>
-              <Mapbox.PointAnnotation
+              <Mapbox.MarkerView
                 key="driverMarker"
-                id="driverMarker"
                 coordinate={markerCoord}
                 anchor={{ x: 0.5, y: 0.5 }}
+                allowOverlap={true}
               >
-                <View style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
+                <View pointerEvents="none" style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
                   <View
                     style={{
                       width: 40,
@@ -3476,7 +3538,7 @@ const handleOpenChat = () => {
                     />
                   </View>
                 </View>
-              </Mapbox.PointAnnotation>
+              </Mapbox.MarkerView>
 
               {driverEta !== null && driverEta > 0 && isTripActive && (
                 <Mapbox.PointAnnotation
@@ -3926,7 +3988,7 @@ const handleOpenChat = () => {
                       ]}
                       onPress={() => {
                         if (Number(corporateInfo.availableCreditXof || 0) <= 0) {
-                          Alert.alert(
+                          showTopNotice(
                             'Saldo Corporativo Esgotado',
                             `O limite de crédito da empresa ${corporateInfo.name} está esgotado no momento. Utilize Dinheiro ou contate o gestor da empresa.`
                           );
@@ -4004,7 +4066,7 @@ const handleOpenChat = () => {
                     ]}
                     onPress={() => {
                       setPaymentMethod('CASH');
-                      Alert.alert(
+                      showTopNotice(
                         'Orange Money em Breve',
                         'Estamos finalizando a integração oficial com a Orange Money para garantir máxima segurança nas suas transações. Por enquanto, utilize o pagamento em Dinheiro diretamente ao motorista.',
                         [{ text: 'Entendi', style: 'default' }]
@@ -4044,7 +4106,7 @@ const handleOpenChat = () => {
                     ]}
                     onPress={() => {
                       setPaymentMethod('CASH');
-                      Alert.alert(
+                      showTopNotice(
                         'Telecel (MTN) em Breve',
                         'Estamos finalizando a integração oficial com a Telecel / MTN MoMo para garantir máxima segurança nas suas transações. Por enquanto, utilize o pagamento em Dinheiro diretamente ao motorista.',
                         [{ text: 'Entendi', style: 'default' }]
@@ -5712,7 +5774,7 @@ const handleOpenChat = () => {
                       setIsForAnotherPerson(true);
                       setIsGuestModalVisible(false);
                     } else {
-                      Alert.alert('Preencha os dados', 'Informe o nome e número do passageiro.');
+                      showTopNotice('Preencha os dados', 'Informe o nome e número do passageiro.');
                     }
                   }}
                 >

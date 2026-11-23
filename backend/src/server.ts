@@ -145,10 +145,15 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   next(err);
 });
 
+const staticUploadsMiddleware = express.static(path.join(process.cwd(), 'uploads'));
 app.use('/uploads', (req, res, next) => {
   console.log(`📸 [FOTO_DEBUG] Acessando arquivo estático: /uploads${req.url}`);
   next();
-}, express.static(path.join(process.cwd(), 'uploads')));
+}, staticUploadsMiddleware);
+app.use('/api/uploads', (req, res, next) => {
+  console.log(`📸 [FOTO_DEBUG] Acessando arquivo estático via /api: /api/uploads${req.url}`);
+  next();
+}, staticUploadsMiddleware);
 
 let isShuttingDown = false;
 
@@ -971,6 +976,7 @@ io.on('connection', (socket: any) => {
 
 // 📞 CHAMADA DE VOZ INTERNA SEGURA (NÚMEROS OCULTOS + AUDITORIA RideCallLog)
 handleSocketEvent(socket, 'call:initiate', async (data, ackCallback) => {
+  if (isSocketRateLimited(socket, 'call:initiate', 4000, 1)) return;
   const { rideId, callerRole } = data || {};
   const callerId = socket.data.user?.id;
   if (!rideId || !isUuid(rideId) || !callerId) {
@@ -1035,13 +1041,37 @@ handleSocketEvent(socket, 'call:initiate', async (data, ackCallback) => {
   }
 });
 
+const emitCallEventToParticipants = async (rideId: string, eventName: string, payload: Record<string, any>) => {
+  const rooms = new Set<string>([rideId, `ride_${rideId}`]);
+  const rideUsers = await prisma.ride.findUnique({
+    where: { id: rideId },
+    select: { passengerId: true, driverId: true },
+  }).catch(() => null);
+
+  if (rideUsers?.passengerId) {
+    rooms.add(rideUsers.passengerId);
+    rooms.add(`passenger_${rideUsers.passengerId}`);
+    rooms.add(`passenger:${rideUsers.passengerId}`);
+    rooms.add(`user_${rideUsers.passengerId}`);
+  }
+  if (rideUsers?.driverId) {
+    rooms.add(rideUsers.driverId);
+    rooms.add(`driver_${rideUsers.driverId}`);
+    rooms.add(`driver:${rideUsers.driverId}`);
+    rooms.add(`user_${rideUsers.driverId}`);
+  }
+  rooms.forEach((room) => {
+    io.to(room).emit(eventName, payload);
+  });
+};
+
 handleSocketEvent(socket, 'call:accept', async (data) => {
   const { rideId, callLogId, accepterRole } = data || {};
   if (!rideId || !isUuid(rideId)) return;
   socket.join(rideId);
   socket.join(`ride_${rideId}`);
   const payload = { rideId, callLogId: callLogId || null, accepterRole };
-  io.to(rideId).to(`ride_${rideId}`).emit('call:accepted', payload);
+  await emitCallEventToParticipants(rideId, 'call:accepted', payload);
 });
 
 handleSocketEvent(socket, 'call:reject', async (data) => {
@@ -1053,7 +1083,11 @@ handleSocketEvent(socket, 'call:reject', async (data) => {
       data: { durationSec: 0 },
     }).catch(() => {});
   }
-  io.to(rideId).to(`ride_${rideId}`).emit('call:rejected', { rideId, callLogId: callLogId || null, rejecterRole });
+  await emitCallEventToParticipants(rideId, 'call:rejected', {
+    rideId,
+    callLogId: callLogId || null,
+    rejecterRole,
+  });
 });
 
 handleSocketEvent(socket, 'call:end', async (data) => {
@@ -1065,7 +1099,7 @@ handleSocketEvent(socket, 'call:end', async (data) => {
       data: { durationSec: Math.max(0, Math.round(Number(durationSec || 0))) },
     }).catch(() => {});
   }
-  io.to(rideId).to(`ride_${rideId}`).emit('call:ended', {
+  await emitCallEventToParticipants(rideId, 'call:ended', {
     rideId,
     callLogId: callLogId || null,
     durationSec: Math.max(0, Math.round(Number(durationSec || 0))),
@@ -1813,19 +1847,7 @@ handleSocketEvent(socket, 'call:voice_chunk', async (data) => {
         ackCallback({ success: true, rideId: ride.id, isQueuedRide });
       }
 
-      if (passengerUser?.deviceToken && typeof sendPushNotification === 'function') {
-        const acceptPayLabel =
-          updatedRide.paymentMethod === 'ORANGE_MONEY' ? 'via Orange Money' :
-          updatedRide.paymentMethod === 'MTN_MOMO' ? 'via MTN MoMo' :
-          (updatedRide.paymentMethod as string) === 'CORPORATE' ? 'via Conta Corporativa' : 'em dinheiro';
-        sendPushNotification(
-          passengerUser.deviceToken,
-          '🚗 Motorista a Caminho!',
-          `${driverUser?.fullName || 'Seu motorista'} aceitou a corrida! Valor total: ${updatedRide.priceXof} XOF (${acceptPayLabel}).`,
-          { type: 'RIDE_ACCEPTED', rideId },
-          PUSH_CHANNELS.RIDE_UPDATE
-        ).catch(() => null);
-      }
+      // Push RIDE_ACCEPTED enviado de forma única por acceptRideLogic em rideService.ts
 
 
       io.to('admin_dashboard').emit('admin:ride_update', {
@@ -2002,15 +2024,7 @@ handleSocketEvent(socket, 'call:voice_chunk', async (data) => {
       io.to(room).emit('ride:arrived', arrivedPayload);
     });
 
-    if (ride?.passenger?.deviceToken) {
-      sendPushNotification(
-        ride.passenger.deviceToken,
-        '📍 Motorista Chegou!',
-        `Seu motorista está no local. Informe o PIN ${ride.startOtp || ''} para iniciar.`,
-        { type: 'DRIVER_ARRIVED', rideId },
-        PUSH_CHANNELS.RIDE_UPDATE
-      ).catch(() => null);
-    }
+    // Push DRIVER_ARRIVED enviado de forma única por driverArrivedLogic em rideService.ts
   });
 
   // --- INICIAR CORRIDA ---
@@ -2056,13 +2070,7 @@ handleSocketEvent(socket, 'call:voice_chunk', async (data) => {
 
       io.to('admin_dashboard').emit('admin:ride_update', { rideId, status: 'IN_PROGRESS', driverId });
 
-      const startedPassenger = updatedRide?.passengerId ? await prisma.passenger.findUnique({ where: { id: updatedRide.passengerId }, select: { deviceToken: true } }) : null; if (startedPassenger?.deviceToken) { sendPushNotification(startedPassenger.deviceToken,
-          '🚕 Viagem Iniciada!',
-          'Tenha uma excelente viagem com o Nô Bai 245!',
-          { type: 'RIDE_STARTED', rideId },
-          PUSH_CHANNELS.RIDE_UPDATE
-        ).catch(() => null);
-      }
+      // Push RIDE_STARTED enviado de forma única por startRideLogic em rideService.ts
     } catch (err: any) {
       const errMsg = err?.message || 'Falha ao validar OTP.';
       console.error(`❌ [START_RIDE_ERROR] Driver ${driverId} -> Ride ${rideId}:`, errMsg);
@@ -2202,8 +2210,8 @@ handleSocketEvent(socket, 'chat:send_message', async (data) => {
     Buffer.from(cleanBase64, 'base64')
   );
 
-  const baseUrl = (process.env.APP_URL || 'https://api.nobai245.com').replace(/\/$/, '');
-  finalAudioUrl = `${baseUrl}/uploads/chat/${fileName}`;
+  const baseOrigin = (process.env.APP_URL || 'https://api.nobai245.com').replace(/\/api\/?$/, '').replace(/\/$/, '');
+  finalAudioUrl = `${baseOrigin}/api/uploads/chat/${fileName}`;
 } catch (fileErr: any) {
   console.error('❌ [CHAT_AUDIO_SAVE_ERR]:', fileErr?.message);
   finalAudioUrl = rawAudio;
@@ -2211,6 +2219,7 @@ handleSocketEvent(socket, 'chat:send_message', async (data) => {
       }
     }
 
+    const inlineAudioData = (rawAudio && typeof rawAudio === 'string' && rawAudio.startsWith('data:audio/')) ? rawAudio : undefined;
     const dbMessageContent = finalAudioUrl ? `[AUDIO]${finalAudioUrl}|${finalDuration}` : rawText;
     const senderTypeEnum = senderRole === 'driver' ? 'DRIVER' : 'PASSENGER';
     const senderUserId = socket.data.user?.id || (senderRole === 'driver' ? ride.driverId : ride.passengerId);
@@ -2223,6 +2232,7 @@ handleSocketEvent(socket, 'chat:send_message', async (data) => {
       text: finalAudioUrl ? '' : rawText,
       message: finalAudioUrl ? '' : rawText,
       audioUrl: finalAudioUrl,
+      audioData: inlineAudioData,
       audioDuration: finalDuration,
       createdAt: new Date().toISOString()
     };

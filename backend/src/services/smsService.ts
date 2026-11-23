@@ -5,7 +5,7 @@ const TERMII_SENDER_ID = (process.env.TERMII_SENDER_ID || 'NOBAI245').trim();
 const TERMII_CHANNEL = (process.env.TERMII_CHANNEL || 'generic').trim();
 const TERMII_BASE_URL = (process.env.TERMII_BASE_URL || 'https://v3.api.termii.com').trim().replace(/\/+$/, '');
 
-const SMS_DEDUP_WINDOW_MS = 25_000;
+const SMS_DEDUP_WINDOW_MS = 45_000;
 const recentSmsDispatches = new Map<string, { expiresAt: number; inFlight?: Promise<boolean>; sent?: boolean }>();
 
 function normalizeTermiiPhone(phone: string): string {

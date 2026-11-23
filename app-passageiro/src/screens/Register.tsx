@@ -24,6 +24,7 @@ export function Register() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
   const [showPassword, setShowPassword] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -111,7 +112,8 @@ export function Register() {
       }
       
       if (isMountedRef.current) {
-        setIsOtpStep(true); 
+        setIsOtpStep(true);
+        setResendCooldown(45);
       }
     } catch (error: any) {
       if (!isMountedRef.current) return;
@@ -167,8 +169,18 @@ export function Register() {
     }
   }
 
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const tmr = setInterval(() => {
+      setResendCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(tmr);
+  }, [resendCooldown]);
+
   async function handleResendOTP() {
+    if (resendLoading || resendCooldown > 0) return;
     setResendLoading(true);
+    setResendCooldown(45);
     try {
       const cleanDigits = cleanPhoneInput(phone);
       await api.post('/passengers/request-otp', {
@@ -220,14 +232,14 @@ export function Register() {
         </TouchableOpacity>
 
         <TouchableOpacity 
-          style={[styles.resendButton, resendLoading && { opacity: 0.6 }]} 
+          style={[styles.resendButton, (resendLoading || resendCooldown > 0) && { opacity: 0.6 }]} 
           onPress={handleResendOTP}
-          disabled={resendLoading}
+          disabled={resendLoading || resendCooldown > 0}
         >
           {resendLoading ? (
             <ActivityIndicator color="#EAB308" size="small" />
           ) : (
-            <Text style={styles.resendText}>Reenviar código por SMS</Text>
+            <Text style={styles.resendText}>{resendCooldown > 0 ? `Aguarde ${resendCooldown}s para reenviar SMS` : 'Reenviar código por SMS'}</Text>
           )}
         </TouchableOpacity>
         

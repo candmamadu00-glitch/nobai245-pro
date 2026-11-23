@@ -46,6 +46,7 @@ export interface ChatMessage {
   sender: 'passenger' | 'driver';
   text?: string;
   audioUrl?: string | null;
+  audioData?: string | null;
   audioDuration?: number;
   senderPhoto?: string | null;
   createdAt?: string;
@@ -85,46 +86,69 @@ const formatTime = (isoString?: string) => {
   }
 };
 
-const getPlayableAudioUri = async (msgId: string, audioUrl: string): Promise<string> => {
+const isValidLocalAudioFile = async (uri: string): Promise<boolean> => {
+  try {
+    const info = await FileSystem.getInfoAsync(uri);
+    if (!info?.exists || (info?.size ?? 0) < 256) return false;
+    const head = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem?.EncodingType?.Base64 || 'base64',
+      length: 32,
+      position: 0,
+    }).catch(() => '');
+    if (head.startsWith('PCFETw') || head.startsWith('PGh0b') || head.startsWith('eyJlcn')) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const getPlayableAudioUri = async (msgId: string, audioUrl: string, audioData?: string | null): Promise<string> => {
   if (audioUrl.startsWith('file://')) {
-    return audioUrl;
+    const ok = await isValidLocalAudioFile(audioUrl);
+    if (ok) return audioUrl;
   }
 
   const safeId = (msgId + '_' + audioUrl.slice(-24)).replace(/[^a-zA-Z0-9]/g, '') || String(Date.now());
   const fileUri = FileSystem.cacheDirectory + 'audio_' + safeId + '.m4a';
 
-  if (audioUrl.startsWith('data:') || audioUrl.length > 500) {
+  const inlineSource = (audioUrl.startsWith('data:') || audioUrl.length > 500)
+    ? audioUrl
+    : (audioData && (audioData.startsWith('data:') || audioData.length > 500) ? audioData : null);
+
+  if (inlineSource) {
     try {
-      const base64Data = audioUrl.includes('base64,') ? audioUrl.split('base64,')[1] : audioUrl;
+      const base64Data = inlineSource.includes('base64,') ? inlineSource.split('base64,')[1] : inlineSource;
       const encodingOpt = FileSystem?.EncodingType?.Base64 || 'base64';
-      const fileInfo = await FileSystem.getInfoAsync(fileUri);
-      if (!fileInfo.exists || (fileInfo.size ?? 0) === 0) {
-        await FileSystem.writeAsStringAsync(fileUri, base64Data, {
-          encoding: encodingOpt,
-        });
+      await FileSystem.writeAsStringAsync(fileUri, base64Data, { encoding: encodingOpt });
+      if (await isValidLocalAudioFile(fileUri)) {
+        return fileUri;
       }
-      return fileUri;
     } catch (e) {
       console.warn('⚠️ Erro ao converter áudio base64 em arquivo local:', e);
     }
   }
 
-  const remoteUrl = (audioUrl.startsWith('http://') || audioUrl.startsWith('https://'))
-    ? audioUrl
-    : API_URL.replace(/\/$/, '') + (audioUrl.startsWith('/') ? audioUrl : '/' + audioUrl);
+  let normalizedPath = audioUrl;
+  if (normalizedPath.includes('/uploads/chat/') && !normalizedPath.includes('/api/uploads/chat/')) {
+    normalizedPath = normalizedPath.replace('/uploads/chat/', '/api/uploads/chat/');
+  }
+
+  const remoteUrl = (normalizedPath.startsWith('http://') || normalizedPath.startsWith('https://'))
+    ? normalizedPath
+    : API_URL.replace(/\/$/, '') + (normalizedPath.startsWith('/') ? normalizedPath : '/' + normalizedPath);
 
   try {
-    const fileInfo = await FileSystem.getInfoAsync(fileUri);
-    if (fileInfo.exists && (fileInfo.size ?? 0) > 100) {
+    if (await isValidLocalAudioFile(fileUri)) {
       return fileUri;
     }
-    if (fileInfo.exists) {
-      await FileSystem.deleteAsync(fileUri, { idempotent: true }).catch(() => {});
-    }
+    await FileSystem.deleteAsync(fileUri, { idempotent: true }).catch(() => {});
     const downloadRes = await FileSystem.downloadAsync(remoteUrl, fileUri);
-    if (downloadRes?.status === 200 && downloadRes?.uri) {
+    if (downloadRes?.status === 200 && downloadRes?.uri && (await isValidLocalAudioFile(downloadRes.uri))) {
       return downloadRes.uri;
     }
+    await FileSystem.deleteAsync(fileUri, { idempotent: true }).catch(() => {});
   } catch (dlErr) {
     console.warn('⚠️ Falha ao baixar áudio para cache local, usando URL remota:', dlErr);
   }
@@ -349,6 +373,7 @@ export function ChatModal({
         const msgSender = (msg.sender === 'passenger' || msg.senderType === 'PASSENGER' || msg.senderRole === 'passenger') ? 'passenger' : 'driver';
         const msgText = msg.text || msg.message || '';
         const msgAudio = msg.audioUrl || msg.audio || msg.fileUrl || null;
+        const msgAudioData = msg.audioData || (typeof msg.audio === 'string' && msg.audio.startsWith('data:') ? msg.audio : null);
 
         const formattedMsg: ChatMessage = {
           id: String(msg.id || ('msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7))),
@@ -356,6 +381,7 @@ export function ChatModal({
           sender: msgSender,
           text: msgText,
           audioUrl: msgAudio,
+          audioData: msgAudioData,
           audioDuration: Number(msg.audioDuration || msg.duration || 0),
           senderPhoto: formatPhotoUrl(msg.senderPhoto),
           createdAt: msg.createdAt || new Date().toISOString(),
@@ -431,7 +457,7 @@ export function ChatModal({
     try {
       await audioRecorder.stop();
       // Aguarda 150ms para o sistema finalizar a gravacao do cabecalho M4A no disco
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      await new Promise((resolve) => setTimeout(resolve, 260));
     } catch {}
 
     try {
@@ -564,7 +590,7 @@ export function ChatModal({
           interruptionMode: 'doNotMix',
         }).catch(() => {});
 
-      await audioRecorder.prepareToRecordAsync();
+      await audioRecorder.prepareToRecordAsync(VOICE_RECORDING_PRESET);
       audioRecorder.record();
 
       isRecordingRef.current = true;
@@ -611,8 +637,8 @@ export function ChatModal({
     setRecordDuration(0);
   };
 
-  const togglePlayAudio = async (msgId: string, audioUrl?: string | null) => {
-    if (!audioUrl) return;
+  const togglePlayAudio = async (msgId: string, audioUrl?: string | null, audioData?: string | null) => {
+    if (!audioUrl && !audioData) return;
 
     try {
       if (playingAudioId === msgId) {
@@ -632,14 +658,14 @@ export function ChatModal({
         shouldPlayInBackground: false,
       }).catch(() => {});
 
-      let playableUri = await getPlayableAudioUri(msgId, audioUrl);
+      let playableUri = await getPlayableAudioUri(msgId, audioUrl || '', audioData);
       if (!playableUri) return;
 
       if (playableUri.startsWith('file://')) {
         const info = await FileSystem.getInfoAsync(playableUri).catch(() => null);
         if (!info || !info.exists || (info.size ?? 0) < 64) {
           await FileSystem.deleteAsync(playableUri, { idempotent: true }).catch(() => {});
-          if (audioUrl.startsWith('http://') || audioUrl.startsWith('https://')) {
+          if (audioUrl && (audioUrl.startsWith('http://') || audioUrl.startsWith('https://'))) {
             playableUri = audioUrl;
           } else {
             console.warn('⚠️ Arquivo de áudio local vazio ou corrompido:', playableUri);
@@ -767,7 +793,7 @@ export function ChatModal({
                       {item.audioUrl ? (
                         <TouchableOpacity
                           style={styles.audioContainer}
-                          onPress={() => togglePlayAudio(item.id, item.audioUrl)}
+                          onPress={() => togglePlayAudio(item.id, item.audioUrl, item.audioData)}
                           activeOpacity={0.8}
                         >
                           <Ionicons

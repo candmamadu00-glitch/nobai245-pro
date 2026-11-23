@@ -8,6 +8,7 @@ import React, {
   useState,
 } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+// @ts-ignore
 import { createRoot } from 'react-dom/client';
 
 let mapboxAccessToken =
@@ -419,6 +420,7 @@ const Mapbox = {
   ShapeSource,
   LineLayer,
   PointAnnotation,
+  MarkerView: PointAnnotation,
 };
 
 const styles = StyleSheet.create({
@@ -436,4 +438,4 @@ const styles = StyleSheet.create({
 });
 
 export default Mapbox;
-export { StyleURL, offlineManager, MapView, Camera, ShapeSource, LineLayer, PointAnnotation };
+export { StyleURL, offlineManager, MapView, Camera, ShapeSource, LineLayer, PointAnnotation, PointAnnotation as MarkerView };

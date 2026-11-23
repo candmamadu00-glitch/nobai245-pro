@@ -970,10 +970,13 @@ export function Home() {
     socket.on('chat:receive_message', handleChatMessage);
     const handleIncomingVoiceCall = (data: any) => {
       if (!data?.rideId) return;
-      setCallRideId(String(data.rideId));
-      setCallDirection('incoming');
-      setActiveCallLogId(data.callLogId || null);
-      setIsCallVisible(true);
+      setIsCallVisible((prevOpen) => {
+        if (prevOpen) return prevOpen;
+        setCallRideId(String(data.rideId));
+        setCallDirection('incoming');
+        setActiveCallLogId(data.callLogId || null);
+        return true;
+      });
     };
     socket.on('call:incoming', handleIncomingVoiceCall);
     return () => {
@@ -1337,7 +1340,7 @@ export function Home() {
               durationMinutes: eta,
               distanceKm: km,
               tripDistanceKm: Number(incomingRideRef.current?.distanceKm || 0) > 0
-                ? Number(Number(incomingRideRef.current.distanceKm).toFixed(2))
+                ? Number(Number(incomingRideRef.current?.distanceKm || 0).toFixed(2))
                 : undefined,
               phase: rideStateRef.current,
               routeCoordinates: coordsList,
@@ -2005,7 +2008,7 @@ export function Home() {
           if (prevCoords) {
             smoothLat = lerp(prevCoords.latitude, aligned.latitude, 0.45);
             smoothLng = lerp(prevCoords.longitude, aligned.longitude, 0.45);
-            smoothHeading = lerpAngle(prevCoords.heading, aligned.bearing, 0.45);
+            smoothHeading = lerpAngle(prevCoords.heading, aligned.bearing, 0.88);
             if (aligned.isOnRoute && routeCoordinatesRef.current) {
               const reSnapped = getRouteAlignedPosition(
                 smoothLat,
@@ -2079,7 +2082,7 @@ export function Home() {
                 durationMinutes: liveDurationMin ?? undefined,
                 distanceKm: liveDistanceKm ?? undefined,
                 tripDistanceKm: Number(incomingRideRef.current?.distanceKm || 0) > 0
-                  ? Number(Number(incomingRideRef.current.distanceKm).toFixed(2))
+                  ? Number(Number(incomingRideRef.current?.distanceKm || 0).toFixed(2))
                   : undefined,
                 phase: rideStateRef.current,
                 ...(shouldIncludePolyline ? { routeCoordinates: routeCoordinatesRef.current } : {}),
@@ -2627,14 +2630,13 @@ export function Home() {
           const screenRelativeRotation = Math.round((worldHeading - mapCameraHeading + 360) % 360);
 
           return (
-            <Mapbox.PointAnnotation
-              ref={carAnnotationRef}
+            <Mapbox.MarkerView
               key={`driver-car-${driver?.id || 'active'}`}
-              id="car-location"
               coordinate={[carLng, carLat]}
               anchor={{ x: 0.5, y: 0.5 }}
+              allowOverlap={true}
             >
-              <View style={styles.vehicle3DContainer}>
+              <View pointerEvents="none" style={styles.vehicle3DContainer}>
                 <View
                   style={[
                     styles.vehicle3DRotator,
@@ -2653,13 +2655,10 @@ export function Home() {
                     style={styles.vehicle3DImage}
                     fadeDuration={0}
                     resizeMode="contain"
-                    onLoad={() => {
-                      carAnnotationRef.current?.refresh();
-                    }}
                   />
                 </View>
               </View>
-            </Mapbox.PointAnnotation>
+            </Mapbox.MarkerView>
           );
         })()}
 
