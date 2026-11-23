@@ -29,22 +29,22 @@ const FileSystem: any = FileSystemLegacy;
 const CALL_VOICE_PRESET = {
   ...RecordingPresets.HIGH_QUALITY,
   extension: '.m4a',
-  sampleRate: 22050,
+  sampleRate: 16000,
   numberOfChannels: 1,
-  bitRate: 48000,
+  bitRate: 24000,
   android: {
     ...(RecordingPresets.HIGH_QUALITY?.android || {}),
     extension: '.m4a',
     outputFormat: 'mpeg4' as const,
     audioEncoder: 'aac' as const,
-    sampleRate: 22050,
+    sampleRate: 16000,
   },
   ios: {
     ...(RecordingPresets.HIGH_QUALITY?.ios || {}),
     extension: '.m4a',
     outputFormat: 'aac ' as const,
     audioQuality: 64,
-    sampleRate: 22050,
+    sampleRate: 16000,
     linearPCMBitDepth: 16,
     linearPCMIsBigEndian: false,
     linearPCMIsFloat: false,
@@ -64,6 +64,12 @@ interface InAppCallModalProps {
   otherUserPhoto?: string | null;
   initialDirection: CallDirection;
   callLogId?: string | null;
+}
+
+interface QueuedVoicePacket {
+  id: string;
+  seq: number;
+  uriPromise: Promise<string | null>;
 }
 
 export const InAppCallModal: React.FC<InAppCallModalProps> = ({
@@ -110,10 +116,13 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
   const currentRoleRef = useRef(currentRole);
   currentRoleRef.current = currentRole;
 
-  const playbackQueueRef = useRef<Array<{ id: string; base64: string }>>([]);
+  const playbackQueueRef = useRef<QueuedVoicePacket[]>([]);
   const isPlayingQueueRef = useRef<boolean>(false);
   const currentPlayerRef = useRef<any>(null);
   const closingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const remoteSpeakingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const outboundSeqRef = useRef<number>(1);
+  const lastPlayedSeqRef = useRef<number>(0);
 
   useEffect(() => {
     elapsedRef.current = elapsedSec;
@@ -142,6 +151,19 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
     }
   }, [initialCallLogId]);
 
+  const applyCallAudioMode = useCallback(async (speakerOn: boolean) => {
+    try {
+      await setIsAudioActiveAsync(true).catch(() => {});
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+        shouldRouteThroughEarpiece: !speakerOn,
+        interruptionMode: 'doNotMix',
+        shouldPlayInBackground: false,
+      });
+    } catch {}
+  }, []);
+
   const stopRecorderSafely = useCallback(async () => {
     if (isRecordingRef.current) {
       isRecordingRef.current = false;
@@ -152,8 +174,19 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
   }, [audioRecorder]);
 
   const stopPlayback = useCallback(() => {
-    playbackQueueRef.current = [];
+    const pending = playbackQueueRef.current.splice(0);
+    pending.forEach((item) => {
+      item.uriPromise
+        .then((uri) => {
+          if (uri) FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+        })
+        .catch(() => {});
+    });
     isPlayingQueueRef.current = false;
+    if (remoteSpeakingTimeoutRef.current) {
+      clearTimeout(remoteSpeakingTimeoutRef.current);
+      remoteSpeakingTimeoutRef.current = null;
+    }
     setIsRemoteSpeaking(false);
     if (currentPlayerRef.current) {
       try {
@@ -232,6 +265,8 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
   useEffect(() => {
     if (!visible) {
       hasInitiatedSessionRef.current = false;
+      outboundSeqRef.current = 1;
+      lastPlayedSeqRef.current = 0;
       Vibration.cancel();
       stopPlayback();
       stopRecorderSafely();
@@ -246,6 +281,8 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
       return;
     }
     hasInitiatedSessionRef.current = true;
+    outboundSeqRef.current = 1;
+    lastPlayedSeqRef.current = 0;
 
     phaseRef.current = initialDirection;
     setPhase(initialDirection);
@@ -281,34 +318,41 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
     }
   }, [visible, initialDirection, finishAndClose, stopPlayback, stopRecorderSafely]);
 
+  useEffect(() => {
+    if (!visible || phase !== 'connected') return;
+    applyCallAudioMode(isSpeakerOn);
+  }, [visible, phase, isSpeakerOn, applyCallAudioMode]);
+
   const processNextAudioChunk = useCallback(async () => {
     if (isPlayingQueueRef.current) return;
     const nextItem = playbackQueueRef.current.shift();
     if (!nextItem) {
-      setIsRemoteSpeaking(false);
+      if (remoteSpeakingTimeoutRef.current) clearTimeout(remoteSpeakingTimeoutRef.current);
+      remoteSpeakingTimeoutRef.current = setTimeout(() => {
+        if (!isPlayingQueueRef.current && playbackQueueRef.current.length === 0) {
+          setIsRemoteSpeaking(false);
+        }
+      }, 350);
       return;
     }
 
     isPlayingQueueRef.current = true;
+    if (remoteSpeakingTimeoutRef.current) {
+      clearTimeout(remoteSpeakingTimeoutRef.current);
+      remoteSpeakingTimeoutRef.current = null;
+    }
     setIsRemoteSpeaking(true);
+    if (nextItem.seq > lastPlayedSeqRef.current) {
+      lastPlayedSeqRef.current = nextItem.seq;
+    }
 
+    let tempUri: string | null = null;
     try {
-      await stopRecorderSafely();
-      await setIsAudioActiveAsync(true).catch(() => {});
-      await setAudioModeAsync({
-        playsInSilentMode: true,
-        allowsRecording: false,
-        shouldRouteThroughEarpiece: !isSpeakerOnRef.current,
-        interruptionMode: 'doNotMix',
-        shouldPlayInBackground: false,
-      }).catch(() => {});
-
-      const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory || '';
-      const tempUri = `${cacheDir}call_chunk_${nextItem.id}.m4a`;
-      const cleanBase64 = nextItem.base64.replace(/^data:audio\/[^;]+;base64,/, '');
-      await FileSystem.writeAsStringAsync(tempUri, cleanBase64, {
-        encoding: FileSystem?.EncodingType?.Base64 || 'base64',
-      });
+      tempUri = await nextItem.uriPromise;
+      if (!tempUri || !visibleRef.current || phaseRef.current !== 'connected') {
+        if (tempUri) FileSystem.deleteAsync(tempUri, { idempotent: true }).catch(() => {});
+        return;
+      }
 
       if (typeof createAudioPlayer === 'function') {
         const player = createAudioPlayer({ uri: tempUri });
@@ -325,7 +369,9 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
               player.remove?.();
             } catch {}
             currentPlayerRef.current = null;
-            FileSystem.deleteAsync(tempUri, { idempotent: true }).catch(() => {});
+            if (tempUri) {
+              FileSystem.deleteAsync(tempUri, { idempotent: true }).catch(() => {});
+            }
             resolve();
           };
 
@@ -333,7 +379,7 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
             if (st?.didJustFinish || st?.error) done();
           });
 
-          setTimeout(done, 10000);
+          setTimeout(done, 4500);
           try {
             player.play();
           } catch {
@@ -342,15 +388,21 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
         });
       }
     } catch {
+      if (tempUri) FileSystem.deleteAsync(tempUri, { idempotent: true }).catch(() => {});
     } finally {
       isPlayingQueueRef.current = false;
       if (playbackQueueRef.current.length > 0 && visibleRef.current && phaseRef.current === 'connected') {
         processNextAudioChunk();
       } else {
-        setIsRemoteSpeaking(false);
+        if (remoteSpeakingTimeoutRef.current) clearTimeout(remoteSpeakingTimeoutRef.current);
+        remoteSpeakingTimeoutRef.current = setTimeout(() => {
+          if (!isPlayingQueueRef.current && playbackQueueRef.current.length === 0) {
+            setIsRemoteSpeaking(false);
+          }
+        }, 350);
       }
     }
-  }, [stopRecorderSafely]);
+  }, []);
 
   useEffect(() => {
     if (!visible || phase !== 'connected' || isMuted) {
@@ -367,33 +419,21 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
       }
       if (!hasPermRef.current || cancelled) return;
 
+      await applyCallAudioMode(isSpeakerOnRef.current);
+
       while (!cancelled && visibleRef.current && phaseRef.current === 'connected' && !isMutedRef.current) {
-        if (isPlayingQueueRef.current || playbackQueueRef.current.length > 0) {
-          await new Promise((r) => setTimeout(r, 180));
-          continue;
-        }
-
         try {
-          await setIsAudioActiveAsync(true).catch(() => {});
-          await setAudioModeAsync({
-            allowsRecording: true,
-            playsInSilentMode: true,
-            shouldRouteThroughEarpiece: !isSpeakerOnRef.current,
-            interruptionMode: 'doNotMix',
-          }).catch(() => {});
-
           await audioRecorder.prepareToRecordAsync(CALL_VOICE_PRESET);
           audioRecorder.record();
           isRecordingRef.current = true;
 
-          for (let step = 0; step < 7; step++) {
-            await new Promise((r) => setTimeout(r, 200));
+          for (let step = 0; step < 6; step++) {
+            await new Promise((r) => setTimeout(r, 150));
             if (
               cancelled ||
               !visibleRef.current ||
               phaseRef.current !== 'connected' ||
-              isMutedRef.current ||
-              isPlayingQueueRef.current
+              isMutedRef.current
             ) {
               break;
             }
@@ -402,29 +442,48 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
           if (isRecordingRef.current) {
             isRecordingRef.current = false;
             await audioRecorder.stop().catch(() => {});
-            await new Promise((r) => setTimeout(r, 120));
 
-            const uri = audioRecorder?.uri || (audioRecorder as any)?.getStatus?.()?.url;
-            if (uri && socketRef.current && rideIdRef.current && !isMutedRef.current && phaseRef.current === 'connected') {
-              const info = await FileSystem.getInfoAsync(uri).catch(() => null);
-              if (info?.exists && (info?.size ?? 0) > 256) {
-                const base64Audio = await FileSystem.readAsStringAsync(uri, {
-                  encoding: FileSystem?.EncodingType?.Base64 || 'base64',
-                }).catch(() => '');
+            const rawUri = audioRecorder?.uri || (audioRecorder as any)?.getStatus?.()?.url;
+            if (rawUri && socketRef.current && rideIdRef.current && !isMutedRef.current && phaseRef.current === 'connected') {
+              const seqToSend = outboundSeqRef.current++;
+              const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory || '';
+              const stagedUri = `${cacheDir}call_tx_${seqToSend}_${Date.now()}.m4a`;
 
-                if (base64Audio && base64Audio.length > 200) {
-                  socketRef.current.emit('call:voice_chunk', {
-                    rideId: rideIdRef.current,
-                    senderRole: currentRoleRef.current,
-                    audioBase64: base64Audio,
-                  });
+              // Copia o trecho finalizado para liberar o gravador imediatamente sem cortar palavras
+              const copied = await FileSystem.copyAsync({ from: rawUri, to: stagedUri })
+                .then(() => true)
+                .catch(() => false);
+
+              const fileToRead = copied ? stagedUri : rawUri;
+
+              (async () => {
+                try {
+                  const info = await FileSystem.getInfoAsync(fileToRead).catch(() => null);
+                  if (info?.exists && (info?.size ?? 0) > 220 && socketRef.current && rideIdRef.current && phaseRef.current === 'connected') {
+                    const base64Audio = await FileSystem.readAsStringAsync(fileToRead, {
+                      encoding: FileSystem?.EncodingType?.Base64 || 'base64',
+                    }).catch(() => '');
+
+                    if (base64Audio && base64Audio.length > 180) {
+                      socketRef.current.emit('call:voice_chunk', {
+                        rideId: rideIdRef.current,
+                        senderRole: currentRoleRef.current,
+                        seq: seqToSend,
+                        audioBase64: base64Audio,
+                      });
+                    }
+                  }
+                } finally {
+                  if (copied) {
+                    FileSystem.deleteAsync(stagedUri, { idempotent: true }).catch(() => {});
+                  }
                 }
-              }
+              })();
             }
           }
         } catch {
           isRecordingRef.current = false;
-          await new Promise((r) => setTimeout(r, 300));
+          await new Promise((r) => setTimeout(r, 180));
         }
       }
     };
@@ -435,7 +494,7 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
       cancelled = true;
       stopRecorderSafely();
     };
-  }, [visible, phase, isMuted, audioRecorder, stopRecorderSafely]);
+  }, [visible, phase, isMuted, audioRecorder, applyCallAudioMode, stopRecorderSafely]);
 
   useEffect(() => {
     if (!visible || !socket) return;
@@ -474,10 +533,45 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
         setStatusLabel('Chamada conectada • Áudio protegido');
       }
 
+      const incomingSeq =
+        typeof data.seq === 'number' && Number.isFinite(data.seq)
+          ? data.seq
+          : lastPlayedSeqRef.current + playbackQueueRef.current.length + 1;
+
+      if (incomingSeq <= lastPlayedSeqRef.current) return;
+      if (playbackQueueRef.current.some((item) => item.seq === incomingSeq)) return;
+
+      const chunkId = `${incomingSeq}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory || '';
+      const tempUri = `${cacheDir}call_rx_${chunkId}.m4a`;
+      const cleanBase64 = String(data.audioBase64).replace(/^data:audio\/[^;]+;base64,/, '');
+
+      // Pre-grava imediatamente no cache enquanto o pacote anterior ainda toca
+      const uriPromise = FileSystem.writeAsStringAsync(tempUri, cleanBase64, {
+        encoding: FileSystem?.EncodingType?.Base64 || 'base64',
+      })
+        .then(() => tempUri)
+        .catch(() => null);
+
       playbackQueueRef.current.push({
-        id: `${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        base64: data.audioBase64,
+        id: chunkId,
+        seq: incomingSeq,
+        uriPromise,
       });
+      playbackQueueRef.current.sort((a, b) => a.seq - b.seq);
+
+      // Evita acumulo de atraso se a rede movel oscilar (mantem no maximo 3 blocos ao vivo)
+      while (playbackQueueRef.current.length > 3) {
+        const dropped = playbackQueueRef.current.shift();
+        if (dropped) {
+          dropped.uriPromise
+            .then((uri) => {
+              if (uri) FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+            })
+            .catch(() => {});
+        }
+      }
+
       processNextAudioChunk();
     };
 

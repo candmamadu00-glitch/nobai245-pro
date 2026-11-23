@@ -1383,26 +1383,45 @@ handleSocketEvent(socket, 'call:end', async (data) => {
   });
 });
 
+const activeVoiceCallCache = new Map<string, { driverId: string | null; passengerId: string | null; expiresAt: number }>();
+
 handleSocketEvent(socket, 'call:voice_chunk', async (data) => {
-  const { rideId, senderRole, audioBase64 } = data || {};
+  const { rideId, audioBase64, seq } = data || {};
   const senderId = socket.data.user?.id;
   if (!rideId || !isUuid(rideId) || !senderId || !audioBase64 || typeof audioBase64 !== 'string') return;
   if (audioBase64.length > 1500000) return;
 
-  const ride = await prisma.ride.findUnique({
-    where: { id: rideId },
-    select: { driverId: true, passengerId: true, status: true },
-  });
-  if (!ride || !['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'].includes(ride.status)) return;
-  if (ride.driverId !== senderId && ride.passengerId !== senderId) return;
+  const now = Date.now();
+  let participants = activeVoiceCallCache.get(rideId);
 
-  const isDriverSender = ride.driverId === senderId;
-  const targetId = isDriverSender ? ride.passengerId : ride.driverId;
+  if (!participants || participants.expiresAt <= now) {
+    const ride = await prisma.ride.findUnique({
+      where: { id: rideId },
+      select: { driverId: true, passengerId: true, status: true },
+    });
+    if (!ride || !['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'].includes(ride.status)) {
+      activeVoiceCallCache.delete(rideId);
+      return;
+    }
+    participants = {
+      driverId: ride.driverId,
+      passengerId: ride.passengerId,
+      expiresAt: now + 15000,
+    };
+    activeVoiceCallCache.set(rideId, participants);
+  }
+
+  if (participants.driverId !== senderId && participants.passengerId !== senderId) return;
+
+  const isDriverSender = participants.driverId === senderId;
+  const targetId = isDriverSender ? participants.passengerId : participants.driverId;
   if (!targetId) return;
 
   const chunkPayload = {
     rideId,
     senderRole: isDriverSender ? 'driver' : 'passenger',
+    seq: typeof seq === 'number' && Number.isFinite(seq) ? seq : undefined,
+    ts: now,
     audioBase64,
   };
 
