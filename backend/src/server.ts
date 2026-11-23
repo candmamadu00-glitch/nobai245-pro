@@ -1,3 +1,4 @@
+import { buildAndBroadcastSos } from './controllers/AdminSosController';
 import fs from 'fs';
 import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
@@ -1541,15 +1542,27 @@ handleSocketEvent(socket, 'call:voice_chunk', async (data) => {
 
     console.warn(`🚨 [SOS_DEBUG] ALERTA DISPARADO! Usuário: ${userId} (${userTypeEnum}) | SOS ID: ${sosAlert?.id || 'N/A'} | Coords: ${latNum}, ${lngNum}`);
 
-    io.to('admin_dashboard').emit('admin:sos_alert', {
-      sosId: sosAlert?.id,
-      userId,
-      userType: userTypeEnum,
-      rideId: rideId || null,
-      latitude: latNum,
-      longitude: lngNum,
-      timestamp: timestamp || new Date().toISOString()
-    });
+    if (sosAlert?.id) {
+      await buildAndBroadcastSos(io, sosAlert.id);
+    } else {
+      const fallbackSos = {
+        id: `sos-${Date.now()}`,
+        sosId: `sos-${Date.now()}`,
+        userId,
+        userType: userTypeEnum,
+        driverId: isDrv ? userId : null,
+        passengerId: !isDrv ? userId : null,
+        rideId: rideId || null,
+        lat: latNum,
+        lng: lngNum,
+        latitude: latNum,
+        longitude: lngNum,
+        status: 'ACTIVE',
+        createdAt: timestamp || new Date().toISOString(),
+      };
+      io.to('admin_dashboard').emit('admin:sos_alert', fallbackSos);
+      io.to('emergency_agencies').emit('admin:sos_alert', fallbackSos);
+    }
   });
 
   // --- MOTORISTA FICA ONLINE (COM TRAVA DE SALDO MÍNIMO DE 1.000 XOF NA CARTEIRA) ---
@@ -2212,7 +2225,7 @@ handleSocketEvent(socket, 'call:voice_chunk', async (data) => {
     }
 
 
-    io.to('admin_dashboard').emit('admin:map_update', {
+    const liveTelemetryPayload = {
       driverId,
       latitude: Number(latitude),
       longitude: Number(longitude),
@@ -2221,7 +2234,9 @@ handleSocketEvent(socket, 'call:voice_chunk', async (data) => {
       rideId: rideId || null,
       phase: typeof phase === 'string' ? phase : null,
       status: rideId ? 'ON_RIDE' : 'AVAILABLE',
-    });
+    };
+    io.to('admin_dashboard').emit('admin:map_update', liveTelemetryPayload);
+    io.to('emergency_agencies').emit('admin:map_update', liveTelemetryPayload);
 
     const dbKey = `last_db_sync:${driverId}`;
     const lastSync = await safeRedis.get(dbKey);
@@ -2258,7 +2273,7 @@ handleSocketEvent(socket, 'call:voice_chunk', async (data) => {
   handleSocketEvent(socket, 'admin:join_dashboard', () => {
     const role = socket.data.user?.role;
     if (role && ['SUPER_ADMIN', 'OPERATOR', 'FINANCE'].includes(role)) {
-      socket.join('admin_dashboard');
+      if (socket.data.user?.role === 'EMERGENCY_AGENCY') { socket.join('emergency_agencies'); } else { socket.join('admin_dashboard'); }
       console.log(`🛡️ [ADMIN_DEBUG] Usuário ${socket.data.user?.id} (${role}) entrou na sala "admin_dashboard".`);
     } else {
       socket.emit('error', { message: 'Acesso negado.' });

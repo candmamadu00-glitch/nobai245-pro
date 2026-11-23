@@ -1,3 +1,4 @@
+import { emergencySiren } from '../utils/emergencySiren';
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { api, BASE_SERVER_URL } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -81,6 +82,24 @@ export function SOSMonitor() {
     playEmergencySiren();
   }, [incomingSosAlert, filter, playEmergencySiren]);
 
+  const generateAgencyLink = async (agencyType: 'POLICE' | 'HOSPITAL') => {
+    const label = agencyType === 'POLICE' ? 'Policia POP (112)' : 'Hospital Central';
+    try {
+      const res = await api.post('/admin/emergency-access/generate', {
+        agencyName: label,
+        agencyType,
+        expiresInHours: 168,
+      });
+      const url = res.data?.accessUrl;
+      if (url) {
+        await navigator.clipboard?.writeText(url).catch(() => {});
+        window.prompt(`Link exclusivo de Radar em Tempo Real gerado para ${label} (valido por 7 dias):`, url);
+      }
+    } catch {
+      alert('Erro ao gerar link exclusivo de emergencia.');
+    }
+  };
+
   const handleUpdateStatus = async (id: string, status: 'RESOLVED' | 'FALSE_ALARM') => {
     const label = status === 'RESOLVED' ? 'RESOLVIDO' : 'FALSO ALARME';
     if (!window.confirm(`Confirmar encerramento deste chamado SOS como ${label}?`)) return;
@@ -120,9 +139,11 @@ export function SOSMonitor() {
           >
             {soundMuted ? '🔇 Sirene Silenciada' : '🔊 Sirene Ativa'}
           </button>
+          <button type="button" onClick={() => generateAgencyLink('POLICE')} style={{ backgroundColor: '#1E3A8A', color: '#FFF', fontWeight: 700 }}>🚓 Link Polícia</button>
+          <button type="button" onClick={() => generateAgencyLink('HOSPITAL')} style={{ backgroundColor: '#065F46', color: '#FFF', fontWeight: 700 }}>🏥 Link Hospital</button>
           <button
             type="button"
-            onClick={playEmergencySiren}
+            onClick={() => { emergencySiren.playPulse(); playEmergencySiren(); }}
             title="Testar alerta sonoro na sala de controle"
           >
             🔔 Testar Som

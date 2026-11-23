@@ -21,6 +21,7 @@ const Tickets = lazy(() => import('./pages/Tickets').then((m) => ({ default: m.T
 const Settings = lazy(() => import('./pages/Settings').then((m) => ({ default: m.Settings })));
 const SOSMonitor = lazy(() => import('./pages/SOSMonitor').then((m) => ({ default: m.SOSMonitor })));
 const TrackRide = lazy(() => import('./pages/TrackRide').then((m) => ({ default: m.TrackRide })));
+const EmergencyDispatch = lazy(() => import('./pages/EmergencyDispatch').then((m) => ({ default: m.EmergencyDispatch })));
 const Admins = lazy(() => import('./pages/Admins').then((m) => ({ default: m.Admins })));
 const Landmarks = lazy(() => import('./pages/Landmarks'));
 const Promos = lazy(() => import('./pages/Promos').then((m) => ({ default: m.Promos })));
@@ -131,6 +132,7 @@ function AppRoutes() {
         {/* Rotas Públicas */}
         <Route path="/login" element={<Login />} />
         <Route path="/track/:rideId" element={<TrackRide />} />
+        <Route path="/emergencia" element={<EmergencyDispatch />} />
         <Route path="/portal-b2b" element={<B2BPortal />} />
 
         {/* Rotas Privadas */}

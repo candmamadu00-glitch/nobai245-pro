@@ -149,13 +149,19 @@ adminRoutes.put(
 
 adminRoutes.get(
   '/sos', 
-  authorizeRole(['SUPER_ADMIN', 'OPERATOR']), 
+  authorizeRole(['SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'EMERGENCY_AGENCY']), 
   (req, res) => AdminSosController.listSosAlerts(req, res)
+);
+
+adminRoutes.post(
+  '/emergency-access/generate',
+  authorizeRole(['SUPER_ADMIN', 'ADMIN']),
+  (req, res) => AdminSosController.generateAgencyAccess(req, res)
 );
 
 adminRoutes.patch(
   '/sos/:sosId/status', 
-  authorizeRole(['SUPER_ADMIN', 'OPERATOR']), 
+  authorizeRole(['SUPER_ADMIN', 'ADMIN', 'OPERATOR', 'EMERGENCY_AGENCY']), 
   (req, res) => AdminSosController.updateSosStatus(req, res)
 );
 

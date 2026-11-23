@@ -1,3 +1,4 @@
+import { buildAndBroadcastSos } from './AdminSosController';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -580,20 +581,7 @@ export class DriverAuthController {
       });
 
       const io = getIo();
-      if (io) {
-        io.to('admin_dashboard').emit('admin:sos_alert', {
-          id: sosAlert.id,
-          driverId,
-          driverName: sosAlert.driver?.fullName,
-          vehiclePlate: sosAlert.driver?.vehiclePlate,
-          vehicleModel: sosAlert.driver?.vehicleBrand,
-          phone: sosAlert.driver?.phone,
-          latitude: Number(latitude),
-          longitude: Number(longitude),
-          audioUrl: sosAlert.audioUrl,
-          createdAt: sosAlert.createdAt,
-        });
-      }
+      await buildAndBroadcastSos(io, sosAlert.id);
 
       return res.status(201).json({ success: true, sosId: sosAlert.id });
     } catch (error: any) {

@@ -1,3 +1,4 @@
+import { emergencySiren } from '../utils/emergencySiren';
 import { useEffect, useState, useCallback } from 'react';
 import { adminSocket, connectAdminSocket } from '../services/adminSocket';
 
@@ -276,6 +277,7 @@ export function useAdminSocket(adminId?: string, token?: string) {
 
     const handleSosAlert = (sosData: SosAlertPayload) => {
       setIncomingSosAlert(sosData);
+      emergencySiren.startContinuous();
       const actor = sosData?.userType === 'DRIVER' ? 'Motorista' : 'Passageiro';
       const name = sosData?.driver?.fullName || sosData?.passenger?.fullName || 'Usuário';
       pushNotification({

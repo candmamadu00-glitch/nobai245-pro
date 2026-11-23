@@ -383,6 +383,13 @@ export function EmergencyDispatch() {
 
         {/* Mapa de Radar em Tempo Real */}
         <div style={{ flex: 1, position: 'relative' }}>
+          <Map
+            ref={mapRef}
+            initialViewState={{ latitude: 11.8632, longitude: -15.5977, zoom: 13 }}
+            mapStyle="mapbox://styles/mapbox/streets-v12"
+            mapboxAccessToken={MAPBOX_TOKEN}
+            style={{ width: '100%', height: '100%' }}
+          >
             <NavigationControl position="bottom-right" />
 
             {driverList.map((d: any) => {

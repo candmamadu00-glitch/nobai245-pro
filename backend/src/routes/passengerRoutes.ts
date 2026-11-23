@@ -1,3 +1,4 @@
+import { buildAndBroadcastSos } from '../controllers/AdminSosController';
 import { prisma } from '../config/prisma';
 import { Router } from 'express';
 import { PassengerAuthController } from '../controllers/PassengerAuthController';
@@ -84,19 +85,38 @@ passengerRoutes.post('/sos', async (req: any, res) => {
       return res.status(400).json({ error: 'Coordenadas de emergência inválidas.' });
     }
 
-    const validRideId = typeof rideId === 'string' && /^[0-9a-fA-F-]{36}$/.test(rideId) ? rideId : null;
+    let validRideId = typeof rideId === 'string' && /^[0-9a-fA-F-]{36}$/.test(rideId) ? rideId : null;
+    let linkedDriverId: string | null = null;
+
+    if (validRideId) {
+      const rideRow = await prisma.ride.findUnique({ where: { id: validRideId }, select: { driverId: true } });
+      linkedDriverId = rideRow?.driverId || null;
+    } else {
+      const activeRide = await prisma.ride.findFirst({
+        where: { passengerId: userId, status: { in: ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'] } },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, driverId: true },
+      });
+      if (activeRide) {
+        validRideId = activeRide.id;
+        linkedDriverId = activeRide.driverId || null;
+      }
+    }
 
     const alert = await prisma.sosAlert.create({
       data: {
         rideId: validRideId,
         userType: 'PASSENGER' as any,
         passengerId: userId,
-        driverId: null,
+        driverId: linkedDriverId,
         lat,
         lng,
         status: 'ACTIVE',
       },
     });
+
+    const io = req.app.get('io');
+    await buildAndBroadcastSos(io, alert.id);
 
     return res.status(201).json({ success: true, alertId: alert.id });
   } catch (err) {

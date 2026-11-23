@@ -442,7 +442,16 @@ export function AdminRadar() {
       )}
 
       <div style={styles.mapContainer}>
-         setFollowSelected(false)}
+        <Map
+          ref={mapRef}
+          initialViewState={DEFAULT_CENTER}
+          mapStyle={
+            mapTheme === 'satellite'
+              ? 'mapbox://styles/mapbox/satellite-streets-v12'
+              : 'mapbox://styles/mapbox/streets-v12'
+          }
+          mapboxAccessToken={MAPBOX_TOKEN}
+          onDragStart={() => setFollowSelected(false)}
           style={{ width: '100%', height: '100%' }}
         >
           <NavigationControl position="bottom-right" />
