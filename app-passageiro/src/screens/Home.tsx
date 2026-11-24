@@ -525,6 +525,7 @@ export function Home() {
   const [extraStopCoords, setExtraStopCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [extraStopAddress, setExtraStopAddress] = useState('');
   const [showExtraStop, setShowExtraStop] = useState(false);
+  const [showReferenceFields, setShowReferenceFields] = useState(false);
 
   const [isForAnotherPerson, setIsForAnotherPerson] = useState(false);
   const [guestName, setGuestName] = useState('');
@@ -5086,7 +5087,7 @@ const handleOpenChat = () => {
         </View>
       </Modal>
 
-      {/* 🔀 MODAL DE BUSCA PROFISSIONAL DE ENDEREÇOS */}
+      {/* 🔀 MODAL DE BUSCA PROFISSIONAL DE ENDEREÇOS (PADRÃO UBER/BOLT) */}
       <Modal
         visible={isSearchModalVisible}
         animationType="fade"
@@ -5100,7 +5101,7 @@ const handleOpenChat = () => {
           style={[
             styles.searchModalContainer,
             {
-              paddingTop: Math.max((insets?.top || 0) + 10, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 12 : 20),
+              paddingTop: Math.max((insets?.top || 0) + 6, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 6 : 16),
             },
           ]}
         >
@@ -5108,10 +5109,13 @@ const handleOpenChat = () => {
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={{ flex: 1 }}
           >
-            {/* CABEÇALHO EXECUTIVO */}
+            {/* CABEÇALHO COMPACTO */}
             <View style={styles.searchHeader}>
               <TouchableOpacity
-                onPress={() => setIsSearchModalVisible(false)}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setIsSearchModalVisible(false);
+                }}
                 style={styles.backButton}
                 activeOpacity={0.75}
               >
@@ -5120,7 +5124,6 @@ const handleOpenChat = () => {
 
               <View style={styles.searchHeaderCenter}>
                 <Text style={styles.searchHeaderTitle}>Definir Trajeto</Text>
-                <Text style={styles.searchHeaderSubtitle}>Escolha partida e destino</Text>
               </View>
 
               <TouchableOpacity
@@ -5137,36 +5140,93 @@ const handleOpenChat = () => {
             </View>
 
             <View style={styles.modalBody}>
-              {/* CARTÃO UNIFICADO DE ROTA FIXO NO TOPO (NÃO DESLIZA COM A LISTA) */}
+              {/* CARTÃO UNIFICADO DE ROTA COMPACTO */}
               <View style={styles.routePlannerCard}>
-                  <View style={styles.routePlannerBody}>
-                    {/* COLUNA DA LINHA DO TRAJETO */}
-                    <View style={styles.routeTimelineCol}>
-                      <View style={styles.routeDotPickupOuter}>
-                        <View style={styles.routeDotPickupInner} />
-                      </View>
-                      <View style={[styles.routeConnectorLine, { height: showExtraStop ? 114 : 96 }]} />
-                      {showExtraStop && (
-                        <>
-                          <View style={styles.routeDotStopOuter}>
-                            <View style={styles.routeDotStopInner} />
-                          </View>
-                          <View style={[styles.routeConnectorLine, { height: 96 }]} />
-                        </>
-                      )}
-                      <View style={styles.routeDotDropoffOuter}>
-                        <View style={styles.routeDotDropoffInner} />
-                      </View>
+                <View style={styles.routePlannerBody}>
+                  {/* COLUNA DA LINHA DO TRAJETO */}
+                  <View style={styles.routeTimelineCol}>
+                    <View style={styles.routeDotPickupOuter}>
+                      <View style={styles.routeDotPickupInner} />
                     </View>
+                    <View
+                      style={[
+                        styles.routeConnectorLine,
+                        { height: showReferenceFields ? 66 : 32 },
+                      ]}
+                    />
+                    {showExtraStop && (
+                      <>
+                        <View style={styles.routeDotStopOuter}>
+                          <View style={styles.routeDotStopInner} />
+                        </View>
+                        <View
+                          style={[
+                            styles.routeConnectorLine,
+                            { height: showReferenceFields ? 66 : 32 },
+                          ]}
+                        />
+                      </>
+                    )}
+                    <View style={styles.routeDotDropoffOuter}>
+                      <View style={styles.routeDotDropoffInner} />
+                    </View>
+                  </View>
 
-                    {/* COLUNA DOS CAMPOS */}
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      {/* EMBARQUE */}
-                      <View style={styles.routeStepBlock}>
-                        <View style={styles.routeStepLabelRow}>
-                          <Text style={[styles.routeStepLabel, { color: '#FACC15' }]}>
-                            PONTO DE PARTIDA
-                          </Text>
+                  {/* COLUNA DOS CAMPOS DE ENDEREÇO */}
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    {/* EMBARQUE */}
+                    <View style={styles.routeStepBlock}>
+                      <View
+                        style={[
+                          styles.mapboxSearchInputWrapper,
+                          searchType === 'pickup' ? styles.mapboxInputFocusedPickup : styles.mapboxInputIdle,
+                        ]}
+                      >
+                        <TextInput
+                          ref={pickupInputRef}
+                          style={styles.mapboxSearchInput}
+                          placeholder={t('pickup_location', 'Local de partida')}
+                          placeholderTextColor="#64748B"
+                          value={searchType === 'pickup' ? searchQuery : pickupAddress}
+                          autoCorrect={false}
+                          returnKeyType="next"
+                          onFocus={() => {
+                            setSearchType('pickup');
+                            const isPlaceholder = !pickupAddress || pickupAddress.trim().toLowerCase() === 'local de partida';
+                            const cleanVal = isPlaceholder ? '' : pickupAddress;
+                            setSearchQuery(cleanVal);
+                            if (cleanVal.trim().length > 0) {
+                              handleMapboxSearch(cleanVal);
+                            }
+                          }}
+                          onChangeText={(text) => {
+                            isManualPickupRef.current = true;
+                            setSearchQuery(text);
+                            handleMapboxSearch(text);
+                          }}
+                        />
+
+                        {(searchType === 'pickup' ? searchQuery : pickupAddress) ? (
+                          <TouchableOpacity
+                            onPress={() => {
+                              isManualPickupRef.current = true;
+                              setSearchType('pickup');
+                              setSearchQuery('');
+                              setPickupAddress('');
+                              setPickupCoords(null);
+                              setSearchResults([]);
+                              setTimeout(() => pickupInputRef.current?.focus(), 60);
+                            }}
+                            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+                            style={{ marginLeft: 6 }}
+                          >
+                            <Ionicons name="close-circle" size={18} color="#64748B" />
+                          </TouchableOpacity>
+                        ) : null}
+
+                        {isSearchingMapbox && searchType === 'pickup' ? (
+                          <ActivityIndicator size="small" color="#EAB308" style={{ marginLeft: 6 }} />
+                        ) : (
                           <TouchableOpacity
                             onPress={() => {
                               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -5175,208 +5235,168 @@ const handleOpenChat = () => {
                               setSearchResults([]);
                               getCurrentLocationWithFallback(true);
                             }}
-                            style={[styles.activeFieldBadge, { backgroundColor: 'rgba(234, 179, 8, 0.16)', flexDirection: 'row', alignItems: 'center', gap: 4 }]}
+                            style={styles.inlineGpsChip}
                             activeOpacity={0.75}
                           >
-                            <Ionicons name="locate" size={11} color="#FACC15" />
-                            <Text style={[styles.activeFieldBadgeText, { color: '#FACC15' }]}>GPS atual</Text>
+                            <Ionicons name="locate" size={12} color="#FACC15" />
+                            <Text style={styles.inlineGpsChipText}>GPS</Text>
                           </TouchableOpacity>
-                        </View>
+                        )}
+                      </View>
 
-                        <View style={[
-                          styles.mapboxSearchInputWrapper,
-                          searchType === 'pickup' ? styles.mapboxInputFocusedPickup : styles.mapboxInputIdle
-                        ]}>
-                          <Ionicons name="radio-button-on" size={16} color="#EAB308" style={{ marginRight: 9 }} />
-                          <TextInput
-                            ref={pickupInputRef}
-                            style={styles.mapboxSearchInput}
-                            placeholder={t('pickup_location', 'Local de Partida')}
-                            placeholderTextColor="#64748B"
-                            value={searchType === 'pickup' ? searchQuery : pickupAddress}
-                            autoCorrect={false}
-                            onFocus={() => {
-                              setSearchType('pickup');
-                              const isPlaceholder = !pickupAddress || pickupAddress.trim().toLowerCase() === 'local de partida';
-                              const cleanVal = isPlaceholder ? '' : pickupAddress;
-                              setSearchQuery(cleanVal);
-                              if (cleanVal.trim().length > 0) {
-                                handleMapboxSearch(cleanVal);
-                              }
-                            }}
-                            onChangeText={(text) => {
-                              isManualPickupRef.current = true;
-                              setSearchQuery(text);
-                              handleMapboxSearch(text);
-                            }}
-                          />
-                          {isSearchingMapbox && searchType === 'pickup' ? (
-                            <ActivityIndicator size="small" color="#EAB308" style={{ marginLeft: 6 }} />
-                          ) : (searchType === 'pickup' ? searchQuery : pickupAddress) ? (
-                            <TouchableOpacity
-                              onPress={() => {
-                                isManualPickupRef.current = true;
-                                setSearchType('pickup');
-                                setSearchQuery('');
-                                setPickupAddress('');
-                                setPickupCoords(null);
-                                setSearchResults([]);
-                                setTimeout(() => pickupInputRef.current?.focus(), 60);
-                              }}
-                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                            >
-                              <Ionicons name="close-circle" size={18} color="#64748B" />
-                            </TouchableOpacity>
-                          ) : null}
-                        </View>
-
+                      {showReferenceFields && (
                         <View style={styles.referenceInputContainer}>
-                          <Ionicons name="compass-outline" size={14} color="#EAB308" style={{ marginRight: 7 }} />
+                          <Ionicons name="compass-outline" size={13} color="#EAB308" style={{ marginRight: 6 }} />
                           <TextInput
                             style={styles.referenceTextInput}
-                            placeholder="Ponto de ref. da partida (opcional)"
+                            placeholder="Ref. partida (ex: em frente ao mercado)"
                             placeholderTextColor="#64748B"
                             value={pickupReferencePoint}
                             onChangeText={setPickupReferencePoint}
                             maxLength={80}
                           />
                         </View>
-                      </View>
-
-                      {/* PARADA EXTRA */}
-                      {showExtraStop && (
-                        <View style={styles.routeStepBlock}>
-                          <View style={styles.routeStepLabelRow}>
-                            <Text style={[styles.routeStepLabel, { color: '#60A5FA' }]}>
-                              PARADA INTERMEDIÁRIA
-                            </Text>
-                            <TouchableOpacity
-                              style={styles.removeStopPill}
-                              onPress={() => {
-                                setShowExtraStop(false);
-                                setExtraStopAddress('');
-                                setExtraStopCoords(null);
-                                setExtraStopReferencePoint('');
-                              }}
-                            >
-                              <Ionicons name="trash-outline" size={11} color="#F87171" />
-                              <Text style={styles.removeStopPillText}>Remover</Text>
-                            </TouchableOpacity>
-                          </View>
-
-                          <View style={[
-                            styles.mapboxSearchInputWrapper,
-                            searchType === 'extraStop' ? styles.mapboxInputFocusedStop : styles.mapboxInputIdle
-                          ]}>
-                            <Ionicons name="navigate-circle" size={17} color="#3B82F6" style={{ marginRight: 9 }} />
-                            <TextInput
-                              style={styles.mapboxSearchInput}
-                              placeholder="Digite o local da parada..."
-                              placeholderTextColor="#64748B"
-                              value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
-                              autoCorrect={false}
-                              onFocus={() => {
-                                setSearchType('extraStop');
-                                setSearchQuery(extraStopAddress);
-                              }}
-                              onChangeText={(text) => {
-                                setSearchQuery(text);
-                                handleMapboxSearch(text);
-                              }}
-                            />
-                            {isSearchingMapbox && searchType === 'extraStop' ? (
-                              <ActivityIndicator size="small" color="#3B82F6" style={{ marginLeft: 6 }} />
-                            ) : (searchType === 'extraStop' ? searchQuery : extraStopAddress) ? (
-                              <TouchableOpacity
-                                onPress={() => { setSearchQuery(''); setExtraStopAddress(''); setExtraStopCoords(null); }}
-                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                              >
-                                <Ionicons name="close-circle" size={18} color="#64748B" />
-                              </TouchableOpacity>
-                            ) : null}
-                          </View>
-
-                          <View style={styles.referenceInputContainer}>
-                            <Ionicons name="compass-outline" size={14} color="#3B82F6" style={{ marginRight: 7 }} />
-                            <TextInput
-                              style={styles.referenceTextInput}
-                              placeholder="Ponto de ref. da parada (opcional)"
-                              placeholderTextColor="#64748B"
-                              value={extraStopReferencePoint}
-                              onChangeText={setExtraStopReferencePoint}
-                              maxLength={80}
-                            />
-                          </View>
-                        </View>
                       )}
+                    </View>
 
-                      {/* DESTINO FINAL */}
-                      <View style={{ marginBottom: 2 }}>
-                        <View style={styles.routeStepLabelRow}>
-                          <Text style={[styles.routeStepLabel, { color: '#F87171' }]}>
-                            DESTINO FINAL
-                          </Text>
-                          {searchType === 'dropoff' && (
-                            <View style={[styles.activeFieldBadge, { backgroundColor: 'rgba(239, 68, 68, 0.16)' }]}>
-                              <Text style={[styles.activeFieldBadgeText, { color: '#F87171' }]}>Editando</Text>
-                            </View>
-                          )}
-                        </View>
-
-                        <View style={[
-                          styles.mapboxSearchInputWrapper,
-                          searchType === 'dropoff' ? styles.mapboxInputFocusedDropoff : styles.mapboxInputIdle
-                        ]}>
-                          <Ionicons name="flag" size={16} color="#EF4444" style={{ marginRight: 9 }} />
+                    {/* PARADA EXTRA */}
+                    {showExtraStop && (
+                      <View style={styles.routeStepBlock}>
+                        <View
+                          style={[
+                            styles.mapboxSearchInputWrapper,
+                            searchType === 'extraStop' ? styles.mapboxInputFocusedStop : styles.mapboxInputIdle,
+                          ]}
+                        >
                           <TextInput
-                            ref={dropoffInputRef}
                             style={styles.mapboxSearchInput}
-                            placeholder={t('where_to', 'Para onde vamos?')}
+                            placeholder="Parada intermediária..."
                             placeholderTextColor="#64748B"
-                            value={searchType === 'dropoff' ? searchQuery : dropoffAddress}
+                            value={searchType === 'extraStop' ? searchQuery : extraStopAddress}
                             autoCorrect={false}
+                            returnKeyType="next"
                             onFocus={() => {
-                              setSearchType('dropoff');
-                              setSearchQuery(dropoffAddress);
-                              if (dropoffAddress && dropoffAddress.trim().length > 0) {
-                                handleMapboxSearch(dropoffAddress);
-                              }
+                              setSearchType('extraStop');
+                              setSearchQuery(extraStopAddress);
                             }}
                             onChangeText={(text) => {
                               setSearchQuery(text);
                               handleMapboxSearch(text);
                             }}
                           />
-                          {isSearchingMapbox && searchType === 'dropoff' ? (
-                            <ActivityIndicator size="small" color="#EF4444" style={{ marginLeft: 6 }} />
-                          ) : (searchType === 'dropoff' ? searchQuery : dropoffAddress) ? (
+                          {isSearchingMapbox && searchType === 'extraStop' ? (
+                            <ActivityIndicator size="small" color="#3B82F6" style={{ marginLeft: 6 }} />
+                          ) : (searchType === 'extraStop' ? searchQuery : extraStopAddress) ? (
                             <TouchableOpacity
-                              onPress={() => { setSearchQuery(''); setDropoffAddress(''); setDropoffCoords(null); }}
-                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                              onPress={() => {
+                                setSearchQuery('');
+                                setExtraStopAddress('');
+                                setExtraStopCoords(null);
+                              }}
+                              hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+                              style={{ marginLeft: 6 }}
                             >
                               <Ionicons name="close-circle" size={18} color="#64748B" />
                             </TouchableOpacity>
                           ) : null}
+
+                          <TouchableOpacity
+                            style={styles.inlineRemoveStopBtn}
+                            onPress={() => {
+                              setShowExtraStop(false);
+                              setExtraStopAddress('');
+                              setExtraStopCoords(null);
+                              setExtraStopReferencePoint('');
+                              setSearchType('dropoff');
+                            }}
+                            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+                          >
+                            <Ionicons name="trash-outline" size={14} color="#F87171" />
+                          </TouchableOpacity>
                         </View>
 
+                        {showReferenceFields && (
+                          <View style={styles.referenceInputContainer}>
+                            <Ionicons name="compass-outline" size={13} color="#3B82F6" style={{ marginRight: 6 }} />
+                            <TextInput
+                              style={styles.referenceTextInput}
+                              placeholder="Ref. parada (opcional)"
+                              placeholderTextColor="#64748B"
+                              value={extraStopReferencePoint}
+                              onChangeText={setExtraStopReferencePoint}
+                              maxLength={80}
+                            />
+                          </View>
+                        )}
+                      </View>
+                    )}
+
+                    {/* DESTINO FINAL */}
+                    <View style={{ marginBottom: 0 }}>
+                      <View
+                        style={[
+                          styles.mapboxSearchInputWrapper,
+                          searchType === 'dropoff' ? styles.mapboxInputFocusedDropoff : styles.mapboxInputIdle,
+                        ]}
+                      >
+                        <TextInput
+                          ref={dropoffInputRef}
+                          style={styles.mapboxSearchInput}
+                          placeholder={t('where_to', 'Para onde vamos?')}
+                          placeholderTextColor="#94A3B8"
+                          value={searchType === 'dropoff' ? searchQuery : dropoffAddress}
+                          autoCorrect={false}
+                          returnKeyType="search"
+                          onFocus={() => {
+                            setSearchType('dropoff');
+                            setSearchQuery(dropoffAddress);
+                            if (dropoffAddress && dropoffAddress.trim().length > 0) {
+                              handleMapboxSearch(dropoffAddress);
+                            }
+                          }}
+                          onChangeText={(text) => {
+                            setSearchQuery(text);
+                            handleMapboxSearch(text);
+                          }}
+                        />
+                        {isSearchingMapbox && searchType === 'dropoff' ? (
+                          <ActivityIndicator size="small" color="#EF4444" style={{ marginLeft: 6 }} />
+                        ) : (searchType === 'dropoff' ? searchQuery : dropoffAddress) ? (
+                          <TouchableOpacity
+                            onPress={() => {
+                              setSearchQuery('');
+                              setDropoffAddress('');
+                              setDropoffCoords(null);
+                            }}
+                            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+                            style={{ marginLeft: 6 }}
+                          >
+                            <Ionicons name="close-circle" size={18} color="#64748B" />
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+
+                      {showReferenceFields && (
                         <View style={styles.referenceInputContainer}>
-                          <Ionicons name="compass-outline" size={14} color="#EF4444" style={{ marginRight: 7 }} />
+                          <Ionicons name="compass-outline" size={13} color="#EF4444" style={{ marginRight: 6 }} />
                           <TextInput
                             style={styles.referenceTextInput}
-                            placeholder="Ponto de ref. do destino (opcional)"
+                            placeholder="Ref. destino (ex: portão azul)"
                             placeholderTextColor="#64748B"
                             value={dropoffReferencePoint}
                             onChangeText={setDropoffReferencePoint}
                             maxLength={80}
                           />
                         </View>
-                      </View>
+                      )}
                     </View>
                   </View>
+                </View>
 
-                  {/* RODAPÉ DO CARTÃO DE ROTA */}
-                  <View style={styles.routeCardFooter}>
-                    {!showExtraStop ? (
+                {/* RODAPÉ DO CARTÃO DE ROTA */}
+                <View style={styles.routeCardFooter}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    {!showExtraStop && (
                       <TouchableOpacity
                         style={styles.addStopPillBtn}
                         activeOpacity={0.8}
@@ -5386,28 +5406,54 @@ const handleOpenChat = () => {
                           setSearchQuery('');
                         }}
                       >
-                        <Ionicons name="add-circle" size={16} color="#60A5FA" />
-                        <Text style={styles.addStopPillText}>Adicionar parada</Text>
+                        <Ionicons name="add-circle" size={14} color="#60A5FA" />
+                        <Text style={styles.addStopPillText}>Parada</Text>
                       </TouchableOpacity>
-                    ) : (
-                      <View />
                     )}
 
-                    {Boolean(pickupCoords && dropoffAddress.trim()) && (
-                      <TouchableOpacity
-                        style={styles.confirmRouteMiniBtn}
-                        activeOpacity={0.85}
-                        onPress={() => {
-                          setIsSearchModalVisible(false);
-                          setBookingStep('SERVICE_AND_PRICE');
-                        }}
+                    <TouchableOpacity
+                      style={[
+                        styles.addStopPillBtn,
+                        showReferenceFields && {
+                          backgroundColor: 'rgba(234, 179, 8, 0.16)',
+                          borderColor: 'rgba(234, 179, 8, 0.4)',
+                        },
+                      ]}
+                      activeOpacity={0.8}
+                      onPress={() => setShowReferenceFields((prev) => !prev)}
+                    >
+                      <Ionicons
+                        name={showReferenceFields ? 'chevron-up' : 'compass-outline'}
+                        size={14}
+                        color={showReferenceFields ? '#FACC15' : '#94A3B8'}
+                      />
+                      <Text
+                        style={[
+                          styles.addStopPillText,
+                          { color: showReferenceFields ? '#FACC15' : '#CBD5E1' },
+                        ]}
                       >
-                        <Text style={styles.confirmRouteMiniBtnText}>Confirmar rota</Text>
-                        <Ionicons name="arrow-forward" size={14} color="#0F172A" />
-                      </TouchableOpacity>
-                    )}
+                        {showReferenceFields ? 'Ocultar ref.' : '+ Referência'}
+                      </Text>
+                    </TouchableOpacity>
                   </View>
+
+                  {Boolean(pickupCoords && dropoffAddress.trim()) && (
+                    <TouchableOpacity
+                      style={styles.confirmRouteMiniBtn}
+                      activeOpacity={0.85}
+                      onPress={() => {
+                        Keyboard.dismiss();
+                        setIsSearchModalVisible(false);
+                        setBookingStep('SERVICE_AND_PRICE');
+                      }}
+                    >
+                      <Text style={styles.confirmRouteMiniBtnText}>Confirmar</Text>
+                      <Ionicons name="arrow-forward" size={13} color="#0F172A" />
+                    </TouchableOpacity>
+                  )}
                 </View>
+              </View>
 
               <ScrollView
                 style={{ flex: 1 }}
@@ -6672,16 +6718,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     backgroundColor: '#0F172A',
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(148, 163, 184, 0.12)',
   },
   backButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#1E293B',
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.16)',
@@ -6708,7 +6754,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: 'rgba(234, 179, 8, 0.12)',
     paddingHorizontal: 11,
-    paddingVertical: 7,
+    paddingVertical: 6,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: 'rgba(234, 179, 8, 0.35)',
@@ -6721,16 +6767,16 @@ const styles = StyleSheet.create({
   },
   modalBody: {
     flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 14,
+    paddingHorizontal: 14,
+    paddingTop: 10,
   },
   routePlannerCard: {
     backgroundColor: '#131C31',
-    borderRadius: 20,
-    padding: 14,
+    borderRadius: 18,
+    padding: 12,
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.16)',
-    marginBottom: 18,
+    marginBottom: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.25,
@@ -6742,64 +6788,64 @@ const styles = StyleSheet.create({
   },
   routeTimelineCol: {
     alignItems: 'center',
-    marginRight: 12,
-    paddingTop: 28,
+    marginRight: 10,
+    paddingTop: 13,
   },
   routeDotPickupOuter: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
     backgroundColor: 'rgba(234, 179, 8, 0.22)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   routeDotPickupInner: {
-    width: 9,
-    height: 9,
-    borderRadius: 4.5,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: '#EAB308',
   },
   routeDotStopOuter: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
     backgroundColor: 'rgba(59, 130, 246, 0.22)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   routeDotStopInner: {
-    width: 9,
-    height: 9,
-    borderRadius: 4.5,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: '#3B82F6',
   },
   routeDotDropoffOuter: {
-    width: 18,
-    height: 18,
-    borderRadius: 6,
+    width: 16,
+    height: 16,
+    borderRadius: 5,
     backgroundColor: 'rgba(239, 68, 68, 0.22)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   routeDotDropoffInner: {
-    width: 9,
-    height: 9,
+    width: 8,
+    height: 8,
     borderRadius: 2,
     backgroundColor: '#EF4444',
   },
   routeConnectorLine: {
     width: 2,
     backgroundColor: '#334155',
-    marginVertical: 4,
+    marginVertical: 3,
   },
   routeStepBlock: {
-    marginBottom: 14,
+    marginBottom: 8,
   },
   routeStepLabelRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 5,
+    marginBottom: 4,
   },
   routeStepLabel: {
     fontSize: 10,
@@ -6829,12 +6875,34 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
   },
+  inlineGpsChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: 'rgba(234, 179, 8, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(234, 179, 8, 0.35)',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 8,
+    marginLeft: 6,
+  },
+  inlineGpsChipText: {
+    color: '#FACC15',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  inlineRemoveStopBtn: {
+    padding: 4,
+    marginLeft: 4,
+  },
   mapboxSearchInputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    borderRadius: 11,
+    paddingHorizontal: 11,
+    minHeight: 42,
+    paddingVertical: 6,
   },
   mapboxInputIdle: {
     backgroundColor: '#0F172A',
@@ -6859,16 +6927,17 @@ const styles = StyleSheet.create({
   mapboxSearchInput: {
     flex: 1,
     color: '#F8FAFC',
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
-    paddingVertical: 0,
+    paddingVertical: 2,
+    textAlignVertical: 'center',
   },
   routeCardFooter: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 14,
-    paddingTop: 12,
+    marginTop: 10,
+    paddingTop: 9,
     borderTopWidth: 1,
     borderTopColor: 'rgba(148, 163, 184, 0.12)',
   },
