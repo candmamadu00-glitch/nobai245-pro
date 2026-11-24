@@ -4805,18 +4805,23 @@ const handleOpenChat = () => {
                         }}>
                           <Image source={item.image} style={{ width: 54, height: 38 }} resizeMode="contain" />
                         </View>
-                        <View style={[styles.categoryTextWrapper, { marginLeft: 12 }]}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                            <Text style={[styles.categoryTitle, isSelected && styles.categoryTextActive, { fontSize: 15, fontWeight: '800' }]}>{item.title}</Text>
-                            {isSelected && (
-                              <View style={{ backgroundColor: '#EAB308', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 6 }}>
-                                <Text style={{ color: '#0F172A', fontSize: 9, fontWeight: '900' }}>SELECIONADO</Text>
-                              </View>
-                            )}
-                          </View>
-                          <Text style={[styles.categorySubtitle, { marginTop: 2 }]}>{item.subtitle}</Text>
+                        <View style={[styles.categoryTextWrapper, { flex: 1, minWidth: 0, marginLeft: 12, marginRight: 8 }]}>
+                          <Text
+                            style={[styles.categoryTitle, isSelected && styles.categoryTextActive, { fontSize: 15, fontWeight: '800' }]}
+                            numberOfLines={1}
+                          >
+                            {item.title}
+                          </Text>
+                          <Text style={[styles.categorySubtitle, { marginTop: 2 }]} numberOfLines={1}>
+                            {item.subtitle}
+                          </Text>
+                          {isSelected && (
+                            <View style={{ alignSelf: 'flex-start', backgroundColor: '#EAB308', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, marginTop: 5 }}>
+                              <Text style={{ color: '#0F172A', fontSize: 9, fontWeight: '900', letterSpacing: 0.4 }}>SELECIONADO</Text>
+                            </View>
+                          )}
                         </View>
-                        <View style={{ alignItems: 'flex-end' }}>
+                        <View style={{ flexShrink: 0, alignItems: 'flex-end', justifyContent: 'center' }}>
                           {isCalculatingPrice ? (
                             <SkeletonLoader width={72} height={18} borderRadius={6} />
                           ) : (
