@@ -5469,59 +5469,10 @@ const handleOpenChat = () => {
               >
                 {searchQuery.trim().length === 0 ? (
                   <View>
-                    <View style={styles.sectionHeaderRow}>
-                      <Text style={styles.sectionHeaderTitle}>Locais Salvos</Text>
-                      <Text style={styles.sectionHeaderHint}>Segure para salvar o atual</Text>
-                    </View>
 
-                    <View style={styles.savedPlacesCard}>
-                      <TouchableOpacity
-                        style={[styles.savedPlaceRow, styles.savedPlaceRowDivider]}
-                        activeOpacity={0.75}
-                        onPress={() => handleFavoritePress('home')}
-                        onLongPress={() => {
-                          if (pickupCoords) {
-                            saveFavoritePlace('home', { address: pickupAddress, ...pickupCoords });
-                          }
-                        }}
-                      >
-                        <View style={[styles.savedIconCircle, { backgroundColor: 'rgba(234, 179, 8, 0.16)' }]}>
-                          <Ionicons name="home" size={18} color="#FACC15" />
-                        </View>
-                        <View style={{ flex: 1, minWidth: 0 }}>
-                          <Text style={styles.savedPlaceTitle}>Casa</Text>
-                          <Text style={styles.savedPlaceSub} numberOfLines={1}>
-                            {homeLocation ? homeLocation.address : 'Segure para salvar sua partida atual'}
-                          </Text>
-                        </View>
-                        <Ionicons name="chevron-forward" size={16} color="#64748B" />
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={styles.savedPlaceRow}
-                        activeOpacity={0.75}
-                        onPress={() => handleFavoritePress('work')}
-                        onLongPress={() => {
-                          if (pickupCoords) {
-                            saveFavoritePlace('work', { address: pickupAddress, ...pickupCoords });
-                          }
-                        }}
-                      >
-                        <View style={[styles.savedIconCircle, { backgroundColor: 'rgba(56, 189, 248, 0.16)' }]}>
-                          <Ionicons name="briefcase" size={18} color="#38BDF8" />
-                        </View>
-                        <View style={{ flex: 1, minWidth: 0 }}>
-                          <Text style={styles.savedPlaceTitle}>Trabalho</Text>
-                          <Text style={styles.savedPlaceSub} numberOfLines={1}>
-                            {workLocation ? workLocation.address : 'Segure para salvar sua partida atual'}
-                          </Text>
-                        </View>
-                        <Ionicons name="chevron-forward" size={16} color="#64748B" />
-                      </TouchableOpacity>
-                    </View>
 
                     {recentSearches.length > 0 && (
-                      <View style={{ marginTop: 18 }}>
+                      <View style={{ marginBottom: 16 }}>
                         <View style={styles.sectionHeaderRow}>
                           <Text style={styles.sectionHeaderTitle}>Pesquisas Recentes</Text>
                         </View>
