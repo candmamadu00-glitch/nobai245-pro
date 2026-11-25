@@ -372,16 +372,7 @@ export const acceptRide = async (req: Request, res: Response): Promise<void> => 
     const updatedRide = await acceptRideLogic(String(rideId), driverId);
     const sanitizedRide = sanitizeRide(updatedRide);
 
-    try {
-      const io = getIo();
-      if (io) {
-        io.to(sanitizedRide.id).emit('ride:accepted', { ride: sanitizedRide });
-        io.to(`passenger_${sanitizedRide.passengerId}`).emit('ride:accepted', { ride: sanitizedRide });
-      }
-    } catch (wsErr) {
-      console.warn('⚠️ [SOCKET] Erro ao emitir aceite de corrida:', wsErr);
-    }
-
+    // Notificacao socket e push ja disparadas de forma unica dentro de acceptRideLogic
     res.json({ success: true, ride: sanitizedRide });
   } catch (error: any) {
     console.error(`❌ [ACEITAR_CORRIDA] Erro: ${error?.message || error}`);

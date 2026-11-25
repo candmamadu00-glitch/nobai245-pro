@@ -103,32 +103,24 @@ export class PassengerAuthController {
         return res.status(409).json({ success: false, error: 'Este número de telefone já está registrado no sistema.' });
       }
 
-      // Se existir apenas um cadastro pendente nunca verificado (isVerified: false), atualiza e reenvia o SMS
+      // Se existir apenas um cadastro pendente nunca verificado (isVerified: false), atualiza e ativa diretamente
       if (passengerPhoneExists && !passengerPhoneExists.isVerified) {
         const passwordHash = await bcrypt.hash(String(password), 12);
-        const otpCode = crypto.randomInt(1000, 10000).toString();
-        const otpCodeHash = await bcrypt.hash(otpCode, 10);
-        const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
         const updatedPassenger = await prisma.passenger.update({
           where: { id: passengerPhoneExists.id },
           data: {
             fullName: cleanFullName,
             passwordHash,
-            otpCodeHash,
-            otpExpiresAt,
-            lastResetAttempt: new Date(),
+            isVerified: true,
+            otpCodeHash: null,
+            otpExpiresAt: null,
           },
         });
 
-        const smsSent = await sendTermiiSMS(formattedPhone, otpCode, 'REGISTER');
-        if (!smsSent) {
-          return res.status(500).json({ success: false, error: 'Falha ao enviar o SMS de verificação. Tente novamente.' });
-        }
-
         return res.status(200).json({
           success: true,
-          message: 'Código de verificação reenviado por SMS.',
+          message: 'Cadastro concluído com sucesso! Faça login para continuar.',
           passenger: {
             id: updatedPassenger.id,
             fullName: updatedPassenger.fullName,
@@ -160,17 +152,13 @@ export class PassengerAuthController {
 
       const passwordHash = await bcrypt.hash(String(password), 12);
 
-      const otpCode = crypto.randomInt(1000, 10000).toString();
-      const otpCodeHash = await bcrypt.hash(otpCode, 10);
-      const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
-
       const paxRegIo = getIo();
       if (paxRegIo) {
         paxRegIo.to('admin_dashboard').emit('admin:activity_notification', {
           id: `pax-reg-${Date.now()}`,
           category: 'PASSENGER_REGISTER',
           title: 'Novo Passageiro Registrado',
-          message: `${cleanFullName} (${formattedPhone}) iniciou cadastro na plataforma.`,
+          message: `${cleanFullName} (${formattedPhone}) cadastrou-se na plataforma.`,
           route: '/passengers',
           severity: 'info',
           createdAt: new Date().toISOString(),
@@ -178,7 +166,6 @@ export class PassengerAuthController {
       }
 
       console.log(`\n🔑 [NOVO CADASTRO PASSAGEIRO] Telefone: ${formattedPhone}`);
-
 
       const passenger = await prisma.passenger.create({
         data: {
@@ -190,16 +177,11 @@ export class PassengerAuthController {
           documentNumber: documentNumber || null,
           paymentProvider: 'ORANGE_MONEY',
           paymentAccountNumber: formattedPhone,
-          isVerified: false,
-          otpCodeHash,
-          otpExpiresAt
+          isVerified: true,
+          otpCodeHash: null,
+          otpExpiresAt: null
         },
       });
-
-      const smsSent = await sendTermiiSMS(formattedPhone, otpCode, 'REGISTER');
-      if (!smsSent) {
-        return res.status(500).json({ success: false, error: 'Conta criada, mas houve falha ao enviar o SMS. Clique em reenviar código.' });
-      }
 
       if (passenger.email) {
         Promise.resolve(sendWelcomeEmail(passenger.email, passenger.fullName)).catch((err) => {
@@ -209,7 +191,7 @@ export class PassengerAuthController {
 
       return res.status(201).json({
         success: true,
-        message: 'Passageiro cadastrado com sucesso! Verifique seu telefone para ativar a conta.',
+        message: 'Passageiro cadastrado com sucesso! Faça login para continuar.',
         passenger: {
           id: passenger.id,
           fullName: passenger.fullName,

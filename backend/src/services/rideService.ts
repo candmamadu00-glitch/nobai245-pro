@@ -917,26 +917,35 @@ export async function acceptRideLogic(rideId: string, driverId: string) {
     isQueuedRide: false
   };
 
-  const passengerRooms = [
-    result.id,
-    result.passengerId,
-    `passenger_${result.passengerId}`,
-    `passenger:${result.passengerId}`,
-    `user_${result.passengerId}`
-  ];
+  const notifyDedupeKey = `ride_accepted_notified:${result.id}`;
+  const alreadyNotified = await safeRedis.get(notifyDedupeKey).catch(() => null);
+  if (!alreadyNotified) {
+    await safeRedis.set(notifyDedupeKey, '1', 120).catch(() => null);
 
-  passengerRooms.forEach(room => {
-    safeSocketEmit(room, 'ride:accepted', passengerAcceptedPayload);
-  });
+    const uniquePassengerRooms = Array.from(new Set([
+      result.id,
+      result.passengerId,
+      `passenger_${result.passengerId}`,
+      `passenger:${result.passengerId}`,
+      `user_${result.passengerId}`
+    ].filter(Boolean)));
 
-  if (result.passenger?.deviceToken) {
-    sendPushNotification(
-      result.passenger.deviceToken,
-      '✅ Corrida Aceita!',
-      `O motorista ${result.driver?.fullName || 'parceiro'} aceitou sua corrida e está a caminho!`,
-      { type: 'RIDE_ACCEPTED', rideId: result.id, status: targetStatus },
-      PUSH_CHANNELS.RIDE_UPDATE
-    ).catch(err => console.error('❌ Erro no Push de Aceite:', err));
+    const ioInstance = getIo();
+    if (ioInstance && uniquePassengerRooms.length > 0) {
+      ioInstance.to(uniquePassengerRooms).emit('ride:accepted', passengerAcceptedPayload);
+    } else {
+      safeSocketEmit(`passenger_${result.passengerId}`, 'ride:accepted', passengerAcceptedPayload);
+    }
+
+    if (result.passenger?.deviceToken) {
+      sendPushNotification(
+        result.passenger.deviceToken,
+        '✅ Corrida Aceita!',
+        `O motorista ${result.driver?.fullName || 'parceiro'} aceitou sua corrida e está a caminho!`,
+        { type: 'RIDE_ACCEPTED', rideId: result.id, status: targetStatus },
+        PUSH_CHANNELS.RIDE_UPDATE
+      ).catch(err => console.error('❌ Erro no Push de Aceite:', err));
+    }
   }
 
   return {

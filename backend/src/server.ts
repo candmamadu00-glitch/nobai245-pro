@@ -2136,17 +2136,17 @@ handleSocketEvent(socket, 'call:voice_chunk', async (data) => {
 
       console.log(`🎉 [RIDE_ACCEPT_SUCCESS] Motorista ${driverId} assumiu a corrida ${rideId}`);
 
-      const passengerRooms = [
+      const uniquePassengerRooms = Array.from(new Set([
         rideId,
         passengerId,
         `passenger_${passengerId}`,
         `passenger:${passengerId}`,
         `user_${passengerId}`
-      ].filter(Boolean);
+      ].filter(Boolean)));
 
-      passengerRooms.forEach(room => {
-        io.to(room).emit('ride:accepted', acceptPayload);
-      });
+      if (uniquePassengerRooms.length > 0) {
+        io.to(uniquePassengerRooms).emit('ride:accepted', acceptPayload);
+      }
 
       socket.emit('driver:accept_ride_success', acceptPayload);
       socket.emit('driver:accept_ride_response', { success: true, rideId: ride.id, isQueuedRide });

@@ -111,10 +111,19 @@ export function Register() {
         });
       }
       
+      Alert.alert(
+        t('success_otp_title', '🎉 Sucesso!'),
+        t('account_verified_msg', 'Conta criada com sucesso! Faça login para prosseguir.')
+      );
+
       if (isMountedRef.current) {
-        setIsOtpStep(true);
-        setResendCooldown(45);
+        setFullName('');
+        setPhone('');
+        setPassword('');
+        setOtpCode('');
+        setIsOtpStep(false);
       }
+      navigation.navigate('Login');
     } catch (error: any) {
       if (!isMountedRef.current) return;
       const errorMessage = 

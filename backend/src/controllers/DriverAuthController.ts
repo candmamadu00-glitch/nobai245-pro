@@ -436,33 +436,7 @@ export class DriverAuthController {
         }
       }
 
-      const incomingOtpCode = String(req.body.otpCode || '').replace(/\D/g, '').trim();
-      const incomingOtpToken = String(req.body.otpToken || '').trim();
-
-      if (!incomingOtpCode || incomingOtpCode.length !== 6) {
-        return res.status(400).json({ success: false, error: 'Informe o código de verificação SMS de 6 dígitos.' });
-      }
-
-      if (!incomingOtpToken) {
-        return res.status(400).json({ success: false, error: 'Sessão de verificação SMS expirada. Solicite um novo código.' });
-      }
-
-      try {
-        const decodedOtp = jwt.verify(incomingOtpToken, JWT_SECRET!) as {
-          phone?: string;
-          otpHash?: string;
-          purpose?: string;
-        };
-        if (decodedOtp.purpose !== 'DRIVER_REGISTER' || decodedOtp.phone !== formattedPhone || !decodedOtp.otpHash) {
-          return res.status(400).json({ success: false, error: 'Token de verificação SMS inválido para este telefone.' });
-        }
-        const isOtpMatch = await bcrypt.compare(incomingOtpCode, decodedOtp.otpHash);
-        if (!isOtpMatch) {
-          return res.status(400).json({ success: false, error: 'Código de verificação SMS incorreto.' });
-        }
-      } catch {
-        return res.status(400).json({ success: false, error: 'O código SMS expirou. Volte e solicite um novo código.' });
-      }
+      // Cadastro direto sem exigencia de codigo SMS OTP (SMS mantido apenas em Esqueci a Senha)
 
       const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
 

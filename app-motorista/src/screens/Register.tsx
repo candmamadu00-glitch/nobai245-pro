@@ -211,7 +211,20 @@ export function Register() {
       }
       setStep(3);
     } else if (step === 3) {
-      handleSendOtp();
+      const cleanPhone = phone.replace(/\D/g, '');
+      if (!cleanPhone || cleanPhone.length !== 9) {
+        return Alert.alert('Atenção', 'Informe um número de telefone válido com 9 dígitos.');
+      }
+      if (!password || password.length < 6) {
+        return Alert.alert('Atenção', 'Crie uma senha segura com no mínimo 6 caracteres.');
+      }
+      if (!selfie || !licenseFront || !licenseBack) {
+        return Alert.alert('Fotos', 'Selfie e Carta de Condução são obrigatórias.');
+      }
+      if (!privacyAccepted) {
+        return Alert.alert('Atenção', 'Você deve ler e aceitar as Políticas de Privacidade.');
+      }
+      handleRegister();
     }
   }
 
@@ -219,14 +232,6 @@ export function Register() {
     const cleanPhone = phone.replace(/\D/g, '');
     const cleanOtp = otpCode.replace(/\D/g, '').trim();
     const activeOtpToken = registrationOtpTokenRef.current || registrationOtpToken;
-
-    if (!cleanOtp || cleanOtp.length !== 6) {
-      return Alert.alert('Atenção', 'Digite o código de verificação SMS de 6 dígitos.');
-    }
-
-    if (!activeOtpToken) {
-      return Alert.alert('Sessão SMS Expirada', 'Volte à etapa anterior e solicite um novo código SMS.');
-    }
 
     if (
       typeof selfie !== 'string' || !selfie.trim() ||
@@ -249,8 +254,8 @@ export function Register() {
       formData.append('vehiclePlate', vehiclePlate.trim().toUpperCase());
       formData.append('vehicleColor', vehicleColor.trim());
       formData.append('vehicleType', vehicleType);
-      formData.append('otpCode', cleanOtp);
-      formData.append('otpToken', activeOtpToken);
+      if (cleanOtp) formData.append('otpCode', cleanOtp);
+      if (activeOtpToken) formData.append('otpToken', activeOtpToken);
 
       if (vehicleType === 'TOCA_TOCA' && vehicleSeats) {
         formData.append('vehicleSeats', String(vehicleSeats).trim());
@@ -395,9 +400,9 @@ export function Register() {
           <View style={styles.formCard}>
             <View style={styles.progressContainer}>
               <View style={styles.progressBarBg}>
-                <View style={[styles.progressBarFill, { width: `${(step / 4) * 100}%` }]} />
+                <View style={[styles.progressBarFill, { width: `${(Math.min(step, 3) / 3) * 100}%` }]} />
               </View>
-              <Text style={styles.stepText}>Etapa {step} de 4</Text>
+              <Text style={styles.stepText}>Etapa {Math.min(step, 3)} de 3</Text>
             </View>
 
             {step === 1 && (
@@ -586,11 +591,11 @@ export function Register() {
                   </Text>
                 </View>
 
-                <TouchableOpacity style={[styles.primaryBtn, sendingOtp && { opacity: 0.7 }]} onPress={handleNextStep} disabled={sendingOtp}>
-                  {sendingOtp ? <ActivityIndicator color="#0F2537" /> : (
+                <TouchableOpacity style={[styles.primaryBtn, loading && { opacity: 0.7 }]} onPress={handleNextStep} disabled={loading}>
+                  {loading ? <ActivityIndicator color="#0F2537" /> : (
                     <>
-                      <Text style={styles.primaryBtnText}>Receber Código SMS 📩</Text>
-                      <Feather name="arrow-right" size={18} color="#0F2537" />
+                      <Text style={styles.primaryBtnText}>Concluir Cadastro ✅</Text>
+                      <Feather name="check" size={18} color="#0F2537" />
                     </>
                   )}
                 </TouchableOpacity>

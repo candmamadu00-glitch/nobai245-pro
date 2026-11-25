@@ -2245,12 +2245,22 @@ const handleOpenChat = () => {
       if (!isMountedRef.current || !data) return;
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
+      const acceptedRideKey = String(data.rideId || data.id || activeRideIdRef.current || 'current');
+      const acceptedEventSig = `${acceptedRideKey}:accepted`;
       const otpCode = String(data.startOtp || data.otpPin || data.pin || '');
+      const parsedDriver = extractDriverInfo(data, otpCode);
+
+      if (notifiedLocalRideEventsRef.current.has(acceptedEventSig)) {
+        if (parsedDriver) setDriverInfo((prev: any) => prev || parsedDriver);
+        if (otpCode) setStartOtp((prev: string) => prev || otpCode);
+        return;
+      }
+      notifiedLocalRideEventsRef.current.add(acceptedEventSig);
+
       setStartOtp(otpCode);
       setActiveRideId(data.rideId || data.id);
       activeRideIdRef.current = data.rideId || data.id;
 
-      const parsedDriver = extractDriverInfo(data, otpCode);
       if (parsedDriver) {
         setDriverInfo(parsedDriver);
       }
@@ -2288,21 +2298,16 @@ const handleOpenChat = () => {
         enabled: isVoiceAssistEnabledRef.current,
       });
 
-      const acceptedRideKey = String(data.rideId || data.id || activeRideIdRef.current || 'current');
-      const acceptedEventSig = `${acceptedRideKey}:accepted`;
-      if (!notifiedLocalRideEventsRef.current.has(acceptedEventSig)) {
-        notifiedLocalRideEventsRef.current.add(acceptedEventSig);
-        Notifications.scheduleNotificationAsync({
-          identifier: `nobai-ride-${acceptedRideKey}-accepted`,
-          content: {
-            title: t('ride_accepted_title', 'Corrida Aceita! 🚗'),
-            body: `${parsedDriver?.name || 'O motorista'} ${t('ride_accepted_msg', 'aceitou sua viagem e está a caminho.')}`,
-            data: { rideId: acceptedRideKey, type: 'RIDE_ACCEPTED' },
-            sound: 'default',
-          },
-          trigger: Platform.OS === 'android' ? { channelId: 'ride-updates' } : null,
-        }).catch(() => {});
-      }
+      Notifications.scheduleNotificationAsync({
+        identifier: `nobai-ride-${acceptedRideKey}-accepted`,
+        content: {
+          title: t('ride_accepted_title', 'Corrida Aceita! 🚗'),
+          body: `${parsedDriver?.name || 'O motorista'} ${t('ride_accepted_msg', 'aceitou sua viagem e está a caminho.')}`,
+          data: { rideId: acceptedRideKey, type: 'RIDE_ACCEPTED' },
+          sound: 'default',
+        },
+        trigger: Platform.OS === 'android' ? { channelId: 'ride-updates' } : null,
+      }).catch(() => {});
     };
 
     const handleDriverArrived = (data: any) => {

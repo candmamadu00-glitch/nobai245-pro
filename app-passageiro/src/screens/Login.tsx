@@ -7,7 +7,7 @@ import {
 } from 'react-native';
 
 // 🎯 CHAVE DA APRESENTAÇÃO DE SEXTA-FEIRA: mude para false após o evento para ocultar a tela de boas-vindas
-const ENABLE_PRESENTATION_WELCOME = true;
+const ENABLE_PRESENTATION_WELCOME = false;
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';

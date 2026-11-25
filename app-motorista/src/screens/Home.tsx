@@ -2101,6 +2101,7 @@ export function Home() {
 
     const currentWalletXof = Number(driver?.walletBalance ?? 0);
     if (currentWalletXof < 1000) {
+      isOnlineRef.current = false;
       setIsOnline(false);
       refreshDriverProfile().catch(() => {});
       return Alert.alert(
@@ -2113,57 +2114,80 @@ export function Home() {
       );
     }
 
-    const foreground = await Location.requestForegroundPermissionsAsync();
-    if (foreground.status !== 'granted') {
-      return Alert.alert('Permissão Necessária 📍', 'Permita o acesso à localização para ficar online.');
-    }
+    // Resposta imediata na interface (Optimistic UI)
+    isOnlineRef.current = true;
+    setIsOnline(true);
+    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch (e) {}
 
     try {
-      const currentLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      const isMocked = currentLoc.mocked || (currentLoc.coords as any)?.mocked;
+      let fgStatus = (await Location.getForegroundPermissionsAsync()).status;
+      if (fgStatus !== 'granted') {
+        fgStatus = (await Location.requestForegroundPermissionsAsync()).status;
+      }
+      if (fgStatus !== 'granted') {
+        isOnlineRef.current = false;
+        if (isMountedRef.current) setIsOnline(false);
+        return Alert.alert('Permissão Necessária 📍', 'Permita o acesso à localização para ficar online.');
+      }
+
+      const socketPromise = connectDriverSocket();
+
+      let currentLoc = await Location.getLastKnownPositionAsync().catch(() => null);
+      if (!currentLoc) {
+        currentLoc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }).catch(() => null);
+      }
+      if (!currentLoc && location) {
+        currentLoc = location;
+      }
+
+      const resolvedLat = currentLoc?.coords?.latitude ?? lastDriverCoordsRef.current?.latitude ?? 11.8636;
+      const resolvedLng = currentLoc?.coords?.longitude ?? lastDriverCoordsRef.current?.longitude ?? -15.5977;
+      const isMocked = Boolean(currentLoc?.mocked || (currentLoc?.coords as any)?.mocked);
 
       if (isMocked && !__DEV__) {
+        isOnlineRef.current = false;
         if (isMountedRef.current) setIsOnline(false);
         return Alert.alert('GPS Simulado Detectado 🚨', 'Desative o aplicativo de GPS Falso para continuar.');
       }
 
       const initialHeading =
-        currentLoc.coords.heading != null && currentLoc.coords.heading >= 0
+        currentLoc?.coords?.heading != null && currentLoc.coords.heading >= 0
           ? currentLoc.coords.heading
           : 0;
+
       lastDriverCoordsRef.current = {
-        latitude: currentLoc.coords.latitude,
-        longitude: currentLoc.coords.longitude,
+        latitude: resolvedLat,
+        longitude: resolvedLng,
         heading: initialHeading,
       };
       setSnappedCarPos({
-        latitude: currentLoc.coords.latitude,
-        longitude: currentLoc.coords.longitude,
+        latitude: resolvedLat,
+        longitude: resolvedLng,
         heading: initialHeading,
       });
-      setIsOnline(true);
-      const activeSocket = await connectDriverSocket();
+
+      const activeSocket = await socketPromise;
 
       if (isMountedRef.current) {
-        setLocation(currentLoc);
+        if (currentLoc) setLocation(currentLoc);
         if (cameraRef.current) {
           cameraRef.current.setCamera({
-            centerCoordinate: [currentLoc.coords.longitude, currentLoc.coords.latitude],
+            centerCoordinate: [resolvedLng, resolvedLat],
             zoomLevel: 16
           });
         }
       }
 
       const socketToUse = (activeSocket as any) || socket;
-      if (socketToUse) {
+      if (socketToUse && isOnlineRef.current) {
         const payload = {
           driverId: driver?.id,
-          latitude: currentLoc.coords.latitude,
-          longitude: currentLoc.coords.longitude,
-          lat: currentLoc.coords.latitude,
-          lng: currentLoc.coords.longitude,
-          heading: currentLoc.coords.heading || 0,
-          speed: currentLoc.coords.speed || 0,
+          latitude: resolvedLat,
+          longitude: resolvedLng,
+          lat: resolvedLat,
+          lng: resolvedLng,
+          heading: initialHeading,
+          speed: currentLoc?.coords?.speed || 0,
         };
 
         lastDriverOnlineEmitAt = Date.now();
@@ -2173,6 +2197,7 @@ export function Home() {
 
       await startTrackingForState(rideState);
     } catch (e) {
+      isOnlineRef.current = false;
       if (isMountedRef.current) setIsOnline(false);
     }
   }
