@@ -1188,17 +1188,24 @@ const handleFullCancelAndReset = useCallback(() => {
 
   useEffect(() => {
     if (['accepted', 'arrived', 'in_progress'].includes(rideStatus)) {
+      const statusTitle =
+        rideStatus === 'accepted'
+          ? 'Motorista a caminho'
+          : rideStatus === 'arrived'
+          ? 'Motorista chegou ao local'
+          : 'Viagem em andamento';
+
       updateOngoingRideNotification({
-        title: rideStatus === 'accepted' ? 'Motorista a caminho' : 'Viagem em andamento',
-        body: `A caminho de: ${dropoffAddress || 'Seu destino'}`,
+        title: statusTitle,
+        body: `Destino: ${dropoffAddress || 'Seu destino'}`,
         vehiclePlate: driverInfo?.licensePlate,
         vehicleModel: driverInfo?.carModel,
-        etaMinutes: driverEta,
+        etaMinutes: null,
       });
     } else {
       dismissOngoingRideNotification();
     }
-  }, [rideStatus, driverEta, driverInfo, dropoffAddress]);
+  }, [rideStatus, driverInfo?.licensePlate, driverInfo?.carModel, dropoffAddress]);
 
   isChatVisibleRef.current = isChatVisible;
   useEffect(() => {

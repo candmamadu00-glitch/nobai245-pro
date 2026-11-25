@@ -3,7 +3,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, Modal,
   KeyboardAvoidingView, Platform, Keyboard,
   FlatList,
-  ScrollView, TextInput, Image, TouchableWithoutFeedback, Alert
+  ScrollView, TextInput, Image, TouchableWithoutFeedback, Alert, PermissionsAndroid
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -574,6 +574,19 @@ export function ChatModal({
     stopActivePlayer();
 
     try {
+      if (Platform.OS === 'android') {
+        const androidGranted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
+        ).catch(() => null);
+        if (androidGranted && androidGranted !== PermissionsAndroid.RESULTS.GRANTED) {
+          Alert.alert(
+            t('permission_denied', 'Permissão negada'),
+            t('mic_permission_needed', 'Precisamos de acesso ao microfone para enviar áudios.')
+          );
+          return;
+        }
+      }
+
       const permission = await AudioModule.requestRecordingPermissionsAsync();
       if (!permission.granted) {
         Alert.alert(
@@ -583,14 +596,24 @@ export function ChatModal({
         return;
       }
 
-      await setAudioModeAsync({
-          allowsRecording: true,
-          playsInSilentMode: true,
-          shouldRouteThroughEarpiece: false,
-          interruptionMode: 'doNotMix',
-        }).catch(() => {});
+      // Garante que qualquer gravacao anterior travada seja encerrada antes de preparar nova
+      try {
+        await audioRecorder.stop();
+      } catch {}
 
-      await audioRecorder.prepareToRecordAsync(VOICE_RECORDING_PRESET);
+      await setIsAudioActiveAsync(true).catch(() => {});
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+        shouldRouteThroughEarpiece: false,
+        interruptionMode: 'doNotMix',
+      }).catch(() => {});
+
+      try {
+        await audioRecorder.prepareToRecordAsync(VOICE_RECORDING_PRESET);
+      } catch {
+        await audioRecorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
+      }
       audioRecorder.record();
 
       isRecordingRef.current = true;
@@ -610,7 +633,8 @@ export function ChatModal({
           stopAndSendRecording(15);
         }
       }, 1000);
-    } catch (err) {
+    } catch (err: any) {
+      console.warn('⚠️ [CHAT_MIC_START_ERROR]:', err?.message || err);
       isRecordingRef.current = false;
       setIsRecording(false);
       Alert.alert(t('error_title', 'Erro'), 'Não foi possível iniciar o microfone neste momento.');

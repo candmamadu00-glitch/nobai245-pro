@@ -2,6 +2,9 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 const ONGOING_RIDE_NOTIFICATION_ID = 'nobai245-active-ride-status';
+const ONGOING_CHANNEL_ID = 'active-ride-ongoing-silent';
+
+let lastSignature = '';
 
 export async function updateOngoingRideNotification({
   title,
@@ -18,37 +21,49 @@ export async function updateOngoingRideNotification({
 }) {
   if (Platform.OS !== 'android') return;
 
-  // Canal com alta prioridade no Android
-  await Notifications.setNotificationChannelAsync('active-ride-ongoing', {
-    name: 'Status da Corrida Ativa',
-    importance: Notifications.AndroidImportance.HIGH,
-    sound: undefined, // Sem som repetitivo ao atualizar
-    vibrationPattern: [0],
-    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-  });
+  try {
+    await Notifications.setNotificationChannelAsync(ONGOING_CHANNEL_ID, {
+      name: 'Status da Corrida Ativa',
+      importance: Notifications.AndroidImportance.LOW,
+      sound: undefined,
+      enableVibrate: false,
+      vibrationPattern: [0],
+      showBadge: false,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    });
 
-  const mainTitle = etaMinutes ? `Chegando em: ${etaMinutes} min` : title;
-  const mainBody = vehiclePlate && vehicleModel 
-    ? `${vehicleModel} • Placa: ${vehiclePlate}\n${body}`
-    : body;
+    const mainTitle = etaMinutes ? `Chegando em: ${etaMinutes} min` : title;
+    const mainBody = vehiclePlate && vehicleModel
+      ? `${vehicleModel} • Placa: ${vehiclePlate}\n${body}`
+      : body;
 
-  await Notifications.scheduleNotificationAsync({
-    identifier: ONGOING_RIDE_NOTIFICATION_ID,
-    content: {
-      title: `🇬🇼 ${mainTitle}`,
-      body: mainBody,
-      sticky: true, // Impede que o usuário feche arrastando para o lado
-      priority: Notifications.AndroidNotificationPriority.HIGH,
-      categoryIdentifier: 'active-ride',
-    },
-    trigger: { channelId: 'active-ride-ongoing' },
-  });
+    const signature = `${mainTitle}|${mainBody}`;
+    if (signature === lastSignature) return;
+    lastSignature = signature;
+
+    await Notifications.scheduleNotificationAsync({
+      identifier: ONGOING_RIDE_NOTIFICATION_ID,
+      content: {
+        title: `🇬🇼 ${mainTitle}`,
+        body: mainBody,
+        sticky: true,
+        sound: false,
+        vibrate: [],
+        priority: Notifications.AndroidNotificationPriority.LOW,
+        categoryIdentifier: 'active-ride',
+      },
+      trigger: null,
+    });
+  } catch (e) {
+    // Falha silenciosa para nao interromper fluxo da corrida
+  }
 }
 
 export async function dismissOngoingRideNotification() {
+  lastSignature = '';
   try {
     await Notifications.dismissNotificationAsync(ONGOING_RIDE_NOTIFICATION_ID);
   } catch (e) {
-    // Ignora erro se não existir notificação ativa
+    // Ignora erro se nao existir notificacao ativa
   }
 }
