@@ -9,6 +9,7 @@ import {
   Vibration,
   Animated,
   Platform,
+  PermissionsAndroid,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -25,6 +26,21 @@ import {
 import * as FileSystemLegacy from 'expo-file-system/legacy';
 
 const FileSystem: any = FileSystemLegacy;
+
+let WebRTCModule: any = null;
+try {
+  WebRTCModule = require('react-native-webrtc');
+} catch {
+  WebRTCModule = null;
+}
+
+const RTC_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+  ],
+};
 
 const CALL_VOICE_PRESET = {
   ...RecordingPresets.HIGH_QUALITY,
@@ -95,6 +111,7 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
   const [isSpeakerOn, setIsSpeakerOn] = useState<boolean>(true);
   const [isRemoteSpeaking, setIsRemoteSpeaking] = useState<boolean>(false);
   const [activeCallLogId, setActiveCallLogId] = useState<string | null>(initialCallLogId || null);
+  const [useLegacyFallback, setUseLegacyFallback] = useState<boolean>(false);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const elapsedRef = useRef<number>(0);
@@ -106,6 +123,12 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
   const hasPermRef = useRef<boolean>(false);
   const hasInitiatedSessionRef = useRef<boolean>(false);
   const activeCallLogIdRef = useRef<string | null>(initialCallLogId || null);
+
+  // Refs WebRTC Full-Duplex
+  const peerConnectionRef = useRef<any>(null);
+  const localStreamRef = useRef<any>(null);
+  const pendingIceCandidatesRef = useRef<any[]>([]);
+  const webrtcConnectedRef = useRef<boolean>(false);
 
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -138,6 +161,13 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
 
   useEffect(() => {
     isMutedRef.current = isMuted;
+    if (localStreamRef.current) {
+      try {
+        localStreamRef.current.getAudioTracks().forEach((track: any) => {
+          track.enabled = !isMuted;
+        });
+      } catch {}
+    }
   }, [isMuted]);
 
   useEffect(() => {
@@ -151,6 +181,24 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
     }
   }, [initialCallLogId]);
 
+  const requestMicPermissionSafely = useCallback(async (): Promise<boolean> => {
+    try {
+      if (Platform.OS === 'android') {
+        const res = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO).catch(() => null);
+        if (res && res !== PermissionsAndroid.RESULTS.GRANTED) {
+          hasPermRef.current = false;
+          return false;
+        }
+      }
+      const perm = await AudioModule.requestRecordingPermissionsAsync().catch(() => null);
+      const granted = Boolean(perm?.granted);
+      hasPermRef.current = granted;
+      return granted;
+    } catch {
+      return hasPermRef.current;
+    }
+  }, []);
+
   const applyCallAudioMode = useCallback(async (speakerOn: boolean) => {
     try {
       await setIsAudioActiveAsync(true).catch(() => {});
@@ -162,6 +210,23 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
         shouldPlayInBackground: false,
       });
     } catch {}
+  }, []);
+
+  const cleanupWebRTC = useCallback(() => {
+    webrtcConnectedRef.current = false;
+    pendingIceCandidatesRef.current = [];
+    if (localStreamRef.current) {
+      try {
+        localStreamRef.current.getTracks().forEach((t: any) => t.stop());
+      } catch {}
+      localStreamRef.current = null;
+    }
+    if (peerConnectionRef.current) {
+      try {
+        peerConnectionRef.current.close();
+      } catch {}
+      peerConnectionRef.current = null;
+    }
   }, []);
 
   const stopRecorderSafely = useCallback(async () => {
@@ -202,6 +267,7 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
       if (phaseRef.current === 'ended') return;
       phaseRef.current = 'ended';
       Vibration.cancel();
+      cleanupWebRTC();
       stopPlayback();
       stopRecorderSafely();
       setPhase('ended');
@@ -209,10 +275,105 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
       if (closingTimeoutRef.current) clearTimeout(closingTimeoutRef.current);
       closingTimeoutRef.current = setTimeout(() => {
         hasInitiatedSessionRef.current = false;
+        setUseLegacyFallback(false);
         onCloseRef.current?.();
       }, 1200);
     },
-    [stopPlayback, stopRecorderSafely]
+    [cleanupWebRTC, stopPlayback, stopRecorderSafely]
+  );
+
+  // Inicializa PeerConnection WebRTC Full-Duplex
+  const setupWebRTCPeer = useCallback(
+    async (isInitiator: boolean) => {
+      if (!WebRTCModule?.RTCPeerConnection || !WebRTCModule?.mediaDevices) {
+        setUseLegacyFallback(true);
+        return null;
+      }
+
+      if (peerConnectionRef.current) {
+        return peerConnectionRef.current;
+      }
+
+      try {
+        const granted = await requestMicPermissionSafely();
+        if (!granted) {
+          setUseLegacyFallback(true);
+          return null;
+        }
+
+        await applyCallAudioMode(isSpeakerOnRef.current);
+
+        const stream = await WebRTCModule.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: false,
+        });
+
+        stream.getAudioTracks().forEach((track: any) => {
+          track.enabled = !isMutedRef.current;
+        });
+        localStreamRef.current = stream;
+
+        const pc = new WebRTCModule.RTCPeerConnection(RTC_CONFIG);
+        peerConnectionRef.current = pc;
+
+        stream.getTracks().forEach((track: any) => {
+          pc.addTrack(track, stream);
+        });
+
+        pc.onicecandidate = (event: any) => {
+          if (event?.candidate && socketRef.current && rideIdRef.current) {
+            socketRef.current.emit('call:webrtc_ice', {
+              rideId: rideIdRef.current,
+              candidate: event.candidate,
+              senderRole: currentRoleRef.current,
+            });
+          }
+        };
+
+        pc.ontrack = () => {
+          webrtcConnectedRef.current = true;
+          setIsRemoteSpeaking(true);
+          setStatusLabel('Chamada HD conectada • Voz em tempo real');
+        };
+
+        pc.onconnectionstatechange = () => {
+          const state = pc.connectionState;
+          if (state === 'connected') {
+            webrtcConnectedRef.current = true;
+            setIsRemoteSpeaking(true);
+            setStatusLabel('Chamada HD conectada • Voz em tempo real');
+          } else if (state === 'failed') {
+            cleanupWebRTC();
+            setUseLegacyFallback(true);
+          }
+        };
+
+        if (isInitiator && socketRef.current && rideIdRef.current) {
+          const offer = await pc.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: false,
+          });
+          await pc.setLocalDescription(offer);
+          socketRef.current.emit('call:webrtc_offer', {
+            rideId: rideIdRef.current,
+            sdp: offer,
+            senderRole: currentRoleRef.current,
+          });
+        }
+
+        return pc;
+      } catch (err) {
+        console.warn('⚠️ [WEBRTC_INIT_FALLBACK]:', err);
+        cleanupWebRTC();
+        setUseLegacyFallback(true);
+        return null;
+      }
+    },
+    [applyCallAudioMode, cleanupWebRTC, requestMicPermissionSafely]
   );
 
   useEffect(() => {
@@ -267,7 +428,9 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
       hasInitiatedSessionRef.current = false;
       outboundSeqRef.current = 1;
       lastPlayedSeqRef.current = 0;
+      setUseLegacyFallback(false);
       Vibration.cancel();
+      cleanupWebRTC();
       stopPlayback();
       stopRecorderSafely();
       setElapsedSec(0);
@@ -295,11 +458,7 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
         : 'Chamando via canal protegido...'
     );
 
-    AudioModule.requestRecordingPermissionsAsync()
-      .then((perm) => {
-        hasPermRef.current = Boolean(perm?.granted);
-      })
-      .catch(() => {});
+    requestMicPermissionSafely();
 
     if (initialDirection === 'outgoing' && socketRef.current && rideIdRef.current) {
       socketRef.current.emit(
@@ -316,13 +475,14 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
         }
       );
     }
-  }, [visible, initialDirection, finishAndClose, stopPlayback, stopRecorderSafely]);
+  }, [visible, initialDirection, finishAndClose, cleanupWebRTC, stopPlayback, stopRecorderSafely, requestMicPermissionSafely]);
 
   useEffect(() => {
     if (!visible || phase !== 'connected') return;
     applyCallAudioMode(isSpeakerOn);
   }, [visible, phase, isSpeakerOn, applyCallAudioMode]);
 
+  // Fallback legado (ativado apenas se WebRTC nativo nao estiver disponivel no device)
   const processNextAudioChunk = useCallback(async () => {
     if (isPlayingQueueRef.current) return;
     const nextItem = playbackQueueRef.current.shift();
@@ -405,7 +565,7 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!visible || phase !== 'connected' || isMuted) {
+    if (!visible || phase !== 'connected' || isMuted || !useLegacyFallback) {
       stopRecorderSafely();
       return;
     }
@@ -414,14 +574,13 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
 
     const runVoiceLoop = async () => {
       if (!hasPermRef.current) {
-        const perm = await AudioModule.requestRecordingPermissionsAsync().catch(() => null);
-        hasPermRef.current = Boolean(perm?.granted);
+        await requestMicPermissionSafely();
       }
       if (!hasPermRef.current || cancelled) return;
 
       await applyCallAudioMode(isSpeakerOnRef.current);
 
-      while (!cancelled && visibleRef.current && phaseRef.current === 'connected' && !isMutedRef.current) {
+      while (!cancelled && visibleRef.current && phaseRef.current === 'connected' && !isMutedRef.current && useLegacyFallback) {
         try {
           await audioRecorder.prepareToRecordAsync(CALL_VOICE_PRESET);
           audioRecorder.record();
@@ -449,7 +608,6 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
               const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory || '';
               const stagedUri = `${cacheDir}call_tx_${seqToSend}_${Date.now()}.m4a`;
 
-              // Copia o trecho finalizado para liberar o gravador imediatamente sem cortar palavras
               const copied = await FileSystem.copyAsync({ from: rawUri, to: stagedUri })
                 .then(() => true)
                 .catch(() => false);
@@ -494,12 +652,12 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
       cancelled = true;
       stopRecorderSafely();
     };
-  }, [visible, phase, isMuted, audioRecorder, applyCallAudioMode, stopRecorderSafely]);
+  }, [visible, phase, isMuted, useLegacyFallback, audioRecorder, applyCallAudioMode, stopRecorderSafely, requestMicPermissionSafely]);
 
   useEffect(() => {
     if (!visible || !socket) return;
 
-    const handleAccepted = (data: any) => {
+    const handleAccepted = async (data: any) => {
       if (data?.rideId && String(data.rideId) !== String(rideIdRef.current)) return;
       if (data?.callLogId) {
         setActiveCallLogId(data.callLogId);
@@ -509,7 +667,79 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       phaseRef.current = 'connected';
       setPhase('connected');
-      setStatusLabel('Chamada conectada • Áudio protegido');
+      setStatusLabel('Conectando áudio HD...');
+
+      // Quem iniciou a ligacao cria a oferta WebRTC assim que o destinatario atende
+      if (initialDirection === 'outgoing') {
+        await setupWebRTCPeer(true);
+      }
+    };
+
+    const handleWebRTCOffer = async (data: any) => {
+      if (data?.rideId && String(data.rideId) !== String(rideIdRef.current)) return;
+      if (data?.senderRole === currentRoleRef.current || !data?.sdp) return;
+
+      try {
+        const pc = await setupWebRTCPeer(false);
+        if (!pc || !WebRTCModule?.RTCSessionDescription) return;
+
+        await pc.setRemoteDescription(new WebRTCModule.RTCSessionDescription(data.sdp));
+
+        while (pendingIceCandidatesRef.current.length > 0) {
+          const cand = pendingIceCandidatesRef.current.shift();
+          if (cand && WebRTCModule?.RTCIceCandidate) {
+            await pc.addIceCandidate(new WebRTCModule.RTCIceCandidate(cand)).catch(() => {});
+          }
+        }
+
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        socketRef.current?.emit('call:webrtc_answer', {
+          rideId: rideIdRef.current,
+          sdp: answer,
+          senderRole: currentRoleRef.current,
+        });
+      } catch (err) {
+        console.warn('⚠️ [WEBRTC_OFFER_ERR]:', err);
+        setUseLegacyFallback(true);
+      }
+    };
+
+    const handleWebRTCAnswer = async (data: any) => {
+      if (data?.rideId && String(data.rideId) !== String(rideIdRef.current)) return;
+      if (data?.senderRole === currentRoleRef.current || !data?.sdp) return;
+
+      try {
+        const pc = peerConnectionRef.current;
+        if (!pc || !WebRTCModule?.RTCSessionDescription) return;
+
+        await pc.setRemoteDescription(new WebRTCModule.RTCSessionDescription(data.sdp));
+
+        while (pendingIceCandidatesRef.current.length > 0) {
+          const cand = pendingIceCandidatesRef.current.shift();
+          if (cand && WebRTCModule?.RTCIceCandidate) {
+            await pc.addIceCandidate(new WebRTCModule.RTCIceCandidate(cand)).catch(() => {});
+          }
+        }
+      } catch (err) {
+        console.warn('⚠️ [WEBRTC_ANSWER_ERR]:', err);
+        setUseLegacyFallback(true);
+      }
+    };
+
+    const handleWebRTCIce = async (data: any) => {
+      if (data?.rideId && String(data.rideId) !== String(rideIdRef.current)) return;
+      if (data?.senderRole === currentRoleRef.current || !data?.candidate) return;
+
+      try {
+        const pc = peerConnectionRef.current;
+        if (pc && pc.remoteDescription && WebRTCModule?.RTCIceCandidate) {
+          await pc.addIceCandidate(new WebRTCModule.RTCIceCandidate(data.candidate)).catch(() => {});
+        } else {
+          pendingIceCandidatesRef.current.push(data.candidate);
+        }
+      } catch {}
     };
 
     const handleRejected = (data: any) => {
@@ -523,9 +753,12 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
     };
 
     const handleVoiceChunk = (data: any) => {
+      if (webrtcConnectedRef.current) return;
       if (data?.rideId && String(data.rideId) !== String(rideIdRef.current)) return;
       if (data?.senderRole === currentRoleRef.current) return;
       if (!data?.audioBase64) return;
+
+      setUseLegacyFallback(true);
 
       if (phaseRef.current !== 'connected' && phaseRef.current !== 'ended') {
         phaseRef.current = 'connected';
@@ -546,7 +779,6 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
       const tempUri = `${cacheDir}call_rx_${chunkId}.m4a`;
       const cleanBase64 = String(data.audioBase64).replace(/^data:audio\/[^;]+;base64,/, '');
 
-      // Pre-grava imediatamente no cache enquanto o pacote anterior ainda toca
       const uriPromise = FileSystem.writeAsStringAsync(tempUri, cleanBase64, {
         encoding: FileSystem?.EncodingType?.Base64 || 'base64',
       })
@@ -560,7 +792,6 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
       });
       playbackQueueRef.current.sort((a, b) => a.seq - b.seq);
 
-      // Evita acumulo de atraso se a rede movel oscilar (mantem no maximo 3 blocos ao vivo)
       while (playbackQueueRef.current.length > 3) {
         const dropped = playbackQueueRef.current.shift();
         if (dropped) {
@@ -576,26 +807,32 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
     };
 
     socket.on('call:accepted', handleAccepted);
+    socket.on('call:webrtc_offer', handleWebRTCOffer);
+    socket.on('call:webrtc_answer', handleWebRTCAnswer);
+    socket.on('call:webrtc_ice', handleWebRTCIce);
     socket.on('call:rejected', handleRejected);
     socket.on('call:ended', handleEnded);
     socket.on('call:voice_chunk', handleVoiceChunk);
 
     return () => {
       socket.off('call:accepted', handleAccepted);
+      socket.off('call:webrtc_offer', handleWebRTCOffer);
+      socket.off('call:webrtc_answer', handleWebRTCAnswer);
+      socket.off('call:webrtc_ice', handleWebRTCIce);
       socket.off('call:rejected', handleRejected);
       socket.off('call:ended', handleEnded);
       socket.off('call:voice_chunk', handleVoiceChunk);
     };
-  }, [visible, socket, finishAndClose, processNextAudioChunk]);
+  }, [visible, socket, initialDirection, setupWebRTCPeer, finishAndClose, processNextAudioChunk]);
 
   const handleAcceptCall = async () => {
     Vibration.cancel();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    const perm = await AudioModule.requestRecordingPermissionsAsync().catch(() => null);
-    hasPermRef.current = Boolean(perm?.granted);
+    await requestMicPermissionSafely();
     phaseRef.current = 'connected';
     setPhase('connected');
-    setStatusLabel('Chamada conectada • Áudio protegido');
+    setStatusLabel('Conectando áudio HD...');
+    await setupWebRTCPeer(false);
     socketRef.current?.emit('call:accept', {
       rideId: rideIdRef.current,
       callLogId: activeCallLogIdRef.current,
@@ -666,7 +903,7 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
                 {isMuted
                   ? 'Seu microfone está silenciado'
                   : isRemoteSpeaking
-                  ? `${otherUserName || 'Contato'} está falando...`
+                  ? `${otherUserName || 'Contato'} conectado ao vivo`
                   : 'Microfone ativo • Pode falar normalmente'}
               </Text>
             </View>

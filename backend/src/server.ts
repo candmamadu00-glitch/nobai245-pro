@@ -1383,6 +1383,40 @@ handleSocketEvent(socket, 'call:end', async (data) => {
   });
 });
 
+handleSocketEvent(socket, 'call:webrtc_offer', async (data) => {
+  const { rideId, sdp, senderRole } = data || {};
+  if (!rideId || !isUuid(rideId) || !sdp) return;
+  socket.join(rideId);
+  socket.join(`ride_${rideId}`);
+  await emitCallEventToParticipants(rideId, 'call:webrtc_offer', {
+    rideId,
+    sdp,
+    senderRole: senderRole || 'driver',
+  });
+});
+
+handleSocketEvent(socket, 'call:webrtc_answer', async (data) => {
+  const { rideId, sdp, senderRole } = data || {};
+  if (!rideId || !isUuid(rideId) || !sdp) return;
+  socket.join(rideId);
+  socket.join(`ride_${rideId}`);
+  await emitCallEventToParticipants(rideId, 'call:webrtc_answer', {
+    rideId,
+    sdp,
+    senderRole: senderRole || 'passenger',
+  });
+});
+
+handleSocketEvent(socket, 'call:webrtc_ice', async (data) => {
+  const { rideId, candidate, senderRole } = data || {};
+  if (!rideId || !isUuid(rideId) || !candidate) return;
+  await emitCallEventToParticipants(rideId, 'call:webrtc_ice', {
+    rideId,
+    candidate,
+    senderRole: senderRole || 'passenger',
+  });
+});
+
 const activeVoiceCallCache = new Map<string, { driverId: string | null; passengerId: string | null; expiresAt: number }>();
 
 handleSocketEvent(socket, 'call:voice_chunk', async (data) => {

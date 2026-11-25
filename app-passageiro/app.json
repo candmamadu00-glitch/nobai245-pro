@@ -99,7 +99,8 @@
         }
       ],
       "expo-asset",
-      "expo-audio"
+      "expo-audio",
+      "@config-plugins/react-native-webrtc"
     ],
     "extra": {
       "eas": {

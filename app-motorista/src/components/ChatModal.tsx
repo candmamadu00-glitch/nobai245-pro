@@ -507,7 +507,7 @@ export function ChatModal({
 
       setMessages((prev) => (isDuplicateMessage(prev, newMsg) ? prev : [...prev, newMsg]));
 
-      if (socket && socket.connected) {
+      const emitSocketAudioFallback = () => {
         safeEmit('chat:send_message', {
           rideId,
           audioUrl: audioPayload,
@@ -521,7 +521,9 @@ export function ChatModal({
           text: '',
           message: ''
         });
-      } else if (api && typeof api.post === 'function' && rideId) {
+      };
+
+      if (api && typeof api.post === 'function' && rideId) {
         const audioForm = new FormData();
         audioForm.append('audio', {
           uri,
@@ -529,37 +531,20 @@ export function ChatModal({
           type: 'audio/m4a',
         } as any);
         audioForm.append('audioDuration', String(durationSec));
+        audioForm.append('duration', String(durationSec));
+        audioForm.append('id', uniqueId);
+        audioForm.append('clientTempId', uniqueId);
+        audioForm.append('sender', currentRole);
+        audioForm.append('senderRole', currentRole);
+
         api.post(`/rides/${rideId}/chat/audio`, audioForm, {
           headers: { 'Content-Type': 'multipart/form-data', Accept: 'application/json' },
+          timeout: 15000,
         }).catch(() => {
-          safeEmit('chat:send_message', {
-            rideId,
-            audioUrl: audioPayload,
-            audio: audioPayload,
-            audioDuration: durationSec,
-            duration: durationSec,
-            id: uniqueId,
-            clientTempId: uniqueId,
-            sender: currentRole,
-            senderRole: currentRole,
-            text: '',
-            message: ''
-          });
+          emitSocketAudioFallback();
         });
       } else {
-        safeEmit('chat:send_message', {
-          rideId,
-          audioUrl: audioPayload,
-          audio: audioPayload,
-          audioDuration: durationSec,
-          duration: durationSec,
-          id: uniqueId,
-          clientTempId: uniqueId,
-          sender: currentRole,
-          senderRole: currentRole,
-          text: '',
-          message: ''
-        });
+        emitSocketAudioFallback();
       }
 
       recordDurationRef.current = 0;
@@ -706,16 +691,28 @@ export function ChatModal({
         if ('muted' in dedicatedPlayer) (dedicatedPlayer as any).muted = false;
         dedicatedPlayer.volume = 1.0;
 
+        let started = false;
+        const startOnceLoaded = () => {
+          if (started || activePlayerRef.current !== dedicatedPlayer) return;
+          started = true;
+          try {
+            dedicatedPlayer.play();
+          } catch {
+            stopActivePlayer();
+          }
+        };
+
         dedicatedPlayer.addListener?.('playbackStatusUpdate', (status: any) => {
           if (status?.didJustFinish || status?.error) {
             stopActivePlayer();
+            return;
+          }
+          if (!started && (status?.isLoaded || (typeof status?.duration === 'number' && status.duration > 0))) {
+            startOnceLoaded();
           }
         });
 
-        await new Promise((resolve) => setTimeout(resolve, 120));
-        if (activePlayerRef.current === dedicatedPlayer) {
-          dedicatedPlayer.play();
-        }
+        setTimeout(startOnceLoaded, 350);
       } else {
         chatPlayer.replace({ uri: playableUri });
         if ('muted' in chatPlayer) (chatPlayer as any).muted = false;
