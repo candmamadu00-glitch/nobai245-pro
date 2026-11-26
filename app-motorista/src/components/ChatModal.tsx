@@ -15,30 +15,7 @@ import * as FileSystemLegacy from 'expo-file-system/legacy';
 const FileSystem: any = FileSystemLegacy;
 import { api } from '../services/api';
 
-const VOICE_RECORDING_PRESET = {
-  ...RecordingPresets.HIGH_QUALITY,
-  extension: '.m4a',
-  sampleRate: 22050,
-  numberOfChannels: 1,
-  bitRate: 64000,
-  android: {
-    ...(RecordingPresets.HIGH_QUALITY?.android || {}),
-    extension: '.m4a',
-    outputFormat: 'mpeg4' as const,
-    audioEncoder: 'aac' as const,
-    sampleRate: 22050,
-  },
-  ios: {
-    ...(RecordingPresets.HIGH_QUALITY?.ios || {}),
-    extension: '.m4a',
-    outputFormat: 'aac ' as const,
-    audioQuality: 64,
-    sampleRate: 22050,
-    linearPCMBitDepth: 16,
-    linearPCMIsBigEndian: false,
-    linearPCMIsFloat: false,
-  },
-};
+const VOICE_RECORDING_PRESET = RecordingPresets.HIGH_QUALITY;
 
 export interface ChatMessage {
   id: string;
@@ -465,7 +442,7 @@ export function ChatModal({
           allowsRecording: false,
           playsInSilentMode: true,
           shouldRouteThroughEarpiece: false,
-          interruptionMode: 'doNotMix',
+          interruptionMode: 'mixWithOthers',
         }).catch(() => {});
     } catch {}
 
@@ -591,7 +568,7 @@ export function ChatModal({
         allowsRecording: true,
         playsInSilentMode: true,
         shouldRouteThroughEarpiece: false,
-        interruptionMode: 'doNotMix',
+        interruptionMode: 'mixWithOthers',
       }).catch(() => {});
 
       try {
@@ -663,7 +640,7 @@ export function ChatModal({
         playsInSilentMode: true,
         allowsRecording: false,
         shouldRouteThroughEarpiece: false,
-        interruptionMode: 'doNotMix',
+        interruptionMode: 'mixWithOthers',
         shouldPlayInBackground: false,
       }).catch(() => {});
 

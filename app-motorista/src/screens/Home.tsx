@@ -1404,10 +1404,77 @@ export function Home() {
     if (!location?.coords || routeSteps.length === 0 || currentStepIndex >= routeSteps.length) return;
     if (!['accepted', 'in_progress'].includes(rideState)) return;
 
-    const currentStep = routeSteps[currentStepIndex];
-    if (!currentStep?.maneuver?.location) return;
+    const buildAccurateManeuverVoice = (step: any): { actionKey: string; ptPhrase: string } | null => {
+      if (!step?.maneuver) return null;
+      const mType = String(step.maneuver.type || '').toLowerCase();
+      const modifier = String(step.maneuver.modifier || '').toLowerCase();
+      const roadName = String(step.name || '').trim();
+      const ontoRoad = roadName && roadName !== '-' ? ` na ${roadName}` : '';
 
-    const [stepLng, stepLat] = currentStep.maneuver.location;
+      if (mType === 'arrive') {
+        return {
+          actionKey: rideState === 'accepted' ? 'arrived_pickup' : 'arrived_dest',
+          ptPhrase: rideState === 'accepted'
+            ? 'chegue ao ponto de embarque do passageiro'
+            : 'chegue ao destino final',
+        };
+      }
+
+      if (mType === 'roundabout' || mType === 'rotary') {
+        const exitNum = Number(step.maneuver.exit || 0);
+        const exitText = exitNum > 0 ? ` e pegue a ${exitNum}ª saída` : '';
+        return { actionKey: 'go_straight', ptPhrase: `entre na rotunda${exitText}${ontoRoad}` };
+      }
+
+      if (modifier.includes('uturn') || mType === 'uturn') {
+        return { actionKey: 'turn_left', ptPhrase: `faça o retorno com segurança${ontoRoad}` };
+      }
+
+      if (modifier === 'sharp left') {
+        return { actionKey: 'turn_left', ptPhrase: `faça uma curva fechada à esquerda${ontoRoad}` };
+      }
+      if (modifier === 'left') {
+        return { actionKey: 'turn_left', ptPhrase: `vire à esquerda${ontoRoad}` };
+      }
+      if (modifier === 'slight left') {
+        return { actionKey: 'turn_left', ptPhrase: `mantenha-se à esquerda${ontoRoad}` };
+      }
+
+      if (modifier === 'sharp right') {
+        return { actionKey: 'turn_right', ptPhrase: `faça uma curva fechada à direita${ontoRoad}` };
+      }
+      if (modifier === 'right') {
+        return { actionKey: 'turn_right', ptPhrase: `vire à direita${ontoRoad}` };
+      }
+      if (modifier === 'slight right') {
+        return { actionKey: 'turn_right', ptPhrase: `mantenha-se à direita${ontoRoad}` };
+      }
+
+      if (modifier === 'straight' || mType === 'continue' || mType === 'new name') {
+        return { actionKey: 'go_straight', ptPhrase: `siga em frente${ontoRoad}` };
+      }
+
+      const rawInstr = String(step.maneuver.instruction || '').trim();
+      if (!rawInstr) return null;
+      const cleaned = rawInstr
+        .replace(/dobra para direito/gi, 'vire à direita')
+        .replace(/dobra para esquerdo/gi, 'vire à esquerda')
+        .replace(/vire para direito/gi, 'vire à direita')
+        .replace(/vire para esquerdo/gi, 'vire à esquerda');
+      const inferredKey = cleaned.toLowerCase().includes('esquerda')
+        ? 'turn_left'
+        : cleaned.toLowerCase().includes('direita')
+          ? 'turn_right'
+          : 'go_straight';
+      return { actionKey: inferredKey, ptPhrase: cleaned.charAt(0).toLowerCase() + cleaned.slice(1) };
+    };
+
+    // O ponto da proxima curva fica na coordenada inicial do proximo passo (ou do passo atual se for o ultimo)
+    const upcomingIndex = currentStepIndex + 1 < routeSteps.length ? currentStepIndex + 1 : currentStepIndex;
+    const upcomingStep = routeSteps[upcomingIndex];
+    if (!upcomingStep?.maneuver?.location) return;
+
+    const [stepLng, stepLat] = upcomingStep.maneuver.location;
     const distMeters = calculateDirectDistance(
       location.coords.latitude,
       location.coords.longitude,
@@ -1417,14 +1484,14 @@ export function Home() {
 
     const rideKey = activeRideId || incomingRide?.rideId || 'active';
 
-    if (distMeters > 45 && distMeters <= 120 && currentStepIndex > 0) {
-      const instruction = currentStep?.maneuver?.instruction;
-      if (instruction) {
+    if (distMeters > 45 && distMeters <= 130 && upcomingIndex > 0) {
+      const guided = buildAccurateManeuverVoice(upcomingStep);
+      if (guided) {
         playBilingualVoice(
-          'navigation',
-          `Em 100 metros, ${translateToKriol(instruction)}`,
+          guided.actionKey,
+          `Em 100 metros, ${guided.ptPhrase}.`,
           undefined,
-          `${rideKey}_${rideState}_step_${currentStepIndex}_pre`
+          `${rideKey}_${rideState}_step_${upcomingIndex}_pre`
         );
       }
     }
@@ -1433,11 +1500,12 @@ export function Home() {
       const nextIndex = currentStepIndex + 1;
       if (nextIndex < routeSteps.length) {
         setCurrentStepIndex(nextIndex);
-        const nextInstruction = routeSteps[nextIndex]?.maneuver?.instruction;
-        if (nextInstruction) {
+        const guidedNow = buildAccurateManeuverVoice(routeSteps[nextIndex]);
+        if (guidedNow) {
+          const cap = guidedNow.ptPhrase.charAt(0).toUpperCase() + guidedNow.ptPhrase.slice(1);
           playBilingualVoice(
-            'navigation',
-            translateToKriol(nextInstruction),
+            guidedNow.actionKey,
+            `Agora, ${cap.charAt(0).toLowerCase() + cap.slice(1)}.`,
             undefined,
             `${rideKey}_${rideState}_step_${nextIndex}_exec`
           );

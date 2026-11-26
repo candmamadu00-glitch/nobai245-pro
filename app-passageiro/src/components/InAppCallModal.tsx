@@ -38,8 +38,17 @@ const RTC_CONFIG = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
+    {
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp',
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
   ],
+  iceCandidatePoolSize: 4,
 };
 
 const CALL_VOICE_PRESET = {
@@ -200,13 +209,18 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
   }, []);
 
   const applyCallAudioMode = useCallback(async (speakerOn: boolean) => {
+    // Nao altera AudioManager via expo-audio se o WebRTC nativo ja assumiu a chamada,
+    // pois interruptionMode 'doNotMix' no Android silencia a trilha de voz do WebRTC.
+    if (peerConnectionRef.current || webrtcConnectedRef.current) {
+      return;
+    }
     try {
       await setIsAudioActiveAsync(true).catch(() => {});
       await setAudioModeAsync({
         allowsRecording: true,
         playsInSilentMode: true,
         shouldRouteThroughEarpiece: !speakerOn,
-        interruptionMode: 'doNotMix',
+        interruptionMode: 'mixWithOthers',
         shouldPlayInBackground: false,
       });
     } catch {}
@@ -301,8 +315,6 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
           return null;
         }
 
-        await applyCallAudioMode(isSpeakerOnRef.current);
-
         const stream = await WebRTCModule.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
@@ -334,7 +346,17 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
           }
         };
 
-        pc.ontrack = () => {
+        pc.ontrack = (event: any) => {
+          try {
+            if (event?.track) {
+              event.track.enabled = true;
+            }
+            if (event?.streams?.[0]) {
+              event.streams[0].getAudioTracks?.().forEach((t: any) => {
+                t.enabled = true;
+              });
+            }
+          } catch {}
           webrtcConnectedRef.current = true;
           setIsRemoteSpeaking(true);
           setStatusLabel('Chamada HD conectada • Voz em tempo real');

@@ -14,8 +14,17 @@ const resolveSpeechLocale = (langCode?: string): { lang: 'pt' | 'en' | 'fr'; loc
  * 🔊 Lê um texto em voz alta através do sintetizador de voz do sistema,
  * garantindo reprodução mesmo se o aparelho estiver em modo silencioso e no idioma ativo.
  */
+let lastSpokenMessage = { normalized: '', timestamp: 0 };
+
 export const speakText = async (text: string, stopPrevious: boolean = true, langOverride?: string) => {
   if (!text || !text.trim()) return;
+
+  const normalizedKey = text.trim().toLowerCase();
+  const now = Date.now();
+  if (lastSpokenMessage.normalized === normalizedKey && (now - lastSpokenMessage.timestamp) < 12000) {
+    return;
+  }
+  lastSpokenMessage = { normalized: normalizedKey, timestamp: now };
 
   try {
     if (typeof (AudioModule as any)?.setAudioModeAsync === 'function') {
