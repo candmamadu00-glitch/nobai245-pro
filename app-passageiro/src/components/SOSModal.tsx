@@ -53,11 +53,13 @@ export function SOSModal({ visible, onClose, currentRideId }: SOSModalProps) {
 
       let location: Location.LocationObject | null = null;
       try {
-        location = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
-      } catch {
-        location = await Location.getLastKnownPositionAsync();
+        location = await Promise.race([
+          Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+        ]);
+      } catch {}
+      if (!location?.coords) {
+        location = await Location.getLastKnownPositionAsync().catch(() => null);
       }
 
       const lat = Number(location?.coords?.latitude);
@@ -76,12 +78,16 @@ export function SOSModal({ visible, onClose, currentRideId }: SOSModalProps) {
         });
       } catch {}
 
-      await api.post('/passengers/sos', {
-        rideId: currentRideId ? String(currentRideId) : null,
-        latitude: lat,
-        longitude: lng,
-        timestamp: new Date().toISOString(),
-      });
+      await api.post(
+        '/passengers/sos',
+        {
+          rideId: currentRideId ? String(currentRideId) : null,
+          latitude: lat,
+          longitude: lng,
+          timestamp: new Date().toISOString(),
+        },
+        { timeout: 5000 }
+      );
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       Alert.alert(

@@ -558,9 +558,11 @@ export function ChatModal({
         return;
       }
 
-      // Garante que qualquer gravacao anterior travada seja encerrada antes de preparar nova
+      // Libera qualquer foco de audio/TTS anterior antes de abrir o microfone
       try {
-        await audioRecorder.stop();
+        if ((audioRecorder as any)?.isRecording) {
+          await audioRecorder.stop();
+        }
       } catch {}
 
       await setIsAudioActiveAsync(true).catch(() => {});
@@ -571,10 +573,17 @@ export function ChatModal({
         interruptionMode: 'mixWithOthers',
       }).catch(() => {});
 
+      // Pequena pausa para o AudioManager do Android liberar o hardware de captura
+      await new Promise((resolve) => setTimeout(resolve, 120));
+
       try {
-        await audioRecorder.prepareToRecordAsync(VOICE_RECORDING_PRESET);
+        await audioRecorder.prepareToRecordAsync();
       } catch {
-        await audioRecorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
+        try {
+          await audioRecorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
+        } catch {
+          await audioRecorder.prepareToRecordAsync(RecordingPresets.LOW_QUALITY);
+        }
       }
       audioRecorder.record();
 

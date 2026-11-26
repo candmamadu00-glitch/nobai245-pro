@@ -1392,7 +1392,10 @@ export function Home() {
     }
   };
 
+  const spokenManeuverKeysRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
+    spokenManeuverKeysRef.current.clear();
     resetVoiceHistory();
     if (!isVoiceAssistEnabled || rideState === 'idle') {
       stopVoice();
@@ -1409,7 +1412,7 @@ export function Home() {
       const mType = String(step.maneuver.type || '').toLowerCase();
       const modifier = String(step.maneuver.modifier || '').toLowerCase();
       const roadName = String(step.name || '').trim();
-      const ontoRoad = roadName && roadName !== '-' ? ` na ${roadName}` : '';
+      const ontoRoad = roadName && roadName !== '-' ? ` pela ${roadName}` : '';
 
       if (mType === 'arrive') {
         return {
@@ -1422,7 +1425,7 @@ export function Home() {
 
       if (mType === 'roundabout' || mType === 'rotary') {
         const exitNum = Number(step.maneuver.exit || 0);
-        const exitText = exitNum > 0 ? ` e pegue a ${exitNum}ª saída` : '';
+        const exitText = exitNum > 0 ? ` e saia na ${exitNum}ª saída` : '';
         return { actionKey: 'go_straight', ptPhrase: `entre na rotunda${exitText}${ontoRoad}` };
       }
 
@@ -1450,7 +1453,7 @@ export function Home() {
         return { actionKey: 'turn_right', ptPhrase: `mantenha-se à direita${ontoRoad}` };
       }
 
-      if (modifier === 'straight' || mType === 'continue' || mType === 'new name') {
+      if (modifier === 'straight' || mType === 'depart' || mType === 'continue' || mType === 'new name') {
         return { actionKey: 'go_straight', ptPhrase: `siga em frente${ontoRoad}` };
       }
 
@@ -1469,48 +1472,58 @@ export function Home() {
       return { actionKey: inferredKey, ptPhrase: cleaned.charAt(0).toLowerCase() + cleaned.slice(1) };
     };
 
-    // O ponto da proxima curva fica na coordenada inicial do proximo passo (ou do passo atual se for o ultimo)
-    const upcomingIndex = currentStepIndex + 1 < routeSteps.length ? currentStepIndex + 1 : currentStepIndex;
-    const upcomingStep = routeSteps[upcomingIndex];
-    if (!upcomingStep?.maneuver?.location) return;
-
-    const [stepLng, stepLat] = upcomingStep.maneuver.location;
-    const distMeters = calculateDirectDistance(
-      location.coords.latitude,
-      location.coords.longitude,
-      stepLat,
-      stepLng
-    ) * 1000;
-
     const rideKey = activeRideId || incomingRide?.rideId || 'active';
+    const phasePrefix = `${rideKey}_${rideState}`;
+    const driverLat = location.coords.latitude;
+    const driverLng = location.coords.longitude;
 
-    if (distMeters > 45 && distMeters <= 130 && upcomingIndex > 0) {
-      const guided = buildAccurateManeuverVoice(upcomingStep);
-      if (guided) {
+    // 1. Anuncio inicial unico ao iniciar cada fase (ida ao embarque ou viagem em andamento)
+    const startAnnouncementKey = `${phasePrefix}_depart_once`;
+    if (!spokenManeuverKeysRef.current.has(startAnnouncementKey)) {
+      spokenManeuverKeysRef.current.add(startAnnouncementKey);
+      const firstGuidance = buildAccurateManeuverVoice(routeSteps[1] || routeSteps[0]);
+      const introPrefix = rideState === 'accepted'
+        ? 'A caminho do ponto de embarque.'
+        : 'Viagem iniciada.';
+      if (firstGuidance) {
+        const cap = firstGuidance.ptPhrase.charAt(0).toUpperCase() + firstGuidance.ptPhrase.slice(1);
         playBilingualVoice(
-          guided.actionKey,
-          `Em 100 metros, ${guided.ptPhrase}.`,
+          firstGuidance.actionKey,
+          `${introPrefix} ${cap}.`,
           undefined,
-          `${rideKey}_${rideState}_step_${upcomingIndex}_pre`
+          startAnnouncementKey
         );
+      } else {
+        playBilingualVoice('go_straight', `${introPrefix} Siga a rota no mapa.`, undefined, startAnnouncementKey);
       }
+      return;
     }
 
-    if (distMeters <= 40) {
-      const nextIndex = currentStepIndex + 1;
-      if (nextIndex < routeSteps.length) {
-        setCurrentStepIndex(nextIndex);
-        const guidedNow = buildAccurateManeuverVoice(routeSteps[nextIndex]);
-        if (guidedNow) {
-          const cap = guidedNow.ptPhrase.charAt(0).toUpperCase() + guidedNow.ptPhrase.slice(1);
-          playBilingualVoice(
-            guidedNow.actionKey,
-            `Agora, ${cap.charAt(0).toLowerCase() + cap.slice(1)}.`,
-            undefined,
-            `${rideKey}_${rideState}_step_${nextIndex}_exec`
-          );
-        }
-      } else {
+    // 2. Varredura dinamica pelos trechos da rota (independente de recalculo de rota):
+    //    Encontra a proxima manobra relevante entre 20m e 140m e fala EXATAMENTE 1 VEZ.
+    for (let i = 1; i < routeSteps.length; i++) {
+      const step = routeSteps[i];
+      if (!step?.maneuver?.location) continue;
+      const mType = String(step.maneuver.type || '').toLowerCase();
+      if (mType === 'new name' || mType === 'notification') continue;
+
+      const [stepLng, stepLat] = step.maneuver.location;
+      const distMeters = calculateDirectDistance(driverLat, driverLng, stepLat, stepLng) * 1000;
+
+      if (distMeters > 140 || distMeters < 15) continue;
+
+      const modifier = String(step.maneuver.modifier || mType || 'step').toLowerCase();
+      const geoSignature = `${phasePrefix}_${stepLat.toFixed(4)}_${stepLng.toFixed(4)}_${modifier}`;
+      if (spokenManeuverKeysRef.current.has(geoSignature)) {
+        continue;
+      }
+
+      const guided = buildAccurateManeuverVoice(step);
+      if (!guided) continue;
+
+      spokenManeuverKeysRef.current.add(geoSignature);
+
+      if (mType === 'arrive') {
         const payMethod = String(incomingRide?.paymentMethod || 'CASH').toUpperCase();
         const isCorporatePay = payMethod === 'CORPORATE' || payMethod === 'CORPORATE_B2B';
         const priceVal = Math.round(Number(incomingRide?.priceXof || 0));
@@ -1523,23 +1536,28 @@ export function Home() {
         const arrivalMsg = rideState === 'accepted'
           ? 'Você está chegando ao ponto de embarque do passageiro.'
           : `Você está chegando ao destino final. Estacione em local seguro, lembre o passageiro de conferir seus pertences e ${paymentGuidance}`;
-        const arrivalKey = rideState === 'accepted' ? 'arrived_pickup' : 'arrived_dest';
+
+        playBilingualVoice(guided.actionKey, arrivalMsg, undefined, geoSignature);
+      } else {
+        const distPrefix = distMeters > 55 ? 'Em 100 metros, ' : 'Agora, ';
         playBilingualVoice(
-          arrivalKey,
-          arrivalMsg,
+          guided.actionKey,
+          `${distPrefix}${guided.ptPhrase}.`,
           undefined,
-          `${rideKey}_${rideState}_arrived`
+          geoSignature
         );
       }
+      break;
     }
   }, [
     location?.coords?.latitude,
     location?.coords?.longitude,
     routeSteps,
-    currentStepIndex,
     rideState,
     activeRideId,
     incomingRide?.rideId,
+    incomingRide?.paymentMethod,
+    incomingRide?.priceXof,
     isVoiceAssistEnabled,
     playBilingualVoice,
   ]);

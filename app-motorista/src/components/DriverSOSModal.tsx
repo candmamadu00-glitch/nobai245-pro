@@ -53,11 +53,13 @@ export function DriverSOSModal({ visible, onClose, currentRideId }: DriverSOSMod
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
       let location: Location.LocationObject | null = null;
       try {
-        location = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
-      } catch {
-        location = await Location.getLastKnownPositionAsync();
+        location = await Promise.race([
+          Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+        ]);
+      } catch {}
+      if (!location?.coords) {
+        location = await Location.getLastKnownPositionAsync().catch(() => null);
       }
 
       if (!location?.coords) {
@@ -77,11 +79,15 @@ export function DriverSOSModal({ visible, onClose, currentRideId }: DriverSOSMod
         }
       } catch {}
 
-      await api.post('/drivers/sos', {
-        rideId: currentRideId ? String(currentRideId) : null,
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-      });
+      await api.post(
+        '/drivers/sos',
+        {
+          rideId: currentRideId ? String(currentRideId) : null,
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+        },
+        { timeout: 5000 }
+      );
 
       // Gravação e envio assíncrono de áudio
       await startRecording();

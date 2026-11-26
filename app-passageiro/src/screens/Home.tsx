@@ -2319,44 +2319,52 @@ const handleOpenChat = () => {
 
     const handleDriverArrived = (data: any) => {
       if (!isMountedRef.current) return;
+      const arrivedRideKey = String(data?.rideId || activeRideIdRef.current || 'current');
+      const arrivedEventSig = `${arrivedRideKey}:arrived`;
+
       setRideStatus('arrived');
       if (data?.startOtp) setStartOtp(data.startOtp);
       if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'arrived');
+
+      if (notifiedLocalRideEventsRef.current.has(arrivedEventSig)) return;
+      notifiedLocalRideEventsRef.current.add(arrivedEventSig);
 
       speakRideStatusUpdate('arrived', {
         startOtp: data?.startOtp || startOtp,
         enabled: isVoiceAssistEnabledRef.current,
       });
 
-      const arrivedRideKey = String(data?.rideId || activeRideIdRef.current || 'current');
-      const arrivedEventSig = `${arrivedRideKey}:arrived`;
-      if (!notifiedLocalRideEventsRef.current.has(arrivedEventSig)) {
-        notifiedLocalRideEventsRef.current.add(arrivedEventSig);
-        Notifications.scheduleNotificationAsync({
-          identifier: `nobai-ride-${arrivedRideKey}-arrived`,
-          content: {
-            title: t('driver_arrived_title', 'Motorista no Local! 📍'),
-            body: t('driver_arrived_alert_msg', 'Seu motorista chegou ao ponto de partida e está te aguardando.'),
-            data: { rideId: arrivedRideKey, type: 'DRIVER_ARRIVED' },
-            sound: 'default',
-          },
-          trigger: Platform.OS === 'android' ? { channelId: 'ride-updates' } : null,
-        }).catch(() => {});
-      }
+      Notifications.scheduleNotificationAsync({
+        identifier: `nobai-ride-${arrivedRideKey}-arrived`,
+        content: {
+          title: t('driver_arrived_title', 'Motorista no Local! 📍'),
+          body: t('driver_arrived_alert_msg', 'Seu motorista chegou ao ponto de partida e está te aguardando.'),
+          data: { rideId: arrivedRideKey, type: 'DRIVER_ARRIVED' },
+          sound: 'default',
+        },
+        trigger: Platform.OS === 'android' ? { channelId: 'ride-updates' } : null,
+      }).catch(() => {});
     };
 
-    const handleRideStarted = () => {
+    const handleRideStarted = (data?: any) => {
       if (!isMountedRef.current) return;
+      const startedRideKey = String(data?.rideId || activeRideIdRef.current || 'current');
+      const startedEventSig = `${startedRideKey}:in_progress`;
+
       if (roadDurationRef.current && roadDurationRef.current > 0) {
         setDriverEta(Math.max(1, Math.round(roadDurationRef.current)));
       }
       setRideStatus('in_progress');
       setIsChatVisible(false);
+      if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'in_progress');
+
+      if (notifiedLocalRideEventsRef.current.has(startedEventSig)) return;
+      notifiedLocalRideEventsRef.current.add(startedEventSig);
+
       speakRideStatusUpdate('in_progress', {
         destination: dropoffAddress,
         enabled: isVoiceAssistEnabledRef.current,
       });
-      if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'in_progress');
     };
 
     const handleRideFinished = (data: any) => {
@@ -2390,27 +2398,27 @@ const handleOpenChat = () => {
     const handleRideCancelled = (data: any) => {
       if (!isMountedRef.current) return;
 
+      const cancelledRideKey = String(data?.rideId || activeRideIdRef.current || 'current');
+      const cancelledEventSig = `${cancelledRideKey}:cancelled`;
+      if (notifiedLocalRideEventsRef.current.has(cancelledEventSig)) return;
+      notifiedLocalRideEventsRef.current.add(cancelledEventSig);
+
       const isDriverCancel = data?.cancelledBy === 'DRIVER';
       const title = isDriverCancel ? t('warning_title', 'Aviso ⚠️') : t('cancelled_title', 'Cancelado');
       const body = isDriverCancel
         ? t('driver_cancelled_msg', 'O motorista cancelou a corrida. Por favor, solicite um novo veículo.')
         : (data?.appliedPenalty ? `${t('cancellation_fee', 'Taxa de cancelamento:')} ${data.penaltyAmount} XOF.` : t('ride_cancelled_msg', 'Sua corrida foi cancelada.'));
 
-      const cancelledRideKey = String(data?.rideId || activeRideIdRef.current || 'current');
-      const cancelledEventSig = `${cancelledRideKey}:cancelled`;
-      if (!notifiedLocalRideEventsRef.current.has(cancelledEventSig)) {
-        notifiedLocalRideEventsRef.current.add(cancelledEventSig);
-        Notifications.scheduleNotificationAsync({
-          identifier: `nobai-ride-${cancelledRideKey}-cancelled`,
-          content: {
-            title,
-            body,
-            data: { rideId: cancelledRideKey, type: 'RIDE_CANCELLED' },
-            sound: 'default',
-          },
-          trigger: Platform.OS === 'android' ? { channelId: 'ride-updates' } : null,
-        }).catch(() => {});
-      }
+      Notifications.scheduleNotificationAsync({
+        identifier: `nobai-ride-${cancelledRideKey}-cancelled`,
+        content: {
+          title,
+          body,
+          data: { rideId: cancelledRideKey, type: 'RIDE_CANCELLED' },
+          sound: 'default',
+        },
+        trigger: Platform.OS === 'android' ? { channelId: 'ride-updates' } : null,
+      }).catch(() => {});
 
       const cancelledId = data?.rideId || activeRideIdRef.current;
       if (cancelledId) {
