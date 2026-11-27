@@ -15,6 +15,11 @@ const resolveSpeechLocale = (langCode?: string): { lang: 'pt' | 'en' | 'fr'; loc
  * garantindo reprodução mesmo se o aparelho estiver em modo silencioso e no idioma ativo.
  */
 let lastSpokenMessage = { normalized: '', timestamp: 0 };
+let isVoiceRecordingActive = false;
+
+export const setVoiceRecordingLock = (active: boolean) => {
+  isVoiceRecordingActive = active;
+};
 
 export const speakText = async (text: string, stopPrevious: boolean = true, langOverride?: string) => {
   if (!text || !text.trim()) return;
@@ -25,6 +30,8 @@ export const speakText = async (text: string, stopPrevious: boolean = true, lang
     return;
   }
   lastSpokenMessage = { normalized: normalizedKey, timestamp: now };
+
+  if (isVoiceRecordingActive) return;
 
   try {
     if (typeof (AudioModule as any)?.setAudioModeAsync === 'function') {

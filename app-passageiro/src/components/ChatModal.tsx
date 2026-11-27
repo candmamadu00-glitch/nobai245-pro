@@ -11,6 +11,7 @@ import { Socket } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
 import { AudioModule, RecordingPresets, useAudioRecorder, useAudioPlayer, useAudioPlayerStatus, setAudioModeAsync, setIsAudioActiveAsync, createAudioPlayer } from 'expo-audio';
 import * as Speech from 'expo-speech';
+import { setVoiceRecordingLock } from '../utils/accessibility';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystemLegacy from 'expo-file-system/legacy';
 const FileSystem: any = FileSystemLegacy;
@@ -209,6 +210,7 @@ export function ChatModal({
   const activePlayerRef = useRef<any>(null);
   const isRecordingRef = useRef<boolean>(false);
   const recordDurationRef = useRef<number>(0);
+  const recordingStartedAtRef = useRef<number>(0);
 
   const storageKey = '@bai245:chat_' + rideId;
 
@@ -425,13 +427,18 @@ export function ChatModal({
   };
 
   const stopAndSendRecording = useCallback(async (finalDuration?: number) => {
+    if (!isRecordingRef.current) return;
+    if (finalDuration == null && Date.now() - recordingStartedAtRef.current < 500) {
+      return;
+    }
+
     if (recordTimerRef.current) {
       clearInterval(recordTimerRef.current);
       recordTimerRef.current = null;
     }
 
-    if (!isRecordingRef.current) return;
     isRecordingRef.current = false;
+    setVoiceRecordingLock(false);
     setIsRecording(false);
 
     try {
@@ -535,16 +542,28 @@ export function ChatModal({
   }, [audioRecorder, currentRole, currentUserPhoto, rideId, safeEmit, t]);
 
   const startRecording = async () => {
-    if (isRecordingRef.current) return;
+    let currentStep = 'STEP_0_INIT';
+    console.log('🎙️ [CHAT_MIC_DEBUG] Toque no botao de gravar iniciado');
+    if (isRecordingRef.current) {
+      console.log('🎙️ [CHAT_MIC_DEBUG] Ignorado: ja esta gravando');
+      return;
+    }
     stopActivePlayer();
+    setVoiceRecordingLock(true);
     try { Speech.stop(); } catch {}
 
     try {
+      currentStep = 'STEP_1_ANDROID_PERM';
       if (Platform.OS === 'android') {
         const androidGranted = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
-        ).catch(() => null);
+        ).catch((e) => {
+          console.warn('🎙️ [CHAT_MIC_DEBUG] Erro PermissionsAndroid:', e);
+          return null;
+        });
+        console.log('🎙️ [CHAT_MIC_DEBUG] PermissionsAndroid:', androidGranted);
         if (androidGranted && androidGranted !== PermissionsAndroid.RESULTS.GRANTED) {
+          setVoiceRecordingLock(false);
           Alert.alert(
             t('permission_denied', 'Permissão negada'),
             t('mic_permission_needed', 'Precisamos de acesso ao microfone para enviar áudios.')
@@ -553,8 +572,11 @@ export function ChatModal({
         }
       }
 
+      currentStep = 'STEP_2_EXPO_PERM';
       const permission = await AudioModule.requestRecordingPermissionsAsync();
+      console.log('🎙️ [CHAT_MIC_DEBUG] Expo permission:', JSON.stringify(permission));
       if (!permission.granted) {
+        setVoiceRecordingLock(false);
         Alert.alert(
           t('permission_denied', 'Permissão negada'),
           t('mic_permission_needed', 'Precisamos de acesso ao microfone para enviar áudios.')
@@ -562,7 +584,7 @@ export function ChatModal({
         return;
       }
 
-      // Libera qualquer foco de audio/TTS anterior antes de abrir o microfone
+      currentStep = 'STEP_3_STOP_PREV';
       try {
         if ((hookAudioRecorder as any)?.isRecording) {
           await hookAudioRecorder.stop();
@@ -574,31 +596,42 @@ export function ChatModal({
         }
       } catch {}
 
-      await setIsAudioActiveAsync(true).catch(() => {});
+      currentStep = 'STEP_4_AUDIO_MODE';
+      await setIsAudioActiveAsync(true).catch((e) => console.warn('🎙️ [CHAT_MIC_DEBUG] setIsAudioActiveAsync:', e));
       await setAudioModeAsync({
         allowsRecording: true,
         playsInSilentMode: true,
         shouldRouteThroughEarpiece: false,
         interruptionMode: 'mixWithOthers',
-      }).catch(() => {});
+      }).catch((e) => console.warn('🎙️ [CHAT_MIC_DEBUG] setAudioModeAsync:', e));
 
-      // Pequena pausa para o AudioManager do Android liberar o hardware de captura
       await new Promise((resolve) => setTimeout(resolve, 160));
 
+      currentStep = 'STEP_5_PREPARE';
       let recorderToUse: any = hookAudioRecorder;
       try {
         await recorderToUse.prepareToRecordAsync();
-      } catch {
+        console.log('🎙️ [CHAT_MIC_DEBUG] prepareToRecordAsync OK (padrao)');
+      } catch (e1: any) {
+        console.warn('🎙️ [CHAT_MIC_DEBUG] Falha prepare padrao:', e1?.message || e1);
         try {
           await recorderToUse.prepareToRecordAsync(RecordingPresets.LOW_QUALITY);
-        } catch {
-          recorderToUse = new (AudioModule as any).AudioRecorder(VOICE_RECORDING_PRESET);
-          await recorderToUse.prepareToRecordAsync();
+          console.log('🎙️ [CHAT_MIC_DEBUG] prepareToRecordAsync OK (LOW_QUALITY)');
+        } catch (e2: any) {
+          console.warn('🎙️ [CHAT_MIC_DEBUG] Falha prepare LOW_QUALITY:', e2?.message || e2);
+          currentStep = 'STEP_5B_NEW_INSTANCE';
+          recorderToUse = new (AudioModule as any).AudioRecorder(RecordingPresets.LOW_QUALITY);
+          await recorderToUse.prepareToRecordAsync(RecordingPresets.LOW_QUALITY);
+          console.log('🎙️ [CHAT_MIC_DEBUG] prepareToRecordAsync OK (nova instancia)');
         }
       }
+
+      currentStep = 'STEP_6_RECORD';
       activeRecorderRef.current = recorderToUse;
       recorderToUse.record();
+      console.log('🎙️ [CHAT_MIC_DEBUG] Gravacao iniciada com sucesso! isRecording=', recorderToUse?.isRecording);
 
+      recordingStartedAtRef.current = Date.now();
       isRecordingRef.current = true;
       recordDurationRef.current = 0;
       setIsRecording(true);
@@ -617,10 +650,15 @@ export function ChatModal({
         }
       }, 1000);
     } catch (err: any) {
-      console.warn('⚠️ [CHAT_MIC_START_ERROR]:', err?.message || err);
+      const errMsg = err?.message || String(err);
+      console.error(`❌ [CHAT_MIC_START_ERROR] falhou em ${currentStep}:`, errMsg, err);
       isRecordingRef.current = false;
+      setVoiceRecordingLock(false);
       setIsRecording(false);
-      Alert.alert(t('error_title', 'Erro'), 'Não foi possível iniciar o microfone neste momento.');
+      Alert.alert(
+        t('error_title', 'Erro'),
+        `Não foi possível iniciar o microfone (${currentStep}: ${errMsg}).`
+      );
     }
   };
 
@@ -630,6 +668,7 @@ export function ChatModal({
       recordTimerRef.current = null;
     }
     isRecordingRef.current = false;
+    setVoiceRecordingLock(false);
     try { await audioRecorder.stop(); } catch {}
     try {
       await setAudioModeAsync({
