@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react';
-import { AudioModule, createAudioPlayer } from 'expo-audio';
+import { AudioModule, createAudioPlayer, setAudioModeAsync, setIsAudioActiveAsync } from 'expo-audio';
 import * as Speech from 'expo-speech';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -50,12 +50,13 @@ function resolveCreoleAsset(actionKey: string, text: string) {
 
 async function ensurePlaybackAudioMode() {
   try {
-    if (typeof (AudioModule as any)?.setAudioModeAsync === 'function') {
-      await (AudioModule as any).setAudioModeAsync({
-        playsInSilentMode: true,
-        allowsRecording: false,
-      });
-    }
+    await setIsAudioActiveAsync(true).catch(() => {});
+    await setAudioModeAsync({
+      playsInSilentMode: true,
+      allowsRecording: false,
+      shouldRouteThroughEarpiece: false,
+      interruptionMode: 'mixWithOthers',
+    });
   } catch {}
 }
 
@@ -147,19 +148,26 @@ export function useBilingualVoice() {
       }
 
       if (mode === 'BOTH') {
+        let creoleTriggered = false;
+        const triggerCreoleOnce = () => {
+          if (creoleTriggered) return;
+          creoleTriggered = true;
+          if (sessionTokenRef.current === currentToken) {
+            playCreoleMp3();
+          }
+        };
+        const fallbackTimer = setTimeout(triggerCreoleOnce, Math.min(4800, Math.max(1800, cleanText.length * 65)));
         Speech.speak(cleanText, {
           language: 'pt-PT',
           rate: 1.0,
           pitch: 1.0,
           onDone: () => {
-            if (sessionTokenRef.current === currentToken) {
-              playCreoleMp3();
-            }
+            clearTimeout(fallbackTimer);
+            triggerCreoleOnce();
           },
           onError: () => {
-            if (sessionTokenRef.current === currentToken) {
-              playCreoleMp3();
-            }
+            clearTimeout(fallbackTimer);
+            triggerCreoleOnce();
           },
         });
       }

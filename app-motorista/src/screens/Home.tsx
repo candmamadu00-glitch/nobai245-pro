@@ -6,7 +6,7 @@ import {
   KeyboardAvoidingView, Platform, StatusBar, Image, Vibration, Switch,
   Animated, PanResponder, ScrollView, AppState, AppStateStatus
 } from 'react-native';
-import { useKeepAwake } from 'expo-keep-awake';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
@@ -50,6 +50,7 @@ const BACKGROUND_LOCATION_TASK = 'BACKGROUND_LOCATION_TASK';
 const STORAGE_ACTIVE_RIDE_ID = '@nobai245:activeRideId';
 const STORAGE_ACTIVE_RIDE_DATA = '@nobai245:activeRideData';
 const STORAGE_ACTIVE_RIDE_STATE = '@nobai245:activeRideState';
+const STORAGE_ACTIVE_RIDE_ROUTE = '@nobai245:activeRideRoute';
 
 const BISSAU_CENTER_LNG = -15.5977;
 const BISSAU_CENTER_LAT = 11.8632;
@@ -403,7 +404,6 @@ function lerp(start: number, end: number, amt: number): number {
 
 export function Home() {
   const { t, i18n } = useTranslation();
-  useKeepAwake();
 
   const { driver, refreshDriverProfile } = useAuth();
   const navigation = useNavigation<any>();
@@ -610,7 +610,7 @@ export function Home() {
   const resetDriverState = useCallback(async () => {
     Vibration.cancel();
     if (acceptTimeoutRef.current) clearTimeout(acceptTimeoutRef.current);
-    await AsyncStorage.multiRemove([STORAGE_ACTIVE_RIDE_ID, STORAGE_ACTIVE_RIDE_DATA, STORAGE_ACTIVE_RIDE_STATE]);
+    await AsyncStorage.multiRemove([STORAGE_ACTIVE_RIDE_ID, STORAGE_ACTIVE_RIDE_DATA, STORAGE_ACTIVE_RIDE_STATE, STORAGE_ACTIVE_RIDE_ROUTE]);
     if (!isMountedRef.current) return;
 
     rideStateRef.current = 'idle';
@@ -642,16 +642,25 @@ export function Home() {
 
   const profileImageUrl = formatImageUrl(driver?.profilePicture || undefined);
 
-  const persistActiveRideState = async (rideData: IncomingRideData | null, state: RideState, rideId: string | null) => {
+  const persistActiveRideState = async (
+    rideData: IncomingRideData | null,
+    state: RideState,
+    rideId: string | null,
+    coordsToCache?: number[][] | null
+  ) => {
     try {
       if (rideData && rideId && state !== 'idle' && state !== 'completed') {
-        await AsyncStorage.multiSet([
+        const pairs: [string, string][] = [
           [STORAGE_ACTIVE_RIDE_ID, rideId],
           [STORAGE_ACTIVE_RIDE_DATA, JSON.stringify(rideData)],
-          [STORAGE_ACTIVE_RIDE_STATE, state]
-        ]);
+          [STORAGE_ACTIVE_RIDE_STATE, state],
+        ];
+        if (Array.isArray(coordsToCache) && coordsToCache.length >= 2) {
+          pairs.push([STORAGE_ACTIVE_RIDE_ROUTE, JSON.stringify(coordsToCache)]);
+        }
+        await AsyncStorage.multiSet(pairs);
       } else {
-        await AsyncStorage.multiRemove([STORAGE_ACTIVE_RIDE_ID, STORAGE_ACTIVE_RIDE_DATA, STORAGE_ACTIVE_RIDE_STATE]);
+        await AsyncStorage.multiRemove([STORAGE_ACTIVE_RIDE_ID, STORAGE_ACTIVE_RIDE_DATA, STORAGE_ACTIVE_RIDE_STATE, STORAGE_ACTIVE_RIDE_ROUTE]);
       }
     } catch (err) {}
   };
@@ -783,6 +792,7 @@ export function Home() {
         const storedRideId = await AsyncStorage.getItem(STORAGE_ACTIVE_RIDE_ID);
         const storedRideData = await AsyncStorage.getItem(STORAGE_ACTIVE_RIDE_DATA);
         const storedRideState = await AsyncStorage.getItem(STORAGE_ACTIVE_RIDE_STATE);
+        const storedRideRoute = await AsyncStorage.getItem(STORAGE_ACTIVE_RIDE_ROUTE);
 
         if (storedRideId && storedRideData && storedRideState && isMountedRef.current) {
           const parsedData = JSON.parse(storedRideData);
@@ -796,10 +806,26 @@ export function Home() {
           setIncomingRide(parsedData);
           setRideState(restoredState);
 
+          if (storedRideRoute) {
+            try {
+              const cachedCoords = JSON.parse(storedRideRoute);
+              if (Array.isArray(cachedCoords) && cachedCoords.length >= 2) {
+                setRouteCoordinates(cachedCoords);
+              }
+            } catch {}
+          }
+
           if (['accepted', 'arrived', 'in_progress'].includes(restoredState)) {
             isOnlineRef.current = true;
             setIsOnline(true);
             await connectDriverSocket();
+            const oLat = Number(parsedData.pickupLat);
+            const oLng = Number(parsedData.pickupLng);
+            const dLat = Number(parsedData.destinationLat);
+            const dLng = Number(parsedData.destinationLng);
+            if (!isNaN(oLat) && !isNaN(oLng) && !isNaN(dLat) && !isNaN(dLng) && oLat !== 0 && dLat !== 0) {
+              fetchMapboxRoute(oLng, oLat, dLng, dLat);
+            }
           }
         }
       } catch (err) {}
@@ -842,7 +868,7 @@ export function Home() {
   // 🛡️ PERSISTÊNCIA AUTOMÁTICA INDEPENDENTE DO GPS
   useEffect(() => {
     if (['accepted', 'arrived', 'in_progress'].includes(rideState) && activeRideId && incomingRide) {
-      persistActiveRideState(incomingRide, rideState, activeRideId);
+      persistActiveRideState(incomingRide, rideState, activeRideId, routeCoordinates);
     }
   }, [rideState, activeRideId, incomingRide]);
 
@@ -1672,6 +1698,32 @@ export function Home() {
     });
     return () => sub.remove();
   }, [location?.coords?.latitude, location?.coords?.longitude]);
+
+  // 🛡️ MANTÉM A TELA DO MOTORISTA ACESA ENQUANTO ESTIVER ONLINE OU EM CORRIDA ATIVA
+  useEffect(() => {
+    const keepScreenTag = 'nobai-driver-active-session';
+    const shouldStayAwake = isOnline || (rideState !== 'idle' && rideState !== 'completed');
+
+    const syncKeepAwake = () => {
+      if (shouldStayAwake) {
+        activateKeepAwakeAsync(keepScreenTag).catch(() => {});
+      } else {
+        deactivateKeepAwake(keepScreenTag).catch(() => {});
+      }
+    };
+
+    syncKeepAwake();
+    const appStateSub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        syncKeepAwake();
+      }
+    });
+
+    return () => {
+      appStateSub.remove();
+      deactivateKeepAwake(keepScreenTag).catch(() => {});
+    };
+  }, [isOnline, rideState]);
 
   const handleNewRideRequest = (data: IncomingRideData & { isQueuedOffer?: boolean; rideId?: string }) => {
     if (!isMountedRef.current) return;

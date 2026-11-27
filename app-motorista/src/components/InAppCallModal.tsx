@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Socket } from 'socket.io-client';
 import * as Haptics from 'expo-haptics';
+import * as Speech from 'expo-speech';
 import {
   AudioModule,
   RecordingPresets,
@@ -241,6 +242,12 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
       } catch {}
       peerConnectionRef.current = null;
     }
+    setAudioModeAsync({
+      allowsRecording: false,
+      playsInSilentMode: true,
+      shouldRouteThroughEarpiece: false,
+      interruptionMode: 'mixWithOthers',
+    }).catch(() => {});
   }, []);
 
   const stopRecorderSafely = useCallback(async () => {
@@ -309,6 +316,7 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
       }
 
       try {
+        try { Speech.stop(); } catch {}
         const granted = await requestMicPermissionSafely();
         if (!granted) {
           setUseLegacyFallback(true);
