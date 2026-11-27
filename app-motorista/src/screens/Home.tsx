@@ -52,6 +52,7 @@ const STORAGE_ACTIVE_RIDE_ID = '@nobai245:activeRideId';
 const STORAGE_ACTIVE_RIDE_DATA = '@nobai245:activeRideData';
 const STORAGE_ACTIVE_RIDE_STATE = '@nobai245:activeRideState';
 const STORAGE_ACTIVE_RIDE_ROUTE = '@nobai245:activeRideRoute';
+const STORAGE_DRIVER_ONLINE_INTENT = '@nobai245:driverOnlineIntent';
 
 const BISSAU_CENTER_LNG = -15.5977;
 const BISSAU_CENTER_LAT = 11.8632;
@@ -795,6 +796,8 @@ export function Home() {
         const storedRideState = await AsyncStorage.getItem(STORAGE_ACTIVE_RIDE_STATE);
         const storedRideRoute = await AsyncStorage.getItem(STORAGE_ACTIVE_RIDE_ROUTE);
 
+        const storedOnlineIntent = await AsyncStorage.getItem(STORAGE_DRIVER_ONLINE_INTENT);
+
         if (storedRideId && storedRideData && storedRideState && isMountedRef.current) {
           const parsedData = JSON.parse(storedRideData);
           const restoredState = storedRideState as RideState;
@@ -832,6 +835,13 @@ export function Home() {
       } catch (err) {}
 
       await syncActiveRideWithServer();
+
+      if (isMountedRef.current && !activeRideIdRef.current) {
+        const wantsOnline = await AsyncStorage.getItem(STORAGE_DRIVER_ONLINE_INTENT).catch(() => null);
+        if (wantsOnline === 'true' && !isOnlineRef.current) {
+          startTracking();
+        }
+      }
     }
 
     restoreLocalState();
@@ -1125,6 +1135,7 @@ export function Home() {
     if (!socket) return;
 
     const handleOnlineFailed = (data: { reason?: string; message?: string }) => {
+      AsyncStorage.setItem(STORAGE_DRIVER_ONLINE_INTENT, 'false').catch(() => {});
       setIsOnline(false);
       refreshDriverProfile().catch(() => {});
       Alert.alert('Carteira com Saldo Insuficiente 💳', data.message || 'Você precisa de no mínimo 1.000 XOF na carteira para ficar online.', [
@@ -1134,6 +1145,7 @@ export function Home() {
     };
 
     const handleForcedOffline = (data: { message?: string }) => {
+      AsyncStorage.setItem(STORAGE_DRIVER_ONLINE_INTENT, 'false').catch(() => {});
       setIsOnline(false);
       refreshDriverProfile().catch(() => {});
       Alert.alert('Modo Offline Ativado ⚠️', data.message || 'Seu saldo ficou abaixo de 1.000 XOF. Recarregue sua carteira para continuar trabalhando.', [
@@ -2253,7 +2265,8 @@ export function Home() {
       );
     }
 
-    // Resposta imediata na interface (Optimistic UI)
+    // Resposta imediata na interface (Optimistic UI) + persistencia de sessao Online
+    AsyncStorage.setItem(STORAGE_DRIVER_ONLINE_INTENT, 'true').catch(() => {});
     isOnlineRef.current = true;
     setIsOnline(true);
     try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch (e) {}
@@ -2342,6 +2355,8 @@ export function Home() {
   }
 
   function stopTracking() {
+    AsyncStorage.setItem(STORAGE_DRIVER_ONLINE_INTENT, 'false').catch(() => {});
+    isOnlineRef.current = false;
     if (driver?.id && socket && socket.connected) {
       socket.timeout(2000).emit('driver:offline', { driverId: driver.id });
     }

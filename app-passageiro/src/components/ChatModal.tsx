@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Socket } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
 import { AudioModule, RecordingPresets, useAudioRecorder, useAudioPlayer, useAudioPlayerStatus, setAudioModeAsync, setIsAudioActiveAsync, createAudioPlayer } from 'expo-audio';
+import * as Speech from 'expo-speech';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystemLegacy from 'expo-file-system/legacy';
 const FileSystem: any = FileSystemLegacy;
@@ -193,7 +194,9 @@ export function ChatModal({
   const [inputText, setInputText] = useState('');
   const [hasRenderError, setHasRenderError] = useState(false);
 
-  const audioRecorder = useAudioRecorder(VOICE_RECORDING_PRESET);
+  const hookAudioRecorder = useAudioRecorder(VOICE_RECORDING_PRESET);
+  const activeRecorderRef = useRef<any>(null);
+  const audioRecorder = activeRecorderRef.current || hookAudioRecorder;
   const chatPlayer = useAudioPlayer(null, { updateInterval: 150 });
   const playerStatus = useAudioPlayerStatus(chatPlayer);
 
@@ -534,6 +537,7 @@ export function ChatModal({
   const startRecording = async () => {
     if (isRecordingRef.current) return;
     stopActivePlayer();
+    try { Speech.stop(); } catch {}
 
     try {
       if (Platform.OS === 'android') {
@@ -560,8 +564,13 @@ export function ChatModal({
 
       // Libera qualquer foco de audio/TTS anterior antes de abrir o microfone
       try {
-        if ((audioRecorder as any)?.isRecording) {
-          await audioRecorder.stop();
+        if ((hookAudioRecorder as any)?.isRecording) {
+          await hookAudioRecorder.stop();
+        }
+      } catch {}
+      try {
+        if (activeRecorderRef.current && activeRecorderRef.current !== hookAudioRecorder) {
+          await activeRecorderRef.current.stop?.();
         }
       } catch {}
 
@@ -574,18 +583,21 @@ export function ChatModal({
       }).catch(() => {});
 
       // Pequena pausa para o AudioManager do Android liberar o hardware de captura
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      await new Promise((resolve) => setTimeout(resolve, 160));
 
+      let recorderToUse: any = hookAudioRecorder;
       try {
-        await audioRecorder.prepareToRecordAsync();
+        await recorderToUse.prepareToRecordAsync();
       } catch {
         try {
-          await audioRecorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
+          await recorderToUse.prepareToRecordAsync(RecordingPresets.LOW_QUALITY);
         } catch {
-          await audioRecorder.prepareToRecordAsync(RecordingPresets.LOW_QUALITY);
+          recorderToUse = new (AudioModule as any).AudioRecorder(VOICE_RECORDING_PRESET);
+          await recorderToUse.prepareToRecordAsync();
         }
       }
-      audioRecorder.record();
+      activeRecorderRef.current = recorderToUse;
+      recorderToUse.record();
 
       isRecordingRef.current = true;
       recordDurationRef.current = 0;
