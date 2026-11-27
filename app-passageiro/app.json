@@ -31,7 +31,8 @@
         "CAMERA",
         "RECORD_AUDIO",
         "VIBRATE",
-        "POST_NOTIFICATIONS"
+        "POST_NOTIFICATIONS",
+        "SYSTEM_ALERT_WINDOW"
       ],
       "googleServicesFile": "./google-services.json",
       "predictiveBackGestureEnabled": false
@@ -100,7 +101,8 @@
       ],
       "expo-asset",
       "expo-audio",
-      "@config-plugins/react-native-webrtc"
+      "@config-plugins/react-native-webrtc",
+      "./plugins/withFloatingRidePill"
     ],
     "extra": {
       "eas": {

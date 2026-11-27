@@ -1075,21 +1075,31 @@ export function Home() {
     if (announcedDriverStateKeyRef.current === stateDedupKey) return;
     announcedDriverStateKeyRef.current = stateDedupKey;
 
+    const rawCategory = String((incomingRide as any)?.vehicleType || (driver as any)?.vehicleType || '').toUpperCase();
+    const rawService = String((incomingRide as any)?.serviceType || '').toUpperCase();
+    const isMotoRide = rawCategory.includes('MOTO');
+    const isDeliveryRide = rawService.includes('ENTREGA') || rawService.includes('DELIVERY') || rawCategory.includes('ENTREGA');
+
     if (rideState === 'accepted') {
       const passengerName = incomingRide?.passengerName ? `de ${incomingRide.passengerName} ` : '';
+      const label = isDeliveryRide ? 'Entrega aceita. Siga para a coleta' : 'Corrida aceita. Siga para o ponto de embarque';
       speakText(
-        `Corrida aceita. Siga para o ponto de embarque ${passengerName}em ${incomingRide?.originAddress || 'local indicado'}.`,
+        `${label} ${passengerName}em ${incomingRide?.originAddress || 'local indicado'}.`,
         true
       );
       triggerHapticFeedback('NEW_OFFER');
     } else if (rideState === 'arrived') {
-      speakText(
-        'Você chegou ao local de embarque. Aguarde o passageiro, confirme o código PIN e lembre-o de utilizar o cinto de segurança.'
-      );
+      const arrivalPrompt = isDeliveryRide
+        ? 'Você chegou ao local de coleta. Retire a encomenda e confirme o código PIN.'
+        : isMotoRide
+        ? 'Você chegou ao local de embarque. Aguarde o passageiro, confirme o código PIN e entregue o capacete.'
+        : 'Você chegou ao local de embarque. Aguarde o passageiro, confirme o código PIN e lembre-o de utilizar o cinto de segurança.';
+      speakText(arrivalPrompt);
       triggerHapticFeedback('ARRIVED');
     } else if (rideState === 'in_progress') {
+      const startLabel = isDeliveryRide ? 'Entrega iniciada com destino a' : 'Viagem iniciada com destino a';
       speakText(
-        `Viagem iniciada com destino a ${incomingRide?.destinationAddress || 'destino final'}. Boa viagem e conduza com segurança.`
+        `${startLabel} ${incomingRide?.destinationAddress || 'destino final'}. Boa viagem e conduza com segurança.`
       );
       triggerHapticFeedback('BUTTON_PRESS');
     }

@@ -37,7 +37,7 @@ import { api } from '../services/api';
 import { registerAndSendPushToken } from '../services/notifications';
 import { updateOngoingRideNotification, dismissOngoingRideNotification } from '../services/ongoingNotification';
 import { speakRideStatusUpdate, speakText, triggerHapticFeedback, getVoiceRecordingLock } from '../utils/accessibility';
-import { updatePassengerLiveRidePill, clearPassengerLiveRidePill } from '../services/rideLiveActivity';
+import { updatePassengerLiveRidePill, clearPassengerLiveRidePill, ensureOverlayPermissionOnce } from '../services/rideLiveActivity';
 
 // Token Mapbox
 function computeSegmentBearing(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -2139,10 +2139,10 @@ const handleOpenChat = () => {
         setShowCancelModal(false);
         const currentStatus = rideStatusRef.current;
         const currentRideId = activeRideIdRef.current;
-        if (currentRideId && ['accepted', 'arrived', 'in_progress'].includes(currentStatus)) {
+        if (['searching', 'queued', 'accepted', 'arrived', 'in_progress'].includes(currentStatus)) {
           updatePassengerLiveRidePill(
             {
-              rideId: currentRideId,
+              rideId: currentRideId || 'searching',
               rideStatus: currentStatus,
               driverName: driverInfo?.name,
               driverPhoto: (driverInfo as any)?.photoUrl || (driverInfo as any)?.photo || (driverInfo as any)?.avatarUrl || (driverInfo as any)?.profilePhoto,
@@ -2324,6 +2324,8 @@ const handleOpenChat = () => {
         carModel: parsedDriver?.carModel,
         carColor: parsedDriver?.carColor,
         plate: parsedDriver?.licensePlate,
+        vehicleType,
+        serviceType,
         enabled: isVoiceAssistEnabledRef.current,
       });
 
@@ -2387,6 +2389,8 @@ const handleOpenChat = () => {
 
       speakRideStatusUpdate('in_progress', {
         destination: dropoffAddress,
+        vehicleType,
+        serviceType,
         enabled: isVoiceAssistEnabledRef.current,
       });
     };
@@ -2799,14 +2803,17 @@ const handleOpenChat = () => {
   }, [pickupCoords, dropoffCoords, extraStopCoords, serviceType, vehicleType, calculateEstimate, rideStatus]);
 
   useEffect(() => {
-    const liveStatuses = ['accepted', 'arrived', 'in_progress'];
-    if (!activeRideId || !liveStatuses.includes(rideStatus)) {
+    const liveStatuses = ['searching', 'queued', 'accepted', 'arrived', 'in_progress'];
+    if (!liveStatuses.includes(rideStatus)) {
       clearPassengerLiveRidePill();
       return;
     }
+    if (rideStatus === 'searching') {
+      ensureOverlayPermissionOnce();
+    }
     if (AppState.currentState !== 'active') {
       updatePassengerLiveRidePill({
-        rideId: activeRideId,
+        rideId: activeRideId || 'searching',
         rideStatus,
         driverName: driverInfo?.name,
         driverPhoto: (driverInfo as any)?.photoUrl || (driverInfo as any)?.photo || (driverInfo as any)?.avatarUrl || (driverInfo as any)?.profilePhoto,

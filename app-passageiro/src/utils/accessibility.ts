@@ -111,12 +111,18 @@ export const speakRideStatusUpdate = (
     origin?: string;
     startOtp?: string;
     paymentMethod?: string;
+    vehicleType?: string;
+    serviceType?: string;
     enabled?: boolean;
     language?: string;
   }
 ) => {
   if (extraData?.enabled === false) return;
   const { lang } = resolveSpeechLocale(extraData?.language);
+  const vType = String(extraData?.vehicleType || '').toUpperCase();
+  const sType = String(extraData?.serviceType || '').toUpperCase();
+  const isMoto = vType.includes('MOTO');
+  const isDelivery = sType.includes('ENTREGA') || sType.includes('DELIVERY') || vType.includes('ENTREGA');
 
   switch (status) {
     case 'queued':
@@ -170,13 +176,28 @@ export const speakRideStatusUpdate = (
     case 'in_progress': {
       if (lang === 'en') {
         const destNotice = extraData?.destination ? ` to ${extraData.destination}` : '';
-        speakText(`Trip started${destNotice}. For your safety, please fasten your seatbelt. Have a pleasant journey!`, true, lang);
+        const safetyNotice = isDelivery
+          ? 'Your delivery is on the way.'
+          : isMoto
+          ? 'For your safety, please wear and fasten your helmet. Have a pleasant journey!'
+          : 'For your safety, please fasten your seatbelt. Have a pleasant journey!';
+        speakText(`${isDelivery ? 'Delivery' : 'Trip'} started${destNotice}. ${safetyNotice}`, true, lang);
       } else if (lang === 'fr') {
         const destNotice = extraData?.destination ? ` vers ${extraData.destination}` : '';
-        speakText(`Course démarrée${destNotice}. Pour votre sécurité, veuillez attacher votre ceinture. Bon voyage !`, true, lang);
+        const safetyNotice = isDelivery
+          ? 'Votre livraison est en route.'
+          : isMoto
+          ? 'Pour votre sécurité, veuillez attacher votre casque. Bon voyage !'
+          : 'Pour votre sécurité, veuillez attacher votre ceinture. Bon voyage !';
+        speakText(`${isDelivery ? 'Livraison' : 'Course'} démarrée${destNotice}. ${safetyNotice}`, true, lang);
       } else {
         const destNotice = extraData?.destination ? ` com destino a ${extraData.destination}` : '';
-        speakText(`Viagem iniciada${destNotice}. Para sua segurança, por favor afivele o cinto de segurança. Tenha uma excelente viagem!`, true, lang);
+        const safetyNotice = isDelivery
+          ? 'Sua encomenda já está a caminho do destino.'
+          : isMoto
+          ? 'Para sua segurança, utilize e afivele o capacete. Tenha uma excelente viagem!'
+          : 'Para sua segurança, por favor afivele o cinto de segurança. Tenha uma excelente viagem!';
+        speakText(`${isDelivery ? 'Entrega' : 'Viagem'} iniciada${destNotice}. ${safetyNotice}`, true, lang);
       }
       triggerHapticFeedback('BUTTON_PRESS');
       break;
