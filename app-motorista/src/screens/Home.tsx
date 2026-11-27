@@ -47,6 +47,7 @@ const CLEAN_BASE_URL = RAW_API_URL.replace(/\/api\/?$/, '').replace(/\/$/, '');
 const API_URL = `${CLEAN_BASE_URL}/api`;
 
 const BACKGROUND_LOCATION_TASK = 'BACKGROUND_LOCATION_TASK';
+const ALLOW_MOCK_GPS_FOR_TESTING = true;
 const STORAGE_ACTIVE_RIDE_ID = '@nobai245:activeRideId';
 const STORAGE_ACTIVE_RIDE_DATA = '@nobai245:activeRideData';
 const STORAGE_ACTIVE_RIDE_STATE = '@nobai245:activeRideState';
@@ -88,7 +89,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) =>
 
   if (location?.coords) {
     const isMocked = location.mocked || (location.coords as any)?.mocked;
-    if (isMocked && !__DEV__) return;
+    if (isMocked && !__DEV__ && !ALLOW_MOCK_GPS_FOR_TESTING) return;
 
     try {
       const storedUser = await AsyncStorage.getItem('@nobai245:driverUser');
@@ -2282,7 +2283,7 @@ export function Home() {
       const resolvedLng = currentLoc?.coords?.longitude ?? lastDriverCoordsRef.current?.longitude ?? -15.5977;
       const isMocked = Boolean(currentLoc?.mocked || (currentLoc?.coords as any)?.mocked);
 
-      if (isMocked && !__DEV__) {
+      if (isMocked && !__DEV__ && !ALLOW_MOCK_GPS_FOR_TESTING) {
         isOnlineRef.current = false;
         if (isMountedRef.current) setIsOnline(false);
         return Alert.alert('GPS Simulado Detectado 🚨', 'Desative o aplicativo de GPS Falso para continuar.');

@@ -1,8 +1,9 @@
 import { Alert, BackHandler, Platform } from 'react-native';
 
 export function checkLocationSecurity(location: any) {
-  // 1. BLOQUEIO DE FAKE GPS (Localização Simulada)
-  if (Platform.OS === 'android' && location.mocked) {
+  // 1. BLOQUEIO DE FAKE GPS (Desativado temporariamente para testes de rota)
+  const ALLOW_MOCK_GPS_FOR_TESTING = true;
+  if (!ALLOW_MOCK_GPS_FOR_TESTING && Platform.OS === 'android' && location.mocked) {
     Alert.alert(
       "Segurança Nobai245", 
       "Detectamos o uso de aplicativo de localização falsa (Fake GPS). Desative-o para usar a plataforma.",
