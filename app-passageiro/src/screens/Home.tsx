@@ -36,7 +36,7 @@ import { SOSModal } from '../components/SOSModal';
 import { api } from '../services/api';
 import { registerAndSendPushToken } from '../services/notifications';
 import { updateOngoingRideNotification, dismissOngoingRideNotification } from '../services/ongoingNotification';
-import { speakRideStatusUpdate, speakText, triggerHapticFeedback } from '../utils/accessibility';
+import { speakRideStatusUpdate, speakText, triggerHapticFeedback, getVoiceRecordingLock } from '../utils/accessibility';
 import { updatePassengerLiveRidePill, clearPassengerLiveRidePill } from '../services/rideLiveActivity';
 
 // Token Mapbox
@@ -2133,7 +2133,9 @@ const handleOpenChat = () => {
     // 🛡️ PASSENGER_APPSTATE_SYNC: Reconcilia estado ao voltar do segundo plano sem fechar modais ativos por 'inactive'
     const appStateSub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'background') {
-        setIsChatVisible(false);
+        if (!getVoiceRecordingLock()) {
+          setIsChatVisible(false);
+        }
         setShowCancelModal(false);
         const currentStatus = rideStatusRef.current;
         const currentRideId = activeRideIdRef.current;
@@ -2375,7 +2377,9 @@ const handleOpenChat = () => {
         setDriverEta(Math.max(1, Math.round(roadDurationRef.current)));
       }
       setRideStatus('in_progress');
-      setIsChatVisible(false);
+      if (!getVoiceRecordingLock()) {
+        setIsChatVisible(false);
+      }
       if (activeRideIdRef.current) persistRideState(activeRideIdRef.current, 'in_progress');
 
       if (notifiedLocalRideEventsRef.current.has(startedEventSig)) return;

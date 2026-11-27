@@ -21,6 +21,8 @@ export const setVoiceRecordingLock = (active: boolean) => {
   isVoiceRecordingActive = active;
 };
 
+export const getVoiceRecordingLock = () => isVoiceRecordingActive;
+
 export const speakText = async (text: string, stopPrevious: boolean = true, langOverride?: string) => {
   if (!text || !text.trim()) return;
 
