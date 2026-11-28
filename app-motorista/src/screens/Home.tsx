@@ -421,6 +421,26 @@ export function Home() {
   }, []);
 
   const [isOnline, setIsOnline] = useState(false);
+  const [dailyGoalXof, setDailyGoalXof] = useState<number>(15000);
+  const [isEditingGoal, setIsEditingGoal] = useState(false);
+
+  useEffect(() => {
+    AsyncStorage.getItem('@nobai245:driverDailyGoal')
+      .then((val) => {
+        const parsed = Number(val);
+        if (!isNaN(parsed) && parsed >= 5000) {
+          setDailyGoalXof(parsed);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const updateDailyGoal = (nextGoal: number) => {
+    setDailyGoalXof(nextGoal);
+    setIsEditingGoal(false);
+    AsyncStorage.setItem('@nobai245:driverDailyGoal', String(nextGoal)).catch(() => {});
+    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+  };
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isMapReady, setIsMapReady] = useState(false);
@@ -3037,6 +3057,96 @@ export function Home() {
                     <Text style={styles.goOnlineText}>{t('go_online', 'Ficar Online')}</Text>
                   </TouchableOpacity>
                 )}
+
+                {/* 🎯 CARTÃO DE META DIÁRIA DE GANHOS */}
+                {(() => {
+                  const earned = Math.max(0, Number(todayEarnings || 0));
+                  const goal = Math.max(5000, Number(dailyGoalXof || 15000));
+                  const pct = Math.min(100, Math.round((earned / goal) * 100));
+                  const remaining = Math.max(0, goal - earned);
+                  const goalReached = earned >= goal;
+
+                  return (
+                    <View style={{
+                      width: '100%',
+                      marginTop: 16,
+                      backgroundColor: '#1E293B',
+                      borderRadius: 18,
+                      padding: 14,
+                      borderWidth: 1,
+                      borderColor: goalReached ? 'rgba(16, 185, 129, 0.45)' : 'rgba(255,255,255,0.08)',
+                    }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Ionicons name={goalReached ? 'trophy' : 'trending-up'} size={15} color={goalReached ? '#10B981' : '#EAB308'} />
+                          <Text style={{ color: '#F8FAFC', fontSize: 12.5, fontWeight: '800', letterSpacing: 0.3 }}>
+                            META DIÁRIA DE GANHOS
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          onPress={() => setIsEditingGoal((prev) => !prev)}
+                          style={{ backgroundColor: 'rgba(234, 179, 8, 0.15)', paddingHorizontal: 9, paddingVertical: 4, borderRadius: 10 }}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={{ color: '#FACC15', fontSize: 11, fontWeight: '800' }}>
+                            {isEditingGoal ? 'Fechar' : 'Ajustar'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+                        <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '900' }}>
+                          {formatCurrency(earned)} <Text style={{ color: '#94A3B8', fontSize: 12, fontWeight: '700' }}>/ {formatCurrency(goal)} XOF</Text>
+                        </Text>
+                        <Text style={{ color: goalReached ? '#34D399' : '#FACC15', fontSize: 13, fontWeight: '900' }}>
+                          {pct}%
+                        </Text>
+                      </View>
+
+                      <View style={{ width: '100%', height: 8, backgroundColor: '#0F172A', borderRadius: 6, overflow: 'hidden' }}>
+                        <View style={{
+                          width: `${Math.max(4, pct)}%`,
+                          height: '100%',
+                          backgroundColor: goalReached ? '#10B981' : '#EAB308',
+                          borderRadius: 6,
+                        }} />
+                      </View>
+
+                      <Text style={{ color: goalReached ? '#6EE7B7' : '#94A3B8', fontSize: 11.5, fontWeight: '600', marginTop: 8 }}>
+                        {goalReached
+                          ? 'Meta diária batida! Excelente trabalho hoje.'
+                          : `Faltam ${formatCurrency(remaining)} XOF para atingir sua meta de hoje.`}
+                      </Text>
+
+                      {isEditingGoal && (
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)' }}>
+                          {[10000, 15000, 20000, 30000].map((preset) => {
+                            const selected = goal === preset;
+                            return (
+                              <TouchableOpacity
+                                key={preset}
+                                onPress={() => updateDailyGoal(preset)}
+                                style={{
+                                  paddingHorizontal: 10,
+                                  paddingVertical: 6,
+                                  borderRadius: 10,
+                                  backgroundColor: selected ? '#EAB308' : '#0F172A',
+                                  borderWidth: 1,
+                                  borderColor: selected ? '#EAB308' : 'rgba(255,255,255,0.12)',
+                                }}
+                                activeOpacity={0.8}
+                              >
+                                <Text style={{ color: selected ? '#0F172A' : '#E2E8F0', fontSize: 11.5, fontWeight: '800' }}>
+                                  {formatCurrency(preset)} XOF
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      )}
+                    </View>
+                  );
+                })()}
               </View>
             )}
 
@@ -3734,18 +3844,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#0F172A',
   },
   voiceToggleHeaderBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#334155',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.5,
-    elevation: 6,
+    borderColor: 'rgba(255, 255, 255, 0.14)',
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.32,
+    shadowRadius: 8,
+    elevation: 8,
   },
   vehicle3DContainer: {
     width: 44,
@@ -3794,14 +3904,14 @@ const styles = StyleSheet.create({
   statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 11,
-    paddingVertical: 8,
-    borderRadius: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.5,
-    elevation: 6,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    borderRadius: 22,
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.34,
+    shadowRadius: 8,
+    elevation: 8,
     borderWidth: 1,
   },
   pillOnline: {
@@ -3831,18 +3941,18 @@ const styles = StyleSheet.create({
   earningsPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1E293B',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 20,
+    backgroundColor: 'rgba(15, 23, 42, 0.94)',
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 22,
     borderWidth: 1,
-    borderColor: '#334155',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.5,
-    elevation: 6,
-    gap: 5,
+    borderColor: 'rgba(16, 185, 129, 0.35)',
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.34,
+    shadowRadius: 8,
+    elevation: 8,
+    gap: 6,
     flexShrink: 1,
   },
   earningsPillText: {
@@ -3851,35 +3961,35 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   filterPill: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#1E293B',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(15, 23, 42, 0.94)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#334155',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.5,
-    elevation: 6,
+    borderColor: 'rgba(255, 255, 255, 0.14)',
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.32,
+    shadowRadius: 8,
+    elevation: 8,
   },
   profilePill: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#1E293B',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(15, 23, 42, 0.94)',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#334155',
+    borderWidth: 1.5,
+    borderColor: 'rgba(234, 179, 8, 0.5)',
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.5,
-    elevation: 6,
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.32,
+    shadowRadius: 8,
+    elevation: 8,
   },
   headerProfileImage: {
     width: '100%',
@@ -3996,14 +4106,18 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   bottomSheet: {
-    backgroundColor: '#1E293B',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+    backgroundColor: '#162032',
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
     paddingHorizontal: 20,
     paddingTop: 8,
     borderTopWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    elevation: 20,
+    borderColor: 'rgba(255, 255, 255, 0.14)',
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: 0.42,
+    shadowRadius: 16,
+    elevation: 24,
     minHeight: 180,
   },
   dragHandleArea: {
@@ -4130,21 +4244,28 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#0F172A',
-    padding: 12,
-    borderRadius: 16,
+    padding: 14,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
     marginBottom: 12,
   },
   passengerPhotoContainer: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     backgroundColor: '#1E293B',
+    borderWidth: 1.5,
+    borderColor: 'rgba(234, 179, 8, 0.55)',
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
-    marginRight: 10,
+    marginRight: 12,
   },
   passengerPhoto: {
     width: '100%',
@@ -4178,8 +4299,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   routeAddressesContainer: {
-    gap: 8,
-    marginBottom: 12,
+    backgroundColor: '#0F172A',
+    borderRadius: 20,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.09)',
+    gap: 10,
+    marginBottom: 14,
   },
   addressItem: {
     flexDirection: 'row',
@@ -4298,10 +4424,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#0F172A',
-    paddingVertical: 10,
-    borderRadius: 12,
+    paddingVertical: 12,
+    borderRadius: 15,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255, 255, 255, 0.12)',
     gap: 6,
   },
   actionButtonSecondaryText: {
@@ -4342,15 +4468,21 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   actionBtnPrimary: {
-    paddingVertical: 14,
-    borderRadius: 16,
+    paddingVertical: 16,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 6,
   },
   actionBtnText: {
     color: '#FFFFFF',
-    fontSize: 15,
+    fontSize: 15.5,
     fontWeight: '900',
+    letterSpacing: 0.4,
   },
   receiptOverlay: {
     flex: 1,
@@ -4359,12 +4491,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   receiptContainer: {
-    backgroundColor: '#1E293B',
-    borderRadius: 24,
+    backgroundColor: '#162032',
+    borderRadius: 28,
     padding: 24,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255, 255, 255, 0.14)',
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.45,
+    shadowRadius: 20,
+    elevation: 16,
   },
   receiptHeaderIcon: {
     marginBottom: 12,

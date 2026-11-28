@@ -606,6 +606,7 @@ export function Home() {
   const [showCancelModal, setShowCancelModal] = useState<boolean>(false);
   const handleCloseCancelModal = useCallback(() => setShowCancelModal(false), []);
   const [showRatingModal, setShowRatingModal] = useState(false);
+  const [showDriverProfileModal, setShowDriverProfileModal] = useState(false);
   const [isChatVisible, setIsChatVisible] = useState(false);
   const [isCallVisible, setIsCallVisible] = useState(false);
   const [callDirection, setCallDirection] = useState<CallDirection>('outgoing');
@@ -2795,6 +2796,22 @@ const handleOpenChat = () => {
   }, [route.params?.openChat, navigation]);
 
   useEffect(() => {
+    const repeat = route.params?.repeatRide;
+    if (!repeat) return;
+    if (rideStatusRef.current === 'idle') {
+      if (repeat.originAddress && typeof repeat.originLat === 'number' && typeof repeat.originLng === 'number') {
+        setPickupAddress(repeat.originAddress);
+        setPickupCoords({ latitude: repeat.originLat, longitude: repeat.originLng });
+      }
+      if (repeat.destinationAddress && typeof repeat.destinationLat === 'number' && typeof repeat.destinationLng === 'number') {
+        setDropoffAddress(repeat.destinationAddress);
+        setDropoffCoords({ latitude: repeat.destinationLat, longitude: repeat.destinationLng });
+      }
+    }
+    navigation.setParams({ repeatRide: undefined });
+  }, [route.params?.repeatRide, navigation]);
+
+  useEffect(() => {
     if (rideStatus !== 'idle') return;
     if (pickupCoords && dropoffCoords) {
       setEstimatedPrice(null);
@@ -4466,7 +4483,12 @@ const handleOpenChat = () => {
                     borderColor: 'rgba(255,255,255,0.14)',
                   }
                 ]}>
-                  <View style={{ position: 'relative' }}>
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setShowDriverProfileModal(true)}
+                    style={{ position: 'relative' }}
+                    accessibilityLabel="Ver perfil verificado do motorista"
+                  >
                     <Image
                       source={{ uri: driverInfo.photoUrl || driverInfo.profilePicture || 'https://via.placeholder.com/100' }}
                       style={[
@@ -4493,14 +4515,19 @@ const handleOpenChat = () => {
                         {Number((driverInfo as any)?.rating || 5.0).toFixed(1)}
                       </Text>
                     </View>
-                  </View>
+                  </TouchableOpacity>
 
-                  <View style={{ flex: 1, marginLeft: 12, paddingRight: 6 }}>
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => setShowDriverProfileModal(true)}
+                    style={{ flex: 1, marginLeft: 12, paddingRight: 6 }}
+                  >
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
                       <Text style={[styles.driverNameCompact, { fontSize: 15, fontWeight: '800' }]} numberOfLines={1}>
                         {driverInfo.name}
                       </Text>
                       <Ionicons name="checkmark-circle" size={15} color="#10B981" />
+                      <Ionicons name="chevron-forward" size={13} color="#94A3B8" />
                     </View>
 
                     <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginTop: 3 }}>
@@ -4543,7 +4570,7 @@ const handleOpenChat = () => {
                         {driverInfo.licensePlate?.toUpperCase() || 'SEM PLACA'}
                       </Text>
                     </View>
-                  </View>
+                  </TouchableOpacity>
 
                   <View style={{
                     width: 58,
@@ -5842,6 +5869,115 @@ const handleOpenChat = () => {
         </KeyboardAvoidingView>
       </Modal>
 
+      {/* 🛡️ CARTÃO DE PERFIL VERIFICADO DO MOTORISTA */}
+      {showDriverProfileModal && driverInfo && (
+        <Modal
+          visible={showDriverProfileModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowDriverProfileModal(false)}
+        >
+          <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.68)', justifyContent: 'flex-end' }}>
+            <View style={{
+              backgroundColor: '#FFFFFF',
+              borderTopLeftRadius: 28,
+              borderTopRightRadius: 28,
+              padding: 24,
+              paddingBottom: Math.max((insets?.bottom || 0) + 20, 28),
+            }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#ECFDF5', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20 }}>
+                  <Ionicons name="shield-checkmark" size={15} color="#059669" />
+                  <Text style={{ fontSize: 11.5, fontWeight: '800', color: '#059669' }}>MOTORISTA VERIFICADO NÔ BAI 245</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setShowDriverProfileModal(false)}
+                  style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center' }}
+                >
+                  <Ionicons name="close" size={20} color="#475569" />
+                </TouchableOpacity>
+              </View>
+
+              <View style={{ alignItems: 'center', marginBottom: 20 }}>
+                <Image
+                  source={{ uri: driverInfo.photoUrl || driverInfo.profilePicture || 'https://via.placeholder.com/120' }}
+                  style={{ width: 88, height: 88, borderRadius: 44, borderWidth: 3, borderColor: '#EAB308', marginBottom: 12 }}
+                />
+                <Text style={{ fontSize: 20, fontWeight: '900', color: '#0F172A' }}>{driverInfo.name}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 8 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FEF9C3', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
+                    <Ionicons name="star" size={14} color="#EAB308" />
+                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#854D0E' }}>
+                      {Number((driverInfo as any)?.rating || 5.0).toFixed(1)} Avaliação
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#F1F5F9', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
+                    <Ionicons name="checkmark-done-circle" size={14} color="#0284C7" />
+                    <Text style={{ fontSize: 12.5, fontWeight: '700', color: '#334155' }}>Documentos Ativos</Text>
+                  </View>
+                </View>
+              </View>
+
+              <View style={{
+                backgroundColor: '#F8FAFC',
+                borderRadius: 18,
+                padding: 16,
+                borderWidth: 1,
+                borderColor: '#E2E8F0',
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: 18,
+              }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B', textTransform: 'uppercase' }}>Veículo Cadastrado</Text>
+                  <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A', marginTop: 2 }}>
+                    {driverInfo.carModel || 'Veículo Nô Bai 245'}
+                  </Text>
+                  <Text style={{ fontSize: 13, color: '#475569', fontWeight: '600', marginTop: 2 }}>
+                    Cor: {VEHICLE_COLOR_OPTIONS.find((c) => c.key === resolveVehicleColorKey(driverInfo.carColor))?.label || driverInfo.carColor || 'Padrão'}
+                  </Text>
+                  <View style={{ alignSelf: 'flex-start', backgroundColor: '#0F172A', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, marginTop: 8 }}>
+                    <Text style={{ color: '#FACC15', fontSize: 13, fontWeight: '900', letterSpacing: 1.2 }}>
+                      {driverInfo.licensePlate?.toUpperCase() || 'SEM PLACA'}
+                    </Text>
+                  </View>
+                </View>
+                <Image
+                  source={getVehicle3DIconAsset(driverInfo.vehicleType, driverInfo.carColor)}
+                  style={{ width: 74, height: 60 }}
+                  resizeMode="contain"
+                />
+              </View>
+
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <TouchableOpacity
+                  style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#F1F5F9', paddingVertical: 14, borderRadius: 14 }}
+                  onPress={() => {
+                    setShowDriverProfileModal(false);
+                    handleShareTrip();
+                  }}
+                >
+                  <Ionicons name="share-social-outline" size={18} color="#0F172A" />
+                  <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>Compartilhar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#EAB308', paddingVertical: 14, borderRadius: 14 }}
+                  onPress={() => {
+                    setShowDriverProfileModal(false);
+                    setUnreadCount(0);
+                    setIsChatVisible(true);
+                  }}
+                >
+                  <Ionicons name="chatbubble-ellipses" size={18} color="#0F172A" />
+                  <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>Abrir Chat</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+
       {/* 💬 CHATMODAL DO PASSAGEIRO (montado apenas quando aberto para compatibilidade Web/iOS) */}
       {isChatVisible && (
         <ChatModal
@@ -5933,11 +6069,16 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   headerBlurWrapper: {
-    borderRadius: 20,
+    borderRadius: 24,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
-    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.34,
+    shadowRadius: 12,
+    elevation: 10,
   },
   headerContent: {
     flexDirection: 'row',
@@ -6083,29 +6224,37 @@ const styles = StyleSheet.create({
   floatingSafetyShieldBtn: {
     position: 'absolute',
     right: 16,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1.5,
     borderColor: '#EF4444',
-    elevation: 6,
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.34,
+    shadowRadius: 8,
+    elevation: 8,
     zIndex: 15,
   },
   recenterButton: {
     position: 'absolute',
     right: 16,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
-    elevation: 6,
+    borderColor: 'rgba(255,255,255,0.18)',
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.34,
+    shadowRadius: 8,
+    elevation: 8,
     zIndex: 15,
   },
   favoritesContainer: {
@@ -6120,12 +6269,17 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.82)',
+    backgroundColor: 'rgba(15, 23, 42, 0.9)',
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 14,
+    paddingVertical: 9,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: 'rgba(255,255,255,0.16)',
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.28,
+    shadowRadius: 8,
+    elevation: 6,
     gap: 8,
   },
   favoriteIconBg: {
@@ -6190,13 +6344,17 @@ const styles = StyleSheet.create({
     zIndex: 25,
   },
   bottomSheet: {
-    backgroundColor: 'rgba(15, 23, 42, 0.88)',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 16,
+    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    paddingHorizontal: 18,
     borderTopWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-    elevation: 12,
+    borderColor: 'rgba(255,255,255,0.16)',
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: 0.42,
+    shadowRadius: 16,
+    elevation: 22,
   },
   dragHandlerArea: {
     width: '100%',
@@ -6218,12 +6376,17 @@ const styles = StyleSheet.create({
   mainSearchInput: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(30, 41, 59, 0.8)',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 14,
+    backgroundColor: 'rgba(30, 41, 59, 0.92)',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: 'rgba(234, 179, 8, 0.32)',
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 4,
   },
   mainSearchText: {
     color: '#F8FAFC',
@@ -6249,10 +6412,15 @@ const styles = StyleSheet.create({
   },
   requestButton: {
     backgroundColor: '#EAB308',
-    borderRadius: 14,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 14,
+    paddingVertical: 16,
+    shadowColor: '#EAB308',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
   },
   requestButtonText: {
     color: '#0F172A',
@@ -6303,11 +6471,16 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   pinCardContainer: {
-    backgroundColor: 'rgba(30, 41, 59, 0.85)',
-    borderRadius: 16,
-    padding: 14,
+    backgroundColor: 'rgba(30, 41, 59, 0.92)',
+    borderRadius: 20,
+    padding: 15,
     borderWidth: 1,
-    borderColor: '#10B981',
+    borderColor: 'rgba(16, 185, 129, 0.5)',
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 5,
     marginBottom: 12,
   },
   pinHeader: {
@@ -6457,11 +6630,16 @@ const styles = StyleSheet.create({
   driverCardCompact: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(30, 41, 59, 0.85)',
-    padding: 12,
-    borderRadius: 16,
+    backgroundColor: 'rgba(30, 41, 59, 0.92)',
+    padding: 14,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: 'rgba(255,255,255,0.15)',
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.26,
+    shadowRadius: 8,
+    elevation: 5,
   },
   driverAvatarCompact: {
     width: 46,
@@ -6497,13 +6675,13 @@ const styles = StyleSheet.create({
   },
   actionBtnSecondary: {
     flex: 1,
-    backgroundColor: 'rgba(30, 41, 59, 0.85)',
-    paddingVertical: 10,
-    borderRadius: 12,
+    backgroundColor: 'rgba(30, 41, 59, 0.9)',
+    paddingVertical: 12,
+    borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: 'rgba(255,255,255,0.14)',
   },
   actionBtnText: {
     fontSize: 11,
@@ -6513,8 +6691,8 @@ const styles = StyleSheet.create({
   actionBtnPrimary: {
     flex: 1.2,
     backgroundColor: '#EAB308',
-    paddingVertical: 10,
-    borderRadius: 12,
+    paddingVertical: 12,
+    borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
@@ -6584,11 +6762,11 @@ const styles = StyleSheet.create({
   categoryCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(30, 41, 59, 0.8)',
-    padding: 12,
-    borderRadius: 14,
+    backgroundColor: 'rgba(30, 41, 59, 0.9)',
+    padding: 14,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: 'rgba(255,255,255,0.14)',
   },
   categoryCardActive: {
     borderColor: '#EAB308',

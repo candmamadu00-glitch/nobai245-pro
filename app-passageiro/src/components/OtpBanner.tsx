@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 
 interface Props {
@@ -17,16 +18,23 @@ export const OtpBanner: React.FC<Props> = ({ otpCode, status }) => {
 
   return (
     <View style={[styles.container, isArrived && styles.arrivedContainer]}>
-      <Text style={[styles.title, isArrived && styles.arrivedTitle]}>
-        {isArrived 
-          ? t('driver_arrived_title', '📍 O Motorista Chegou!') 
-          : t('security_code_title', '🔑 Código de Segurança')}
-      </Text>
+      <View style={[styles.badgeRow, isArrived && styles.arrivedBadgeRow]}>
+        <Ionicons
+          name={isArrived ? 'checkmark-circle' : 'shield-checkmark'}
+          size={14}
+          color={isArrived ? '#059669' : '#B45309'}
+        />
+        <Text style={[styles.title, isArrived && styles.arrivedTitle]}>
+          {isArrived 
+            ? t('driver_arrived_title', 'O Motorista Chegou!') 
+            : t('security_code_title', 'Código de Embarque')}
+        </Text>
+      </View>
       
       <Text style={styles.subtitle}>
         {isArrived 
-          ? t('inform_pin_arrived', 'Informe este PIN ao motorista para iniciar o percurso:') 
-          : t('inform_pin_boarding', 'Forneça este código ao motorista ao embarcar:')}
+          ? t('inform_pin_arrived', 'Informe este PIN ao motorista para iniciar a viagem:') 
+          : t('inform_pin_boarding', 'Mostre este código ao motorista ao embarcar:')}
       </Text>
 
       <View style={styles.otpBox}>
@@ -44,39 +52,52 @@ export const OtpBanner: React.FC<Props> = ({ otpCode, status }) => {
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#FFF8E1',
-    borderColor: '#FFA000',
+    backgroundColor: '#FFFBEB',
+    borderColor: '#F59E0B',
     borderWidth: 1.5,
-    borderRadius: 16,
+    borderRadius: 22,
     padding: 16,
     alignItems: 'center',
     marginHorizontal: 16,
     marginVertical: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 4,
   },
   arrivedContainer: {
-    backgroundColor: '#E8F5E9',
-    borderColor: '#2E7D32',
+    backgroundColor: '#ECFDF5',
+    borderColor: '#10B981',
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 20,
+    marginBottom: 8,
+  },
+  arrivedBadgeRow: {
+    backgroundColor: '#D1FAE5',
   },
   title: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#E65100',
-    marginBottom: 4,
+    fontSize: 13.5,
+    fontWeight: '900',
+    color: '#B45309',
   },
   arrivedTitle: {
-    color: '#1B5E20',
+    color: '#047857',
   },
   subtitle: {
-    fontSize: 13,
+    fontSize: 12.5,
     color: '#475569',
     textAlign: 'center',
-    marginBottom: 12,
+    marginBottom: 14,
     lineHeight: 18,
+    fontWeight: '600',
   },
   otpBox: {
     flexDirection: 'row',
@@ -85,30 +106,30 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   digitBox: {
-    width: 46,
-    height: 52,
-    backgroundColor: '#FFF',
-    borderRadius: 12,
+    width: 48,
+    height: 54,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.08,
-    shadowRadius: 3,
+    shadowRadius: 6,
     borderWidth: 1.5,
-    borderColor: '#FFE082',
+    borderColor: '#FCD34D',
   },
   arrivedDigitBox: {
-    borderColor: '#A5D6A7',
-    backgroundColor: '#FFF',
+    borderColor: '#6EE7B7',
+    backgroundColor: '#FFFFFF',
   },
   digitText: {
-    fontSize: 22,
+    fontSize: 23,
     fontWeight: '900',
-    color: '#F57C00',
+    color: '#D97706',
   },
   arrivedDigitText: {
-    color: '#2E7D32',
+    color: '#059669',
   },
 });

@@ -21,6 +21,8 @@ interface IncomingRideData {
   originAddress?: string;
   destinationAddress?: string;
   serviceType?: 'RIDE' | 'DELIVERY' | 'RENTAL';
+  vehicleType?: string;
+  distanceKm?: number;
   paymentMethod?: 'ORANGE_MONEY' | 'MTN_MOMO' | 'WALLET' | 'CASH' | 'CORPORATE' | 'CORPORATE_B2B' | string;
   priceXof?: number;
   stops?: Stop[];
@@ -50,11 +52,9 @@ export function IncomingRideModal({
   const { t } = useTranslation();
   const ringtonePlayerRef = useRef<any>(null);
 
-  // Reproduz o áudio da chamada enquanto a corrida estiver em oferta no modal
   useEffect(() => {
     if (visible && ride) {
       try {
-        // Certifique-se de que o arquivo esteja em src/assets/audio/ride_request.mp3
         const soundAsset = require('../../assets/audio/crioulo/new_ride.mp3');
         const player = createAudioPlayer(soundAsset);
         player.loop = true;
@@ -80,6 +80,29 @@ export function IncomingRideModal({
 
   if (!visible || !ride) return null;
 
+  const safeTime = Math.max(0, Number(timeLeft || 0));
+  const progressPct = Math.max(4, Math.min(100, (safeTime / 15) * 100));
+  const timerColor = safeTime > 8 ? '#059669' : safeTime > 4 ? '#D97706' : '#DC2626';
+  const timerBg = safeTime > 8 ? '#ECFDF5' : safeTime > 4 ? '#FEF3C7' : '#FEE2E2';
+
+  const serviceLabel = ride.serviceType === 'DELIVERY'
+    ? 'ENTREGA / ENCOMENDA'
+    : ride.serviceType === 'RENTAL'
+    ? 'ALUGUEL POR HORA'
+    : String(ride.vehicleType || '').toUpperCase().includes('MOTO')
+    ? 'MOTO-TÁXI'
+    : 'CORRIDA NÔ BAI 245';
+
+  const paymentLabel = (ride.paymentMethod === 'CORPORATE' || ride.paymentMethod === 'CORPORATE_B2B')
+    ? 'Corporativo (Não cobrar)'
+    : ride.paymentMethod === 'ORANGE_MONEY'
+    ? 'Orange Money (Pago)'
+    : ride.paymentMethod === 'MTN_MOMO'
+    ? 'Telecel / MTN (Pago)'
+    : ride.paymentMethod === 'WALLET'
+    ? 'Carteira Digital (Pago)'
+    : 'Dinheiro em Espécie';
+
   return (
     <Modal
       visible={visible}
@@ -89,37 +112,56 @@ export function IncomingRideModal({
     >
       <View style={styles.overlay}>
         <View style={styles.container}>
-          
-          {/* BANNER SUPERIOR */}
-          <View style={[styles.badgeBanner, styles.normalBanner]}>
-            <Ionicons name="flash-outline" size={18} color="#FFF" />
-            <Text style={styles.badgeText}>🚗 NOVA SOLICITAÇÃO</Text>
+          {/* BARRA DE CONTAGEM REGRESSIVA ANIMADA */}
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${progressPct}%`, backgroundColor: timerColor }]} />
           </View>
 
-          {/* TEMPO RESTANTE */}
-          <View style={styles.timerContainer}>
-            <Text style={styles.timerText}>{timeLeft}s</Text>
+          {/* CABEÇALHO DE CATEGORIA E CRONÔMETRO */}
+          <View style={styles.topHeaderRow}>
+            <View style={styles.serviceBadge}>
+              <Ionicons
+                name={ride.serviceType === 'DELIVERY' ? 'cube' : 'flash'}
+                size={14}
+                color="#0F172A"
+              />
+              <Text style={styles.serviceBadgeText}>{serviceLabel}</Text>
+            </View>
+
+            <View style={[styles.timerPill, { backgroundColor: timerBg, borderColor: timerColor }]}>
+              <Ionicons name="time-outline" size={14} color={timerColor} />
+              <Text style={[styles.timerText, { color: timerColor }]}>{safeTime}s</Text>
+            </View>
           </View>
 
-          {/* DADOS DO PASSAGEIRO */}
+          {/* GANHO EM DESTAQUE + PASSAGEIRO */}
           <View style={styles.passengerRow}>
             {ride.passengerPhoto ? (
               <Image source={{ uri: ride.passengerPhoto }} style={styles.avatar} />
             ) : (
               <View style={styles.avatarPlaceholder}>
-                <Ionicons name="person" size={24} color="#059669" />
+                <Ionicons name="person" size={24} color="#0F172A" />
               </View>
             )}
             <View style={styles.passengerInfo}>
-              <Text style={styles.passengerName}>{ride.passengerName || 'Passageiro'}</Text>
+              <Text style={styles.passengerName} numberOfLines={1}>
+                {ride.passengerName || 'Passageiro Nô Bai'}
+              </Text>
               <View style={styles.ratingRow}>
-                <Ionicons name="star" size={14} color="#EAB308" />
-                <Text style={styles.ratingText}>
-                  {Number(ride.passengerRating || 5.0).toFixed(1)}
-                </Text>
+                <View style={styles.ratingPill}>
+                  <Ionicons name="star" size={12} color="#EAB308" />
+                  <Text style={styles.ratingText}>
+                    {Number(ride.passengerRating || 5.0).toFixed(1)}
+                  </Text>
+                </View>
+                {typeof ride.distanceKm === 'number' && ride.distanceKm > 0 && (
+                  <Text style={styles.distanceBadge}>{ride.distanceKm.toFixed(1)} km</Text>
+                )}
               </View>
             </View>
+
             <View style={styles.priceContainer}>
+              <Text style={styles.priceLabel}>GANHO</Text>
               <Text style={styles.priceValue}>{formatCurrency(ride.priceXof)}</Text>
               <Text style={styles.priceUnit}>XOF</Text>
             </View>
@@ -128,35 +170,41 @@ export function IncomingRideModal({
           {/* ROTA DA CORRIDA */}
           <View style={styles.routeBox}>
             <View style={styles.routeItem}>
-              <Ionicons name="location-sharp" size={18} color="#10B981" />
-              <Text style={styles.routeText} numberOfLines={2}>
-                {ride.originAddress || 'Ponto de Embarque'}
-              </Text>
+              <View style={styles.originDot} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.routeCaption}>EMBARQUE</Text>
+                <Text style={styles.routeText} numberOfLines={2}>
+                  {ride.originAddress || 'Ponto de Embarque'}
+                </Text>
+              </View>
             </View>
 
             {ride.stops && ride.stops.length > 0 && (
               <View style={styles.routeItem}>
-                <Ionicons name="ellipsis-vertical" size={18} color="#EAB308" />
+                <Ionicons name="ellipsis-vertical" size={16} color="#D97706" />
                 <Text style={styles.routeTextSub} numberOfLines={1}>
-                  +{ride.stops.length} parada(s) no trajeto
+                  +{ride.stops.length} parada(s) intermediária(s)
                 </Text>
               </View>
             )}
 
+            <View style={styles.routeDivider} />
+
             <View style={styles.routeItem}>
-              <Ionicons name="flag-sharp" size={18} color="#EF4444" />
-              <Text style={styles.routeText} numberOfLines={2}>
-                {ride.destinationAddress || 'Destino Final'}
-              </Text>
+              <View style={styles.destDot} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.routeCaption}>DESTINO</Text>
+                <Text style={styles.routeText} numberOfLines={2}>
+                  {ride.destinationAddress || 'Destino Final'}
+                </Text>
+              </View>
             </View>
           </View>
 
           {/* MÉTODO DE PAGAMENTO */}
           <View style={styles.paymentTag}>
-            <Ionicons name="wallet-outline" size={14} color="#6B7280" />
-            <Text style={styles.paymentText}>
-              Pagamento: {(ride.paymentMethod === 'CORPORATE' || ride.paymentMethod === 'CORPORATE_B2B') ? 'Conta Corporativa (Não cobrar)' : ride.paymentMethod === 'ORANGE_MONEY' ? 'Orange Money (Pago)' : ride.paymentMethod === 'MTN_MOMO' ? 'Telecel / MTN (Pago)' : 'Dinheiro em Espécie'}
-            </Text>
+            <Ionicons name="wallet-outline" size={15} color="#0F172A" />
+            <Text style={styles.paymentText}>{paymentLabel}</Text>
           </View>
 
           {/* BOTÕES DE AÇÃO */}
@@ -166,7 +214,7 @@ export function IncomingRideModal({
               onPress={onReject} 
               activeOpacity={0.8}
             >
-              <Ionicons name="close" size={24} color="#EF4444" />
+              <Ionicons name="close" size={22} color="#DC2626" />
               <Text style={styles.rejectText}>Recusar</Text>
             </TouchableOpacity>
 
@@ -175,11 +223,10 @@ export function IncomingRideModal({
               onPress={onAccept} 
               activeOpacity={0.85}
             >
-              <Ionicons name="checkmark-sharp" size={24} color="#FFF" />
+              <Ionicons name="checkmark-sharp" size={22} color="#FFF" />
               <Text style={styles.acceptText}>{t('accept_ride', 'Aceitar Corrida')}</Text>
             </TouchableOpacity>
           </View>
-
         </View>
       </View>
     </Modal>
@@ -189,81 +236,124 @@ export function IncomingRideModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    backgroundColor: 'rgba(15, 23, 42, 0.68)',
     justifyContent: 'flex-end',
   },
   container: {
-    backgroundColor: '#FFF',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 20,
+    paddingBottom: 24,
+    paddingTop: 0,
+    overflow: 'hidden',
   },
-  badgeBanner: {
+  progressTrack: {
+    width: '100%',
+    height: 6,
+    backgroundColor: '#F1F5F9',
+    marginBottom: 16,
+  },
+  progressFill: {
+    height: '100%',
+    borderTopRightRadius: 3,
+    borderBottomRightRadius: 3,
+  },
+  topHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  serviceBadge: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#FEF08A',
     paddingVertical: 6,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     borderRadius: 20,
     gap: 6,
-    marginBottom: 12,
   },
-  normalBanner: { backgroundColor: '#059669' },
-  badgeText: { color: '#FFF', fontWeight: '800', fontSize: 12 },
-  timerContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#FEF3C7',
-    borderWidth: 2,
-    borderColor: '#F59E0B',
-    justifyContent: 'center',
+  serviceBadgeText: { color: '#0F172A', fontWeight: '800', fontSize: 11.5, letterSpacing: 0.4 },
+  timerPill: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    gap: 4,
   },
-  timerText: { fontSize: 16, fontWeight: '900', color: '#D97706' },
+  timerText: { fontSize: 14, fontWeight: '900' },
   passengerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     width: '100%',
     marginBottom: 16,
   },
-  avatar: { width: 50, height: 50, borderRadius: 25 },
+  avatar: { width: 52, height: 52, borderRadius: 26, borderWidth: 2, borderColor: '#EAB308' },
   avatarPlaceholder: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#ECFDF5',
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#F1F5F9',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  passengerInfo: { flex: 1, marginLeft: 12 },
-  passengerName: { fontSize: 16, fontWeight: '800', color: '#111827' },
-  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
-  ratingText: { fontSize: 13, fontWeight: '700', color: '#4B5563' },
-  priceContainer: { alignItems: 'flex-end' },
-  priceValue: { fontSize: 20, fontWeight: '900', color: '#059669' },
-  priceUnit: { fontSize: 11, fontWeight: '700', color: '#6B7280' },
+  passengerInfo: { flex: 1, marginLeft: 12, paddingRight: 8 },
+  passengerName: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
+  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
+  ratingPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEF9C3',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  ratingText: { fontSize: 12, fontWeight: '800', color: '#854D0E' },
+  distanceBadge: { fontSize: 12, fontWeight: '700', color: '#64748B' },
+  priceContainer: {
+    alignItems: 'flex-end',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  priceLabel: { fontSize: 9.5, fontWeight: '800', color: '#059669', letterSpacing: 0.5 },
+  priceValue: { fontSize: 21, fontWeight: '900', color: '#047857', lineHeight: 24 },
+  priceUnit: { fontSize: 10.5, fontWeight: '800', color: '#059669' },
   routeBox: {
     width: '100%',
-    backgroundColor: '#F9FAFB',
-    borderRadius: 12,
-    padding: 12,
-    gap: 10,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 18,
+    padding: 14,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: '#E2E8F0',
     marginBottom: 12,
   },
-  routeItem: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  routeText: { fontSize: 13, fontWeight: '600', color: '#374151', flex: 1 },
+  routeItem: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  originDot: { width: 11, height: 11, borderRadius: 6, backgroundColor: '#10B981' },
+  destDot: { width: 11, height: 11, borderRadius: 3, backgroundColor: '#0F172A' },
+  routeDivider: { height: 1, backgroundColor: '#E2E8F0', marginVertical: 10, marginLeft: 23 },
+  routeCaption: { fontSize: 10, fontWeight: '800', color: '#94A3B8', letterSpacing: 0.5 },
+  routeText: { fontSize: 13.5, fontWeight: '700', color: '#0F172A', marginTop: 1 },
   routeTextSub: { fontSize: 12, fontWeight: '700', color: '#D97706', flex: 1 },
   paymentTag: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 12,
     gap: 6,
     marginBottom: 16,
   },
-  paymentText: { fontSize: 12, color: '#6B7280', fontWeight: '600' },
+  paymentText: { fontSize: 12.5, color: '#334155', fontWeight: '700' },
   actionsRow: {
     flexDirection: 'row',
     width: '100%',
@@ -274,9 +364,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: '#FEE2E2',
+    paddingVertical: 15,
+    borderRadius: 16,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
     gap: 6,
   },
   rejectText: { color: '#DC2626', fontWeight: '800', fontSize: 15 },
@@ -285,10 +377,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 14,
-    borderRadius: 12,
+    paddingVertical: 15,
+    borderRadius: 16,
     backgroundColor: '#059669',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
     gap: 6,
   },
-  acceptText: { color: '#FFF', fontWeight: '800', fontSize: 15 },
+  acceptText: { color: '#FFF', fontWeight: '800', fontSize: 16 },
 });

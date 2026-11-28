@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 import { 
   Modal, 
   View, 
@@ -13,6 +12,7 @@ import {
   TouchableWithoutFeedback
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 
 interface Props {
   visible: boolean;
@@ -27,16 +27,16 @@ export const StartRideOtpModal = ({ visible, onSubmitOtp, onCancel }: Props) => 
   const handleConfirm = () => {
     if (!otp.trim()) return;
     onSubmitOtp(otp.trim());
-    setOtp(''); // Limpa o input após enviar
+    setOtp('');
   };
 
   const handleCancel = () => {
-    setOtp(''); // Limpa o input se cancelar
+    setOtp('');
     onCancel();
   };
 
-  // Recuo dinâmico para garantir distância segura dos botões do Android/iOS
   const dynamicBottomPadding = Math.max((insets?.bottom || 0) + 16, Platform.OS === 'android' ? 24 : 16);
+  const isReady = otp.length === 4;
 
   return (
     <Modal 
@@ -53,20 +53,24 @@ export const StartRideOtpModal = ({ visible, onSubmitOtp, onCancel }: Props) => 
           <View style={[styles.overlay, { paddingBottom: dynamicBottomPadding }]}>
             <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
               <View style={styles.modalContent}>
+                <View style={styles.shieldIconCircle}>
+                  <Ionicons name="shield-checkmark" size={26} color="#059669" />
+                </View>
+
                 <Text style={styles.title}>Digite o PIN da corrida</Text>
                 <Text style={styles.subtitle}>
-                  Solicite o código de 4 dígitos ao passageiro para iniciar a viagem.
+                  Solicite o código de 4 dígitos ao passageiro para iniciar a viagem com segurança.
                 </Text>
                 
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, isReady && styles.inputReady]}
                   value={otp}
                   onChangeText={(text) => setOtp(text.replace(/\D/g, '').slice(0, 4))}
                   keyboardType="number-pad"
                   autoFocus={true}
                   maxLength={4}
-                  placeholder="0000"
-                  placeholderTextColor="#9CA3AF"
+                  placeholder="• • • •"
+                  placeholderTextColor="#94A3B8"
                 />
                 
                 <View style={styles.buttonContainer}>
@@ -82,13 +86,13 @@ export const StartRideOtpModal = ({ visible, onSubmitOtp, onCancel }: Props) => 
                     style={[
                       styles.button, 
                       styles.confirmButton, 
-                      otp.length < 4 && styles.disabledButton
+                      !isReady && styles.disabledButton
                     ]} 
                     onPress={handleConfirm}
-                    disabled={otp.length < 4}
+                    disabled={!isReady}
                     activeOpacity={0.85}
                   >
-                    <Text style={styles.confirmText}>Confirmar</Text>
+                    <Text style={styles.confirmText}>Iniciar Viagem</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -106,58 +110,77 @@ const styles = StyleSheet.create({
   },
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    backgroundColor: 'rgba(15, 23, 42, 0.72)',
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 20,
   },
   modalContent: {
     width: '100%',
-    maxWidth: 340,
+    maxWidth: 350,
     backgroundColor: '#FFFFFF',
-    padding: 22,
-    borderRadius: 20,
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
+    padding: 24,
+    borderRadius: 28,
+    alignItems: 'center',
+    elevation: 16,
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+  },
+  shieldIconCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 14,
   },
   title: {
-    fontSize: 18,
-    fontWeight: '800',
+    fontSize: 19,
+    fontWeight: '900',
     color: '#0F172A',
     textAlign: 'center',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   subtitle: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#64748B',
     textAlign: 'center',
-    marginBottom: 18,
+    lineHeight: 18,
+    marginBottom: 20,
   },
   input: {
-    borderWidth: 1.5,
+    width: '100%',
+    borderWidth: 2,
     borderColor: '#CBD5E1',
     backgroundColor: '#F8FAFC',
-    borderRadius: 14,
-    paddingVertical: 12,
+    borderRadius: 18,
+    paddingVertical: 14,
     paddingHorizontal: 16,
-    fontSize: 26,
-    fontWeight: '800',
+    fontSize: 28,
+    fontWeight: '900',
     color: '#0F172A',
     textAlign: 'center',
-    marginBottom: 20,
-    letterSpacing: 8,
+    marginBottom: 22,
+    letterSpacing: 10,
+  },
+  inputReady: {
+    borderColor: '#059669',
+    backgroundColor: '#ECFDF5',
   },
   buttonContainer: {
     flexDirection: 'row',
+    width: '100%',
     gap: 10,
   },
   button: {
     flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
+    paddingVertical: 15,
+    borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -166,9 +189,16 @@ const styles = StyleSheet.create({
   },
   confirmButton: {
     backgroundColor: '#059669',
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
   },
   disabledButton: {
     backgroundColor: '#CBD5E1',
+    shadowOpacity: 0,
+    elevation: 0,
   },
   cancelText: {
     color: '#475569',
